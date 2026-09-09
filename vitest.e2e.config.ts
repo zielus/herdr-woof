@@ -26,6 +26,8 @@ export const E2E_GROUPS = {
     "test/runner/supervision.test.ts",
     "test/recovery/kill-window.test.ts",
   ],
+  /** The single-server lock, which only two real processes can prove (A9). */
+  server: ["test/server/server-lifecycle.test.ts"],
 } as const;
 
 export const E2E_SUITES = Object.values(E2E_GROUPS).flat();
