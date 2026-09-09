@@ -34,6 +34,7 @@ export const E2E_GROUPS = {
    */
   server: [
     "test/server/server-lifecycle.test.ts",
+    "test/server/composed-run.e2e.test.ts",
     "test/server/park-resume.e2e.test.ts",
     "test/server/human-decision.e2e.test.ts",
   ],
