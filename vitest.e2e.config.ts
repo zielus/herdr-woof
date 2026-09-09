@@ -15,6 +15,17 @@ export const E2E_GROUPS = {
   cli: ["test/repo/cli.test.ts"],
   /** The load seam against a real Node, whose type stripping vite would hide. */
   loader: ["test/loader/native-import.test.ts"],
+  /**
+   * Effect execution and crash recovery: every file here spawns a real child
+   * process, and the kill-window probe SIGKILLs one at each of the three
+   * interruption windows (SPEC A10).
+   */
+  effects: [
+    "test/runner/shell.test.ts",
+    "test/runner/effects.test.ts",
+    "test/runner/supervision.test.ts",
+    "test/recovery/kill-window.test.ts",
+  ],
 } as const;
 
 export const E2E_SUITES = Object.values(E2E_GROUPS).flat();
