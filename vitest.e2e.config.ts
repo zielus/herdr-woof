@@ -12,7 +12,7 @@ import { defineConfig } from "vitest/config";
  */
 export const E2E_GROUPS = {
   /** The built CLI, spawned as a child process. */
-  cli: ["test/repo/cli.test.ts"],
+  cli: ["test/repo/cli.test.ts", "test/server/cleanup-cli.e2e.test.ts"],
   /** The load seam against a real Node, whose type stripping vite would hide. */
   loader: ["test/loader/native-import.test.ts"],
   /**
@@ -34,8 +34,13 @@ export const E2E_GROUPS = {
    */
   server: [
     "test/server/server-lifecycle.test.ts",
+    "test/server/composed-run.e2e.test.ts",
     "test/server/park-resume.e2e.test.ts",
     "test/server/human-decision.e2e.test.ts",
+    "test/server/represent-unsent.e2e.test.ts",
+    "test/server/answer-window.e2e.test.ts",
+    "test/server/follow-ups.e2e.test.ts",
+    "test/server/monitor-timer.e2e.test.ts",
   ],
   /** The extension's binaries: the hooks and the MCP server, as processes. */
   extension: ["test/extension/binaries.e2e.test.ts"],

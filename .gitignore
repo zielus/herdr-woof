@@ -4,6 +4,9 @@ dist/
 *.tgz
 coverage/
 *.log
+# …except the acceptance records the research docs cite: an excerpt nobody can
+# check against its log is how a headline outruns its evidence (WP7 record).
+!docs/research/*.log
 .DS_Store
 .env
 .env.*
