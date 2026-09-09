@@ -55,7 +55,7 @@ function selectedSuites(): readonly string[] {
 
 export default defineConfig({
   test: {
-    globalSetup: ["./test/global-setup.ts"],
+    globalSetup: ["./test/global-setup.ts", "./test/e2e-build.ts"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     include: [...selectedSuites()],
