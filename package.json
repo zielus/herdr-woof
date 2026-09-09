@@ -21,7 +21,10 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "sheepherdr": "./dist/cli.js"
+    "sheepherdr": "./dist/cli.js",
+    "sheepherdr-mcp": "./dist/extension/bin/mcp.js",
+    "sheepherdr-hook-stop": "./dist/extension/bin/hook-stop.js",
+    "sheepherdr-hook-observe": "./dist/extension/bin/hook-observe.js"
   },
   "files": [
     "dist/",
@@ -29,7 +32,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc --project tsconfig.build.json",
+    "build": "rm -rf dist && tsc --project tsconfig.build.json && cp -R plugin dist/plugin",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "format": "prettier --write .",
