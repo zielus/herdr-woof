@@ -23,6 +23,7 @@ export const E2E_GROUPS = {
   effects: [
     "test/runner/shell.test.ts",
     "test/runner/effects.test.ts",
+    "test/runner/updates.test.ts",
     "test/runner/supervision.test.ts",
     "test/recovery/kill-window.test.ts",
   ],
