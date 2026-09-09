@@ -13,7 +13,7 @@ export default defineConfig({
     exclude: ["node_modules/**", ...E2E_SUITES],
     coverage: {
       provider: "istanbul",
-      include: ["src/claude/**", "src/herdr/**"],
+      include: ["src/claude/**", "src/engine/**", "src/herdr/**"],
       exclude: [
         // Re-export, generated and type-only modules contain no behavior to
         // test. Keeping them out also makes branch totals stable across
