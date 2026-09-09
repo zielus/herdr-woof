@@ -38,6 +38,7 @@ export const E2E_GROUPS = {
     "test/server/park-resume.e2e.test.ts",
     "test/server/human-decision.e2e.test.ts",
     "test/server/represent-unsent.e2e.test.ts",
+    "test/server/answer-window.e2e.test.ts",
   ],
   /** The extension's binaries: the hooks and the MCP server, as processes. */
   extension: ["test/extension/binaries.e2e.test.ts"],
