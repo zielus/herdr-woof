@@ -1,0 +1,63 @@
+{
+  "name": "sheepherdr",
+  "version": "0.0.0",
+  "description": "sheepherdr \u2014 driving Claude Code sessions through Herdr.",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zielus/sheepherdr.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "sheepherdr": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "bun x vitest run",
+    "test:e2e": "bun x vitest run --config vitest.e2e.config.ts",
+    "test:all": "bun run test && bun run test:e2e",
+    "check:version": "bun run scripts/check-version.ts",
+    "gen:herdr-types": "bun run scripts/gen-herdr-types.ts",
+    "smoke:package": "bun run scripts/smoke-package.ts",
+    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run check:version && bun run test && bun run build && bun run smoke:package",
+    "verify:full": "bun run verify && bun run test:e2e",
+    "release:dry-run": "bun run scripts/release.ts dry-run",
+    "release:prepare": "bun run scripts/release.ts prepare",
+    "test:coverage": "bun x vitest run --coverage"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.2",
+    "@types/node": "^26.4.1",
+    "@vitest/coverage-istanbul": "^4.1.10",
+    "json-schema-to-typescript": "^16.0.0",
+    "oxlint": "^1.81.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
