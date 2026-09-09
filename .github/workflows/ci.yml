@@ -71,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [cli, loader, effects, server]
+        group: [cli, loader, effects, server, extension]
     env:
       E2E_GROUP: ${{ matrix.group }}
     steps:
