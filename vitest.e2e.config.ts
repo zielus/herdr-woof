@@ -12,7 +12,7 @@ import { defineConfig } from "vitest/config";
  */
 export const E2E_GROUPS = {
   /** The built CLI, spawned as a child process. */
-  cli: ["test/repo/cli.test.ts"],
+  cli: ["test/repo/cli.test.ts", "test/server/cleanup-cli.e2e.test.ts"],
   /** The load seam against a real Node, whose type stripping vite would hide. */
   loader: ["test/loader/native-import.test.ts"],
   /**
