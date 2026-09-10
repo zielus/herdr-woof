@@ -14,3 +14,9 @@ coverage/
 .idea/
 .vscode/
 .work/
+
+# graphify: the skill and the CLAUDE.md wiring are committed; the built graph is not
+graphify-out/
+# per-machine Claude Code state
+.claude/settings.local.json
+.claude/worktrees/
