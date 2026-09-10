@@ -48,6 +48,8 @@ export const E2E_GROUPS = {
   ],
   /** The extension's binaries: the hooks and the MCP server, as processes. */
   extension: ["test/extension/binaries.e2e.test.ts"],
+  /** Persistent resource preparation against real Git worktrees. */
+  sessions: ["test/server/session-resources-workspaces-git.test.ts"],
   /**
    * The shipped install path (ADR-0031): the packed tarball installed with npm
    * into a throwaway global prefix, `woof install` run out of it, and an
