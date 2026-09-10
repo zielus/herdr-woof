@@ -3,7 +3,3 @@ node_modules/
 bun.lock
 CHANGELOG.md
 NOTICE
-
-# Preserved draw-svg evidence and generated brand preview.
-artifacts/draw-svg/
-assets/brand/preview.html
