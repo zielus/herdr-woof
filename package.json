@@ -1,12 +1,12 @@
 {
-  "name": "sheepherdr",
+  "name": "herdr-woof",
   "version": "0.0.0",
   "description": "Multi-agent orchestration for CLI coding agents on Herdr: durable TypeScript workflow graphs that run inside your live Claude Code session",
   "private": true,
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zielus/sheepherdr.git"
+    "url": "git+https://github.com/zielus/herdr-woof.git"
   },
   "engines": {
     "node": ">=22.18"
@@ -21,10 +21,10 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "sheepherdr": "./dist/cli.js",
-    "sheepherdr-mcp": "./dist/extension/bin/mcp.js",
-    "sheepherdr-hook-stop": "./dist/extension/bin/hook-stop.js",
-    "sheepherdr-hook-observe": "./dist/extension/bin/hook-observe.js"
+    "woof": "./dist/cli.js",
+    "woof-mcp": "./dist/extension/bin/mcp.js",
+    "woof-hook-stop": "./dist/extension/bin/hook-stop.js",
+    "woof-hook-observe": "./dist/extension/bin/hook-observe.js"
   },
   "files": [
     "dist/",

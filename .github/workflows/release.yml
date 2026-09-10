@@ -62,7 +62,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: sheepherdr-tarball
+          name: woof-tarball
           path: artifacts/*.tgz
           if-no-files-found: error
 
