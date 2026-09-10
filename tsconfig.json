@@ -14,7 +14,10 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node", "bun"]
+    "types": ["node", "bun"],
+    "paths": {
+      "herdr-woof": ["./src/index.ts"]
+    }
   },
   "include": ["src", "scripts", "test"]
 }
