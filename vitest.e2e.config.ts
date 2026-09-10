@@ -50,6 +50,7 @@ export const E2E_GROUPS = {
   extension: ["test/extension/binaries.e2e.test.ts"],
   /** Persistent resource preparation against real Git worktrees. */
   sessions: [
+    "test/repo/plan-review-commit.test.ts",
     "test/server/session-resources-workspaces-git.test.ts",
     "test/server/session-lifecycle.e2e.test.ts",
   ],
