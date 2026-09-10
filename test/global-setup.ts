@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const TEST_TEMP_ROOT_ENV = "SHEEPHERDR_TEST_TEMP_ROOT";
+export const TEST_TEMP_ROOT_ENV = "WOOF_TEST_TEMP_ROOT";
 
 let ownedRoot: string | undefined;
 let previousRoot: string | undefined;
@@ -15,7 +15,7 @@ export function setup(): void {
   // socket path limit once a fake Herdr socket path is appended to it. /tmp is
   // a symlink to the same place and leaves room.
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
-  ownedRoot = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, "sheepherdr-tests-")));
+  ownedRoot = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, "woof-tests-")));
   process.env[TEST_TEMP_ROOT_ENV] = ownedRoot;
 }
 

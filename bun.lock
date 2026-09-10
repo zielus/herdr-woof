@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sheepherdr",
+      "name": "herdr-woof",
       "dependencies": {
         "commander": "^15.0.0",
         "ink": "^7.1.1",
