@@ -44,6 +44,14 @@ export const E2E_GROUPS = {
   ],
   /** The extension's binaries: the hooks and the MCP server, as processes. */
   extension: ["test/extension/binaries.e2e.test.ts"],
+  /**
+   * The shipped install path (ADR-0031): the packed tarball installed with npm
+   * into a throwaway global prefix, `woof install` run out of it, and an
+   * upgrade over it. The slowest group by far — it reaches the npm registry for
+   * the runtime dependencies, so it carries its own per-test timeout well above
+   * this config's default.
+   */
+  install: ["test/packaging/global-install.e2e.test.ts"],
 } as const;
 
 export const E2E_SUITES = Object.values(E2E_GROUPS).flat();
