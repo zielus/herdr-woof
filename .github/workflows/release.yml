@@ -1,0 +1,104 @@
+name: Release
+
+# Releases are cut by pushing a `v<major>.<minor>.<patch>` tag on master after
+# `bun run release:prepare` and `bun run release:dry-run`. Merging a PR never
+# releases on its own.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: "1.3.2"
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag is on master
+        run: |
+          git fetch --no-tags --quiet origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on master" >&2
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: bun install --frozen-lockfile
+
+      - name: Check tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(bun run --silent scripts/print-version.ts)"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package version $pkg" >&2
+            exit 1
+          fi
+          echo "releasing v$pkg"
+
+      - run: bun run verify
+
+      # The one gate on the artifact that exercises how a user actually gets it:
+      # pack, `npm install -g` into a throwaway prefix, run the installed `woof`,
+      # run `woof install` out of it, and upgrade over it (ADR-0031).
+      - name: Verify a global install of the packed tarball
+        env:
+          E2E_GROUP: install
+        run: bun run test:e2e
+
+      # Two copies of one tarball. `artifacts/` keeps the version-carrying name
+      # for the build artifact and for anyone reading the run; `release/` holds
+      # the stable filename the Release is uploaded under, so that
+      # `/releases/latest/download/herdr-woof.tgz` resolves for every version
+      # (ADR-0031). The version itself stays inside package.json, untouched.
+      - name: Pack the release asset
+        run: |
+          set -euo pipefail
+          bun pm pack --destination ./artifacts
+          count="$(find artifacts -maxdepth 1 -name '*.tgz' | wc -l | tr -d ' ')"
+          if [ "$count" != "1" ]; then
+            echo "expected exactly one tarball in artifacts/, found $count" >&2
+            exit 1
+          fi
+          mkdir -p release
+          cp artifacts/*.tgz release/herdr-woof.tgz
+          echo "packed $(ls artifacts) -> release/herdr-woof.tgz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: woof-tarball
+          path: artifacts/*.tgz
+          if-no-files-found: error
+
+      # A tag carrying a prerelease identifier (`v0.2.0-rc.1`) matches this
+      # workflow's `v*.*.*` filter, so the discriminator has to be explicit:
+      # GitHub never resolves `/releases/latest/` to a release marked
+      # prerelease. `make_latest: legacy` on a stable tag lets GitHub order
+      # releases itself, so re-running an older tag cannot move "Latest"
+      # backwards.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'legacy' }}
+          files: release/herdr-woof.tgz

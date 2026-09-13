@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.tgz
+coverage/
+*.log
+# …except the acceptance records the research docs cite: an excerpt nobody can
+# check against its log is how a headline outruns its evidence (WP7 record).
+!docs/research/*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.work/
+
+# graphify: the skill and the CLAUDE.md wiring are committed; the built graph is not
+graphify-out/
+# per-machine Claude Code state
+.claude/settings.local.json
+.claude/worktrees/
