@@ -156,6 +156,44 @@ catch (error) { out = { name: error.name, message: error.message }; }`,
     expect(thrown.name).toBe("TypeError");
     expect(thrown.message).toContain("reason is not one of");
   });
+
+  it("passes a malformed terminalId or sessionId to record validation instead of dropping it", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    const out = runSdk<{
+      results: Array<{ name: string; message: string }>;
+      unchanged: boolean;
+      nulls: string;
+    }>(
+      runDir,
+      `import { readFileSync } from "node:fs";
+const journalPath = runDir + "/journal.jsonl";
+const before = readFileSync(journalPath, "utf8");
+const results = [];
+for (const ids of [{ terminalId: 123 }, { sessionId: 123 }, { terminalId: "" }, { sessionId: {} }]) {
+  try {
+    await store.assignAgent({ runDir, agentId: "worker", runtime: { adapter: "herdr", runtimeName: "w-worker", paneId: "w1:p1" }, ...ids });
+    results.push({ name: "none", message: "" });
+  } catch (error) {
+    results.push({ name: error.name, message: error.message });
+  }
+}
+const unchanged = readFileSync(journalPath, "utf8") === before;
+const nulls = (await store.assignAgent({ runDir, agentId: "worker", runtime: { adapter: "herdr", runtimeName: "w-worker", paneId: "w1:p1" }, terminalId: null, sessionId: null })).outcome;
+out = { results, unchanged, nulls };`,
+    );
+
+    expect(out.results.map((result) => result.name)).toEqual([
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      "TypeError",
+    ]);
+    expect(out.results[0]?.message).toContain("terminalId");
+    expect(out.results[1]?.message).toContain("sessionId");
+    expect(out.unchanged).toBe(true);
+    expect(out.nulls).toBe("recorded");
+  });
 });
 
 describe("state store: delivery certainty and limits", () => {

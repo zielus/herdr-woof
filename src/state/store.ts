@@ -145,8 +145,13 @@ export async function assignAgent(
       runtimeName: input.runtime.runtimeName,
       paneId: input.runtime.paneId,
     },
-    ...(typeof input.terminalId === "string" ? { terminalId: input.terminalId } : {}),
-    ...(typeof input.sessionId === "string" ? { sessionId: input.sessionId } : {}),
+    // Any given value goes to record validation, so a malformed id throws instead of vanishing.
+    ...(input.terminalId !== undefined && input.terminalId !== null
+      ? { terminalId: input.terminalId }
+      : {}),
+    ...(input.sessionId !== undefined && input.sessionId !== null
+      ? { sessionId: input.sessionId }
+      : {}),
   });
 }
 
