@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -268,6 +269,57 @@ describe("resuming against a replaced run directory", () => {
 
     expect(exit.status).toBe(5);
     expect(items(file)).toEqual([
+      expect.objectContaining({ type: "resync_required", reason: "cursor_foreign" }),
+    ]);
+  });
+});
+
+describe("live subscription against a replaced journal", () => {
+  const TS = "2026-09-14T10:00:00.000Z";
+  const line = (record: Json) => `${JSON.stringify({ schemaVersion: 1, ts: TS, ...record })}\n`;
+  const openedLine = (runId: string) => line({ seq: 1, type: "run.opened", runId });
+  const terminatedLine = line({
+    seq: 2,
+    type: "run.terminated",
+    outcome: "cancelled",
+    reason: "replacement",
+  });
+
+  async function subscribeThenReplace(name: string, replace: (journal: string) => void) {
+    const runDir = makeRunDir();
+    const journal = join(runDir, "journal.jsonl");
+    writeFileSync(journal, openedLine("run-old"));
+    const file = join(eventsDir, `${name}.jsonl`);
+    const observer = startNode(OBSERVER, [runDir, file, ""]);
+    await waitUntil(() => items(file).length >= 1, 10_000, "run.opened event");
+    replace(journal);
+    const exit = await withTimeout(observer.done, 10_000, "observer exit");
+    return { exit, seen: items(file) };
+  }
+
+  it("ends with cursor_foreign when the journal is rewritten in place with a same-length line 1", async () => {
+    expect(openedLine("run-new")).toHaveLength(openedLine("run-old").length);
+    const { exit, seen } = await subscribeThenReplace("rewritten", (journal) =>
+      writeFileSync(journal, openedLine("run-new") + terminatedLine),
+    );
+
+    expect(exit.status, exit.stderr).toBe(5);
+    expect(seen).toEqual([
+      expect.objectContaining({ type: "run.opened", seq: 1, runId: "run-old" }),
+      expect.objectContaining({ type: "resync_required", reason: "cursor_foreign" }),
+    ]);
+  });
+
+  it("ends with cursor_foreign when another file with an identical line 1 is renamed into place", async () => {
+    const { exit, seen } = await subscribeThenReplace("renamed", (journal) => {
+      const replacement = `${journal}.new`;
+      writeFileSync(replacement, openedLine("run-old") + terminatedLine);
+      renameSync(replacement, journal);
+    });
+
+    expect(exit.status, exit.stderr).toBe(5);
+    expect(seen).toEqual([
+      expect.objectContaining({ type: "run.opened", seq: 1, runId: "run-old" }),
       expect.objectContaining({ type: "resync_required", reason: "cursor_foreign" }),
     ]);
   });

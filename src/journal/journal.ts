@@ -170,6 +170,8 @@ export type ReadJournalPrefixResult =
       endOffset: number;
       /** journalAnchor of line 1, when this read started at offset 0 and line 1 is complete. */
       anchor: string | null;
+      /** The file read and its line 1, under the same condition as `anchor`. */
+      file: JournalFile | null;
     }
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
 
@@ -193,13 +195,91 @@ export function readJournalPrefix(
     const replayed = replay(parsed.records);
     if (!replayed.ok) return corrupt(read.journalPath, replayed.line, replayed.message);
   }
+  const file =
+    fromOffset === 0 && parsed.firstLine !== undefined
+      ? {
+          dev: read.dev,
+          ino: read.ino,
+          anchor: journalAnchor(parsed.firstLine),
+          firstLineBytes: parsed.firstLine.byteLength + 1,
+        }
+      : null;
   return {
     ok: true,
     records: parsed.records,
     tailPending: parsed.tailPending,
     endOffset: fromOffset + parsed.consumed,
-    anchor:
-      fromOffset === 0 && parsed.firstLine !== undefined ? journalAnchor(parsed.firstLine) : null,
+    anchor: file?.anchor ?? null,
+    file,
+  };
+}
+
+/** The journal file a subscription started on: its identity and its line 1. */
+export interface JournalFile {
+  dev: number;
+  ino: number;
+  anchor: string;
+  /** Byte length of line 1 including its newline. */
+  firstLineBytes: number;
+}
+
+export type ReadJournalContinuationResult =
+  | { ok: true; records: JournalRecord[]; tailPending: boolean; endOffset: number }
+  | {
+      ok: false;
+      reason: "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
+      message: string;
+      line?: number;
+    };
+
+class JournalReplacedError extends Error {}
+
+/**
+ * `readJournalPrefix` from `fromOffset`, first checking on the same opened
+ * descriptor that the file is still the one in `file`: same device and inode,
+ * and the same line 1 bytes. A journal replaced at the path, by rename or by
+ * rewriting it in place, is `journal_replaced` even when its length matches.
+ */
+export function readJournalContinuation(
+  runDir: string,
+  { fromOffset, expectSeq, file }: { fromOffset: number; expectSeq: number; file: JournalFile },
+): ReadJournalContinuationResult {
+  let read: BytesResult;
+  try {
+    read = readJournalBytes(runDir, fromOffset, (fd) => {
+      const stats = fstatSync(fd);
+      if (stats.dev !== file.dev || stats.ino !== file.ino) {
+        throw new JournalReplacedError("the journal at this path is a different file");
+      }
+      const first = Buffer.alloc(file.firstLineBytes);
+      let length = 0;
+      while (length < first.length) {
+        const got = readSync(fd, first, length, first.length - length, length);
+        if (got === 0) break;
+        length += got;
+      }
+      if (
+        length !== file.firstLineBytes ||
+        first[length - 1] !== 0x0a ||
+        journalAnchor(first.subarray(0, length - 1)) !== file.anchor
+      ) {
+        throw new JournalReplacedError("journal line 1 changed; the journal was replaced");
+      }
+    });
+  } catch (error) {
+    if (error instanceof JournalReplacedError) {
+      return { ok: false, reason: "journal_replaced", message: error.message };
+    }
+    throw error;
+  }
+  if (!read.ok) return read;
+  const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
+  if (!parsed.ok) return parsed;
+  return {
+    ok: true,
+    records: parsed.records,
+    tailPending: parsed.tailPending,
+    endOffset: fromOffset + parsed.consumed,
   };
 }
 
@@ -209,15 +289,24 @@ export function journalAnchor(firstLine: Uint8Array): string {
 }
 
 type BytesResult =
-  | { ok: true; journalPath: string; content: Buffer }
+  | { ok: true; journalPath: string; content: Buffer; dev: number; ino: number }
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string };
 
-function readJournalBytes(runDir: string, fromOffset: number): BytesResult {
+/** `verify` runs on the opened descriptor before any read and may throw JournalReplacedError. */
+function readJournalBytes(
+  runDir: string,
+  fromOffset: number,
+  verify?: (fd: number) => void,
+): BytesResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: Buffer;
+  let dev: number;
+  let ino: number;
   try {
     const fd = openJournalFile(journalPath, O_RDONLY);
     try {
+      verify?.(fd);
+      ({ dev, ino } = fstatSync(fd));
       if (fromOffset === 0) {
         content = readFileSync(fd);
       } else {
@@ -245,6 +334,7 @@ function readJournalBytes(runDir: string, fromOffset: number): BytesResult {
     if (error instanceof JournalFileError) {
       return { ok: false, reason: "journal_corrupt", message: error.message };
     }
+    if (error instanceof JournalReplacedError) throw error;
     const code = (error as NodeJS.ErrnoException).code;
     return {
       ok: false,
@@ -255,7 +345,7 @@ function readJournalBytes(runDir: string, fromOffset: number): BytesResult {
           : `cannot read ${journalPath}: ${(error as Error).message}`,
     };
   }
-  return { ok: true, journalPath, content };
+  return { ok: true, journalPath, content, dev, ino };
 }
 
 type ParsedLines =

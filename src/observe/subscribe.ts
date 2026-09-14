@@ -2,7 +2,13 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { JOURNAL_FILE, readJournal, readJournalPrefix } from "../journal/journal.js";
+import {
+  JOURNAL_FILE,
+  readJournal,
+  readJournalContinuation,
+  readJournalPrefix,
+  type JournalFile,
+} from "../journal/journal.js";
 import { withJournalLock } from "../journal/lock.js";
 import type { JournalRecord } from "../journal/records.js";
 import { replay } from "../state/reducer.js";
@@ -45,6 +51,7 @@ export async function* subscribeEvents(
   const signal = options.signal;
   let records: JournalRecord[] = [];
   let anchor: string | undefined;
+  let file: JournalFile | undefined;
   let offset = 0;
   let yielded: number | undefined;
   let tail: { offset: number; size: number; since: number } | undefined;
@@ -71,7 +78,8 @@ export async function* subscribeEvents(
         }
         continue; // not created yet
       }
-      if (read.anchor === null) continue; // no complete run.opened line yet
+      if (read.anchor === null || read.file === null) continue; // no complete run.opened line yet
+      file = read.file;
       anchor = read.anchor;
       records = read.records;
       offset = read.endOffset;
@@ -87,7 +95,21 @@ export async function* subscribeEvents(
         yielded = checked.seq;
       }
     } else {
-      const next = readJournalPrefix(runDir, { fromOffset: offset, expectSeq: records.length + 1 });
+      // Every incremental read first checks, on the descriptor it reads from,
+      // that the file and its line 1 are still the ones this subscription began on.
+      const next = readJournalContinuation(runDir, {
+        fromOffset: offset,
+        expectSeq: records.length + 1,
+        file: file as JournalFile,
+      });
+      if (!next.ok && next.reason === "journal_replaced") {
+        yield {
+          type: "resync_required",
+          reason: "cursor_foreign",
+          message: `the journal at this path now belongs to another run: ${next.message}`,
+        };
+        return;
+      }
       if (next.ok) {
         records = [...records, ...next.records];
         offset = next.endOffset;
