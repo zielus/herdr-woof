@@ -75,7 +75,12 @@ export const LIMIT_KEYS: readonly (keyof Limits)[] = [...COUNT_LIMIT_KEYS, ...DU
 
 /** Upper bound for count limits. */
 export const MAX_COUNT_LIMIT = 1000;
-/** Upper bound for duration limits: seven days. */
+/**
+ * Upper bound for duration limits: seven days (604 800 000 ms). Lead decision
+ * (plan §9 amendment, repair round 1, SC-008): every wait must be bounded, and
+ * an unbounded duration is not a limit, so all `*Ms` limits are positive safe
+ * integers of at most seven days.
+ */
 export const MAX_DURATION_LIMIT_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface RunPlan {
