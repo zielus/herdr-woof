@@ -347,6 +347,17 @@ describe("request.dispatched rules", () => {
       );
     }
   });
+  it("refuses a started dispatch for an accepted attempt once a newer attempt of the stage opened", () => {
+    expectRefused(
+      journalOf(
+        ...base(),
+        accepted(4, "build", "builder", null),
+        attempt("build", "builder", 1, 2),
+        dispatched("build", "builder"),
+      ),
+      "dispatch_not_latest",
+    );
+  });
   it("refuses a dispatch for a superseded attempt", () => {
     expectRefused(
       journalOf(...base(), attempt("build", "builder", 1, 2), dispatched("build", "builder")),

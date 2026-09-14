@@ -113,6 +113,7 @@ export type ReducerReason =
   | "owner_mismatch"
   | "verdicts_mismatch"
   | "dispatch_exists"
+  | "dispatch_not_latest"
   | "attempt_open_conflict"
   | "invalid_transition"
   | "gate_subject_unknown"
@@ -225,7 +226,8 @@ export function emptyRunState(): RunState {
  *   reconciled delivered) and not accepted → format_repair.
  * - request.dispatched: an attempt already accepted but not yet dispatched
  *   accepts exactly one `started` dispatch (the worker submitted before the
- *   engine recorded the delivery); any other delivery stays attempt_unknown.
+ *   engine recorded the delivery); any other delivery stays attempt_unknown,
+ *   and dispatch_not_latest refuses it once a newer attempt of the stage opened.
  * - request.dispatched: after agent_unassigned, assignment_mismatch when
  *   `target.terminalId` and the current assignment's terminal id are both known
  *   and differ.
@@ -531,6 +533,13 @@ function applyDispatched(state: RunState, record: RequestDispatchedRecord): Refu
   const acceptedFirst = attempt.status === "accepted" && record.delivery === "started";
   if (attempt.status !== "open" && !acceptedFirst) {
     return ["attempt_unknown", `attempt ${key} is ${attempt.status}, not open`];
+  }
+  const latest = state.latestByStage.get(record.stageId);
+  if (acceptedFirst && (latest?.visit !== record.visit || latest.attempt !== record.attempt)) {
+    return [
+      "dispatch_not_latest",
+      `attempt ${key} was accepted, but ${record.stageId}/${String(latest?.visit)}/${String(latest?.attempt)} is the stage's latest attempt; its dispatch can no longer be recorded`,
+    ];
   }
   const assignment = state.assignments.get(record.agentId)?.at(-1);
   if (assignment === undefined) {

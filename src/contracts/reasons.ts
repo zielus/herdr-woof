@@ -78,6 +78,7 @@ export type StoreReason =
   | "owner_mismatch"
   | "verdicts_mismatch"
   | "dispatch_exists"
+  | "dispatch_not_latest"
   | "gate_subject_unknown"
   | "gate_subject_stale"
   | "gate_mismatch"
