@@ -271,27 +271,31 @@ describe("decide: starting, readiness and dispatch", () => {
     const base = [opened(CORE_PLAN), writerAssigned];
     const agents = { writer: readyView("writer") };
     const original = behaviour.request;
-    for (const bad of [
-      null,
-      undefined,
-      {},
-      { goal: "g", instructions: 1, inputs: [] },
-      { goal: "g", instructions: "i", inputs: [null] },
-      {
-        goal: "g",
-        instructions: "i",
-        inputs: [{ label: "x", from: { stageId: "a", checkId: "b" } }],
-      },
-      { goal: "g", instructions: "i", inputs: [], task: { title: "t" } },
-    ]) {
-      behaviour.request = () => bad as unknown as Json;
-      expect(act(base, { agents }), JSON.stringify(bad)).toMatchObject({
-        type: "terminate",
-        outcome: "failed",
-        reason: expect.stringMatching(/^definition_contract_violated: draft: request\(\) /),
-      });
+    try {
+      for (const bad of [
+        null,
+        undefined,
+        {},
+        { goal: "g", instructions: 1, inputs: [] },
+        { goal: "g", instructions: "i", inputs: [null] },
+        {
+          goal: "g",
+          instructions: "i",
+          inputs: [{ label: "x", from: { stageId: "a", checkId: "b" } }],
+        },
+        { goal: "g", instructions: "i", inputs: [], task: { title: "t" } },
+      ]) {
+        behaviour.request = () => bad as unknown as Json;
+        expect(act(base, { agents }), JSON.stringify(bad)).toMatchObject({
+          type: "terminate",
+          outcome: "failed",
+          reason: expect.stringMatching(/^definition_contract_violated: draft: request\(\) /),
+        });
+      }
+    } finally {
+      // Restored even when an assertion fails, so later tests keep the valid request.
+      behaviour.request = original;
     }
-    behaviour.request = original;
   });
 
   it("exhausts readinessWaitMs at its boundary", () => {
