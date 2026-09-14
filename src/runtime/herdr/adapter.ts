@@ -52,8 +52,11 @@ const START_RETRY_WINDOW_MS = 15_000;
 const MIN_START_TIMEOUT_MS = 3001;
 
 /** The same `agent start` argv with its `--timeout` value replaced. */
-function withStartTimeout(args: string[], timeoutMs: number): string[] {
+export function withStartTimeout(args: string[], timeoutMs: number): string[] {
   const index = args.indexOf("--timeout");
+  if (index < 0 || index + 1 >= args.length) {
+    throw new TypeError(`agent start argv has no "--timeout <ms>" pair: ${JSON.stringify(args)}`);
+  }
   return args.map((item, position) => (position === index + 1 ? String(timeoutMs) : item));
 }
 
