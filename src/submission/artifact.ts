@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants,
+  fstatSync,
   fsyncSync,
-  mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -10,10 +12,13 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
 import { writeAll } from "../journal/write-all.js";
+import { ensureRealDirectory, symlinkComponentProblem } from "./containment.js";
+
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
 
 export type ResolveArtifactResult =
   | { ok: true; realPath: string; bytes: Buffer }
@@ -97,25 +102,44 @@ export function resolveArtifact(
   return { ok: true, realPath: probeReal, bytes };
 }
 
+/** Reads a regular file without following a symlink at its final component. */
+function readRegularFile(path: string): Buffer {
+  const fd = openSync(path, O_RDONLY | O_NOFOLLOW);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(`${path} is not a regular file`);
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function hashFile(path: string): string {
-  return sha256Hex(readFileSync(path));
+  return sha256Hex(readRegularFile(path));
 }
 
 /**
- * Publishes accepted bytes at `<runDir>/<acceptedPath>`: write every byte to a
- * temporary file, fsync, mark read-only, rename into place, then re-hash the
- * published file. The temporary file is removed on every failure. Returns the
- * published sha256; throws on I/O failure.
+ * Publishes accepted bytes at `<runDir>/<acceptedPath>`. The destination
+ * directory `accepted/<stage>/visit-<n>/attempt-<m>` must consist of real
+ * directories inside the run, checked before and after creation. The bytes go to
+ * an unpredictable temporary file created with O_EXCL | O_NOFOLLOW, which is
+ * fsynced, marked read-only and renamed into place; the published file is then
+ * re-hashed without following symlinks. The temporary file is removed on every
+ * failure. Returns the published sha256; throws on a refused destination or an
+ * I/O failure, naming the offending path component.
  *
  * Publication is provisional: a copy is accepted only once a
  * `submission.accepted` record references it.
  */
 export function publishAccepted(runDir: string, acceptedPath: string, bytes: Uint8Array): string {
-  const dest = join(runDir, acceptedPath);
-  mkdirSync(dirname(dest), { recursive: true });
-  const tmp = `${dest}.tmp-${process.pid}`;
+  const runReal = realpathSync(runDir);
+  const relDir = posix.dirname(acceptedPath);
+  const refused = ensureRealDirectory(runReal, relDir);
+  if (refused !== undefined) throw new Error(`refused accepted destination: ${refused}`);
+
+  const dest = join(runReal, acceptedPath);
+  const tmp = join(runReal, relDir, `${posix.basename(acceptedPath)}.tmp-${randomUUID()}`);
   try {
-    const fd = openSync(tmp, "w", 0o600);
+    const fd = openSync(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600);
     try {
       writeAll(fd, bytes);
       fsyncSync(fd);
@@ -133,11 +157,14 @@ export function publishAccepted(runDir: string, acceptedPath: string, bytes: Uin
 
 /**
  * Removes a provisionally published copy that was never journaled, but only
- * while its content still hashes to what this submission published.
+ * while its directory is still a real in-run directory and its content still
+ * hashes to what this submission published.
  */
 export function removePublished(runDir: string, acceptedPath: string, publishedSha: string): void {
-  const dest = join(runDir, acceptedPath);
   try {
+    const runReal = realpathSync(runDir);
+    if (symlinkComponentProblem(runReal, posix.dirname(acceptedPath)) !== undefined) return;
+    const dest = join(runReal, acceptedPath);
     if (hashFile(dest) === publishedSha) rmSync(dest, { force: true });
   } catch {
     // Already gone or unreadable: nothing this submission can safely remove.
@@ -145,8 +172,9 @@ export function removePublished(runDir: string, acceptedPath: string, publishedS
 }
 
 /**
- * Checks that an accepted copy still matches its journal record. Returns a
- * description of the mismatch, or undefined when the copy is intact.
+ * Checks that an accepted copy is still a regular file at its place inside the
+ * run and matches its journal record. Returns a description of the problem, or
+ * undefined when the copy is intact.
  */
 export function acceptedCopyProblem(
   runDir: string,
@@ -154,7 +182,12 @@ export function acceptedCopyProblem(
 ): string | undefined {
   let bytes: Buffer;
   try {
-    bytes = readFileSync(join(runDir, artifact.acceptedPath));
+    const runReal = realpathSync(runDir);
+    const component = symlinkComponentProblem(runReal, posix.dirname(artifact.acceptedPath));
+    if (component !== undefined) {
+      return `accepted copy ${artifact.acceptedPath} is not inside the run directory: ${component}`;
+    }
+    bytes = readRegularFile(join(runReal, artifact.acceptedPath));
   } catch (error) {
     return `accepted copy ${artifact.acceptedPath} is unreadable: ${(error as Error).message}`;
   }

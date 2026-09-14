@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
@@ -13,6 +13,7 @@ import {
 import type { RejectionReason } from "../contracts/reasons.js";
 import {
   JOURNAL_FILE,
+  JournalFileError,
   appendRecord,
   attemptKey,
   readJournal,
@@ -68,6 +69,13 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
  *
+ * The journal must be a regular, non-symlink file in the run directory; it is
+ * opened without following symlinks, so a journal replaced by a link at any point
+ * is `journal_corrupt` and its target is never read or written. Accepted copies
+ * live under real in-run `accepted/` directories: a symlinked destination
+ * component refuses publication (`journal_write_failed`, naming the component)
+ * and, on the duplicate path, makes the copy check fail (`journal_corrupt`).
+ *
  * Only a copy referenced by a `submission.accepted` record is accepted. When the
  * acceptance cannot be journaled, the copy this call published is removed while
  * its content is unchanged; a crash between publication and the append can
@@ -79,7 +87,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
     return rejection("run_dir_invalid", "no run directory given (--run-dir or WOOF_RUN_DIR)");
   }
   const runDir = resolve(input.runDir);
-  if (!isFile(join(runDir, JOURNAL_FILE))) {
+  if (!journalPresent(join(runDir, JOURNAL_FILE))) {
     return rejection("run_dir_invalid", `${runDir} does not contain ${JOURNAL_FILE}`);
   }
   const paneId = input.paneId === "" ? undefined : input.paneId;
@@ -101,7 +109,8 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
     }
   }
 
-  // 4. Lock and replay.
+  // 4. Lock and replay. readJournal re-validates the journal file under the
+  // lock, so a link swapped in after step 1 is caught here.
   let locked;
   try {
     locked = await withJournalLock(
@@ -210,7 +219,7 @@ function decide(
   }
 
   // 8. Closed attempt: identical retry gets the prior receipt, but only while
-  // the accepted copy still matches the journal.
+  // the accepted copy is still a real in-run file matching the journal.
   if (attempt.accepted !== undefined) {
     const receipt = receiptFromAccepted(attempt.accepted);
     if (attempt.accepted.envelopeDigest !== digest) {
@@ -233,7 +242,7 @@ function decide(
         ...(paneId !== undefined ? { paneId } : {}),
       });
     } catch (error) {
-      return rejection("journal_write_failed", (error as Error).message);
+      return writeFailure(error, "");
     }
     return { outcome: "duplicate", receipt };
   }
@@ -318,9 +327,9 @@ function decide(
     return { outcome: "accepted", receipt: receiptFromAccepted(record) };
   } catch (error) {
     removePublished(runDir, acceptedPath, actual);
-    return rejection(
-      "journal_write_failed",
-      `cannot journal the acceptance, so the unreferenced accepted copy was removed: ${(error as Error).message}`,
+    return writeFailure(
+      error,
+      "cannot journal the acceptance, so the unreferenced accepted copy was removed: ",
     );
   }
 }
@@ -340,12 +349,17 @@ function journalRejection(
       ...context,
     });
   } catch (error) {
-    return rejection(
-      "journal_write_failed",
-      `cannot journal ${outcome.reason} rejection: ${(error as Error).message}`,
-    );
+    return writeFailure(error, `cannot journal ${outcome.reason} rejection: `);
   }
   return outcome;
+}
+
+/** A journal file that stopped being a regular in-run file is corrupt, not a write failure. */
+function writeFailure(error: unknown, prefix: string): Rejection {
+  return rejection(
+    error instanceof JournalFileError ? "journal_corrupt" : "journal_write_failed",
+    `${prefix}${(error as Error).message}`,
+  );
 }
 
 function readEnvelopeFile(path: string): Uint8Array | { error: string } {
@@ -372,9 +386,14 @@ function readEnvelopeFile(path: string): Uint8Array | { error: string } {
   }
 }
 
-function isFile(path: string): boolean {
+/**
+ * Preliminary check only: a regular file or a symlink counts as present, so a
+ * symlinked journal reaches the locked read and is reported as journal_corrupt.
+ */
+function journalPresent(path: string): boolean {
   try {
-    return statSync(path).isFile();
+    const stats = lstatSync(path);
+    return stats.isFile() || stats.isSymbolicLink();
   } catch {
     return false;
   }

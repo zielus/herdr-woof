@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -7,8 +7,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { writeAll } from "./write-all.js";
 
 /**
- * Journal lock: `<runDir>/journal.lock`, created with O_EXCL and holding
- * `{pid, host, ts, token}`.
+ * Journal lock: `<runDir>/journal.lock`, created with O_CREAT | O_EXCL |
+ * O_NOFOLLOW and holding `{pid, host, ts, token}`. Any existing entry at the
+ * path, including a symlink (dangling or not), counts as held; the lock is never
+ * created or read through a symlink.
  *
  * There is no automatic stale-lock recovery. A lock left behind by a crashed
  * process makes every writer report `journal_busy` after the timeout, naming the
@@ -20,6 +22,8 @@ import { writeAll } from "./write-all.js";
  * still holds that writer's random token.
  */
 export const LOCK_FILE = "journal.lock";
+
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
 
 export interface LockOptions {
   timeoutMs?: number;
@@ -71,7 +75,7 @@ async function acquire(
   for (;;) {
     let fd: number | undefined;
     try {
-      fd = openSync(lockPath, "wx");
+      fd = openSync(lockPath, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
@@ -114,7 +118,12 @@ function release(lockPath: string, token: string): void {
 
 function readLock(lockPath: string): string | undefined {
   try {
-    return readFileSync(lockPath, "utf8");
+    const fd = openSync(lockPath, O_RDONLY | O_NOFOLLOW);
+    try {
+      return readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return undefined;
   }

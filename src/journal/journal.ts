@@ -1,4 +1,13 @@
-import { closeSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
+  ftruncateSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -12,22 +21,90 @@ import { writeAll } from "./write-all.js";
 
 export const JOURNAL_FILE = "journal.jsonl";
 
+const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
+
+/**
+ * `journal.jsonl` is not a regular, non-symlink file directly inside the run
+ * directory. Callers report it as `journal_corrupt`; a symlink's target is never
+ * read or written.
+ */
+export class JournalFileError extends Error {}
+
 export type ReadJournalResult =
   | { ok: true; records: JournalRecord[] }
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
 
 /**
+ * Opens the journal without following a symlink at its path and checks that the
+ * descriptor is a regular file that the path still names.
+ */
+function openJournalFile(journalPath: string, flags: number, mode?: number): number {
+  let fd: number;
+  try {
+    fd = openSync(journalPath, flags | O_NOFOLLOW, mode);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new JournalFileError(
+        `${journalPath} is a symlink; the journal must be a regular file inside the run directory`,
+      );
+    }
+    throw error;
+  }
+  try {
+    const opened = fstatSync(fd);
+    const named = lstatSync(journalPath);
+    if (
+      !opened.isFile() ||
+      named.isSymbolicLink() ||
+      opened.ino !== named.ino ||
+      opened.dev !== named.dev
+    ) {
+      throw new JournalFileError(`${journalPath} is not a regular file inside the run directory`);
+    }
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+  return fd;
+}
+
+/** Whether anything (file, directory or symlink) exists at the journal path. */
+export function journalExists(runDir: string): boolean {
+  try {
+    lstatSync(join(runDir, JOURNAL_FILE));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** Creates an empty journal exclusively, never through an existing path. Call under the lock. */
+export function createJournal(runDir: string): void {
+  closeSync(openJournalFile(join(runDir, JOURNAL_FILE), O_WRONLY | O_CREAT | O_EXCL, 0o644));
+}
+
+/**
  * Reads `<runDir>/journal.jsonl`. The journal fails closed with
- * `journal_corrupt` and a line number when a line is not a valid record, the
- * final line has no trailing newline, `seq` has a gap, the first record is not
+ * `journal_corrupt` (with a line number where one applies) when the path is a
+ * symlink or not a regular file, a line is not a valid record, the final line
+ * has no trailing newline, `seq` has a gap, the first record is not
  * `run.opened`, or `replay` finds an impossible transition.
  */
 export function readJournal(runDir: string): ReadJournalResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: string;
   try {
-    content = readFileSync(journalPath, "utf8");
+    const fd = openJournalFile(journalPath, O_RDONLY);
+    try {
+      content = readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
   } catch (error) {
+    if (error instanceof JournalFileError) {
+      return { ok: false, reason: "journal_corrupt", message: error.message };
+    }
     const code = (error as NodeJS.ErrnoException).code;
     return {
       ok: false,
@@ -71,9 +148,10 @@ export function readJournal(runDir: string): ReadJournalResult {
 
 /**
  * Appends one record with the next `seq`, writing the whole line and fsyncing
- * it before returning. On failure the journal is truncated back to its previous
- * length when possible and the error is rethrown. Callers must hold the journal
- * lock and pass the records they just read under it.
+ * it before returning. The journal must already exist as a regular file; a
+ * symlink throws `JournalFileError`. On a write failure the journal is truncated
+ * back to its previous length when possible and the error is rethrown. Callers
+ * must hold the journal lock and pass the records they just read under it.
  */
 export function appendRecord(
   runDir: string,
@@ -87,7 +165,7 @@ export function appendRecord(
     ...record,
   } as JournalRecord;
   const line = Buffer.from(`${JSON.stringify(full)}\n`, "utf8");
-  const fd = openSync(join(runDir, JOURNAL_FILE), "a");
+  const fd = openJournalFile(join(runDir, JOURNAL_FILE), O_WRONLY | O_APPEND);
   try {
     const sizeBefore = fstatSync(fd).size;
     try {
