@@ -11,14 +11,13 @@ import type { AttemptOpenReason } from "../contracts/reasons.js";
 import {
   JournalFileError,
   appendRecord,
-  compareAttempts,
   createJournal,
   journalExists,
   readJournal,
-  replay,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
 import { attemptArtifactDir, type JournalRecord } from "../journal/records.js";
+import { compareAttempts, replay } from "../state/reducer.js";
 import { ensureRealDirectory } from "./containment.js";
 
 export interface OpenAttemptInput extends AttemptIdentity {

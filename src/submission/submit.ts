@@ -15,12 +15,9 @@ import {
   JOURNAL_FILE,
   JournalFileError,
   appendRecord,
-  attemptKey,
   describeEntryKind,
   inspectJournalPath,
   readJournal,
-  replay,
-  verdictAllowed,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
 import {
@@ -29,6 +26,7 @@ import {
   receiptIdFor,
   type JournalRecord,
 } from "../journal/records.js";
+import { attemptKey, replay, verdictAllowed } from "../state/reducer.js";
 import {
   acceptedCopyProblem,
   publishAccepted,
