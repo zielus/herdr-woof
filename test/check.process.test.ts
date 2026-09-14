@@ -117,7 +117,8 @@ describe("runCheck", () => {
 const run = await runCheck({ argv: ["woof-no-such-command-xyz"], cwd: process.argv[1], timeoutMs: 5000 });
 console.log(JSON.stringify({ ...run, output: run.output.toString("utf8") }));`,
       [cwd],
-      { env: { PATH: `${file}:${process.env["PATH"] ?? ""}` }, timeoutMs: 30_000 },
+      // Last on PATH: the lookup's final error is then ENOTDIR, which spawn throws synchronously.
+      { env: { PATH: `${process.env["PATH"] ?? ""}:${file}` }, timeoutMs: 30_000 },
     );
     expect(result.status, result.stderr).toBe(0);
     const out = result.json as unknown as CheckOut;
