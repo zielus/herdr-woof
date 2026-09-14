@@ -271,9 +271,12 @@ requiredAction, since, observed, attempt}`, reachable and non-null exactly
   `gatesByGate {id: n}`, `formatRepairsByVisit {"stage/visit": n}`,
   `workRetriesByVisit {"stage/visit": n}`, `blocks`, `reconciliations
 {delivered, abandoned}` — alongside p2's existing counters.
-- **`checks: string[] | null`** (the plan's declared engine-run check ids,
-  `null` for a plan without any or a plan-less run), `input:
-{path, sha256, bytes} | null` (the run's persisted `input.json`), and
+- **`checks: string[] | null`** (the plan's declared engine-run check ids;
+  `null` for a plan without any, a plan-less run, **and an explicit empty
+  `checks: []`** — all three report `null`, never `[]`), `input:
+{path, sha256, bytes} | null` (the run's persisted `input.json`, written
+  `0444` on the still-open file descriptor with `fchmodSync` after write and
+  `fsync` — the mode does not depend on the process umask), and
   `agents[].args: string[] | null` (resolved launch arguments) round out
   the run plan projected onto the snapshot.
 - **`RunResult` (`deriveRunResult(snapshot, {runDir, repository})`, pure over

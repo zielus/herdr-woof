@@ -308,19 +308,25 @@ evidence:"no_evidence_before_deadline"}` and the run ends
   `DeliveryResolution` type, but no p3 record can carry it: no evidence
   proves a prompt was never delivered after an ambiguous dispatch.
 
-- **Revision binding (D4).** `revisionOf(repo, {timeoutMs?, signal?})` first
-  resolves `git rev-parse --show-toplevel` from the given path — the
-  fingerprint always covers the whole work tree from its root, whatever
-  directory inside it is given — then computes `{head: git rev-parse HEAD |
-null, tree: <write-tree of a temporary index seeded with HEAD and git add
--A>, root}` without touching the real index or working tree (`git add` into
-  the temporary index does write unreferenced blobs into the repository's
-  object store). Admission requires the workflow's `repository(input)` to
-  already name that top level (`realpath(repository) === realpath(root)`,
-  else `repo_invalid` naming both); every later fingerprint therefore starts
-  from the same root. Given a `timeoutMs`, one deadline covers every git step;
-  hitting it returns `{ok:false, reason:"timeout"}` (an aborted call returns
-  `"aborted"`) rather than a `repo_invalid` git error. The driver computes the
+- **Revision binding (D4).** `revisionOf(repo, {timeoutMs?, stepTimeoutMs?,
+signal?})` first resolves `git rev-parse --show-toplevel` from the given
+  path — the fingerprint always covers the whole work tree from its root,
+  whatever directory inside it is given — then computes `{head: git rev-parse
+HEAD | null, tree: <write-tree of a temporary index seeded with HEAD and
+git add -A>, root}` without touching the real index or working tree (`git
+add` into the temporary index does write unreferenced blobs into the
+  repository's object store). Admission requires the workflow's
+  `repository(input)` to already name that top level (`realpath(repository)
+=== realpath(root)`, else `repo_invalid` naming both); every later
+  fingerprint therefore starts from the same root. `timeoutMs`, when given, is
+  one overall deadline covering every git step; `stepTimeoutMs` bounds each
+  individual git step (default `GIT_TIMEOUT_MS`, 120 000 ms) and applies
+  whether or not an overall `timeoutMs` is also given. Hitting either returns
+  `{ok:false, reason:"timeout"}` (an aborted call returns `"aborted"`) rather
+  than a `repo_invalid` git error, and the message names the exact bound that
+  was hit: "did not finish within `<timeoutMs>` ms" when the overall deadline
+  fired, or "a git step did not finish within `<stepTimeoutMs>` ms" when an
+  individual step did (never a bare `undefined`). The driver computes the
   fingerprint at dispatch (`request.dispatched.revision`) and again immediately before
   recording a gate (`gate.recorded.revision`); a stage declared
   `bindsRevision: true` receives both `reviewed` (the revision its accepted
