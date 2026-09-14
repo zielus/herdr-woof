@@ -77,7 +77,7 @@ bin/woof submit --run-dir "$RUN_DIR" --envelope "$RUN_DIR/envelope.json"
 ```
 
 Exit codes: `0` for `accepted`/`duplicate`/`opened`; `2` for a rejection with a
-machine-readable reason (a closed set, see
+machine-readable reason (including `artifact_too_large` for artifacts over 32 MiB; a closed set, see
 [communication.md](docs/architecture/communication.md#implemented-now-p1-prototype));
 `3` for a run-directory or journal infrastructure failure; `1` for a usage
 error. The SDK exposes the same operations as `submitResult`, `openAttempt`

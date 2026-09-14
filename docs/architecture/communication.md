@@ -40,7 +40,8 @@ behavior, not design intent. The exhaustive detail lives in
   (`run_dir_invalid` if not, unjournaled), envelope readability, envelope
   schema, then run identity, attempt existence, owner, duplicate/conflict,
   staleness, verdict, artifact scope, artifact existence, artifact content,
-  artifact hash, and finally publish-and-record.
+  artifact size (`artifact_too_large` above 32 MiB), artifact hash, and finally
+  publish-and-record.
   `src/contracts/reasons.ts` (`REJECTION_REASONS`) is the closed set, and the
   doc comment on `submitResult` in `src/submission/submit.ts` is the
   authoritative order.
