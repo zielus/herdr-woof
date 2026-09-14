@@ -221,6 +221,48 @@ describe("scripted runtime adapter behaviour", () => {
     ]);
   });
 
+  it("refuses a non-integer or negative advance without moving the cursor", async () => {
+    const { runtime, handle } = await started({
+      timeline: [
+        { status: "working", stateChangeSeq: 1, terminalId: "t1" },
+        { status: "idle", stateChangeSeq: 2, terminalId: "t1" },
+      ],
+    });
+    for (const steps of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, "1"]) {
+      expect(() => runtime.advance(NAME, steps as number), String(steps)).toThrow(TypeError);
+    }
+    expect(await runtime.observe(handle)).toMatchObject({
+      ok: true,
+      value: { lifecycle: "working", order: { stateChangeSeq: 1 } },
+    });
+    runtime.advance(NAME, 0);
+    expect(await runtime.observe(handle)).toMatchObject({ value: { lifecycle: "working" } });
+    runtime.advance(NAME, 1);
+    expect(await runtime.observe(handle)).toMatchObject({ value: { lifecycle: "ready" } });
+  });
+
+  it("refuses an empty afterDeliver sequence at construction", () => {
+    for (const afterDeliver of [[], [[]], [[{ status: "working" }], []]]) {
+      expect(
+        () =>
+          createScriptedRuntime({
+            agents: { [NAME]: { timeline: [{ status: "idle" }], afterDeliver } },
+          }),
+        JSON.stringify(afterDeliver),
+      ).toThrow(TypeError);
+    }
+    for (const afterDeliver of [
+      [{ status: "working" }],
+      [[{ status: "working" }], [{ status: "idle" }]],
+    ]) {
+      expect(() =>
+        createScriptedRuntime({
+          agents: { [NAME]: { timeline: [{ status: "idle" }], afterDeliver } },
+        }),
+      ).not.toThrow();
+    }
+  });
+
   it("refuses a delivery script that crosses the delivery code sets", () => {
     const bad = [
       "not_delivered:timeout",

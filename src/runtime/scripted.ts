@@ -57,7 +57,11 @@ export interface ScriptedCall {
 
 export interface ScriptedRuntime extends RuntimeAdapter {
   readonly adapter: "scripted";
-  /** Moves an agent's timeline cursor forward (clamped to the last entry). */
+  /**
+   * Moves an agent's timeline cursor forward (clamped to the last entry).
+   * `steps` must be a non-negative safe integer; anything else throws a
+   * TypeError and leaves the cursor unchanged.
+   */
   advance(runtimeName: string, steps?: number): void;
   /** Queues an arbitrary observation, returned by the next observe of that agent. */
   emit(
@@ -97,6 +101,16 @@ export function createScriptedRuntime(options: {
           `scripted agent ${name} has onDeliver ${JSON.stringify(value)}; use "started", "not_delivered:<${NOT_DELIVERED_CODES.join("|")}>" or "ambiguous:<${AMBIGUOUS_CODES.join("|")}>"`,
         );
       }
+    }
+    const afterDeliver = script.afterDeliver;
+    if (
+      afterDeliver !== undefined &&
+      (afterDeliver.length === 0 ||
+        (isNested(afterDeliver) && afterDeliver.some((entries) => entries.length === 0)))
+    ) {
+      throw new TypeError(
+        `scripted agent ${name} has an empty afterDeliver sequence; give at least one timeline entry per deliver call`,
+      );
     }
     agents.set(name, {
       script,
@@ -290,6 +304,11 @@ export function createScriptedRuntime(options: {
     },
 
     advance(runtimeName: string, steps = 1): void {
+      if (!Number.isSafeInteger(steps) || steps < 0) {
+        throw new TypeError(
+          `advance steps must be a non-negative safe integer, not ${String(steps)}`,
+        );
+      }
       const state = agents.get(runtimeName);
       if (state === undefined) throw new TypeError(`scripted agent ${runtimeName} does not exist`);
       state.cursor = Math.min(state.cursor + steps, state.timeline.length - 1);
