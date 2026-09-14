@@ -163,14 +163,20 @@ export type FoldEventsResult =
  * `data.runId` naming another run (with or without a base), is
  * `journal_corrupt`. An event that is not a valid record, whose cursor is not positioned
  * after its own seq, whose `data` carries an envelope field (`schemaVersion`,
- * `seq`, `ts`, `type`), or that conflicts with an already folded record is
- * `journal_corrupt`.
+ * `seq`, `ts`, `type`), whose `subject` differs from the one recomputed from its
+ * record (for a duplicate, from the acceptance it names), or that conflicts with
+ * an already folded record is `journal_corrupt`.
  */
 export function foldEvents(
   base: RunProjection | null,
   events: readonly RunEvent[],
 ): FoldEventsResult {
   const records = base === null ? [] : [...base.records];
+  // Acceptances by seq, for the canonical subject of a submission.duplicate.
+  const acceptedBySeq = new Map<number, JournalRecord>();
+  for (const record of records) {
+    if (record.type === "submission.accepted") acceptedBySeq.set(record.seq, record);
+  }
   let anchor = base === null ? undefined : parseCursor(base.snapshot.cursor)?.anchor;
   const runId = base?.snapshot.runId;
   // With no base, the stream's own run.opened event names the run every event must belong to.
@@ -222,6 +228,17 @@ export function foldEvents(
     if (typeof record === "string") {
       return { ok: false, reason: "journal_corrupt", message: `event ${event.seq}: ${record}` };
     }
+    const subject: unknown = event.subject;
+    if (
+      !isObject(subject) ||
+      canonicalJson(subject) !== canonicalJson(subjectOf(record, acceptedBySeq))
+    ) {
+      return {
+        ok: false,
+        reason: "journal_corrupt",
+        message: `event ${event.seq} subject does not match its record`,
+      };
+    }
     if (event.seq <= records.length) {
       // At-least-once delivery: a repeat must be the record already folded at that seq.
       const existing = records[event.seq - 1];
@@ -242,6 +259,7 @@ export function foldEvents(
       };
     }
     records.push(record);
+    if (record.type === "submission.accepted") acceptedBySeq.set(record.seq, record);
   }
   if (anchor === undefined) {
     return { ok: false, reason: "resync_required", message: "no projection and no events to fold" };

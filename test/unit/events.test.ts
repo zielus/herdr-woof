@@ -388,6 +388,40 @@ describe("snapshot and events consistency", () => {
     });
   });
 
+  it("fails closed on an event whose subject differs from its record", () => {
+    const records = journalOf(
+      parse,
+      opened(),
+      attempt("build", "builder"),
+      accepted(3, "build", "builder", null),
+      duplicate(3),
+    );
+    const events = projectEvents(records, anchorOf(records));
+    expect(foldEvents(null, events)).toMatchObject({ ok: true });
+
+    const attemptEvent = events[1] as Event;
+    const wrongAgent = {
+      ...attemptEvent,
+      subject: { ...attemptEvent.subject, agentId: "reviewer" },
+    };
+    expect(foldEvents(null, [events[0] as Event, wrongAgent])).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+
+    const duplicateEvent = events[3] as Event;
+    for (const subject of [{}, { ...duplicateEvent.subject, attempt: 2 }]) {
+      expect(
+        foldEvents(null, [...events.slice(0, 3), { ...duplicateEvent, subject }]),
+      ).toMatchObject({
+        ok: false,
+        reason: "journal_corrupt",
+      });
+    }
+    const base = { snapshot: deriveSnapshot(records).snapshot, records };
+    expect(foldEvents(base, [wrongAgent])).toMatchObject({ ok: false, reason: "journal_corrupt" });
+  });
+
   it("fails closed on an event whose cursor is not positioned after its own seq", () => {
     const records = journalOf(parse, opened(), assigned("builder"));
     const anchor = anchorOf(records);
