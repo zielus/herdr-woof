@@ -14,6 +14,7 @@ import {
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,6 +28,7 @@ import {
   ofType,
   openAttempt,
   readyAttempt,
+  repoRoot,
   runNode,
   submit,
   woof,
@@ -282,6 +284,101 @@ describe("non-regular artifact entries", () => {
 
     expectRejected(result, "artifact_missing", 2, "is not a regular file (FIFO)");
     expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+describe("artifact stability", () => {
+  it("rejects an artifact that changes size while it is read as artifact_hash_mismatch", () => {
+    const { runDir, envelope } = readyAttempt();
+    const artifactUrl = pathToFileURL(join(repoRoot, "dist", "submission", "artifact.js")).href;
+    const script = `
+import { closeSync, openSync, writeFileSync, writeSync } from "node:fs";
+const artifacts = await import(${JSON.stringify(artifactUrl)});
+const sdk = await import(${JSON.stringify(distIndexUrl)});
+const [runDir, envelopeRaw, artifactPath, original] = process.argv.slice(1);
+// Appends 2 bytes through a second descriptor, between open and read.
+const grow = () => {
+  const fd = openSync(artifactPath, "a");
+  try {
+    writeSync(fd, "!!");
+  } finally {
+    closeSync(fd);
+  }
+};
+
+let helper = "no error";
+try {
+  artifacts.readRegularFile(artifactPath, grow);
+} catch (error) {
+  helper = error.message;
+}
+
+writeFileSync(artifactPath, original);
+let fired = false;
+artifacts.artifactReadHooks.beforeRead = (_fd, path) => {
+  if (!fired && path.endsWith("report.md")) {
+    fired = true;
+    grow();
+  }
+};
+const outcome = await sdk.submitResult({ runDir, envelopeRaw });
+const read = sdk.readJournal(runDir);
+console.log(JSON.stringify({ helper, fired, outcome, types: read.records.map((r) => r.type) }));
+`;
+
+    const result = runNode(
+      script,
+      [runDir, JSON.stringify(envelope), join(runDir, envelope.artifact.path), CONTENT],
+      { timeoutMs: BLOCKING_GUARD_MS },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      helper: string;
+      fired: boolean;
+      outcome: { outcome: string; reason: string; message: string };
+      types: string[];
+    };
+    expect(output.helper).toContain("changed size while it was read");
+    expect(output.fired).toBe(true);
+    expect(output.outcome).toMatchObject({ outcome: "rejected", reason: "artifact_hash_mismatch" });
+    expect(output.outcome.message).toContain("changed size while it was read");
+    expect(output.types).not.toContain("submission.accepted");
+    expect(output.types.at(-1)).toBe("submission.rejected");
+  });
+});
+
+describe("envelope entries", () => {
+  it("reports a FIFO or symlink at the envelope path as envelope_malformed without blocking", () => {
+    const { runDir, envelope } = readyAttempt();
+    const outbox = join(runDir, "outbox");
+    mkdirSync(outbox, { recursive: true });
+    const fifo = join(outbox, "fifo.json");
+    mkfifo(fifo);
+    const real = join(outbox, "real.json");
+    writeFileSync(real, JSON.stringify(envelope));
+    const link = join(outbox, "link.json");
+    symlinkSync(real, link);
+
+    for (const [path, kind] of [
+      [fifo, "FIFO"],
+      [link, "symlink"],
+    ] as const) {
+      const started = Date.now();
+      const result = woof(["submit", "--run-dir", runDir, "--envelope", path], {
+        timeoutMs: BLOCKING_GUARD_MS,
+      });
+      const elapsed = Date.now() - started;
+
+      expectRejected(result, "envelope_malformed", 2, `is not a regular file (${kind})`);
+      expect(elapsed).toBeLessThan(2000);
+    }
+    const lines = journal(runDir);
+    expect(ofType(lines, "submission.rejected").map((line) => line.reason)).toEqual([
+      "envelope_malformed",
+      "envelope_malformed",
+    ]);
+    expect(ofType(lines, "submission.accepted")).toHaveLength(0);
   });
 });
 

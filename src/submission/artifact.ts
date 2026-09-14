@@ -5,11 +5,11 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   openSync,
   readSync,
   realpathSync,
-  renameSync,
   rmSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
@@ -27,12 +27,27 @@ const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constant
  */
 export const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
+export type BeforeRead = (fd: number, path: string) => void;
+
+/**
+ * Test seam for the read path, not exposed through the SDK entry point or the
+ * CLI. `beforeRead` runs after a file is opened and validated and before its
+ * bytes are read; the default does nothing.
+ */
+export const artifactReadHooks: { beforeRead: BeforeRead } = {
+  beforeRead: () => undefined,
+};
+
 export type ResolveArtifactResult =
   | { ok: true; realPath: string; bytes: Buffer }
   | {
       ok: false;
       reason:
-        "artifact_out_of_scope" | "artifact_missing" | "artifact_empty" | "artifact_too_large";
+        | "artifact_out_of_scope"
+        | "artifact_missing"
+        | "artifact_empty"
+        | "artifact_too_large"
+        | "artifact_hash_mismatch";
       message: string;
     };
 
@@ -45,6 +60,8 @@ class FileTooLargeError extends Error {
   }
 }
 
+class FileChangedError extends Error {}
+
 /**
  * Resolves an envelope artifact path and reads it once. The attempt directory
  * must be a real directory strictly inside the run directory, and the path,
@@ -52,8 +69,9 @@ class FileTooLargeError extends Error {
  * The artifact must be a regular file (inspected with lstat; a FIFO, socket or
  * device is `artifact_missing` and never opened), at most MAX_ARTIFACT_BYTES
  * (`artifact_too_large`, decided from its size without reading it), with
- * non-whitespace content (`artifact_empty`). Returning the bytes that were
- * checked lets the caller hash and publish exactly those bytes.
+ * non-whitespace content (`artifact_empty`). A file whose size changes while it
+ * is read is not stable and is `artifact_hash_mismatch`. Returning the bytes
+ * that were checked lets the caller hash and publish exactly those bytes.
  */
 export function resolveArtifact(
   runDir: string,
@@ -119,6 +137,9 @@ export function resolveArtifact(
         message: `${relPath} is ${error.size} bytes; the limit is ${MAX_ARTIFACT_BYTES}`,
       };
     }
+    if (error instanceof FileChangedError) {
+      return { ok: false, reason: "artifact_hash_mismatch", message: error.message };
+    }
     return missing(`${relPath} cannot be read: ${(error as Error).message}`);
   }
   if (bytes.toString("utf8").trim() === "") {
@@ -135,9 +156,15 @@ export function resolveArtifact(
  * Reads a regular file of at most MAX_ARTIFACT_BYTES. The entry is inspected
  * with lstat first, so a FIFO, socket, device, directory or symlink is refused
  * without being opened; the open uses O_NOFOLLOW | O_NONBLOCK and the descriptor
- * must still be the same regular file. Throws FileTooLargeError above the cap.
+ * must still be the same regular file. After reading, the descriptor is
+ * fstat-ed again: any size change (growth or shrinkage) throws, because the
+ * bytes read are not a stable version of the file. Throws FileTooLargeError
+ * above the cap.
  */
-function readRegularFile(path: string): Buffer {
+export function readRegularFile(
+  path: string,
+  beforeRead: BeforeRead = artifactReadHooks.beforeRead,
+): Buffer {
   const named = lstatSync(path);
   if (!named.isFile()) {
     throw new Error(`${path} is not a regular file (${describeEntryKind(named)})`);
@@ -150,7 +177,8 @@ function readRegularFile(path: string): Buffer {
     if (!opened.isFile() || opened.ino !== named.ino || opened.dev !== named.dev) {
       throw new Error(`${path} changed while it was opened`);
     }
-    // One byte past the expected size (capped) detects growth beyond the limit.
+    beforeRead(fd, path);
+    // One byte past the expected size (capped) detects growth during the read.
     const buffer = Buffer.alloc(Math.min(opened.size, MAX_ARTIFACT_BYTES) + 1);
     let length = 0;
     while (length < buffer.length) {
@@ -158,7 +186,13 @@ function readRegularFile(path: string): Buffer {
       if (read === 0) break;
       length += read;
     }
-    if (length > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, length);
+    const final = fstatSync(fd);
+    if (final.size !== opened.size || length !== opened.size) {
+      throw new FileChangedError(
+        `${path} changed size while it was read (${opened.size} → ${final.size} bytes); the artifact is not stable`,
+      );
+    }
+    if (final.size > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, final.size);
     return buffer.subarray(0, length);
   } finally {
     closeSync(fd);
@@ -170,14 +204,17 @@ export function hashFile(path: string): string {
 }
 
 /**
- * Publishes accepted bytes at `<runDir>/<acceptedPath>`. The destination
- * directory `accepted/<stage>/visit-<n>/attempt-<m>` must consist of real
- * directories inside the run, checked before and after creation. The bytes go to
- * an unpredictable temporary file created with O_EXCL | O_NOFOLLOW, which is
- * fsynced, marked read-only and renamed into place; the published file is then
- * re-hashed without following symlinks. The temporary file is removed on every
- * failure. Returns the published sha256; throws on a refused destination or an
- * I/O failure, naming the offending path component.
+ * Publishes accepted bytes at `<runDir>/<acceptedPath>` without ever replacing
+ * an existing destination. The destination directory
+ * `accepted/<stage>/visit-<n>/attempt-<m>` must consist of real directories
+ * inside the run, checked before and after creation. The bytes go to an
+ * unpredictable temporary file created with O_EXCL | O_NOFOLLOW, which is
+ * fsynced and marked read-only, then hard-linked to the destination (a link,
+ * unlike a rename, fails when the destination exists). If a destination exists
+ * with identical content it is reused; any other existing entry is a conflict
+ * and is left untouched. The temporary name is removed on every path. Returns
+ * the published sha256; throws on a refused destination, a conflict or an I/O
+ * failure, naming the offending path.
  *
  * Publication is provisional: a copy is accepted only once a
  * `submission.accepted` record references it.
@@ -199,9 +236,27 @@ export function publishAccepted(runDir: string, acceptedPath: string, bytes: Uin
       closeSync(fd);
     }
     chmodSync(tmp, 0o444);
-    renameSync(tmp, dest);
+    try {
+      linkSync(tmp, dest);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let existing: string;
+      try {
+        existing = hashFile(dest);
+      } catch (inspectError) {
+        throw new Error(
+          `accepted destination ${acceptedPath} already exists and was not replaced: ${(inspectError as Error).message}`,
+          { cause: inspectError },
+        );
+      }
+      if (existing !== sha256Hex(bytes)) {
+        throw new Error(
+          `accepted destination ${acceptedPath} already exists with different content and was not replaced`,
+          { cause: error },
+        );
+      }
+    }
   } finally {
-    // After a successful rename the temporary name no longer exists.
     rmSync(tmp, { force: true });
   }
   return hashFile(dest);

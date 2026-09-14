@@ -592,6 +592,61 @@ describe("woof submit", () => {
     expect(atLimit.json?.receipt?.artifact.bytes).toBe(limit);
   });
 
+  it("rejects . and .. as ids in envelopes and attempt open", () => {
+    const { runDir, envelope } = readyAttempt();
+
+    const dotted = submit(runDir, { ...envelope, stageId: ".." });
+    expectRejected(dotted, "envelope_invalid");
+    expect(fields(dotted)).toEqual(["stageId"]);
+
+    for (const stage of ["..", "."]) {
+      const open = woof([
+        "attempt",
+        "open",
+        "--run-dir",
+        makeRunDir(),
+        "--run",
+        "run-1",
+        "--agent",
+        "worker",
+        "--stage",
+        stage,
+        "--visit",
+        "1",
+        "--attempt",
+        "1",
+      ]);
+      expect(open.status, `${open.stdout}${open.stderr}`).toBe(1);
+      expect(open.stderr).toContain("stageId must be a valid id");
+    }
+  });
+
+  it("never replaces an existing accepted destination", () => {
+    // A different file already at the destination is a conflict and stays untouched.
+    const different = readyAttempt();
+    const differentDest = join(different.runDir, "accepted/report/visit-1/attempt-1/report.md");
+    mkdirSync(dirname(differentDest), { recursive: true });
+    writeFileSync(differentDest, "# Planted before acceptance\n");
+
+    const conflict = submit(different.runDir, different.envelope);
+    expectRejected(conflict, "journal_write_failed", 3);
+    expect(conflict.json?.message).toContain("already exists with different content");
+    expect(readFileSync(differentDest, "utf8")).toBe("# Planted before acceptance\n");
+    expect(readdirSync(dirname(differentDest))).toEqual(["report.md"]);
+    expect(ofType(journal(different.runDir), "submission.accepted")).toHaveLength(0);
+
+    // An identical file already at the destination is reused.
+    const identical = readyAttempt();
+    const identicalDest = join(identical.runDir, "accepted/report/visit-1/attempt-1/report.md");
+    mkdirSync(dirname(identicalDest), { recursive: true });
+    writeFileSync(identicalDest, CONTENT);
+
+    expectOutcome(submit(identical.runDir, identical.envelope), "accepted");
+    expect(ofType(journal(identical.runDir), "submission.accepted")).toHaveLength(1);
+    expect(readFileSync(identicalDest, "utf8")).toBe(CONTENT);
+    expect(readdirSync(dirname(identicalDest))).toEqual(["report.md"]);
+  });
+
   it("reaches every exported rejection reason", () => {
     const exported = runNode(
       `const m = await import(${JSON.stringify(distIndexUrl)}); console.log(JSON.stringify(m.REJECTION_REASONS));`,

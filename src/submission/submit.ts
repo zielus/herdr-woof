@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
@@ -16,6 +16,7 @@ import {
   JournalFileError,
   appendRecord,
   attemptKey,
+  describeEntryKind,
   inspectJournalPath,
   readJournal,
   replay,
@@ -45,6 +46,8 @@ export type SubmitInput = {
 
 type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
 
+const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
+
 /**
  * Validates a result envelope and its artifact, then records the outcome in the
  * run journal. The first failing check wins, in this order (pinned by
@@ -55,7 +58,7 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  *  2. journal lock acquired                            → journal_busy
  *  3. journal file is regular and replays cleanly      → journal_corrupt
  *  4. journal holds run.opened (the run was opened)    → run_dir_invalid
- *  5. envelope readable, ≤ 64 KiB, a JSON object       → envelope_malformed
+ *  5. envelope regular file, ≤ 64 KiB, a JSON object   → envelope_malformed
  *  6. envelope matches schema v1                       → envelope_invalid
  *  7. runId equals the journal's run                   → run_mismatch
  *  8. the attempt was opened                           → attempt_unknown
@@ -70,6 +73,7 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * 15. artifact has non-whitespace content              → artifact_empty
  * 16. artifact size ≤ MAX_ARTIFACT_BYTES (32 MiB)      → artifact_too_large
  * 17. artifact sha256 matches the envelope             → artifact_hash_mismatch
+ *     artifact size unchanged while it was read        → artifact_hash_mismatch
  * 18. publish the accepted copy, append the record     → accepted / journal_write_failed
  *
  * The envelope is read and parsed before the lock is taken, but an envelope
@@ -399,14 +403,29 @@ function writeFailure(error: unknown, prefix: string): Rejection {
   );
 }
 
+/**
+ * Reads an envelope file. The path is inspected with lstat before opening: a
+ * symlink, FIFO, socket, directory or device is refused (envelope_malformed)
+ * without an open that could block. The open uses O_NOFOLLOW | O_NONBLOCK and
+ * the descriptor must be a regular file.
+ */
 function readEnvelopeFile(path: string): Uint8Array | { error: string } {
   let fd: number;
   try {
-    fd = openSync(path, "r");
+    const named = lstatSync(path);
+    if (!named.isFile()) {
+      return {
+        error: `cannot read envelope ${path}: it is not a regular file (${describeEntryKind(named)})`,
+      };
+    }
+    fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (error) {
     return { error: `cannot read envelope ${path}: ${(error as Error).message}` };
   }
   try {
+    if (!fstatSync(fd).isFile()) {
+      return { error: `cannot read envelope ${path}: it is not a regular file` };
+    }
     // Read one byte past the limit so oversized envelopes are detectable.
     const buffer = Buffer.alloc(MAX_ENVELOPE_BYTES + 1);
     let length = 0;
