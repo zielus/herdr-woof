@@ -1,7 +1,7 @@
 import {
-  chmodSync,
   closeSync,
   constants,
+  fchmodSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -67,9 +67,10 @@ export function writeEngineFile(runDir: string, relPath: string, bytes: Uint8Arr
     while (offset < bytes.byteLength)
       offset += writeSync(fd, bytes, offset, bytes.byteLength - offset);
     fsyncSync(fd);
+    // The mode is set on the open descriptor, never by path: a replaced path cannot redirect it.
+    fchmodSync(fd, 0o444);
   } finally {
     closeSync(fd);
   }
-  chmodSync(path, 0o444);
   return { path, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
 }

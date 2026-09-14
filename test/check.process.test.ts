@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { distUrl, runNode, sha256 } from "./helpers/process.js";
+import { distUrl, repoRoot, runNode, sha256 } from "./helpers/process.js";
 
 // Check execution and engine evidence files, in real child processes.
 const dirs: string[] = [];
@@ -153,6 +153,17 @@ catch (error) { console.log(JSON.stringify({ ok: false, message: error.message }
     expect(write(runDir, rel, "evidence\n")).toMatchObject({ ok: true });
     expect(write(runDir, rel, "other\n")).toMatchObject({ ok: false });
     expect(readFileSync(join(runDir, rel), "utf8")).toBe("evidence\n");
+  });
+
+  it("sets the read-only mode on the open descriptor, never by path", () => {
+    const source = readFileSync(join(repoRoot, "dist", "scheduler", "files.js"), "utf8");
+    expect(source).toContain("fchmodSync(fd, 0o444)");
+    expect(source).not.toMatch(/[^f]chmodSync\(/);
+    // The mode is already read-only when the descriptor is closed.
+    const runDir = tempDir("woof-files-");
+    const out = write(runDir, "requests/x/request.md", "text");
+    expect(out).toMatchObject({ ok: true });
+    expect(lstatSync(join(runDir, "requests/x/request.md")).mode & 0o777).toBe(0o444);
   });
 
   it("refuses a symlinked directory component", () => {
