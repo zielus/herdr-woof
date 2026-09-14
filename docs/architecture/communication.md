@@ -27,17 +27,20 @@ behavior, not design intent. The exhaustive detail lives in
 
 - **Envelope v1** (`schemaVersion: 1`): `runId`, `agentId`, `stageId` (each
   matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`), `visit` and `attempt` as
-  integers `>= 1` (not the `attemptId` string shown in earlier drafts of this
-  page), `status` (`"completed"` or `"failed"`), a required `verdict` (a
-  string, or `null` when the stage declares no verdicts), and
-  `artifact: { path, sha256 }` — a POSIX-relative path with no `..` segments
-  and a 64-character lowercase hex digest. Unknown top-level or artifact keys
-  are rejected; the envelope file is capped at 64 KiB.
+  safe integers `>= 1` (`Number.isSafeInteger`; not the `attemptId` string
+  shown in earlier drafts of this page), `status` (`"completed"` or
+  `"failed"`), a required `verdict` (a string, or `null` when the stage
+  declares no verdicts), and `artifact: { path, sha256 }` — a POSIX-relative
+  path with no `..` segments and a 64-character lowercase hex digest. Unknown
+  top-level or artifact keys are rejected; the envelope file is capped at
+  64 KiB.
 - **Reason codes and decision order.** `woof submit` runs a fixed, closed set
-  of checks and returns the first one that fails: run directory, envelope
-  readability, envelope schema, journal lock/replay, run identity, attempt
-  existence, owner, duplicate/conflict, staleness, verdict, artifact scope,
-  artifact existence, artifact content, artifact hash, then publish-and-record.
+  of checks and returns the first one that fails: run directory, journal lock
+  (`journal_busy`), journal replay (`journal_corrupt`), the run being opened
+  (`run_dir_invalid` if not, unjournaled), envelope readability, envelope
+  schema, then run identity, attempt existence, owner, duplicate/conflict,
+  staleness, verdict, artifact scope, artifact existence, artifact content,
+  artifact hash, and finally publish-and-record.
   `src/contracts/reasons.ts` (`REJECTION_REASONS`) is the closed set, and the
   doc comment on `submitResult` in `src/submission/submit.ts` is the
   authoritative order.
