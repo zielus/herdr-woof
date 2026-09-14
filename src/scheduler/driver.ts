@@ -231,6 +231,21 @@ export async function runWorkflow<Input>(
       }),
     );
 
+  /** Engine files (requests, check evidence); a refused or failed write is a run failure, never a throw. */
+  const engineFile = (
+    relPath: string,
+    bytes: Uint8Array,
+  ): ({ ok: true } & ReturnType<typeof writeEngineFile>) | { ok: false; reason: string } => {
+    try {
+      return { ok: true, ...writeEngineFile(runDir, relPath, bytes) };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `engine_file_error: ${relPath}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  };
+
   const tick = async (): Promise<RunWorkflowResult | undefined> => {
     stats.ticks += 1;
     if (observeNext !== null) {
@@ -468,7 +483,12 @@ export async function runWorkflow<Input>(
           break;
         }
         const requestPath = `requests/${action.stageId}/visit-${action.visit}/attempt-${action.attempt}/request.md`;
-        const file = writeEngineFile(runDir, requestPath, Buffer.from(rendered.text, "utf8"));
+        const file = engineFile(requestPath, Buffer.from(rendered.text, "utf8"));
+        if (!file.ok) {
+          // Nothing was sent: the attempt stays undelivered and the run fails.
+          written = await end("failed", file.reason);
+          break;
+        }
         view.readyStreak = 0;
         view.activitySinceDispatch = false;
         view.awaitingReadySince = null;
@@ -545,7 +565,11 @@ export async function runWorkflow<Input>(
         if (run.aborted) return undefined;
         const subject = action.subject;
         const path = `checks/${action.gate}/${subject.stageId}-v${subject.visit}-a${subject.attempt}/output.log`;
-        const file = writeEngineFile(runDir, path, run.output);
+        const file = engineFile(path, run.output);
+        if (!file.ok) {
+          written = await end("failed", file.reason);
+          break;
+        }
         const revision = await revisionOf(repository);
         if (!revision.ok) {
           written = await end("failed", `repo_invalid: ${revision.message}`);
@@ -647,8 +671,18 @@ export async function runWorkflow<Input>(
 
   for (;;) {
     // Ticks are sequential by design: each reads the state the previous one wrote.
-    // oxlint-disable-next-line no-await-in-loop
-    const done = await tick();
+    let done: RunWorkflowResult | undefined;
+    try {
+      // oxlint-disable-next-line no-await-in-loop
+      done = await tick();
+    } catch (error) {
+      // Last resort: an unexpected throw still ends the run with a recorded outcome.
+      // oxlint-disable-next-line no-await-in-loop
+      return fatal({
+        reason: "engine_invariant",
+        message: `unexpected error: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
     if (done !== undefined) return done;
   }
 }

@@ -4,8 +4,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -331,6 +333,54 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
       scriptedEnv(join(ws.root, "second.log")),
     );
     expect(again).toMatchObject({ status: 2, json: { outcome: "rejected", reason: "run_exists" } });
+  }, 60_000);
+
+  it("fails with engine_file_error, one result line and a recorded termination when an engine file cannot be written", () => {
+    const expectEngineFileFailure = (ws: ReturnType<typeof workspace>, path: string) => {
+      const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+      expect(result.status, result.stderr).toBe(4);
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+      expect(result.stderr).not.toContain("    at ");
+      const printed = JSON.parse(result.stdout.trim()) as { outcome: string; result: Json };
+      expect(printed).toMatchObject({ outcome: "run", result: { outcome: "failed" } });
+      expect(String(printed.result["reason"])).toContain(`engine_file_error: ${path}`);
+      expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+    };
+
+    // A pre-planted request file with other bytes.
+    const conflict = workspace();
+    writeInput(conflict.inputPath, input(conflict.repo));
+    const planted = join(conflict.runDir, "requests", "build", "visit-1", "attempt-1");
+    mkdirSync(planted, { recursive: true });
+    writeFileSync(join(planted, "request.md"), "planted\n");
+    expectEngineFileFailure(conflict, "requests/build/visit-1/attempt-1/request.md");
+    expect(readFileSync(join(planted, "request.md"), "utf8")).toBe("planted\n");
+    expect(journalTypes(conflict.runDir)).not.toContain("request.dispatched");
+
+    // A symlinked requests/ component: nothing is written through it.
+    const linked = workspace();
+    writeInput(linked.inputPath, input(linked.repo));
+    const outside = join(linked.root, "outside");
+    mkdirSync(outside);
+    mkdirSync(linked.runDir);
+    symlinkSync(outside, join(linked.runDir, "requests"));
+    expectEngineFileFailure(linked, "requests/build/visit-1/attempt-1/request.md");
+    expect(readdirSync(outside)).toEqual([]);
+
+    // A symlinked checks/ component on the check evidence path.
+    const checks = workspace();
+    writeInput(
+      checks.inputPath,
+      input(checks.repo, {
+        verify: { command: ["node", "-e", "process.exit(0)"], timeoutMs: 20_000 },
+      }),
+    );
+    const outsideChecks = join(checks.root, "outside");
+    mkdirSync(outsideChecks);
+    mkdirSync(checks.runDir);
+    symlinkSync(outsideChecks, join(checks.runDir, "checks"));
+    expectEngineFileFailure(checks, "checks/verify/build-v1-a1/output.log");
+    expect(readdirSync(outsideChecks)).toEqual([]);
   }, 60_000);
 
   it("exits 5 when the reviewer never passes and the rounds run out", () => {
