@@ -146,7 +146,17 @@ InputRef[]}` plus optional `task`/`roleInstructions`, each `InputRef`
   a malformed return ends the run
   `failed{reason:"definition_contract_violated: <stage>: request() …"}` before
   any dispatch. `null` is reserved for a format-repair dispatch (which never
-  calls `request()`) and is never a valid return otherwise.
+  calls `request()`) and is never a valid return otherwise. A present
+  `task.context` is checked the same way, as a JSON value (`jsonValueProblem`,
+  `src/contracts/json-value.ts` — no `BigInt`, function, symbol, non-finite
+  number, cycle, or non-plain object such as a `Date`; nesting bounded to
+  1000 levels): a violation is the same
+  `definition_contract_violated: <stage>: request() task.context …` failure,
+  caught before the request is rendered rather than surfacing later as an
+  engine invariant. This is the shared check the built-in `build-review`
+  workflow's own input validation uses for its `task.context` field, so a
+  context a definition accepts at input time can never fail this later
+  contract check with different rules.
 - **Check stages** (`kind: "check"`) run an engine-owned command instead of an
   agent: `command(input) → {argv, timeoutMs}`, executed with no shell in the
   repository (`src/scheduler/check.ts`), and `next(ctx)` receives the exit code,
