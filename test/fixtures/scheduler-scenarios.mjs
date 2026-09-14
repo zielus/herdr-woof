@@ -1,19 +1,29 @@
 // Scheduler scenarios in a real child process: node scheduler-scenarios.mjs <name> <tmp-dir>
-// Builds a temporary git repository, admits the built-in build-review workflow,
-// opens the run and drives it with the scripted runtime. Scripted workers act on
-// the observe that follows a delivered prompt: they read their open attempt from
-// the snapshot, write an artifact and submit through the real submission path.
-// Prints one JSON report line.
+// Builds a temporary git repository, admits a workflow (the built-in build-review
+// unless the scenario loads another definition), opens the run and drives it with
+// the scripted runtime. Scripted workers act on an observe that follows a
+// delivered prompt: they read their open attempt from the snapshot, write an
+// artifact and submit through the real submission path. Prints one JSON report.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const load = (rel) => import(pathToFileURL(join(root, "dist", rel)).href);
+const distUrl = (rel) => pathToFileURL(join(root, "dist", rel)).href;
+const load = (rel) => import(distUrl(rel));
 const { runWorkflow } = await load("scheduler/driver.js");
 const { admitWorkflow } = await load("scheduler/admission.js");
+const { loadWorkflowDefinition } = await load("scheduler/loader.js");
 const { buildReviewWorkflow } = await load("workflows/build-review.js");
 const { openRun } = await load("state/store.js");
 const { readSnapshot } = await load("state/snapshot.js");
@@ -42,9 +52,21 @@ function git(repo, ...args) {
   return result.stdout;
 }
 
+const journalOf = (runDir) =>
+  readFileSync(join(runDir, "journal.jsonl"), "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line));
+
 /**
- * Runs one scenario. `workers.<agentId>(ctx)` returns what the worker does for
- * that delivery: { verdict, status, content, badSha, submit: false, edit(repo), twice }.
+ * Options:
+ * - workers.<agentId>(ctx) → { verdict, status, content, badSha, submit: false, edit(repo), twice, late: {attempt, verdict} }
+ * - runtime.<agentId>: ScriptedAgent overrides
+ * - idleAfterWork(agentId) → boolean (default true): advance the timeline after the worker acted
+ * - skipObserves(agentId) → n: observes to let pass (advancing the timeline) before the worker acts
+ * - onObserve(handle, context), after(context)
+ * - verify: false | {command, timeoutMs}; limits: overrides
+ * - definitionPath, makeInput(repo): another workflow
  */
 async function scenario(options) {
   const runId = `sc-${name}`;
@@ -56,31 +78,75 @@ async function scenario(options) {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "init");
 
-  const names = {
-    builder: herdrRuntimeName(runId, "builder"),
-    reviewer: herdrRuntimeName(runId, "reviewer"),
-  };
-  const agentOf = Object.fromEntries(
-    Object.entries(names).map(([agentId, runtimeName]) => [runtimeName, agentId]),
+  let definition = buildReviewWorkflow;
+  if (options.definitionPath !== undefined) {
+    const loaded = await loadWorkflowDefinition(options.definitionPath);
+    if (!loaded.ok) throw new Error(`definition refused: ${JSON.stringify(loaded)}`);
+    definition = loaded.definition;
+  }
+  const agentIds = definition.agents.map((agent) => agent.agentId);
+  const names = Object.fromEntries(
+    agentIds.map((agentId) => [agentId, herdrRuntimeName(runId, agentId)]),
   );
-  const defaultScript = () => ({
-    timeline: [{ status: "idle", stateChangeSeq: 1 }],
-    afterDeliver: [
-      { status: "working", stateChangeSeq: 2 },
-      { status: "idle", stateChangeSeq: 3 },
-    ],
-  });
+  const agentOf = Object.fromEntries(agentIds.map((agentId) => [names[agentId], agentId]));
   const runtime = createScriptedRuntime({
-    agents: {
-      [names.builder]: { ...defaultScript(), ...options.runtime?.builder },
-      [names.reviewer]: { ...defaultScript(), ...options.runtime?.reviewer },
-    },
+    agents: Object.fromEntries(
+      agentIds.map((agentId) => [
+        names[agentId],
+        {
+          timeline: [{ status: "idle", stateChangeSeq: 1 }],
+          afterDeliver: [
+            { status: "working", stateChangeSeq: 2 },
+            { status: "idle", stateChangeSeq: 3 },
+          ],
+          ...options.runtime?.[agentId],
+        },
+      ]),
+    ),
   });
 
-  const counts = { builder: 0, reviewer: 0 };
+  const counts = Object.fromEntries(agentIds.map((agentId) => [agentId, 0]));
   const submissions = [];
   const pending = new Map();
-  const context = { runDir, repo, runId, names, runtime, submissions };
+  const context = {
+    runDir,
+    repo,
+    runId,
+    names,
+    runtime,
+    submissions,
+    marks: {},
+    journal: () => journalOf(runDir),
+  };
+
+  const artifactFor = (stageId) =>
+    definition.stages.find((stage) => stage.kind === "agent" && stage.stageId === stageId)
+      ?.artifactFile ?? "out.md";
+
+  async function submit(agentId, identity, plan) {
+    const rel = `artifacts/${identity.stageId}/visit-${identity.visit}/attempt-${identity.attempt}/${artifactFor(identity.stageId)}`;
+    const content =
+      plan.content ??
+      `# ${identity.stageId} visit ${identity.visit} attempt ${identity.attempt}\n\n${plan.note ?? "Work done."}\n`;
+    mkdirSync(dirname(join(runDir, rel)), { recursive: true });
+    writeFileSync(join(runDir, rel), content);
+    const envelope = {
+      schemaVersion: 1,
+      runId,
+      agentId,
+      stageId: identity.stageId,
+      visit: identity.visit,
+      attempt: identity.attempt,
+      status: plan.status ?? "completed",
+      verdict: plan.verdict ?? null,
+      artifact: { path: rel, sha256: plan.badSha === true ? "0".repeat(64) : sha256(content) },
+    };
+    for (let round = 0; round < (plan.twice === true ? 2 : 1); round += 1) {
+      const out = await submitResult({ runDir, envelopeRaw: JSON.stringify(envelope) });
+      submissions.push({ agentId, ...identity, outcome: out.outcome, reason: out.reason ?? null });
+    }
+  }
+  context.submit = submit;
 
   async function work(agentId, text) {
     const snapshot = readSnapshot(runDir);
@@ -92,28 +158,15 @@ async function scenario(options) {
     const plan =
       options.workers[agentId]({ ...active, count: counts[agentId], text, ...context }) ?? {};
     plan.edit?.(repo);
-    if (plan.submit === false) return;
-    const file = active.stageId === "review" ? "review.md" : "completion.md";
-    const rel = `artifacts/${active.stageId}/visit-${active.visit}/attempt-${active.attempt}/${file}`;
-    const content =
-      plan.content ??
-      `# ${active.stageId} visit ${active.visit} attempt ${active.attempt}\n\n${plan.note ?? "Work done."}\n`;
-    writeFileSync(join(runDir, rel), content);
-    const envelope = {
-      schemaVersion: 1,
-      runId,
-      agentId,
-      stageId: active.stageId,
-      visit: active.visit,
-      attempt: active.attempt,
-      status: plan.status ?? "completed",
-      verdict: plan.verdict ?? null,
-      artifact: { path: rel, sha256: plan.badSha === true ? "0".repeat(64) : sha256(content) },
-    };
-    for (let round = 0; round < (plan.twice === true ? 2 : 1); round += 1) {
-      const out = await submitResult({ runDir, envelopeRaw: JSON.stringify(envelope) });
-      submissions.push({ agentId, ...active, outcome: out.outcome, reason: out.reason ?? null });
+    if (plan.late !== undefined) {
+      await submit(
+        agentId,
+        { ...active, attempt: plan.late.attempt },
+        { verdict: plan.late.verdict, note: "late" },
+      );
     }
+    if (plan.submit === false) return;
+    await submit(agentId, active, plan);
   }
 
   const wrapped = {
@@ -124,22 +177,31 @@ async function scenario(options) {
     stop: (handle, input) => runtime.stop(handle, input),
     async deliver(handle, text, input) {
       const result = await runtime.deliver(handle, text, input);
-      if (runtime.calls().at(-1)?.args.sent === true) pending.set(handle.runtimeName, text);
+      if (runtime.calls().at(-1)?.args.sent === true) {
+        pending.set(handle.runtimeName, {
+          text,
+          skip: options.skipObserves?.(agentOf[handle.runtimeName]) ?? 0,
+        });
+      }
       return result;
     },
     async observe(handle) {
-      const text = pending.get(handle.runtimeName);
-      if (text !== undefined) {
+      const agentId = agentOf[handle.runtimeName];
+      const job = pending.get(handle.runtimeName);
+      if (job !== undefined && job.skip > 0) {
+        job.skip -= 1;
+        runtime.advance(handle.runtimeName);
+      } else if (job !== undefined) {
         pending.delete(handle.runtimeName);
-        await work(agentOf[handle.runtimeName], text);
-        if (options.idleAfterWork !== false) runtime.advance(handle.runtimeName);
+        await work(agentId, job.text);
+        if (options.idleAfterWork?.(agentId) !== false) runtime.advance(handle.runtimeName);
       }
-      await options.onObserve?.(handle, context);
+      await options.onObserve?.(handle, { ...context, agentId });
       return runtime.observe(handle);
     },
   };
 
-  const rawInput = {
+  const rawInput = options.makeInput?.(repo) ?? {
     schemaVersion: 1,
     repo,
     task: {
@@ -171,11 +233,7 @@ async function scenario(options) {
       ...options.limits,
     },
   };
-  const admitted = await admitWorkflow({
-    definition: buildReviewWorkflow,
-    input: rawInput,
-    runDir,
-  });
+  const admitted = await admitWorkflow({ definition, input: rawInput, runDir });
   if (!admitted.ok) throw new Error(`admission refused: ${JSON.stringify(admitted)}`);
   const opened = await openRun({ runDir, runId, plan: admitted.plan, input: rawInput });
   if (opened.outcome !== "recorded") throw new Error(`openRun refused: ${JSON.stringify(opened)}`);
@@ -184,7 +242,7 @@ async function scenario(options) {
   context.abort = () => controller.abort();
   const out = await runWorkflow({
     runDir,
-    definition: buildReviewWorkflow,
+    definition,
     input: admitted.input,
     runtime: wrapped,
     submitCommand: [process.execPath, join(root, "dist", "cli.js")],
@@ -193,10 +251,7 @@ async function scenario(options) {
   });
   await options.after?.(context);
 
-  const journal = readFileSync(join(runDir, "journal.jsonl"), "utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line));
+  const journal = journalOf(runDir);
   const requests = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -210,11 +265,7 @@ async function scenario(options) {
         });
     }
   };
-  try {
-    walk(join(runDir, "requests"));
-  } catch {
-    // No request was written.
-  }
+  if (existsSync(join(runDir, "requests"))) walk(join(runDir, "requests"));
   const snapshot = readSnapshot(runDir);
   return {
     result: out.result,
@@ -231,6 +282,7 @@ async function scenario(options) {
     requests,
     submissions,
     snapshot: snapshot.ok ? snapshot.snapshot : null,
+    marks: context.marks,
     names,
     runDir,
     repo,
@@ -241,16 +293,301 @@ const edit = (content) => (repo) => {
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "src", "change.txt"), content);
 };
+const builderEdits = ({ count }) => ({ edit: edit(`version ${count}\n`) });
+const once = (context, key) => {
+  if (context.marks[key] === true) return false;
+  context.marks[key] = true;
+  return true;
+};
 
 const SCENARIOS = {
   happy: () =>
     scenario({
       workers: {
-        builder: ({ count }) => ({ edit: edit(`version ${count}\n`) }),
+        builder: builderEdits,
         reviewer: ({ count }) => ({
           verdict: count === 1 ? "fail" : "pass",
           note: count === 1 ? "Blocking: add the header line." : "Looks good.",
         }),
+      },
+    }),
+
+  "bad-submission": () =>
+    scenario({
+      workers: {
+        builder: builderEdits,
+        // Attempt 1 claims pass with a wrong hash; the format repair submits a valid fail; round 2 passes.
+        reviewer: ({ count }) =>
+          count === 1
+            ? { verdict: "pass", badSha: true }
+            : { verdict: count === 2 ? "fail" : "pass" },
+      },
+    }),
+
+  "no-submission": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: ({ count }) => (count === 1 ? { submit: false } : { edit: edit("built\n") }),
+        reviewer: () => ({ verdict: "pass" }),
+      },
+    }),
+
+  "revision-moved": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: ({ count, repo }) => ({
+          verdict: "pass",
+          // Review 1 changes the repository before it passes; the change is gone again before review 2.
+          edit:
+            count === 1
+              ? () => writeFileSync(join(repo, "stray.txt"), "reviewer edit\n")
+              : undefined,
+        }),
+      },
+      onObserve: (_handle, context) => {
+        const moved = context
+          .journal()
+          .some((record) => record.type === "gate.recorded" && record.reason === "revision_moved");
+        const stray = join(context.repo, "stray.txt");
+        if (moved && existsSync(stray)) rmSync(stray);
+      },
+    }),
+
+  "late-older-pass": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: ({ count }) =>
+          count === 1
+            ? { submit: false }
+            : count === 2
+              ? { late: { attempt: 1, verdict: "pass" }, verdict: "fail" }
+              : { verdict: "pass" },
+      },
+    }),
+
+  "max-rounds": () =>
+    scenario({
+      verify: false,
+      limits: { maxRounds: 2 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "fail" }) },
+    }),
+
+  "max-visits": () =>
+    scenario({
+      verify: { command: ["node", "-e", "process.exit(1)"], timeoutMs: 20000 },
+      limits: { maxVisitsPerStage: 2 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "max-format-repairs": () =>
+    scenario({
+      verify: false,
+      limits: { maxFormatRepairs: 1 },
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "max-attempts": () =>
+    scenario({
+      verify: false,
+      runtime: { builder: { onDeliver: "not_delivered:agent_busy" } },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "readiness-timeout": () =>
+    scenario({
+      verify: false,
+      limits: { readinessWaitMs: 300 },
+      runtime: { builder: { timeline: [{ status: "working", stateChangeSeq: 1 }] } },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "blocked-timeout": () =>
+    scenario({
+      verify: false,
+      limits: { blockedWaitMs: 300 },
+      runtime: { builder: { afterDeliver: [{ status: "blocked", stateChangeSeq: 2 }] } },
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "delivery-timeout": () =>
+    scenario({
+      verify: false,
+      limits: { deliveryTimeoutMs: 300 },
+      runtime: { builder: { onDeliver: "ambiguous:stalled" } },
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "run-timeout": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 600 },
+      runtime: { builder: { afterDeliver: [{ status: "working", stateChangeSeq: 2 }] } },
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "blocked-resolved": () =>
+    scenario({
+      verify: false,
+      runtime: {
+        reviewer: {
+          afterDeliver: [
+            { status: "blocked", stateChangeSeq: 2 },
+            { status: "working", stateChangeSeq: 3 },
+            { status: "idle", stateChangeSeq: 4 },
+          ],
+        },
+      },
+      idleAfterWork: (agentId) => agentId !== "reviewer",
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      onObserve: (handle, context) => {
+        if (context.agentId !== "reviewer") return;
+        const snapshot = readSnapshot(context.runDir);
+        if (
+          snapshot.ok &&
+          snapshot.snapshot.attention.blocked !== null &&
+          once(context, "blocked")
+        ) {
+          context.marks.blockedSnapshot = snapshot.snapshot;
+          context.runtime.advance(handle.runtimeName);
+        }
+      },
+    }),
+
+  "ambiguous-delivered": () =>
+    scenario({
+      verify: false,
+      runtime: { builder: { onDeliver: ["ambiguous:timeout", "started"] } },
+      skipObserves: (agentId) => (agentId === "builder" ? 1 : 0),
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "cancel-abort": () =>
+    scenario({
+      verify: false,
+      idleAfterWork: (agentId) => agentId !== "reviewer",
+      workers: { builder: builderEdits, reviewer: () => ({ submit: false }) },
+      onObserve: (_handle, context) => {
+        if (context.agentId === "reviewer" && once(context, "abort")) context.abort();
+      },
+      after: async (context) => {
+        await context.submit(
+          "reviewer",
+          { stageId: "review", visit: 1, attempt: 1 },
+          { verdict: "pass", note: "late" },
+        );
+      },
+    }),
+
+  "cancel-external": () =>
+    scenario({
+      verify: false,
+      idleAfterWork: (agentId) => agentId !== "reviewer",
+      workers: { builder: builderEdits, reviewer: () => ({ submit: false }) },
+      onObserve: (_handle, context) => {
+        if (context.agentId !== "reviewer" || !once(context, "terminate")) return;
+        const script = `const { terminateRun } = await import(${JSON.stringify(distUrl("state/store.js"))});
+const out = await terminateRun({ runDir: process.argv[1], outcome: "cancelled", reason: "cancelled from another process" });
+if (out.outcome !== "recorded") process.exit(1);`;
+        const child = spawnSync(
+          process.execPath,
+          ["--input-type=module", "--eval", script, context.runDir],
+          { encoding: "utf8" },
+        );
+        context.marks.externalStatus = child.status;
+      },
+    }),
+
+  duplicates: () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: ({ count }) => ({ edit: edit(`v${count}\n`), twice: true }),
+        reviewer: () => ({ verdict: "pass" }),
+      },
+    }),
+
+  "agent-gone": () =>
+    scenario({
+      verify: false,
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+      onObserve: async (handle, context) => {
+        if (
+          context.agentId === "builder" &&
+          context.journal().some((record) => record.type === "request.dispatched") &&
+          once(context, "gone")
+        ) {
+          await context.runtime.stop(handle, { timeoutMs: 1 });
+        }
+      },
+    }),
+
+  "agent-replaced": () =>
+    scenario({
+      verify: false,
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+      onObserve: (handle, context) => {
+        if (
+          context.agentId === "builder" &&
+          context.journal().some((record) => record.type === "request.dispatched") &&
+          once(context, "replace")
+        ) {
+          context.runtime.emit(handle.runtimeName, {
+            lifecycle: "working",
+            runtimeStatus: "working",
+            order: { terminalId: "term-intruder", stateChangeSeq: 9, revision: null },
+          });
+        }
+      },
+    }),
+
+  "altered-input": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "fail" }) },
+      onObserve: (_handle, context) => {
+        if (context.agentId !== "builder") return;
+        const journal = context.journal();
+        const review = journal.find(
+          (record) => record.type === "submission.accepted" && record.stageId === "review",
+        );
+        if (
+          review === undefined ||
+          !journal.some((record) => record.type === "gate.recorded" && record.gate === "review") ||
+          !once(context, "alter")
+        )
+          return;
+        const copy = join(context.runDir, review.artifact.acceptedPath);
+        chmodSync(copy, 0o644);
+        writeFileSync(copy, "# Tampered review\n");
+      },
+    }),
+
+  "builder-failed": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: () => ({ status: "failed", note: "Could not build." }),
+        reviewer: () => ({ verdict: "pass" }),
+      },
+    }),
+
+  reuse: () =>
+    scenario({
+      definitionPath: join(root, "test", "fixtures", "workflows", "two-stage.mjs"),
+      makeInput: (repo) => ({ repo }),
+      workers: {
+        writer: ({ count }) => ({ edit: edit(`draft ${count}\n`) }),
+        critic: ({ count }) => ({ verdict: count === 1 ? "rework" : "approve" }),
       },
     }),
 };
