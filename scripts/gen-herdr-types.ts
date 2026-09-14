@@ -6,10 +6,13 @@
  * `--refresh` to re-dump it from the live daemon first (`herdr api schema
  * --json`); that is the only step that needs Herdr installed.
  *
- * The schema's own `protocol` number is written into the generated banner and
- * mirrored by the `PROTOCOL` constant in `src/herdr/types.ts`; a test asserts
- * the three agree, so a regeneration that moves the protocol cannot land
- * silently.
+ * The schema's own `protocol` number is written into the generated banner.
+ *
+ * Carried over from a previous iteration that also kept a `PROTOCOL`
+ * constant in `src/herdr/types.ts` plus a test asserting the two agree —
+ * neither exists in this scaffold yet, so nothing currently guards against a
+ * regeneration silently moving the protocol number. Add that constant and
+ * test back before anything depends on `types.generated.ts`.
  */
 
 import { compile } from "json-schema-to-typescript";

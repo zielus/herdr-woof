@@ -36,5 +36,11 @@ export default defineConfig({
     exclude: ["node_modules/**"],
     // Two workers keep a laptop usable; CI runners have two cores, so one.
     maxWorkers: process.env.CI === undefined ? 2 : 1,
+    // E2E_GROUPS is empty in this scaffold, so `include` above resolves to
+    // no files. Without this, vitest's default treats "no test files" as a
+    // failure and test:e2e/test:all/verify:full would exit non-zero for a
+    // reason that has nothing to do with the code. Drop this once a real
+    // e2e group exists.
+    passWithNoTests: true,
   },
 });

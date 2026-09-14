@@ -42,13 +42,32 @@ await program.parseAsync(process.argv);
 
 /** Runs a diagnostic command and reports its outcome; never throws. */
 function probe(command: string, args: readonly string[]): string {
+  const label = `${command} ${args.join(" ")}`;
   try {
     const output = execFileSync(command, [...args], { encoding: "utf8" }).trim();
-    return `${command} ${args.join(" ")}:\n${indent(output)}`;
+    return `${label}:\n${indent(output)}`;
   } catch (error) {
-    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    return `${command} ${args.join(" ")}: not found (${detail})`;
+    // execFileSync throws with `code: "ENOENT"` when the binary itself is
+    // missing, and a plain non-zero-exit Error (carrying stderr/stdout)
+    // when the binary ran and failed — those are different diagnoses and
+    // doctor should not conflate "not installed" with "installed but broken".
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return `${label}: not found`;
+    }
+    const stderr = isExecError(error) ? error.stderr.trim() : "";
+    const detail = stderr !== "" ? stderr : error instanceof Error ? error.message : String(error);
+    return `${label}: failed (${detail.split("\n")[0]})`;
   }
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+// execFileSync is called with `encoding: "utf8"`, so a non-zero-exit error's
+// stderr comes back as a string, not the Buffer it would default to.
+function isExecError(error: unknown): error is Error & { stderr: string } {
+  return error instanceof Error && typeof (error as { stderr?: unknown }).stderr === "string";
 }
 
 function indent(text: string): string {

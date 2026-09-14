@@ -57,13 +57,18 @@ export async function serveMcp(options: ServeMcpOptions): Promise<void> {
   const handleLine = async (line: string): Promise<void> => {
     const text = line.trim();
     if (text === "") return;
-    let message: JsonRpcMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(text) as JsonRpcMessage;
+      parsed = JSON.parse(text);
     } catch {
       send({ id: null, error: { code: PARSE_ERROR, message: "Invalid JSON" } });
       return;
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      send({ id: null, error: { code: INVALID_REQUEST, message: "A request must be an object" } });
+      return;
+    }
+    const message = parsed as JsonRpcMessage;
     const id = message.id;
     const method = message.method;
     if (typeof method !== "string") {
@@ -110,19 +115,20 @@ export async function serveMcp(options: ServeMcpOptions): Promise<void> {
 
 async function handle(
   method: string,
-  params: unknown,
+  _params: unknown,
   name: string,
   version: string,
 ): Promise<Record<string, unknown> | undefined> {
   switch (method) {
-    case "initialize": {
-      const asked = (params as { protocolVersion?: unknown } | undefined)?.protocolVersion;
+    case "initialize":
+      // We implement exactly one protocol version and always say so —
+      // never echo whatever the client asked for, which would claim
+      // support for a version (past or future) we don't actually speak.
       return {
-        protocolVersion: typeof asked === "string" ? asked : MCP_PROTOCOL_VERSION,
+        protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name, version },
       };
-    }
     case "notifications/initialized":
     case "notifications/cancelled":
       return undefined;
