@@ -247,6 +247,35 @@ describe("woof run build-review: usage and admission", () => {
     expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
   });
 
+  it("rejects a run directory equal to, inside or containing the repository before anything runs", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(ws.repo));
+    const alias = join(ws.root, "alias");
+    symlinkSync(ws.repo, alias);
+    const cases = [
+      join(ws.repo, ".woof-run"),
+      join(ws.repo, "not", "created", "yet"),
+      ws.repo,
+      join(alias, ".woof-run"),
+      ws.root,
+    ];
+    for (const runDir of cases) {
+      const result = runBuildReview(
+        { ...ws, runDir },
+        ["--runtime-module", runtimeModule],
+        scriptedEnv(ws.log),
+      );
+      expect(result.status, `${runDir}: ${result.stdout}`).toBe(2);
+      expect(result.json).toMatchObject({ outcome: "rejected", reason: "input_invalid" });
+      expect(result.json?.message).toContain(runDir);
+      expect(result.json?.message).toContain(ws.repo);
+      expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+    }
+    expect(existsSync(ws.log)).toBe(false);
+    expect(existsSync(join(ws.repo, "not"))).toBe(false);
+    expect(existsSync(join(ws.repo, ".woof-run"))).toBe(false);
+  });
+
   it("refuses to run outside Herdr without a runtime module, without spawning herdr or writing", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));

@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,5 +104,51 @@ describe("loadWorkflowDefinition in a real node process", () => {
     expect(out).toMatchObject({ ok: false, reason: "definition_invalid" });
     expect(existsSync(marker)).toBe(true);
     expect(readFileSync(marker, "utf8")).toBe("loaded\n");
+  });
+});
+
+describe("admitWorkflow with a loaded definition whose callbacks misbehave", () => {
+  function admit(mode: string): LoadOut & { threw?: string } {
+    const dir = mkdtempSync(join(tmpdir(), "woof-admit-"));
+    dirs.push(dir);
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
+    const result = runNode(
+      `const { loadWorkflowDefinition } = await import(${JSON.stringify(distUrl("scheduler/loader.js"))});
+const { admitWorkflow } = await import(${JSON.stringify(distUrl("scheduler/admission.js"))});
+const loaded = await loadWorkflowDefinition(process.argv[1]);
+if (!loaded.ok) { console.log(JSON.stringify(loaded)); process.exit(0); }
+try {
+  const admitted = await admitWorkflow({ definition: loaded.definition, input: { topic: "t" }, runDir: process.argv[2] });
+  console.log(JSON.stringify(admitted.ok ? { ok: true } : admitted));
+} catch (error) {
+  console.log(JSON.stringify({ ok: false, threw: error.message }));
+}`,
+      [join(fixtures, "callbacks.mjs"), join(dir, "run")],
+      { env: { WOOF_TEST_CALLBACK: mode, WOOF_TEST_REPO: repo } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return result.json as unknown as LoadOut & { threw?: string };
+  }
+
+  it("admits the well-behaved definition", () => {
+    expect(admit("none")).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["validate-throws", "validateInput", "validateInput failed on purpose"],
+    ["validate-bad", "validateInput", "returned no { ok } result"],
+    ["repository-throws", "repository", "repository failed on purpose"],
+    ["repository-bad", "repository", "not a path string"],
+    ["agents-throws", "resolveAgents", "resolveAgents failed on purpose"],
+    ["agents-bad", "resolveAgents", "agent writer is not"],
+    ["limits-throws", "resolveLimits", "resolveLimits failed on purpose"],
+    ["limits-bad", "resolveLimits", "returned no limits object"],
+  ])("maps %s to a structured definition_invalid rejection", (mode, field, message) => {
+    const out = admit(mode);
+    expect(out.threw).toBeUndefined();
+    expect(out).toMatchObject({ ok: false, reason: "definition_invalid", details: [{ field }] });
+    expect(out.message).toContain(message);
   });
 });
