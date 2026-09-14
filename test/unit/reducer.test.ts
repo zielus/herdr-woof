@@ -11,8 +11,10 @@ import {
   assigned,
   attempt,
   dispatched,
+  duplicate,
   journalOf as buildJournal,
   opened,
+  rejected,
   terminated,
 } from "../helpers/records.js";
 
@@ -111,6 +113,22 @@ describe("p1 journal compatibility", () => {
     );
     expect(state.plan).toBeNull();
     expect(state.status).toBe("running");
+  });
+});
+
+describe("run.opened rules", () => {
+  it("refuses a second run.opened instead of mixing two runs", () => {
+    expectRefused(journalOf(opened(PLAN, "run-one"), opened(null, "run-two")), "run_exists");
+    expectRefused(journalOf(opened(null, "run-one"), opened(PLAN, "run-one")), "run_exists");
+    expectRefused(
+      journalOf(opened(), attempt("build", "builder"), opened(PLAN, "run-two")),
+      "run_exists",
+    );
+  });
+  it("refuses any record before run.opened", () => {
+    for (const first of [terminated(), assigned("builder"), rejected("envelope_malformed")]) {
+      expectRefused(journalOf(first), "invalid_transition");
+    }
   });
 });
 
@@ -328,6 +346,18 @@ describe("run.terminated rules", () => {
         attempt("build", "builder"),
         terminated(),
         accepted(4, "build", "builder", null),
+      ),
+      "run_closed",
+    );
+  });
+  it("refuses a duplicate after termination", () => {
+    expectRefused(
+      journalOf(
+        opened(),
+        attempt("build", "builder"),
+        accepted(3, "build", "builder", null),
+        terminated(),
+        duplicate(3),
       ),
       "run_closed",
     );

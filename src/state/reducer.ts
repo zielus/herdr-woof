@@ -71,6 +71,7 @@ export interface RunState {
  * trigger (for example an acceptance that disagrees with its attempt).
  */
 export type ReducerReason =
+  | "run_exists"
   | "run_mismatch"
   | "run_closed"
   | "agent_unknown"
@@ -149,6 +150,11 @@ export function emptyRunState(): RunState {
  * supersedes the stage's still-open attempts; accepted attempts stay accepted.
  *
  * p2 rules, in check order per record:
+ * - run.opened is the first and only run record: a second one is run_exists,
+ *   and any other record before it is invalid_transition. `readJournal` checks
+ *   line positions too; this keeps `replay`, `deriveSnapshot` and `foldEvents`
+ *   from mixing two runs when they are given records that did not come from a
+ *   journal read.
  * - attempt.opened: run_mismatch, run_closed, then with a plan stage_unknown,
  *   owner_mismatch (agent is not the stage's agent), verdicts_mismatch (not
  *   the stage's verdict set), then attempt_open_conflict. Limits are never
@@ -215,8 +221,17 @@ export function candidateRecord(
 type Refusal = [ReducerReason, string];
 
 function applyRecord(state: RunState, record: JournalRecord): Refusal | undefined {
+  if (record.type !== "run.opened" && state.runId === undefined) {
+    return ["invalid_transition", `${record.type} before run.opened`];
+  }
   switch (record.type) {
     case "run.opened":
+      if (state.runId !== undefined) {
+        return [
+          "run_exists",
+          `run.opened for run ${record.runId} after run ${state.runId} was opened; run.opened must be the first and only run record`,
+        ];
+      }
       state.runId = record.runId;
       state.plan = record.plan ?? null;
       state.openedAt = record.ts;

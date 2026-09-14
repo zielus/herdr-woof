@@ -297,4 +297,24 @@ describe("snapshot and events consistency", () => {
     };
     expect(foldEvents(base, [invalid])).toMatchObject({ ok: false, reason: "journal_corrupt" });
   });
+
+  it("fails closed on a forged second run.opened instead of mixing two runs", () => {
+    const records = journalOf(parse, opened(), assigned("builder"));
+    const events = projectEvents(records, anchorOf(records));
+    const base = { snapshot: deriveSnapshot(records).snapshot, records };
+    const forged: Event = {
+      ...(events[1] as Event),
+      seq: 3,
+      type: "run.opened",
+      data: { runId: "run-1", plan: { ...PLAN, workflow: { name: "other", version: "9" } } },
+    };
+
+    expect(foldEvents(base, [forged])).toMatchObject({ ok: false, reason: "journal_corrupt" });
+    expect(foldEvents(null, [...events, forged])).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+    const twoRuns = journalOf(parse, opened(PLAN, "run-one"), opened(null, "run-two"));
+    expect(deriveSnapshot(twoRuns)).toMatchObject({ ok: false });
+  });
 });
