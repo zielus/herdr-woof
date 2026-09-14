@@ -246,6 +246,52 @@ appendFileSync(path, line.slice(half));
   });
 });
 
+describe("event subscription and a partial first line", () => {
+  it("ends with journal_corrupt when a torn run.opened line persists past the grace period", async () => {
+    const runDir = makeRunDir();
+    writeFileSync(join(runDir, "journal.jsonl"), '{"schemaVersion":1,"seq":1,"ts":"20');
+    const file = join(eventsDir, "torn-first-line.jsonl");
+    const started = Date.now();
+
+    const exit = await withTimeout(
+      startNode(OBSERVER, [runDir, file, "", JSON.stringify({ tornTailGraceMs: 300 })]).done,
+      10_000,
+      "observer exit",
+    );
+
+    expect(exit.status, exit.stderr).toBe(5);
+    expect(items(file)).toEqual([
+      expect.objectContaining({ type: "error", reason: "journal_corrupt" }),
+    ]);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("yields run.opened once when the first line is written in two halves", async () => {
+    const runDir = makeRunDir();
+    const journalPath = join(runDir, "journal.jsonl");
+    const line = `${JSON.stringify({ schemaVersion: 1, seq: 1, ts: "2026-09-14T10:00:00.000Z", type: "run.opened", runId: "run-1" })}\n`;
+    const half = Math.floor(line.length / 2);
+    writeFileSync(journalPath, line.slice(0, half));
+    const file = join(eventsDir, "first-line-in-halves.jsonl");
+    const observer = startNode(OBSERVER, [
+      runDir,
+      file,
+      "",
+      JSON.stringify({ tornTailGraceMs: 2000 }),
+    ]);
+
+    await delay(300);
+    expect(items(file)).toEqual([]);
+    appendFileSync(journalPath, line.slice(half));
+    await waitUntil(() => items(file).length >= 1, 10_000, "run.opened event");
+    await delay(100);
+    observer.child.kill("SIGKILL");
+    await observer.done;
+
+    expect(items(file)).toEqual([expect.objectContaining({ type: "run.opened", seq: 1 })]);
+  });
+});
+
 describe("event subscription on a run directory that can never hold a journal", () => {
   it("ends at once with run_dir_invalid when the run directory path is a regular file", async () => {
     const runDir = join(makeRunDir(), "not-a-directory");

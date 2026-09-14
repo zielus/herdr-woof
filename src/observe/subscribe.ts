@@ -60,6 +60,26 @@ export async function* subscribeEvents(
   let yielded: number | undefined;
   let tail: { offset: number; size: number; since: number } | undefined;
 
+  /**
+   * Tracks a partial final line at byte offset `at`. Once the same partial line
+   * has persisted for the grace period, one `readJournal` under the journal lock
+   * decides: no append is in flight under the lock, so a line still torn there
+   * is persisted corruption (its message is returned).
+   */
+  const tornTail = async (at: number): Promise<string | undefined> => {
+    const size = fileSize(runDir);
+    if (tail === undefined || tail.offset !== at || tail.size !== size) {
+      tail = { offset: at, size, since: Date.now() };
+      return undefined;
+    }
+    if (Date.now() - tail.since < graceMs) return undefined;
+    const locked = await withJournalLock(runDir, () => readJournal(runDir), { timeoutMs: pollMs });
+    if (!locked.ok) return undefined; // a writer holds the lock: its append is still in flight
+    if (!locked.value.ok) return locked.value.message;
+    tail = undefined;
+    return undefined;
+  };
+
   for (let first = true; ; first = false) {
     if (signal?.aborted === true) return;
     if (!first) {
@@ -95,7 +115,20 @@ export async function* subscribeEvents(
         }
         continue; // not created yet
       }
-      if (read.anchor === null || read.file === null) continue; // no complete run.opened line yet
+      if (read.anchor === null || read.file === null) {
+        // No complete run.opened line yet: a first line being written, or torn for good.
+        if (!read.tailPending) {
+          tail = undefined;
+          continue;
+        }
+        // oxlint-disable-next-line no-await-in-loop
+        const torn = await tornTail(0);
+        if (torn !== undefined) {
+          yield { type: "error", reason: "journal_corrupt", message: torn };
+          return;
+        }
+        continue;
+      }
       file = read.file;
       anchor = read.anchor;
       records = read.records;
@@ -194,20 +227,12 @@ export async function* subscribeEvents(
       tail = undefined;
       continue;
     }
-    const size = fileSize(runDir);
-    if (tail === undefined || tail.offset !== offset || tail.size !== size) {
-      tail = { offset, size, since: Date.now() };
-      continue;
-    }
-    if (Date.now() - tail.since < graceMs) continue;
     // oxlint-disable-next-line no-await-in-loop
-    const locked = await withJournalLock(runDir, () => readJournal(runDir), { timeoutMs: pollMs });
-    if (!locked.ok) continue; // a writer holds the lock: its append is still in flight
-    if (!locked.value.ok) {
-      yield { type: "error", reason: "journal_corrupt", message: locked.value.message };
+    const torn = await tornTail(offset);
+    if (torn !== undefined) {
+      yield { type: "error", reason: "journal_corrupt", message: torn };
       return;
     }
-    tail = undefined;
   }
 }
 
