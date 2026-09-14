@@ -848,6 +848,44 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "PR4-1. agents without a stateChangeSeq whose observations never change still dispatch and complete",
+    () => {
+      const report = runScenario("null-seq-agents");
+      expect(report.result).toMatchObject({ outcome: "completed", limit: null });
+      expect(ofType(report, "request.dispatched").map((record) => record["stageId"])).toEqual([
+        "build",
+        "review",
+      ]);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR4-6. a pane split that times out on the run budget is exhausted, another pane error is failed",
+    () => {
+      const timedOut = runScenario("pane-timeout");
+      expect(timedOut.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(timedOut.types).not.toContain("agent.assigned");
+      const broken = runScenario("pane-error");
+      expect(broken.result).toMatchObject({ outcome: "failed", limit: null });
+      expect(broken.result.reason).toMatch(/^agent_start_failed: builder: runtime_error/);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR4-7. an abort during the poll sleep ends the run cancelled and settles panes",
+    () => {
+      const report = runScenario("abort-in-sleep");
+      expect(report.marks["abort"]).toBe(true);
+      expect(report.result).toMatchObject({ outcome: "cancelled", limit: null });
+      expect(report.error).toBeNull();
+      expect(report.calls.some((call) => call.method === "stop")).toBe(true);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

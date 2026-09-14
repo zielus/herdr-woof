@@ -433,7 +433,13 @@ export async function runWorkflow<Input>(
         if (action.reason === "awaiting_ready" && action.observe !== null) {
           viewOf(action.observe).awaitingReadySince ??= clock();
         }
-        await sleep(Math.max(0, Math.min(pollMs, remainingMs(snapshot))), options.signal);
+        try {
+          await sleep(Math.max(0, Math.min(pollMs, remainingMs(snapshot))), options.signal);
+        } catch (error) {
+          // An abort during the sleep is cancellation, not an engine error: the next tick
+          // decides with aborted: true.
+          if (options.signal?.aborted !== true) throw error;
+        }
         return undefined;
       }
 
@@ -445,14 +451,19 @@ export async function runWorkflow<Input>(
           written = await runTimedOut(snapshot);
           break;
         }
+        const paneTimeoutMs = capped(snapshot, ADAPTER_COMMAND_CAP_MS);
         const pane = await runtime.openPane({
           near: options.paneNear ?? "current",
           cwd: repository,
           env: { WOOF_RUN_DIR: runDir },
-          timeoutMs: capped(snapshot, ADAPTER_COMMAND_CAP_MS),
+          timeoutMs: paneTimeoutMs,
         });
         const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
-        if (remainingMs(snapshot) <= 0) {
+        // A split that timed out on a budget-capped bound, or any split that returns after the
+        // deadline, is the run timeout rather than a failed start.
+        const paneBudgetTimeout =
+          !pane.ok && pane.error.code === "timeout" && paneTimeoutMs < ADAPTER_COMMAND_CAP_MS;
+        if (remainingMs(snapshot) <= 0 || paneBudgetTimeout) {
           if (pane.ok) {
             viewOf(action.agentId).handle = handleFor(
               runtime,

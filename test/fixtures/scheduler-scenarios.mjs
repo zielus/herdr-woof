@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -176,7 +177,19 @@ async function scenario(options) {
 
   const wrapped = {
     adapter: options.adapterName ?? "scripted",
-    openPane: (input) => runtime.openPane(input),
+    openPane: (input) =>
+      options.openPaneError !== undefined
+        ? Promise.resolve({
+            ok: false,
+            error: {
+              code: options.openPaneError,
+              runtimeCode: null,
+              message: `injected ${options.openPaneError}`,
+              command: [],
+              exitCode: null,
+            },
+          })
+        : runtime.openPane(input),
     startAgent: (input) => runtime.startAgent(input),
     waitFor: (handle, states, timeoutMs) => runtime.waitFor(handle, states, timeoutMs),
     stop: (handle, input) =>
@@ -282,6 +295,10 @@ async function scenario(options) {
     signal: controller.signal,
     pollMs: options.pollMs ?? 2,
     onAction: (action) => options.onAction?.(action, context),
+    // rejectingSleep: a sleep that rejects with AbortError when the run is aborted mid-sleep.
+    ...(options.rejectingSleep === true
+      ? { sleep: (ms, signal) => delay(ms, undefined, signal !== undefined ? { signal } : {}) }
+      : {}),
   });
   const elapsedMs = Date.now() - startedAt;
   await options.after?.(context);
@@ -827,6 +844,51 @@ await withJournalLock(runDir, async () => {
       workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
       observeError: (agentId, count) =>
         agentId === "builder" && (count === 2 || count === 3) ? "timeout" : undefined,
+    }),
+
+  "null-seq-agents": () =>
+    scenario({
+      verify: false,
+      // Neither agent reports a stateChangeSeq: every ready observation repeats unchanged.
+      runtime: Object.fromEntries(
+        ["builder", "reviewer"].map((agentId) => [
+          agentId,
+          {
+            timeline: [{ status: "idle" }],
+            afterDeliver: [{ status: "working" }, { status: "idle" }],
+          },
+        ]),
+      ),
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "pane-timeout": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 2000 },
+      openPaneError: "timeout",
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "pane-error": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 2000 },
+      openPaneError: "runtime_error",
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "abort-in-sleep": () =>
+    scenario({
+      verify: false,
+      pollMs: 200,
+      rejectingSleep: true,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // Abort while the driver sleeps after its first wait.
+      onAction: (action, context) => {
+        if (action.type !== "wait" || !once(context, "abort")) return;
+        setTimeout(() => context.abort(), 20);
+      },
     }),
 
   "stop-fails": () =>
