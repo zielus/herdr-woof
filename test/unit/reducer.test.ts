@@ -4,6 +4,17 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadDist, repoRoot } from "../helpers/dist.js";
+import {
+  HEX,
+  PLAN,
+  accepted,
+  assigned,
+  attempt,
+  dispatched,
+  journalOf as buildJournal,
+  opened,
+  terminated,
+} from "../helpers/records.js";
 
 type Json = Record<string, unknown>;
 interface AttemptStateJson {
@@ -40,123 +51,7 @@ beforeAll(async () => {
   ));
 });
 
-const PLAN = {
-  workflow: { name: "build-review", version: "1" },
-  agents: [
-    { agentId: "builder", role: "builder", kind: "claude", model: null },
-    { agentId: "reviewer", role: "reviewer", kind: "claude", model: "opus" },
-  ],
-  stages: [
-    { stageId: "build", agentId: "builder", verdicts: [] },
-    { stageId: "review", agentId: "reviewer", verdicts: ["approve", "reject"] },
-  ],
-  limits: {
-    maxAttemptsPerVisit: 2,
-    maxVisitsPerStage: 3,
-    maxRounds: 3,
-    runTimeoutMs: 600_000,
-    readinessWaitMs: 60_000,
-    blockedWaitMs: 60_000,
-    deliveryTimeoutMs: 10_000,
-  },
-};
-
-const HEX = "a".repeat(64);
-
-/** Builds records with contiguous seq and fixed timestamps; each is parsed to prove its shape. */
-function journalOf(...bodies: Json[]): Json[] {
-  return bodies.map((body, index) => {
-    const record = {
-      schemaVersion: 1,
-      seq: index + 1,
-      ts: new Date(Date.UTC(2026, 8, 14, 10, 0, index)).toISOString(),
-      ...body,
-    };
-    const parsed = parseRecordLine(JSON.stringify(record));
-    if (typeof parsed === "string") throw new Error(`fixture record ${index + 1}: ${parsed}`);
-    return parsed;
-  });
-}
-
-const opened = (plan: Json | null = PLAN, runId = "run-1"): Json => ({
-  type: "run.opened",
-  runId,
-  ...(plan !== null ? { plan } : {}),
-});
-
-function attempt(
-  stageId: string,
-  agentId: string,
-  visit = 1,
-  attemptNo = 1,
-  verdicts: string[] = stageId === "review" ? ["approve", "reject"] : [],
-  runId = "run-1",
-): Json {
-  return {
-    type: "attempt.opened",
-    runId,
-    agentId,
-    stageId,
-    visit,
-    attempt: attemptNo,
-    verdicts,
-    artifactDir: `artifacts/${stageId}/visit-${visit}/attempt-${attemptNo}`,
-  };
-}
-
-const assigned = (agentId: string, paneId = `w1:${agentId}`): Json => ({
-  type: "agent.assigned",
-  agentId,
-  runtime: { adapter: "scripted", runtimeName: `w-${agentId}`, paneId },
-});
-
-function dispatched(
-  stageId: string,
-  agentId: string,
-  visit = 1,
-  attemptNo = 1,
-  delivery = "started",
-  reason = "observed_working",
-): Json {
-  return {
-    type: "request.dispatched",
-    agentId,
-    stageId,
-    visit,
-    attempt: attemptNo,
-    delivery,
-    reason,
-  };
-}
-
-const terminated = (outcome = "cancelled", limit?: string): Json => ({
-  type: "run.terminated",
-  outcome,
-  reason: "test",
-  ...(limit !== undefined ? { limit } : {}),
-});
-
-function accepted(seq: number, stageId: string, agentId: string, verdict: string | null): Json {
-  const dir = `${stageId}/visit-1/attempt-1`;
-  return {
-    type: "submission.accepted",
-    runId: "run-1",
-    agentId,
-    stageId,
-    visit: 1,
-    attempt: 1,
-    status: "completed",
-    verdict,
-    envelopeDigest: HEX,
-    artifact: {
-      path: `artifacts/${dir}/out.md`,
-      sha256: HEX,
-      bytes: 10,
-      acceptedPath: `accepted/${dir}/out.md`,
-    },
-    receiptId: `rcpt-${seq}-${HEX.slice(0, 12)}`,
-  };
-}
+const journalOf = (...bodies: Json[]): Json[] => buildJournal(parseRecordLine, ...bodies);
 
 function expectOk(records: Json[]): StateJson {
   const result = replay(records);

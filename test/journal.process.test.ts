@@ -14,10 +14,12 @@ import {
   ofType,
   openAttempt,
   openAttemptOk,
+  openPlannedRun,
   readyAttempt,
   runNode,
   sha256,
   submit,
+  terminateRunOk,
   woofAsync,
   writeArtifact,
   writeEnvelope,
@@ -284,5 +286,33 @@ describe("woof attempt open", () => {
       "attempt.opened",
     ]);
     expectContiguousSeq(lines);
+  });
+
+  it("refuses attempts outside a planned run's stages, owners and verdicts, and after termination", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+
+    for (const [spec, reason] of [
+      [{ stage: "deploy" }, "stage_unknown"],
+      [{ agent: "reviewer" }, "owner_mismatch"],
+      [{ verdicts: "pass" }, "verdicts_mismatch"],
+      [{ verdicts: "pass,fail,maybe" }, "verdicts_mismatch"],
+    ] as const) {
+      const refused = openAttempt(runDir, spec);
+      expect(refused.status, `${refused.stdout}${refused.stderr}`).toBe(2);
+      expect(refused.json).toMatchObject({ outcome: "rejected", reason });
+    }
+    // The verdict set is compared without regard to order.
+    openAttemptOk(runDir, { verdicts: "fail,pass" });
+    terminateRunOk(runDir);
+    const closed = openAttempt(runDir, { attempt: 2 });
+    expect(closed.status).toBe(2);
+    expect(closed.json).toMatchObject({ outcome: "rejected", reason: "run_closed" });
+
+    expect(journal(runDir).map((line) => line.type)).toEqual([
+      "run.opened",
+      "attempt.opened",
+      "run.terminated",
+    ]);
   });
 });

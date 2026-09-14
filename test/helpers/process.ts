@@ -263,3 +263,111 @@ export function journal(runDir: string): JournalLine[] {
 export function ofType(lines: readonly JournalLine[], type: string): JournalLine[] {
   return lines.filter((line) => line.type === type);
 }
+
+/** File URL of a compiled module, relative to dist/, e.g. "state/store.js". */
+export function distUrl(rel: string): string {
+  return pathToFileURL(join(repoRoot, "dist", rel)).href;
+}
+
+/** Runs an ES module script in a child `node` process without blocking. */
+export function runNodeAsync(
+  script: string,
+  args: readonly string[] = [],
+  options: RunOptions = {},
+): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", ["--input-type=module", "--eval", script, ...args], {
+      env: childEnv(options.env),
+      cwd: repoRoot,
+      ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve(toResult(status, stdout, stderr)));
+    child.stdin.end(options.input ?? "");
+  });
+}
+
+/**
+ * A child script with the compiled store, snapshot, attempt, submit and journal
+ * modules loaded. `body` sees `runDir` (argv[1]) and `input` (argv[2] as JSON)
+ * and assigns the JSON-printed result to `out`.
+ */
+export function sdkScript(body: string): string {
+  return `
+const store = await import(${JSON.stringify(distUrl("state/store.js"))});
+const snapshots = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
+const { openAttempt } = await import(${JSON.stringify(distUrl("submission/attempt.js"))});
+const { submitResult } = await import(${JSON.stringify(distUrl("submission/submit.js"))});
+const { readJournal } = await import(${JSON.stringify(distUrl("journal/journal.js"))});
+const runDir = process.argv[1];
+const input = process.argv[2] === undefined ? {} : JSON.parse(process.argv[2]);
+let out;
+${body}
+console.log(JSON.stringify(out));
+`;
+}
+
+/** Runs `sdkScript(body)` in a child process and returns its printed result. */
+export function runSdk<T = Record<string, unknown>>(
+  runDir: string,
+  body: string,
+  input?: unknown,
+): T {
+  const result = runNode(
+    sdkScript(body),
+    input === undefined ? [runDir] : [runDir, JSON.stringify(input)],
+  );
+  if (result.status !== 0) {
+    throw new Error(`sdk script failed (${result.status}): ${result.stdout}${result.stderr}`);
+  }
+  return JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "null") as T;
+}
+
+/** Plan matching the CLI helper defaults: stage report is owned by worker with verdicts pass,fail. */
+export function testPlan(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    workflow: { name: "report-review", version: "1" },
+    agents: [
+      { agentId: "worker", role: "writer", kind: "claude", model: null },
+      { agentId: "reviewer", role: "reviewer", kind: "claude", model: null },
+    ],
+    stages: [
+      { stageId: "report", agentId: "worker", verdicts: ["pass", "fail"] },
+      { stageId: "review", agentId: "reviewer", verdicts: ["approve", "reject"] },
+    ],
+    limits: {
+      maxAttemptsPerVisit: 2,
+      maxVisitsPerStage: 3,
+      maxRounds: 3,
+      runTimeoutMs: 600_000,
+      readinessWaitMs: 60_000,
+      blockedWaitMs: 60_000,
+      deliveryTimeoutMs: 10_000,
+    },
+    ...overrides,
+  };
+}
+
+/** Opens run-1 with a plan through the store, failing loudly unless it is recorded. */
+export function openPlannedRun(runDir: string, plan = testPlan()): void {
+  const out = runSdk<{ outcome: string }>(
+    runDir,
+    `out = await store.openRun({ runDir, runId: "run-1", plan: input });`,
+    plan,
+  );
+  if (out.outcome !== "recorded") throw new Error(`openRun: ${JSON.stringify(out)}`);
+}
+
+/** Terminates the run through the store, failing loudly unless it is recorded. */
+export function terminateRunOk(runDir: string, outcome = "cancelled"): void {
+  const out = runSdk<{ outcome: string }>(
+    runDir,
+    `out = await store.terminateRun({ runDir, outcome: input.outcome, reason: "test termination" });`,
+    { outcome },
+  );
+  if (out.outcome !== "recorded") throw new Error(`terminateRun: ${JSON.stringify(out)}`);
+}

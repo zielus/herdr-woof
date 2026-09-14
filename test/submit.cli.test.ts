@@ -30,6 +30,7 @@ import {
   runNode,
   sha256,
   submit,
+  terminateRunOk,
   woof,
   writeArtifact,
   writeEnvelope,
@@ -645,6 +646,19 @@ describe("woof submit", () => {
     expect(ofType(journal(identical.runDir), "submission.accepted")).toHaveLength(1);
     expect(readFileSync(identicalDest, "utf8")).toBe(CONTENT);
     expect(readdirSync(dirname(identicalDest))).toEqual(["report.md"]);
+  });
+
+  it("rejects a late submission to a terminated run and journals the rejection", () => {
+    const { runDir, envelope } = readyAttempt();
+    terminateRunOk(runDir);
+
+    const result = submit(runDir, envelope);
+
+    expectRejected(result, "run_closed");
+    expect(result.json?.message).toContain("terminated as cancelled");
+    const lines = journal(runDir);
+    expect(lines.at(-1)).toMatchObject({ type: "submission.rejected", reason: "run_closed" });
+    expect(ofType(lines, "submission.accepted")).toHaveLength(0);
   });
 
   it("reaches every exported rejection reason", () => {

@@ -16,8 +16,12 @@ import {
   readJournal,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
-import { attemptArtifactDir, type JournalRecord } from "../journal/records.js";
-import { compareAttempts, replay } from "../state/reducer.js";
+import {
+  attemptArtifactDir,
+  type JournalRecord,
+  type NewJournalRecord,
+} from "../journal/records.js";
+import { candidateRecord, compareAttempts, refuseAppend, replay } from "../state/reducer.js";
 import { ensureRealDirectory } from "./containment.js";
 
 export interface OpenAttemptInput extends AttemptIdentity {
@@ -45,7 +49,11 @@ export type OpenAttemptOutcome =
  * Declares an open attempt and its owner in the run journal, creating the run
  * directory, journal and `artifacts/<stage>/visit-<n>/attempt-<m>/` as needed.
  * The (visit, attempt) pair must be newer than every attempt already opened for
- * the stage; still-open older attempts become stale. The attempt directory and
+ * the stage; still-open older attempts become stale. Refused in order:
+ * run_mismatch, run_closed (terminated run), then for a run opened with a plan
+ * stage_unknown, owner_mismatch (not the stage's agent) and verdicts_mismatch
+ * (not the stage's verdict set), then attempt_open_conflict. Limits are not
+ * enforced. The attempt directory and
  * its ancestors under the run directory must be real directories, never
  * symlinks (`attempt_dir_out_of_scope`). A new journal is created exclusively
  * under the lock; a symlinked or non-regular journal is `journal_corrupt`. This
@@ -95,6 +103,33 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
             { field: "runId", message: `expected ${state.runId}` },
           ]);
         }
+        const candidate: NewJournalRecord = {
+          type: "attempt.opened",
+          runId: input.runId,
+          agentId: input.agentId,
+          stageId: input.stageId,
+          visit: input.visit,
+          attempt: input.attempt,
+          verdicts,
+          artifactDir,
+          ...(input.paneId !== undefined ? { paneId: input.paneId } : {}),
+        };
+        // A new journal is checked as if run.opened preceded the attempt.
+        const refusal = refuseAppend(
+          records.length > 0
+            ? records
+            : [candidateRecord([], { type: "run.opened", runId: input.runId })],
+          candidate,
+        );
+        if (
+          refusal !== undefined &&
+          (refusal.reason === "run_closed" ||
+            refusal.reason === "stage_unknown" ||
+            refusal.reason === "owner_mismatch" ||
+            refusal.reason === "verdicts_mismatch")
+        ) {
+          return reject(refusal.reason, refusal.message);
+        }
         const latest = state.latestByStage.get(input.stageId);
         if (latest !== undefined && compareAttempts(input, latest) <= 0) {
           return reject(
@@ -116,17 +151,7 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
           if (records.length === 0) {
             records.push(appendRecord(runDir, records, { type: "run.opened", runId: input.runId }));
           }
-          const opened = appendRecord(runDir, records, {
-            type: "attempt.opened",
-            runId: input.runId,
-            agentId: input.agentId,
-            stageId: input.stageId,
-            visit: input.visit,
-            attempt: input.attempt,
-            verdicts,
-            artifactDir,
-            ...(input.paneId !== undefined ? { paneId: input.paneId } : {}),
-          });
+          const opened = appendRecord(runDir, records, candidate);
           return {
             outcome: "opened",
             attempt: {
