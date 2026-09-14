@@ -235,6 +235,22 @@ export type ReadJournalContinuationResult =
 class JournalReplacedError extends Error {}
 
 /**
+ * Test seams for the observer read path, not exposed through the SDK entry
+ * point or the CLI; the defaults do nothing. `afterLineOneCheck` runs in
+ * `readJournalContinuation` once line 1 has been checked on the opened
+ * descriptor and before the continuation bytes are read. `afterContinuationRead`
+ * runs after the continuation descriptor is closed, with the result about to be
+ * returned.
+ */
+export const journalReadHooks: {
+  afterLineOneCheck: (fd: number) => void;
+  afterContinuationRead: (result: ReadJournalContinuationResult) => void;
+} = {
+  afterLineOneCheck: () => undefined,
+  afterContinuationRead: () => undefined,
+};
+
+/**
  * `readJournalPrefix` from `fromOffset`, first checking on the same opened
  * descriptor that the file is still the one in `file`: same device and inode,
  * and the same line 1 bytes. A journal replaced at the path, by rename or by
@@ -265,22 +281,28 @@ export function readJournalContinuation(
       ) {
         throw new JournalReplacedError("journal line 1 changed; the journal was replaced");
       }
+      journalReadHooks.afterLineOneCheck(fd);
     });
   } catch (error) {
     if (error instanceof JournalReplacedError) {
-      return { ok: false, reason: "journal_replaced", message: error.message };
+      return finish({ ok: false, reason: "journal_replaced", message: error.message });
     }
     throw error;
   }
-  if (!read.ok) return read;
+  if (!read.ok) return finish(read);
   const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
-  if (!parsed.ok) return parsed;
-  return {
+  if (!parsed.ok) return finish(parsed);
+  return finish({
     ok: true,
     records: parsed.records,
     tailPending: parsed.tailPending,
     endOffset: fromOffset + parsed.consumed,
-  };
+  });
+}
+
+function finish(result: ReadJournalContinuationResult): ReadJournalContinuationResult {
+  journalReadHooks.afterContinuationRead(result);
+  return result;
 }
 
 /** Run anchor: the first 12 hex characters of sha256 over journal line 1, without its newline. */
