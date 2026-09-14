@@ -1,13 +1,16 @@
 import {
   appendFileSync,
+  chmodSync,
+  existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -20,6 +23,7 @@ import {
   journal,
   makeRunDir,
   ofType,
+  openAttempt,
   openAttemptOk,
   readyAttempt,
   runNode,
@@ -437,6 +441,71 @@ describe("woof submit", () => {
       expect(result.stdout).toBe("");
       expect(result.stderr).toMatch(/^woof: /);
     }
+  });
+
+  it("refuses to open an attempt whose directory or an ancestor is a symlink out of the run", () => {
+    for (const link of ["artifacts/report/visit-1/attempt-1", "artifacts/report", "artifacts"]) {
+      const runDir = makeRunDir();
+      const outside = makeRunDir();
+      mkdirSync(dirname(join(runDir, link)), { recursive: true });
+      symlinkSync(outside, join(runDir, link));
+
+      const result = openAttempt(runDir);
+
+      expect(result.status, `${link}: ${result.stdout}${result.stderr}`).toBe(2);
+      expect(result.json).toMatchObject({
+        outcome: "rejected",
+        reason: "attempt_dir_out_of_scope",
+      });
+      expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+      expect(readdirSync(outside)).toEqual([]);
+    }
+  });
+
+  it("rejects artifacts once the attempt directory or an ancestor is replaced by a symlink out of the run", () => {
+    for (const replaced of ["artifacts/report/visit-1/attempt-1", "artifacts/report"]) {
+      const { runDir, envelope } = readyAttempt();
+      const outside = makeRunDir();
+      // Mirror the replaced subtree outside the run, with a matching artifact.
+      writeArtifact(outside, artifactRel().slice(replaced.length + 1), CONTENT);
+      rmSync(join(runDir, replaced), { recursive: true, force: true });
+      symlinkSync(outside, join(runDir, replaced));
+
+      const result = submit(runDir, envelope);
+
+      expectRejected(result, "artifact_out_of_scope");
+      expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
+    }
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "removes the published copy when the acceptance cannot be journaled",
+    () => {
+      const { runDir, envelope } = readyAttempt();
+      const journalPath = join(runDir, "journal.jsonl");
+      const before = readFileSync(journalPath);
+      chmodSync(journalPath, 0o444);
+      try {
+        expectRejected(submit(runDir, envelope), "journal_write_failed", 3);
+      } finally {
+        chmodSync(journalPath, 0o644);
+      }
+
+      expect(readFileSync(journalPath).equals(before)).toBe(true);
+      expect(readdirSync(join(runDir, "accepted/report/visit-1/attempt-1"))).toEqual([]);
+    },
+  );
+
+  it("leaves no temporary file when the accepted copy cannot be put in place", () => {
+    const { runDir, envelope } = readyAttempt();
+    const acceptedDir = join(runDir, "accepted/report/visit-1/attempt-1");
+    // A non-empty directory at the destination makes the final rename fail.
+    mkdirSync(join(acceptedDir, "report.md", "blocker"), { recursive: true });
+
+    expectRejected(submit(runDir, envelope), "journal_write_failed", 3);
+
+    expect(readdirSync(acceptedDir)).toEqual(["report.md"]);
+    expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
   });
 
   it("reaches every exported rejection reason", () => {
