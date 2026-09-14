@@ -84,5 +84,6 @@ jobs:
         with:
           node-version: "22.18.0"
       - run: bun install --frozen-lockfile
+      - run: bun run check:version
       - run: bun run build
       - run: bun run smoke:package

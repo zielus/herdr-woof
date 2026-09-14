@@ -60,6 +60,17 @@ describe("plugin placeholders", () => {
     expect(manifest).not.toContain("[[panes]]");
   });
 
+  it("keeps the Herdr manifest version in sync with package.json", () => {
+    const manifest = readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8");
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+      version: string;
+    };
+
+    expect(manifest).toMatch(
+      new RegExp(`^version = "${pkg.version.replaceAll(".", "\\.")}"$`, "m"),
+    );
+  });
+
   it("contains no MCP registration or launcher", () => {
     const claudeRoot = join(repoRoot, "plugin", "claude");
 
