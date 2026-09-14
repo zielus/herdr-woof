@@ -29,6 +29,7 @@ const { openRun } = await load("state/store.js");
 const { readSnapshot } = await load("state/snapshot.js");
 const { submitResult } = await load("submission/submit.js");
 const { herdrRuntimeName } = await load("runtime/names.js");
+const { revisionOf } = await load("scheduler/revision.js");
 const { createScriptedRuntime } = await load("testing.js");
 
 const [name, tmp] = process.argv.slice(2);
@@ -65,7 +66,7 @@ const journalOf = (runDir) =>
  * - idleAfterWork(agentId) → boolean (default true): advance the timeline after the worker acted
  * - skipObserves(agentId) → n: observes to let pass (advancing the timeline) before the worker acts
  * - submitInDeliver(agentId) → boolean: the worker submits inside deliver, before it returns
- * - onObserve(handle, context), after(context)
+ * - onObserve(handle, context), after(context), onAction(action, context) (sync, before each action runs)
  * - verify: false | {command, timeoutMs}; limits: overrides
  * - definitionPath, makeInput(repo): another workflow
  */
@@ -253,6 +254,7 @@ async function scenario(options) {
     submitCommand: [process.execPath, join(root, "dist", "cli.js")],
     signal: controller.signal,
     pollMs: options.pollMs ?? 2,
+    onAction: (action) => options.onAction?.(action, context),
   });
   await options.after?.(context);
 
@@ -287,6 +289,7 @@ async function scenario(options) {
     requests,
     submissions,
     snapshot: snapshot.ok ? snapshot.snapshot : null,
+    finalRevision: await revisionOf(repo),
     marks: context.marks,
     names,
     runDir,
@@ -574,6 +577,23 @@ if (out.outcome !== "recorded") process.exit(1);`;
         const copy = join(context.runDir, review.artifact.acceptedPath);
         chmodSync(copy, 0o644);
         writeFileSync(copy, "# Tampered review\n");
+      },
+    }),
+
+  "moved-before-gate": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // The repository changes after the passing review's revision was computed, just before its gate.
+      onAction: (action, context) => {
+        if (
+          action.type === "record_gate" &&
+          action.gate.gate === "review" &&
+          action.gate.decision === "pass" &&
+          once(context, "move")
+        ) {
+          writeFileSync(join(context.repo, "stray.txt"), "changed before the gate\n");
+        }
       },
     }),
 

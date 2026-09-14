@@ -598,6 +598,40 @@ describe("decide: gates", () => {
     });
   });
 
+  it("records a revision-bound completion only on the reviewed tree of the latest work gate", () => {
+    const original = behaviour.critique;
+    behaviour.critique = () => ({
+      decision: "pass",
+      reason: "accepted_by_critic",
+      outcome: "completed",
+    });
+    const reviewed = [...critiquing(), accepted(11, "critique", "critic", "accept")];
+    // The current tree differs from the reviewed one: the engine rejects instead of completing.
+    const moved = {
+      gate: "critique",
+      acceptedSeq: 11,
+      revision: { head: null, tree: "d".repeat(40) },
+    };
+    expect(act(reviewed, { evidence: moved })).toMatchObject({
+      type: "record_gate",
+      gate: {
+        decision: "reject",
+        reason: "revision_moved",
+        next: { stageId: "critique" },
+        reviewed: REV,
+        revision: { tree: "d".repeat(40) },
+      },
+    });
+    // Reviewed, current and work-gate trees agree: the definition's completion is recorded.
+    expect(
+      act(reviewed, { evidence: { gate: "critique", acceptedSeq: 11, revision: REV } }),
+    ).toMatchObject({
+      type: "record_gate",
+      gate: { decision: "pass", next: { outcome: "completed" } },
+    });
+    behaviour.critique = original;
+  });
+
   it("terminates with the outcome of a gate that ends the run", () => {
     const done = [
       ...critiquing(),

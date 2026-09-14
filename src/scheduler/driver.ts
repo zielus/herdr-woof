@@ -594,6 +594,25 @@ export async function runWorkflow<Input>(
 
       case "record_gate": {
         const gate = action.gate;
+        let revision = gate.revision;
+        if (gate.kind === "stage" && agentStageOf(definition, gate.gate)?.bindsRevision === true) {
+          // Fingerprint again immediately before appending a revision-bound gate.
+          const fresh = await revisionOf(repository);
+          if (!fresh.ok) {
+            written = await end("failed", `repo_invalid: ${fresh.message}`);
+            break;
+          }
+          if (fresh.revision.tree !== gate.revision.tree) {
+            // The repository moved after the evidence was computed: decide again on the fresh tree.
+            evidence = {
+              gate: gate.gate,
+              acceptedSeq: gate.subject.acceptedSeq,
+              revision: fresh.revision,
+            };
+            return undefined;
+          }
+          revision = fresh.revision;
+        }
         written = await write(() =>
           recordGate({
             runDir,
@@ -604,7 +623,7 @@ export async function runWorkflow<Input>(
             reason: gate.reason,
             round: gate.round,
             next: gate.next,
-            revision: gate.revision,
+            revision,
             ...(gate.verdict !== undefined ? { verdict: gate.verdict } : {}),
             ...(gate.reviewed !== undefined ? { reviewed: gate.reviewed } : {}),
             ...(gate.check !== undefined ? { check: gate.check } : {}),
@@ -618,6 +637,12 @@ export async function runWorkflow<Input>(
               "exhausted",
               `gate ${gate.gate} requires another round beyond maxRounds (${String(snapshot.limits?.maxRounds)})`,
               action.exhausted,
+            );
+          } else if ("outcome" in gate.next) {
+            // End the run in the same effect, so nothing runs between the gate and its outcome.
+            const outcome = gate.next.outcome;
+            written = await write(() =>
+              terminateRun({ runDir, outcome, reason: gate.reason.slice(0, 500), ...lock }),
             );
           }
         }

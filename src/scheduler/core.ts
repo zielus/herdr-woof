@@ -432,9 +432,9 @@ function decideRun<Input>(
         revision: { reviewed, current: evidence.revision },
       }),
     );
-    return gateAction(view, limits, targetId, transition, {
+    const base = {
       gate: targetId,
-      kind: "stage",
+      kind: "stage" as const,
       subject: {
         stageId: targetId,
         visit: current.visit,
@@ -445,7 +445,19 @@ function decideRun<Input>(
       revision: evidence.revision,
       verdict: attempt.accepted.verdict,
       ...(reviewed !== null ? { reviewed } : {}),
-    });
+    };
+    // Completion fence: a revision-bound stage completes the run only on the exact
+    // tree it reviewed, which is also the tree of the latest work gate.
+    if (stage.bindsRevision && "outcome" in transition && transition.outcome === "completed") {
+      const tree = evidence.revision.tree;
+      const work = snapshot.gates.findLast(
+        (item) => item.kind === "stage" && item.gate !== targetId,
+      );
+      if (reviewed?.tree !== tree || (work !== undefined && work.revision.tree !== tree)) {
+        return revisionMoved(view, limits, targetId, base);
+      }
+    }
+    return gateAction(view, limits, targetId, transition, base);
   }
 
   if (attempt.dispatch === null) {
@@ -632,6 +644,32 @@ function gateAction<Input>(
       next,
     },
     exhausted: needsRound && roundsUsed >= limits.maxRounds ? "maxRounds" : null,
+  };
+}
+
+/** Engine-imposed rejection of a completion whose revision no longer matches: the stage runs again. */
+function revisionMoved<Input>(
+  view: SchedulerView<Input>,
+  limits: Limits,
+  stageId: string,
+  base: Omit<GateRecordAction, "decision" | "reason" | "round" | "next">,
+): Action {
+  const definition = view.definition;
+  const roundsUsed =
+    definition.roundStage === null
+      ? 0
+      : (view.snapshot.counters.visitsByStage[definition.roundStage] ?? 0);
+  return {
+    type: "record_gate",
+    gate: {
+      ...base,
+      decision: "reject",
+      reason: "revision_moved",
+      round: roundsUsed,
+      next: { stageId },
+    },
+    exhausted:
+      definition.roundStage === stageId && roundsUsed >= limits.maxRounds ? "maxRounds" : null,
   };
 }
 

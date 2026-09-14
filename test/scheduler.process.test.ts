@@ -611,6 +611,25 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-001. a repository change between revision and gate makes completion impossible",
+    () => {
+      const report = runScenario("moved-before-gate");
+      expect(report.marks["move"]).toBe(true);
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "maxRounds" });
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+      const reviews = gatesOf(report).filter((gate) => gate["gate"] === "review");
+      expect(reviews.length).toBeGreaterThan(0);
+      expect(reviews.some((gate) => "outcome" in (gate["next"] as Json))).toBe(false);
+      expect(reviews.map((gate) => gate["reason"])).toEqual(reviews.map(() => "revision_moved"));
+      // Every recorded review gate carries the tree the repository actually has.
+      const finalTree = (report as Report & { finalRevision: { revision: { tree: string } } })
+        .finalRevision.revision.tree;
+      for (const gate of reviews) expect((gate["revision"] as Json)["tree"]).toBe(finalTree);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");
