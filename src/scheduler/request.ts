@@ -11,6 +11,9 @@ import type { AttemptCause, Revision } from "../domain/types.js";
 /** Largest rendered request, in bytes. */
 export const MAX_REQUEST_BYTES = 32 * 1024;
 
+/** Longest run directory path admission accepts, in bytes; request size bounds assume it. */
+export const MAX_RUN_DIR_BYTES = 512;
+
 export interface ResolvedInput {
   label: string;
   /** Absolute path of the accepted copy or evidence file. */

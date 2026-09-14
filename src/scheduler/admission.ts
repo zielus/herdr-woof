@@ -6,7 +6,8 @@ import { validateRunPlan } from "../domain/plan.js";
 import type { AgentSpec, Revision, RunPlan } from "../domain/types.js";
 import type { WorkflowDefinition } from "./definition.js";
 import { launchArgs } from "./launch.js";
-import { revisionOf } from "./revision.js";
+import { MAX_RUN_DIR_BYTES } from "./request.js";
+import { revisionOf, type RevisionResult } from "./revision.js";
 
 /**
  * Workflow admission (p3): everything checked before a run directory or pane
@@ -38,6 +39,15 @@ export async function admitWorkflow<Input>(options: {
   runDir: string;
 }): Promise<AdmissionResult<Input>> {
   const { definition } = options;
+  // The run directory is used verbatim in launch arguments and requests: absolute and bounded.
+  if (typeof options.runDir !== "string" || !isAbsolute(options.runDir)) {
+    const message = `the run directory ${String(options.runDir)} must be an absolute path`;
+    return reject("input_invalid", message, [{ field: "runDir", message }]);
+  }
+  if (Buffer.byteLength(options.runDir, "utf8") > MAX_RUN_DIR_BYTES) {
+    const message = `the run directory path is longer than ${MAX_RUN_DIR_BYTES} bytes`;
+    return reject("input_invalid", message, [{ field: "runDir", message }]);
+  }
   const validated = call("validateInput", () => definition.validateInput(options.input));
   if (!validated.ok) return invalidDefinition("validateInput", validated.message);
   const verdict: unknown = validated.value;
@@ -46,10 +56,25 @@ export async function admitWorkflow<Input>(options: {
   }
   if (verdict["ok"] !== true) {
     const details = verdict["details"];
-    if (!Array.isArray(details)) {
-      return invalidDefinition("validateInput", "returned ok: false without details");
+    if (
+      !Array.isArray(details) ||
+      !details.every(
+        (detail) =>
+          isObject(detail) &&
+          typeof detail["field"] === "string" &&
+          typeof detail["message"] === "string",
+      )
+    ) {
+      return invalidDefinition(
+        "validateInput",
+        "returned ok: false without details of { field: string, message: string } entries",
+      );
     }
-    return reject("input_invalid", "workflow input is invalid", details as RejectionDetail[]);
+    return reject(
+      "input_invalid",
+      "workflow input is invalid",
+      (details as RejectionDetail[]).map(({ field, message }) => ({ field, message })),
+    );
   }
   if (!("input" in verdict))
     return invalidDefinition("validateInput", "returned ok: true without input");
@@ -64,7 +89,16 @@ export async function admitWorkflow<Input>(options: {
   if (!isAbsolute(repository)) {
     return reject("repo_invalid", "the repository must be an absolute path");
   }
-  const revision = await revisionOf(repository);
+  let revision: RevisionResult;
+  try {
+    revision = await revisionOf(repository);
+  } catch (error) {
+    // For example a path with a NUL byte, which git's argv refuses before spawning.
+    return reject(
+      "repo_invalid",
+      `cannot inspect the repository ${JSON.stringify(repository)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (!revision.ok) return reject("repo_invalid", revision.message);
   // The repository is the whole work tree: a directory inside it is refused, so
   // overlap checks and fingerprints always use the same top level.

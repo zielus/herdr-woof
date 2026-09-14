@@ -169,7 +169,8 @@ async function runBuildReviewCommand(args: string[]): Promise<number> {
   if (!isId(runId))
     throw new UsageError(`--run-id must be a valid id\n\n${RUN_BUILD_REVIEW_USAGE}`);
   const pollMs =
-    values["poll-ms"] === undefined ? 1000 : milliseconds(values["poll-ms"], "--poll-ms");
+    // At least 1 ms: a zero poll would spin the scheduler (SDK callers may still pass 0).
+    values["poll-ms"] === undefined ? 1000 : milliseconds(values["poll-ms"], "--poll-ms", 1);
 
   // Admission: nothing is launched and nothing is written until the run opens.
   const definition = validateWorkflowDefinition(buildReviewWorkflow);
@@ -393,9 +394,9 @@ function defaultRunId(): string {
   return `br-${stamp}-${randomBytes(3).toString("hex")}`;
 }
 
-function milliseconds(value: string, flag: string): number {
-  if (!/^(0|[1-9][0-9]*)$/.test(value) || Number(value) > 3_600_000) {
-    throw new UsageError(`${flag} must be an integer between 0 and 3600000`);
+function milliseconds(value: string, flag: string, min = 0): number {
+  if (!/^(0|[1-9][0-9]*)$/.test(value) || Number(value) < min || Number(value) > 3_600_000) {
+    throw new UsageError(`${flag} must be an integer between ${min} and 3600000`);
   }
   return Number(value);
 }

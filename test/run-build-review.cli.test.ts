@@ -297,6 +297,40 @@ describe("woof run build-review: usage and admission", () => {
     expect(existsSync(join(ws.repo, ".woof-run"))).toBe(false);
   });
 
+  it("rejects a repository path git cannot take (a NUL byte) as repo_invalid, structured", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(`${ws.repo}\u0000x`));
+    const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(result.json).toMatchObject({ outcome: "rejected", reason: "repo_invalid" });
+    expect(existsSync(ws.log)).toBe(false);
+    expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
+  });
+
+  it("requires --poll-ms of at least 1", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(ws.repo));
+    const zero = woof(
+      [
+        "run",
+        "build-review",
+        "--input",
+        ws.inputPath,
+        "--run-dir",
+        ws.runDir,
+        "--poll-ms",
+        "0",
+        "--runtime-module",
+        runtimeModule,
+      ],
+      { env: scriptedEnv(ws.log) },
+    );
+    expect(zero.status).toBe(1);
+    expect(zero.stderr).toContain("--poll-ms must be an integer between 1 and 3600000");
+    expect(existsSync(ws.log)).toBe(false);
+  });
+
   it("rejects a runtime module whose factory does not return a RuntimeAdapter, before opening a run", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));

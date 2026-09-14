@@ -132,6 +132,27 @@ try {
     return result.json as unknown as LoadOut & { threw?: string };
   }
 
+  it("rejects a relative or overlong run directory as input_invalid before any callback", () => {
+    for (const runDir of ["relative/run", `/${"x".repeat(1100)}`]) {
+      const result = runNode(
+        `const { loadWorkflowDefinition } = await import(${JSON.stringify(distUrl("scheduler/loader.js"))});
+const { admitWorkflow } = await import(${JSON.stringify(distUrl("scheduler/admission.js"))});
+const loaded = await loadWorkflowDefinition(process.argv[1]);
+const admitted = await admitWorkflow({ definition: loaded.definition, input: { topic: "t" }, runDir: process.argv[2] });
+console.log(JSON.stringify(admitted));`,
+        [join(fixtures, "callbacks.mjs"), runDir],
+        { env: { WOOF_TEST_CALLBACK: "validate-throws", WOOF_TEST_REPO: "/nonexistent" } },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      // validate-throws would be definition_invalid: the run directory check comes first.
+      expect(result.json).toMatchObject({
+        ok: false,
+        reason: "input_invalid",
+        details: [{ field: "runDir" }],
+      });
+    }
+  });
+
   it("admits the well-behaved definition", () => {
     expect(admit("none")).toEqual({ ok: true });
   });
@@ -139,6 +160,7 @@ try {
   it.each([
     ["validate-throws", "validateInput", "validateInput failed on purpose"],
     ["validate-bad", "validateInput", "returned no { ok } result"],
+    ["details-bad", "validateInput", "{ field: string, message: string }"],
     ["repository-throws", "repository", "repository failed on purpose"],
     ["repository-bad", "repository", "not a path string"],
     ["agents-throws", "resolveAgents", "resolveAgents failed on purpose"],
