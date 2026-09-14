@@ -1,13 +1,21 @@
 import { canonicalJson } from "../contracts/canonical-json.js";
 import { isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
 import { MAX_COUNT_LIMIT, MAX_DURATION_LIMIT_MS, type Limits } from "../domain/types.js";
-import type {
-  InputRef,
-  RunHistory,
-  StageGateContext,
-  Transition,
-  WorkflowDefinition,
+import {
+  agentStageOf,
+  type InputRef,
+  type RequestContext,
+  type RunHistory,
+  type StageGateContext,
+  type Transition,
+  type WorkflowDefinition,
 } from "../scheduler/definition.js";
+import {
+  MAX_REQUEST_BYTES,
+  MAX_RUN_DIR_BYTES,
+  renderRequest,
+  type ResolvedInput,
+} from "../scheduler/request.js";
 
 /**
  * Built-in `build-review` workflow (p3): build → verify (an engine-run check,
@@ -74,12 +82,8 @@ function validateInput(
       fail("task.acceptanceCriteria", "must be a non-empty array of non-empty strings");
     }
     if (Object.hasOwn(task, "context")) {
-      try {
-        if (task["context"] === undefined || canonicalJson(task["context"]) === undefined)
-          fail("task.context", "must be a JSON value");
-      } catch {
-        fail("task.context", "must be a JSON value");
-      }
+      const problem = jsonValueProblem(task["context"], "task.context", new Set(), 0);
+      if (problem !== undefined) fail(problem.field, problem.message);
     }
   }
 
@@ -159,6 +163,16 @@ function validateInput(
     );
     if (size > MAX_TASK_BYTES)
       fail("task", `task and instructions are ${size} bytes; the limit is ${MAX_TASK_BYTES}`);
+  }
+  if (details.length === 0) {
+    // The exact formatted request (pretty-printed context, fixed text, longest paths) must fit.
+    const largest = largestRequestBytes(value as unknown as BuildReviewInput);
+    if (largest > MAX_REQUEST_BYTES) {
+      fail(
+        "task",
+        `the largest rendered request for this input would be ${largest} bytes; the limit is ${MAX_REQUEST_BYTES}`,
+      );
+    }
   }
   if (details.length > 0) return { ok: false, details };
   return { ok: true, input: structuredClone(value) as unknown as BuildReviewInput };
@@ -334,6 +348,142 @@ function exact(
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) fail(`${prefix}${key}`, "unknown field");
   }
+}
+
+const MAX_CONTEXT_DEPTH = 1000;
+
+/** A JSON value: null, boolean, finite number, string, array or plain object of JSON values, acyclic. */
+function jsonValueProblem(
+  value: unknown,
+  field: string,
+  ancestors: Set<object>,
+  depth: number,
+): RejectionDetail | undefined {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? undefined : { field, message: "must be a finite number" };
+  }
+  if (typeof value !== "object")
+    return { field, message: `must be a JSON value, not ${typeof value}` };
+  if (depth >= MAX_CONTEXT_DEPTH) {
+    return { field, message: `nests deeper than ${MAX_CONTEXT_DEPTH} levels` };
+  }
+  if (ancestors.has(value)) return { field, message: "must not contain a cycle" };
+  const isArray = Array.isArray(value);
+  if (
+    !isArray &&
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    Object.getPrototypeOf(value) !== null
+  ) {
+    return { field, message: "must be a plain JSON object or array" };
+  }
+  ancestors.add(value);
+  try {
+    if (isArray) {
+      for (let index = 0; index < value.length; index += 1) {
+        const problem = jsonValueProblem(value[index], `${field}[${index}]`, ancestors, depth + 1);
+        if (problem !== undefined) return problem;
+      }
+    } else {
+      for (const [key, item] of Object.entries(value)) {
+        const problem = jsonValueProblem(item, `${field}.${key}`, ancestors, depth + 1);
+        if (problem !== undefined) return problem;
+      }
+    }
+  } finally {
+    ancestors.delete(value);
+  }
+  return undefined;
+}
+
+/** An absolute path of the admitted maximum run directory length, plus room for symlink resolution. */
+function longPath(char: string): string {
+  return `/${char.repeat(MAX_RUN_DIR_BYTES + 127)}`;
+}
+
+/**
+ * Admission-time bound on the exact rendered request: renders the largest
+ * requests this input can produce — the review, and the repair entered by a
+ * review or by the verify check, each with every input its request names — with
+ * a run directory and submit command at the admitted maximum length (plus room
+ * for symlink resolution) and maximal counters, ids and digests.
+ */
+function largestRequestBytes(input: BuildReviewInput): number {
+  const runDir = longPath("r");
+  const hex = "f".repeat(64);
+  const counter = MAX_COUNT_LIMIT;
+  const seq = Number.MAX_SAFE_INTEGER;
+  const receiptId = `rcpt-${seq}-${hex.slice(0, 12)}`;
+  type Entered = NonNullable<RequestContext<BuildReviewInput>["enteredBy"]>;
+  const builderGate = {
+    kind: "stage",
+    gate: "repair",
+    subject: { stageId: "repair", visit: counter, attempt: counter, acceptedSeq: seq, receiptId },
+    revision: { head: hex, tree: hex },
+  } as unknown as Entered;
+  const cases: Array<{ stageId: string; enteredBy: Entered }> = [
+    { stageId: "review", enteredBy: builderGate },
+    { stageId: "repair", enteredBy: { ...builderGate, gate: "review" } },
+    { stageId: "repair", enteredBy: { ...builderGate, kind: "check", gate: "verify" } as Entered },
+  ];
+  let largest = 0;
+  for (const { stageId, enteredBy } of cases) {
+    const stage = agentStageOf(buildReviewWorkflow, stageId);
+    if (stage === undefined) continue;
+    const request = stage.request({
+      input,
+      runId: "r".repeat(128),
+      history: { gates: [builderGate], latestAccepted: {} },
+      stageId,
+      visit: counter,
+      attempt: counter,
+      round: counter,
+      enteredBy,
+    });
+    const inputs: ResolvedInput[] = request.inputs.map((ref) => {
+      if ("checkId" in ref.from) {
+        return {
+          label: ref.label,
+          path: `${runDir}/checks/${ref.from.checkId}/repair-v${counter}-a${counter}/output.log`,
+          sha256: hex,
+          checkId: ref.from.checkId,
+        };
+      }
+      const source = agentStageOf(buildReviewWorkflow, ref.from.stageId);
+      return {
+        label: ref.label,
+        path: `${runDir}/accepted/${ref.from.stageId}/visit-${counter}/attempt-${counter}/${source?.artifactFile ?? "artifact"}`,
+        sha256: hex,
+        accepted: { stageId: ref.from.stageId, visit: counter, attempt: counter, receiptId },
+      };
+    });
+    const rendered = renderRequest({
+      runId: "r".repeat(128),
+      workflow: { name: buildReviewWorkflow.name, version: buildReviewWorkflow.version },
+      agentId: stage.agentId,
+      role: stage.agentId,
+      stageId,
+      visit: counter,
+      attempt: counter,
+      cause: "work_retry",
+      round: counter,
+      repository: input.repo,
+      revision: { head: hex, tree: hex },
+      runDir,
+      artifactFile: stage.artifactFile,
+      verdicts: stage.verdicts,
+      submitCommand: [longPath("n"), longPath("c")],
+      goal: request.goal,
+      instructions: request.instructions,
+      inputs,
+      ...(request.task !== undefined ? { task: request.task } : {}),
+      ...(request.roleInstructions !== undefined
+        ? { roleInstructions: request.roleInstructions }
+        : {}),
+    });
+    largest = Math.max(largest, rendered.bytes);
+  }
+  return largest;
 }
 
 function nonEmpty(value: unknown): value is string {
