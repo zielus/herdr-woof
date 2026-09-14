@@ -141,7 +141,7 @@ describe("overlayRuntime", () => {
 
     expect(overlaid.agents[0]?.runtime).toEqual({
       lifecycle: "ready",
-      herdrStatus: "done",
+      runtimeStatus: "done",
       observedAt: "2026-09-14T10:00:00.000Z",
       order: { terminalId: "t1", stateChangeSeq: 6, revision: null },
     });

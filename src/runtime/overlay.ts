@@ -6,7 +6,8 @@ import type { ObservationTracker } from "./tracker.js";
 /** In-memory runtime state laid over a snapshot agent; never persisted. */
 export interface RuntimeOverlay {
   lifecycle: Lifecycle;
-  herdrStatus: string | null;
+  /** Raw runtime status, as in LifecycleObservation.runtimeStatus. */
+  runtimeStatus: string | null;
   observedAt: string;
   order: ObservationOrder;
 }
@@ -62,7 +63,7 @@ export function overlayRuntime(
       ...copy,
       runtime: {
         lifecycle: last.lifecycle,
-        herdrStatus: last.runtimeStatus,
+        runtimeStatus: last.runtimeStatus,
         observedAt: last.observedAt,
         order: { ...last.order },
       },
