@@ -72,6 +72,14 @@ export async function* subscribeEvents(
     if (anchor === undefined) {
       const read = readJournalPrefix(runDir);
       if (!read.ok) {
+        if (read.reason === "journal_replaced") {
+          yield {
+            type: "resync_required",
+            reason: "cursor_foreign",
+            message: `the journal at this path was replaced while it was read: ${read.message}`,
+          };
+          return;
+        }
         if (read.reason === "journal_corrupt") {
           yield { type: "error", reason: "journal_corrupt", message: read.message };
           return;
@@ -118,7 +126,9 @@ export async function* subscribeEvents(
         // The line at the offset did not continue the journal: re-read it whole.
         const full = readJournalPrefix(runDir);
         if (!full.ok) {
-          if (full.reason === "journal_corrupt") {
+          if (full.reason === "journal_replaced") {
+            yield { type: "resync_required", reason: "cursor_foreign", message: full.message };
+          } else if (full.reason === "journal_corrupt") {
             yield { type: "error", reason: "journal_corrupt", message: full.message };
           } else {
             yield { type: "resync_required", reason: "cursor_ahead", message: full.message };

@@ -335,6 +335,84 @@ describe("snapshot and events consistency", () => {
     expect(foldEvents(base, [invalid])).toMatchObject({ ok: false, reason: "journal_corrupt" });
   });
 
+  it("fails closed on an event whose cursor is not positioned after its own seq", () => {
+    const records = journalOf(parse, opened(), assigned("builder"));
+    const anchor = anchorOf(records);
+    const events = projectEvents(records, anchor);
+    const base = {
+      snapshot: deriveSnapshot(records.slice(0, 1)).snapshot,
+      records: records.slice(0, 1),
+    };
+    const misplaced = { ...(events[1] as Event), cursor: formatCursor(1, anchor) };
+
+    expect((events[1] as Event).seq).toBe(2);
+    expect(foldEvents(base, [misplaced])).toMatchObject({ ok: false, reason: "journal_corrupt" });
+    expect(foldEvents(base, [events[1] as Event])).toMatchObject({ ok: true });
+  });
+
+  it("treats the event envelope as authoritative and rejects data carrying envelope fields", () => {
+    const records = journalOf(parse, opened(), assigned("builder"));
+    const events = projectEvents(records, anchorOf(records));
+    const base = {
+      snapshot: deriveSnapshot(records.slice(0, 1)).snapshot,
+      records: records.slice(0, 1),
+    };
+    const event = events[1] as Event;
+    for (const extra of [
+      { type: "run.terminated" },
+      { seq: 7 },
+      { ts: "2020-01-01T00:00:00.000Z" },
+      { schemaVersion: 2 },
+    ]) {
+      const forged = { ...event, data: { ...event.data, ...extra } };
+      expect(foldEvents(base, [forged]), JSON.stringify(extra)).toMatchObject({
+        ok: false,
+        reason: "journal_corrupt",
+      });
+    }
+    const terminatedAsAssigned: Event = {
+      ...event,
+      type: "run.terminated",
+      data: { outcome: "cancelled", reason: "x", type: "agent.assigned" },
+    };
+    expect(foldEvents(base, [terminatedAsAssigned])).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+  });
+
+  it("accepts an identical duplicate as a no-op and fails closed on a conflicting one", () => {
+    const records = journalOf(parse, opened(), assigned("builder"), attempt("build", "builder"));
+    const events = projectEvents(records, anchorOf(records));
+    const base = {
+      snapshot: deriveSnapshot(records.slice(0, 2)).snapshot,
+      records: records.slice(0, 2),
+    };
+    const fresh = deriveSnapshot(records).snapshot;
+
+    const repeated = foldEvents(base, [events[1] as Event, events[0] as Event, events[2] as Event]);
+    expect(repeated.ok).toBe(true);
+    if (repeated.ok) expect(repeated.projection.snapshot).toEqual(fresh);
+
+    const assignedEvent = events[1] as Event;
+    const conflicting: Event = {
+      ...assignedEvent,
+      data: {
+        ...assignedEvent.data,
+        runtime: { adapter: "scripted", runtimeName: "w-builder", paneId: "w1:elsewhere" },
+      },
+    };
+    expect(foldEvents(base, [conflicting, events[2] as Event])).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+    const invalidRepeat: Event = { ...assignedEvent, data: { agentId: "../x" } };
+    expect(foldEvents(base, [invalidRepeat])).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+  });
+
   it("fails closed on a forged second run.opened instead of mixing two runs", () => {
     const records = journalOf(parse, opened(), assigned("builder"));
     const events = projectEvents(records, anchorOf(records));

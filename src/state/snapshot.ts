@@ -8,7 +8,7 @@ import type {
   RunStatus,
 } from "../domain/types.js";
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
-import { journalAnchor, readJournalPrefix } from "../journal/journal.js";
+import { journalAnchor, readJournalPrefixSettled } from "../journal/journal.js";
 import type { JournalRecord } from "../journal/records.js";
 import {
   attemptKey,
@@ -141,15 +141,25 @@ export function parseCursor(cursor: string): { seq: number; anchor: string } | u
 /**
  * Reads a snapshot of `<runDir>` without taking the journal lock. A final line
  * still being written is excluded (`journal.tailPending`); a journal with no
- * records is `run_dir_invalid`. With `verifyArtifacts`, every accepted copy is
+ * records is `run_dir_invalid`. A journal whose line 1 changes while it is read
+ * is read again, so a replaced run is shown whole, never as a mixed prefix; one
+ * still being replaced after three reads is `run_dir_invalid`. With `verifyArtifacts`, every accepted copy is
  * re-hashed against its journal record and reported in `integrity.artifacts`.
  */
 export function readSnapshot(
   runDir: string,
   options: { verifyArtifacts?: boolean } = {},
 ): ReadSnapshotResult {
-  const read = readJournalPrefix(runDir);
-  if (!read.ok) return read;
+  const read = readJournalPrefixSettled(runDir);
+  if (!read.ok) {
+    // A journal still being replaced after the bounded re-reads has no stable run to show.
+    return {
+      ok: false,
+      reason: read.reason === "journal_replaced" ? "run_dir_invalid" : read.reason,
+      message: read.message,
+      ...(read.line === undefined ? {} : { line: read.line }),
+    };
+  }
   if (read.records.length === 0 || read.anchor === null) {
     return { ok: false, reason: "run_dir_invalid", message: `${runDir} holds no run records` };
   }

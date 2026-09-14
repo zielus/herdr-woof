@@ -1,4 +1,5 @@
-import { readJournalPrefix } from "../journal/journal.js";
+import { canonicalJson } from "../contracts/canonical-json.js";
+import { readJournalPrefixSettled } from "../journal/journal.js";
 import { parseRecordLine, type JournalRecord } from "../journal/records.js";
 import { deriveSnapshot, type RunSnapshot } from "../state/snapshot.js";
 import { checkCursor, formatCursor, parseCursor, type CursorProblem } from "./cursor.js";
@@ -111,8 +112,15 @@ export function readEvents(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_EVENTS_LIMIT) {
     throw new TypeError(`limit must be an integer between 1 and ${MAX_EVENTS_LIMIT}`);
   }
-  const read = readJournalPrefix(runDir);
-  if (!read.ok) return { ok: false, reason: read.reason, message: read.message };
+  const read = readJournalPrefixSettled(runDir);
+  if (!read.ok) {
+    // A journal still being replaced after the bounded re-reads has no stable run to page.
+    return {
+      ok: false,
+      reason: read.reason === "journal_replaced" ? "run_dir_invalid" : read.reason,
+      message: read.message,
+    };
+  }
   if (read.records.length === 0 || read.anchor === null) {
     return { ok: false, reason: "run_dir_invalid", message: `${runDir} holds no run records` };
   }
@@ -145,9 +153,13 @@ export type FoldEventsResult =
 /**
  * Folds events onto a projection (or onto nothing, starting from seq 1) by
  * extending the record list and deriving the snapshot again with the same
- * reducer; there is no second reducer. Events at or below the projection's
- * revision are skipped (at-least-once delivery). A gap, another run's anchor
- * or run id, or an event that is not a valid record requires a resync.
+ * reducer; there is no second reducer. An event at or below the projection's
+ * revision is skipped only when it is the same record already folded
+ * (at-least-once delivery). A gap or another run's anchor or run id requires a
+ * resync. An event that is not a valid record, whose cursor is not positioned
+ * after its own seq, whose `data` carries an envelope field (`schemaVersion`,
+ * `seq`, `ts`, `type`), or that conflicts with an already folded record is
+ * `journal_corrupt`.
  */
 export function foldEvents(
   base: RunProjection | null,
@@ -157,11 +169,11 @@ export function foldEvents(
   let anchor = base === null ? undefined : parseCursor(base.snapshot.cursor)?.anchor;
   const runId = base?.snapshot.runId;
   for (const event of events) {
-    const eventAnchor = parseCursor(event.cursor)?.anchor;
-    anchor ??= eventAnchor;
+    const cursor = parseCursor(event.cursor);
+    anchor ??= cursor?.anchor;
     if (
-      eventAnchor === undefined ||
-      eventAnchor !== anchor ||
+      cursor === undefined ||
+      cursor.anchor !== anchor ||
       (runId !== undefined && event.runId !== runId)
     ) {
       return {
@@ -170,25 +182,35 @@ export function foldEvents(
         message: `event ${event.seq} belongs to another run`,
       };
     }
-    if (event.seq <= records.length) continue;
+    if (cursor.seq !== event.seq) {
+      return {
+        ok: false,
+        reason: "journal_corrupt",
+        message: `event ${event.seq} carries cursor ${event.cursor}, which is not positioned after it`,
+      };
+    }
+    const record = recordOf(event);
+    if (typeof record === "string") {
+      return { ok: false, reason: "journal_corrupt", message: `event ${event.seq}: ${record}` };
+    }
+    if (event.seq <= records.length) {
+      // At-least-once delivery: a repeat must be the record already folded at that seq.
+      const existing = records[event.seq - 1];
+      if (existing === undefined || canonicalJson(existing) !== canonicalJson(record)) {
+        return {
+          ok: false,
+          reason: "journal_corrupt",
+          message: `event ${event.seq} conflicts with the record already folded at that seq`,
+        };
+      }
+      continue;
+    }
     if (event.seq !== records.length + 1) {
       return {
         ok: false,
         reason: "resync_required",
         message: `event ${event.seq} does not follow ${records.length}`,
       };
-    }
-    const record = parseRecordLine(
-      JSON.stringify({
-        schemaVersion: 1,
-        seq: event.seq,
-        ts: event.ts,
-        type: event.type,
-        ...event.data,
-      }),
-    );
-    if (typeof record === "string") {
-      return { ok: false, reason: "journal_corrupt", message: `event ${event.seq}: ${record}` };
     }
     records.push(record);
   }
@@ -198,4 +220,26 @@ export function foldEvents(
   const derived = deriveSnapshot(records, { anchor });
   if (!derived.ok) return { ok: false, reason: "journal_corrupt", message: derived.message };
   return { ok: true, projection: { snapshot: derived.snapshot, records } };
+}
+
+const ENVELOPE_FIELDS = ["schemaVersion", "seq", "ts", "type"] as const;
+
+/** The journal record an event stands for; the event's envelope fields are authoritative. */
+function recordOf(event: RunEvent): JournalRecord | string {
+  const data: unknown = event.data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return "data must be an object";
+  }
+  for (const field of ENVELOPE_FIELDS) {
+    if (Object.hasOwn(data, field)) return `data must not carry the envelope field ${field}`;
+  }
+  return parseRecordLine(
+    JSON.stringify({
+      ...data,
+      schemaVersion: 1,
+      seq: event.seq,
+      ts: event.ts,
+      type: event.type,
+    }),
+  );
 }

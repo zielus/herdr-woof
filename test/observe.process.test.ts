@@ -342,7 +342,13 @@ const REWRITE = 'import { writeFileSync } from "node:fs"; writeFileSync(process.
 const APPEND = 'import { appendFileSync } from "node:fs"; appendFileSync(process.argv[1], process.argv[2]);';
 const RENAME = 'import { renameSync, writeFileSync } from "node:fs"; writeFileSync(process.argv[1] + ".new", process.argv[2]); renameSync(process.argv[1] + ".new", process.argv[1]);';
 let checks = 0;
+let prefixReads = 0;
 let swapped = false;
+journalReadHooks.afterPrefixRead = () => {
+  prefixReads += 1;
+  // prefix: same inode, new line 1, while the subscription's first full read is in progress.
+  if (mode === "prefix" && prefixReads === 1) writer(REWRITE, replacement);
+};
 journalReadHooks.afterLineOneCheck = () => {
   checks += 1;
   if (checks !== 1) return;
@@ -362,7 +368,11 @@ for await (const item of subscribeEvents(runDir, { pollMs: 15 })) {
 process.exit(6);
 `;
 
-  async function atBoundary(name: string, mode: "rewrite" | "swap", replacement: string) {
+  async function atBoundary(
+    name: string,
+    mode: "rewrite" | "swap" | "prefix",
+    replacement: string,
+  ) {
     const runDir = makeRunDir();
     writeFileSync(join(runDir, "journal.jsonl"), openedLine("run-old"));
     const file = join(eventsDir, `${name}.jsonl`);
@@ -387,6 +397,48 @@ process.exit(6);
       expect.objectContaining({ type: "run.opened", seq: 1, runId: "run-old" }),
       expect.objectContaining({ type: "resync_required", reason: "cursor_foreign" }),
     ]);
+  });
+
+  it("ends a fresh subscription with cursor_foreign when line 1 is rewritten during its first full read", async () => {
+    const { exit, seen } = await atBoundary(
+      "boundary-prefix",
+      "prefix",
+      openedLine("run-new") + terminatedLine,
+    );
+
+    expect(exit.status, exit.stderr).toBe(5);
+    expect(seen).toEqual([
+      expect.objectContaining({ type: "resync_required", reason: "cursor_foreign" }),
+    ]);
+  });
+
+  it("shows a journal rewritten in place during a snapshot read as the replacement, never as the old prefix", () => {
+    const runDir = makeRunDir();
+    writeFileSync(join(runDir, "journal.jsonl"), openedLine("run-old"));
+    const out = runSdk<Json>(
+      runDir,
+      `import { spawnSync } from "node:child_process";
+const { journalReadHooks } = await import(${JSON.stringify(distUrl("journal/journal.js"))});
+let reads = 0;
+journalReadHooks.afterPrefixRead = () => {
+  reads += 1;
+  if (reads !== 1) return;
+  const code = 'import { writeFileSync } from "node:fs"; writeFileSync(process.argv[1], process.argv[2]);';
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", code, runDir + "/journal.jsonl", input.replacement]);
+  if (result.status !== 0) throw new Error(String(result.stderr));
+};
+const read = snapshots.readSnapshot(runDir);
+out = { ok: read.ok, runId: read.snapshot?.runId, revision: read.snapshot?.revision, status: read.snapshot?.status, reads };`,
+      { replacement: openedLine("run-new") + terminatedLine },
+    );
+
+    expect(out).toEqual({
+      ok: true,
+      runId: "run-new",
+      revision: 2,
+      status: "cancelled",
+      reads: 2,
+    });
   });
 
   it("never yields seq 2 when another inode is renamed in between a failed continuation read and the fallback full read", async () => {

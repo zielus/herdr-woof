@@ -173,7 +173,12 @@ export type ReadJournalPrefixResult =
       /** The file read and its line 1, under the same condition as `anchor`. */
       file: JournalFile | null;
     }
-  | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
+  | {
+      ok: false;
+      reason: "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
+      message: string;
+      line?: number;
+    };
 
 /**
  * Tolerant, lock-free read for observers. Every newline-terminated line gets
@@ -182,12 +187,23 @@ export type ReadJournalPrefixResult =
  * appending it. A read from offset 0 replays the records; a read from a later
  * `fromOffset` checks only record fields and `seq` continuity from `expectSeq`,
  * and the caller replays the records it accumulated. It never takes the lock.
+ * A read from offset 0 re-reads line 1 on the same descriptor after reading:
+ * if it no longer matches the bytes read, the journal was rewritten during the
+ * read and the result is `journal_replaced`.
  */
 export function readJournalPrefix(
   runDir: string,
   { fromOffset = 0, expectSeq = 1 }: { fromOffset?: number; expectSeq?: number } = {},
 ): ReadJournalPrefixResult {
-  const read = readJournalBytes(runDir, fromOffset);
+  let read: BytesResult;
+  try {
+    read = readJournalBytes(runDir, fromOffset, fromOffset === 0 ? verifyPrefixRead : undefined);
+  } catch (error) {
+    if (error instanceof JournalReplacedError) {
+      return { ok: false, reason: "journal_replaced", message: error.message };
+    }
+    throw error;
+  }
   if (!read.ok) return read;
   const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
   if (!parsed.ok) return parsed;
@@ -212,6 +228,44 @@ export function readJournalPrefix(
     anchor: file?.anchor ?? null,
     file,
   };
+}
+
+/**
+ * `readJournalPrefix` from offset 0, read again while the journal is replaced
+ * during the read, at most `reads` times in all. The last result is returned,
+ * so it can still be `journal_replaced`.
+ */
+export function readJournalPrefixSettled(runDir: string, reads = 3): ReadJournalPrefixResult {
+  let read = readJournalPrefix(runDir);
+  for (let count = 1; count < reads && !read.ok && read.reason === "journal_replaced"; count += 1) {
+    read = readJournalPrefix(runDir);
+  }
+  return read;
+}
+
+/**
+ * Post-read check for an offset-0 read: line 1 read again on the same
+ * descriptor must equal line 1 of the bytes read. The descriptor's device and
+ * inode cannot change while it is open, so an in-place rewrite shows up here.
+ */
+function verifyPrefixRead(fd: number, phase: "before" | "after", content?: Buffer): void {
+  if (phase !== "after" || content === undefined) return;
+  journalReadHooks.afterPrefixRead(fd);
+  const end = content.indexOf(0x0a);
+  if (end === -1) return; // no complete line 1: no anchor is taken from this read
+  const expected = content.subarray(0, end + 1);
+  const now = Buffer.alloc(expected.length);
+  let length = 0;
+  while (length < now.length) {
+    const got = readSync(fd, now, length, now.length - length, length);
+    if (got === 0) break;
+    length += got;
+  }
+  if (length !== expected.length || !now.equals(expected)) {
+    throw new JournalReplacedError(
+      "journal line 1 changed while it was read; the journal was replaced",
+    );
+  }
 }
 
 /** The journal file a subscription started on: its identity and its line 1. */
@@ -245,9 +299,12 @@ class JournalReplacedError extends Error {}
 export const journalReadHooks: {
   afterLineOneCheck: (fd: number) => void;
   afterContinuationRead: (result: ReadJournalContinuationResult) => void;
+  /** Runs after an offset-0 `readJournalPrefix` read its bytes, before line 1 is checked again. */
+  afterPrefixRead: (fd: number) => void;
 } = {
   afterLineOneCheck: () => undefined,
   afterContinuationRead: () => undefined,
+  afterPrefixRead: () => undefined,
 };
 
 /**
@@ -324,7 +381,7 @@ type BytesResult =
 function readJournalBytes(
   runDir: string,
   fromOffset: number,
-  verify?: (fd: number, phase: "before" | "after") => void,
+  verify?: (fd: number, phase: "before" | "after", content?: Buffer) => void,
 ): BytesResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: Buffer;
@@ -355,7 +412,7 @@ function readJournalBytes(
         }
         content = content.subarray(0, length);
       }
-      verify?.(fd, "after");
+      verify?.(fd, "after", content);
     } finally {
       closeSync(fd);
     }
