@@ -14,7 +14,7 @@
  */
 import type { Readable, Writable } from "node:stream";
 
-/** The newest MCP revision this server claims. The client's wins if it names one. */
+/** The one MCP protocol revision this server implements. Never negotiated away. */
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 
 export interface ServeMcpOptions {
@@ -70,6 +70,12 @@ export async function serveMcp(options: ServeMcpOptions): Promise<void> {
     }
     const message = parsed as JsonRpcMessage;
     const id = message.id;
+    if (message.jsonrpc !== "2.0") {
+      if (id !== undefined && id !== null) {
+        send({ id, error: { code: INVALID_REQUEST, message: 'jsonrpc must be "2.0"' } });
+      }
+      return;
+    }
     const method = message.method;
     if (typeof method !== "string") {
       if (id !== undefined && id !== null) {
