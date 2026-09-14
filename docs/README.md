@@ -5,6 +5,11 @@ Status: design baseline, 2026-09-14. These documents synthesize the
 and inspected project material. They describe what to build; they do not claim
 that the features exist or that proposed implementation details are approved.
 
+A first working slice now exists: result handoff (envelope v1, `woof submit`,
+`woof attempt open`, and the run journal). See
+[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype)
+for what is real today versus still proposed.
+
 Read in this order:
 
 1. [Product brief](product/brief.md): purpose, scope, and required outcomes.

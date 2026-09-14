@@ -1,10 +1,11 @@
 # Woof
 
 Woof is the future orchestration SDK for coding agents running through Herdr.
-This repository currently provides a **foundation only**: a package boundary,
-build and packaging checks, a diagnostic CLI, and truthful Herdr/Claude plugin
-placeholders. It does not run workflows, delegate agents, persist runs, or
-publish a `HerdrAgentsSDK` API yet.
+This repository provides a package boundary, build and packaging checks, a
+diagnostic CLI, truthful Herdr/Claude plugin placeholders, and a first working
+slice of result handoff: a worker-callable `woof submit` CLI/SDK bridge backed
+by an append-only run journal (see below). It does not run workflows, delegate
+agents, or publish a stable `HerdrAgentsSDK` API yet.
 
 ## Requirements
 
@@ -23,21 +24,69 @@ bun run verify
 
 `bun run build` compiles the ESM package and declarations to `dist/`. The
 installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
-`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action. The
-only current executable behavior is diagnostic:
+`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action.
+Executable behavior today is diagnostic, plus the result-handoff prototype:
 
 ```sh
 bin/woof --help
 bin/woof --version
 bin/woof doctor
+bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
+  --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
+bin/woof submit --envelope <path|-> [--run-dir <dir>]
 ```
 
 `doctor` reports whether Herdr and Claude Code can be invoked; neither is
-required for the command to complete. Any workflow-oriented command is rejected
-as not implemented.
+required for the command to complete. Any other workflow-oriented command is
+rejected as not implemented.
 
 The package smoke test packs the project, installs it into an isolated local
 consumer, imports its public entry point, and exercises the installed CLI.
+
+## Result handoff (p1 prototype)
+
+A worker declares an attempt, then submits a small envelope pointing at the
+artifact it wrote. `woof` validates the envelope and the artifact against an
+append-only run journal (`<runDir>/journal.jsonl`) and records the outcome:
+
+```sh
+RUN_DIR=/tmp/woof-example
+bin/woof attempt open --run-dir "$RUN_DIR" --run demo-1 --agent worker-1 \
+  --stage report --visit 1 --attempt 1 --verdicts pass,fail
+# {"outcome":"opened","attempt":{...,"artifactDir":"<absolute path>"}}
+
+mkdir -p "$RUN_DIR/artifacts/report/visit-1/attempt-1"
+echo "# Report" > "$RUN_DIR/artifacts/report/visit-1/attempt-1/report.md"
+HASH=$(shasum -a 256 "$RUN_DIR/artifacts/report/visit-1/attempt-1/report.md" | cut -d' ' -f1)
+
+cat > "$RUN_DIR/envelope.json" <<EOF
+{
+  "schemaVersion": 1,
+  "runId": "demo-1",
+  "agentId": "worker-1",
+  "stageId": "report",
+  "visit": 1,
+  "attempt": 1,
+  "status": "completed",
+  "verdict": "pass",
+  "artifact": { "path": "artifacts/report/visit-1/attempt-1/report.md", "sha256": "$HASH" }
+}
+EOF
+bin/woof submit --run-dir "$RUN_DIR" --envelope "$RUN_DIR/envelope.json"
+# {"outcome":"accepted","receipt":{...}}
+```
+
+Exit codes: `0` for `accepted`/`duplicate`/`opened`; `2` for a rejection with a
+machine-readable reason (a closed set, see
+[communication.md](docs/architecture/communication.md#implemented-now-p1-prototype));
+`3` for a run-directory or journal infrastructure failure; `1` for a usage
+error. The SDK exposes the same operations as `submitResult`, `openAttempt`
+and `readJournal` (marked as an unstable p1 prototype in `src/index.ts`).
+
+What still does not exist: a scheduler or workflow engine, workflow
+definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or
+run hosting (there is no daemon or live run owner — `submit` opens the journal
+itself, in process).
 
 ## Integrations and scope
 
