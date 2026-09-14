@@ -66,6 +66,18 @@ export async function admitWorkflow<Input>(options: {
   }
   const revision = await revisionOf(repository);
   if (!revision.ok) return reject("repo_invalid", revision.message);
+  // The repository is the whole work tree: a directory inside it is refused, so
+  // overlap checks and fingerprints always use the same top level.
+  let sameRoot = false;
+  try {
+    sameRoot = realpathSync(repository) === realpathSync(revision.root);
+  } catch {
+    sameRoot = false;
+  }
+  if (!sameRoot) {
+    const message = `the repository ${repository} is not the top level of its git work tree ${revision.root}`;
+    return reject("repo_invalid", message, [{ field: "repository", message }]);
+  }
 
   const overlap = runDirOverlap(repository, options.runDir);
   if (overlap !== undefined) {

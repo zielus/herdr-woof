@@ -247,6 +247,26 @@ describe("woof run build-review: usage and admission", () => {
     expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
   });
 
+  it("rejects a repository path below the git top level, naming both, before anything runs", () => {
+    const ws = workspace();
+    const nested = join(ws.repo, "src");
+    mkdirSync(nested);
+    writeInput(ws.inputPath, input(nested));
+    // A run directory beside src/ lies inside the real work tree.
+    const runDir = join(ws.repo, "run");
+    const result = runBuildReview(
+      { ...ws, runDir },
+      ["--runtime-module", runtimeModule],
+      scriptedEnv(ws.log),
+    );
+    expect(result.status, result.stdout).toBe(2);
+    expect(result.json).toMatchObject({ outcome: "rejected", reason: "repo_invalid" });
+    expect(result.json?.message).toContain(nested);
+    expect(result.json?.message).toMatch(/is not the top level of its git work tree \//);
+    expect(existsSync(runDir)).toBe(false);
+    expect(existsSync(ws.log)).toBe(false);
+  });
+
   it("rejects a run directory equal to, inside or containing the repository before anything runs", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));

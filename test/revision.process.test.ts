@@ -16,6 +16,7 @@ afterEach(() => {
 interface RevisionOut {
   ok: boolean;
   revision?: { head: string | null; tree: string };
+  root?: string;
   reason?: string;
   message?: string;
 }
@@ -125,6 +126,20 @@ describe("revisionOf", () => {
     const out = revision(repo);
     expect(out).toMatchObject({ ok: true, revision: { head: null } });
     expect(out.revision?.tree).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("fingerprints the whole work tree from a nested directory, including sibling changes", () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, "src"));
+    writeFileSync(join(repo, "src", "inner.txt"), "inner\n");
+    const nested = revision(join(repo, "src")) as RevisionOut & { root?: string };
+    expect(nested.ok, nested.message).toBe(true);
+    expect(nested.revision?.tree).toBe(treeOf(repo));
+    expect(nested.root).toBe(revision(repo).root);
+    // A change outside the nested directory still changes the nested fingerprint.
+    writeFileSync(join(repo, "sibling.txt"), "outside src\n");
+    expect(revision(join(repo, "src")).revision?.tree).not.toBe(nested.revision?.tree);
+    expect(revision(join(repo, "src")).revision?.tree).toBe(treeOf(repo));
   });
 
   it("refuses a directory that is not a git work tree", () => {
