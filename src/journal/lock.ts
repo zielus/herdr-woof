@@ -101,9 +101,10 @@ async function acquire(
           `Woof does not remove stale locks: if that process is gone, delete ${lockPath} by hand.`,
       };
     }
-    // Polling is sequential by design: each wait precedes the next attempt.
+    // Polling is sequential by design: each wait precedes the next attempt. The
+    // wait never extends past the deadline, so timeoutMs is an upper bound.
     // oxlint-disable-next-line no-await-in-loop
-    await delay(pollMs);
+    await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
   }
 }
 

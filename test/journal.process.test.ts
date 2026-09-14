@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   artifactRel,
   cleanupRunDirs,
+  distIndexUrl,
   envelopeFor,
   journal,
   makeRunDir,
@@ -14,6 +15,7 @@ import {
   openAttempt,
   openAttemptOk,
   readyAttempt,
+  runNode,
   submit,
   woofAsync,
   writeArtifact,
@@ -123,6 +125,38 @@ describe("run journal failure boundaries", () => {
     expect(elapsed).toBeLessThan(7000);
     expect(existsSync(lockPath)).toBe(true);
     expect(readFileSync(join(runDir, "journal.jsonl")).equals(journalBefore)).toBe(true);
+  });
+
+  it("treats timeoutMs as an upper bound even when pollMs is longer", () => {
+    const { runDir, envelope } = readyAttempt();
+    writeFileSync(
+      join(runDir, "journal.lock"),
+      JSON.stringify({ pid: process.pid, host: hostname(), ts: new Date().toISOString() }),
+    );
+    // Lock options are SDK-only, so the check runs submitResult in a child process.
+    const script = `
+const sdk = await import(${JSON.stringify(distIndexUrl)});
+const started = Date.now();
+const outcome = await sdk.submitResult({
+  runDir: process.argv[1],
+  envelopeRaw: process.argv[2],
+  lock: { timeoutMs: 100, pollMs: 10000 },
+});
+console.log(JSON.stringify({ outcome, elapsed: Date.now() - started }));
+`;
+
+    const started = Date.now();
+    const result = runNode(script, [runDir, JSON.stringify(envelope)]);
+    const wall = Date.now() - started;
+
+    expect(result.status, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      outcome: { outcome: string; reason: string };
+      elapsed: number;
+    };
+    expect(output.outcome).toMatchObject({ outcome: "rejected", reason: "journal_busy" });
+    expect(output.elapsed).toBeLessThan(2000);
+    expect(wall).toBeLessThan(2000);
   });
 });
 
