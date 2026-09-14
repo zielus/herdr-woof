@@ -5,14 +5,30 @@
 //   node scripts/live/build-review.mjs --probe
 //   node scripts/live/build-review.mjs 2>&1 | tee docs/research/build-review-live.log
 //
-// It builds a fixture repository and input, runs the real `woof run
-// build-review` CLI with two Claude agents, samples `woof run show` and Herdr
-// agent status every 5 s, then prints the evidence and a PASS/FAIL line per
-// hard gate. It never reads pane text and never sends keys. Exit 0 when every
-// gate passes, 1 when one fails, 4 when the journal holds run.blocked.
+// It rebuilds the fixture repository at one fixed path, writes the input, runs
+// the real `woof run build-review` CLI with two Claude agents, samples `woof run
+// show` and Herdr agent status every 5 s, then prints the evidence and a
+// PASS/FAIL line per hard gate. It never reads pane text and never sends keys.
+// Exit 0 when every gate passes, 1 when one fails, 4 when the journal holds
+// run.blocked.
+//
+// Operator precondition: Claude Code asks a folder-trust question for a
+// directory it has never seen, and that blocks agent startup. The operator must
+// have trusted the fixed fixture path
+// ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo in Claude
+// Code once (open `claude` there and answer its folder-trust question); Woof
+// never does this. The repository there is deleted and re-initialized on every
+// run; run directories stay per-stamp next to it, outside it.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -30,6 +46,9 @@ const { revisionOf } = await load("scheduler/revision.js");
 const probe = process.argv.includes("--probe");
 const phaseDir = join(homedir(), ".herdr-dev", "runs", "herdr-woof", "p3-build-review-loop");
 const probeLog = join(phaseDir, "live-probe.log");
+// The one fixture path the operator trusts in Claude Code; see the header.
+const fixtureRepo = join(phaseDir, "live", "fixture-repo");
+const trustPrecondition = `the operator must have trusted ${fixtureRepo} in Claude Code once (open \`claude\` there and answer its folder-trust question); Woof never does this.`;
 const logged = new Set();
 
 function log(line = "", key = undefined) {
@@ -83,6 +102,7 @@ log(`node --version: ${process.version}`, "node");
 log(`git --version: ${sh("git", ["--version"]).stdout}`, "git");
 log(`woof commit: ${sh("git", ["-C", woofRoot, "rev-parse", "HEAD"]).stdout}`, "commit");
 log(`woof worktree status --porcelain:\n${worktreeStatusBefore || "(clean)"}`);
+log(`precondition: ${trustPrecondition}`);
 if (process.env["HERDR_ENV"] !== "1" || (process.env["HERDR_PANE_ID"] ?? "") === "") {
   log("precondition failed: run this inside a Herdr pane (HERDR_ENV=1, HERDR_PANE_ID)");
   process.exit(1);
@@ -91,13 +111,16 @@ if (process.env["HERDR_ENV"] !== "1" || (process.env["HERDR_PANE_ID"] ?? "") ===
 // ---------------------------------------------------------------- fixture
 const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace("T", "-").slice(0, 15);
 const live = join(phaseDir, "live", probe ? `probe-${stamp}` : stamp);
-const repo = join(live, "repo");
+const repo = fixtureRepo;
 const runDir = join(live, "run");
 const inputPath = join(live, "input.json");
 const nonce = randomBytes(6).toString("hex");
 const runId = `${probe ? "live-probe" : "live-br"}-${stamp}`;
 const requiredLine = `// woof-acceptance: ${nonce}`;
+// Re-initialize the fixed fixture repository from scratch; the run directory is per stamp, outside it.
+rmSync(repo, { recursive: true, force: true });
 mkdirSync(join(repo, "src"), { recursive: true });
+mkdirSync(live, { recursive: true });
 const gitAs = (...args) =>
   sh(
     "git",
@@ -182,7 +205,7 @@ const input = probe
 writeFileSync(inputPath, `${JSON.stringify(input, null, 2)}\n`);
 section("fixture");
 log(`live root: ${live}`);
-log(`repo: ${repo}`);
+log(`repo (fixed, re-initialized): ${repo}`);
 log(`run dir: ${runDir}`);
 log(`nonce: ${nonce}`);
 log(`input (${inputPath}):\n${readFileSync(inputPath, "utf8")}`, "input");
@@ -210,10 +233,19 @@ process.on("SIGINT", () => child.kill("SIGINT"));
 
 const herdr = createHerdrCliRuntime({ bin: "herdr" });
 const samples = [];
+let startupBlockReported = false;
 async function sample() {
   const shown = woof("run", "show", runDir);
   if (shown.status !== 0) return;
   const snapshot = JSON.parse(shown.stdout).snapshot;
+  const block = snapshot.attention?.blocked;
+  if (block?.reason === "startup_blocked" && !startupBlockReported) {
+    startupBlockReported = true;
+    const assignment = snapshot.agents.find((item) => item.agentId === block.agentId)?.assignment;
+    log(
+      `[startup blocked] agent ${block.agentId} (runtime ${assignment?.runtimeName ?? "unknown"}) is blocked while starting in pane ${assignment?.paneId ?? "unknown"}; precondition: ${trustPrecondition} Nothing answers it; the run exhausts blockedWaitMs as designed.`,
+    );
+  }
   const row = {
     at: new Date().toISOString(),
     status: snapshot.status,
