@@ -27,8 +27,11 @@ All notable changes to this project are documented here. The format follows
   (`readSnapshot`/`deriveSnapshot`, `readEvents`/`subscribeEvents`/
   `foldEvents`) with a resume cursor and tail-tolerant reads; a
   `RuntimeAdapter` contract with a Herdr CLI implementation (live-checked
-  against a real `claude` agent through Herdr) and an in-memory scripted
-  double exported from `herdr-woof/testing`; and the read-only `woof run
-show` CLI command. Declared limits are validated and counted, not yet
-  enforced; gate, block and delivery-reconciliation records remain
-  design-only (phase 3). No version bump (`check:version` stays at 0.0.0).
+  against a real `claude` agent through Herdr, its `inspect` restricted to a
+  read-only command allowlist) and an in-memory scripted double exported
+  from `herdr-woof/testing`; and the read-only `woof run show` CLI command,
+  which also exits 3 with the distinct reason `journal_replaced` when the
+  journal's line 1 changes on every one of three consecutive re-reads.
+  Declared limits are validated and counted, not yet enforced; gate, block
+  and delivery-reconciliation records remain design-only (phase 3). No
+  version bump (`check:version` stays at 0.0.0).

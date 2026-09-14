@@ -100,20 +100,34 @@ bin/woof run show "$RUN_DIR" --verify-artifacts
 ```
 
 Exit `0` with the snapshot; exit `3` when the run directory or journal is
-invalid. It works on a terminated run and on a p1 journal. The SDK also
-exposes a run plan (`RunPlan`/`Limits`/`AgentSpec`/`StageSpec`,
-`validateRunPlan`), the run-facts store (`openRun`, `assignAgent`,
-`recordDispatch`, `terminateRun`), snapshots and events
-(`readSnapshot`/`deriveSnapshot`, `readEvents`/`subscribeEvents`/
-`foldEvents`), and a runtime adapter contract
+invalid — reason `run_dir_invalid` (missing journal or no records),
+`journal_corrupt`, or `journal_replaced` (the journal's line 1 changed
+during each of three consecutive re-reads). It works on a terminated run
+and on a p1 journal. The SDK also exposes a run plan
+(`RunPlan`/`Limits`/`AgentSpec`/`StageSpec`, `validateRunPlan`), the
+run-facts store (`openRun`, `assignAgent`, `recordDispatch`,
+`terminateRun`; `assignAgent` throws a TypeError for a malformed
+`terminalId`/`sessionId` rather than dropping it — only `null`/`undefined`
+are omitted), snapshots and events (`readSnapshot`/`deriveSnapshot`,
+`readEvents`/`subscribeEvents`/`foldEvents`), and a runtime adapter contract
 (`RuntimeAdapter`/`createHerdrCliRuntime`/`herdrRuntimeName`,
 `ObservationTracker`/`watchAgent`, `overlayRuntime`) — see
 [domain model](docs/architecture/domain-model.md#implemented-now-p2) and
 [observability](docs/architecture/observability.md#implemented-now-p2), all
-marked as an unstable p2 contract in `src/index.ts`. A deterministic
+marked as an unstable p2 contract in `src/index.ts`.
+
+`createHerdrCliRuntime`'s `inspect` runs only a read-only allowlist —
+`agent list`, `agent get <target>`, `pane get <id>`, `pane list` and
+`workspace list` — and refuses everything else as `invalid_request` without
+spawning. Its `waitFor` returns `unsupported` without spawning whenever the
+requested states include `gone` or `unknown` (Herdr cannot wait for either),
+and `stop` gives up the closed pane's ownership immediately once `pane
+close` succeeds, before it even verifies the agent is gone. A deterministic
 in-memory double for the same runtime contract, `createScriptedRuntime`,
 ships from the `herdr-woof/testing` subpath for workflow-author tests; it is
-never exported from the main entry.
+never exported from the main entry. Its `advance` throws a TypeError for a
+negative or non-integer step count, and construction throws a TypeError for
+an empty `afterDeliver` sequence (flat or nested).
 
 What still does not exist: a scheduler or workflow engine, workflow
 definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or

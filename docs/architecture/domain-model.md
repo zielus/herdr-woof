@@ -156,11 +156,16 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
 
 - **Runtime lifecycle is an overlay, never a record.** A runtime adapter's
   lifecycle observations (`ready | working | blocked | unknown | gone`) live
-  only in an in-memory tracker; overlaying them onto a snapshot fills
-  `agents[].runtime` for display and reports whether any agent was observed.
-  A derived snapshot on its own (`deriveSnapshot`/`readSnapshot`/`woof run
-show`) always reports `agents[].runtime: null`: no lifecycle value
-  completes, accepts or fails an attempt, and runtime observation is lossy
-  by construction — transitions between two reads are not seen. See
+  only in an in-memory tracker; overlaying them onto a snapshot
+  (`overlayRuntime`) fills `agents[].runtime` for display and reports
+  whether any agent was observed. It applies an agent's last tracked
+  observation only when the assignment's `terminalId` is null or equals the
+  observation's terminal — otherwise that agent's `runtime` stays `null` and
+  the agent is listed in the result's `skipped` list instead of being
+  overlaid with the wrong occupant's lifecycle. A derived snapshot on its
+  own (`deriveSnapshot`/`readSnapshot`/`woof run show`) always reports
+  `agents[].runtime: null`: no lifecycle value completes, accepts or fails
+  an attempt, and runtime observation is lossy by construction —
+  transitions between two reads are not seen. See
   [observability](observability.md#implemented-now-p2) for the runtime
   adapter contract itself.

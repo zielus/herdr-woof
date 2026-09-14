@@ -98,8 +98,15 @@ design intent. Source: `src/state/snapshot.ts`,
   `attention.ambiguousDeliveries`, `outputs.latestAcceptedByStage`,
   `liveness`, and `integrity.artifacts` (`"unchecked"` by default). It never
   embeds artifact bodies or review/research prose, only references.
-  `readSnapshot` takes no journal lock and works after a run has ended; a
-  journal with no records is `run_dir_invalid`.
+  `readSnapshot` takes no journal lock and works after a run has ended.
+  `run_dir_invalid` now means only that the journal is missing or holds no
+  records. `readSnapshot` and `readEvents` both re-read the journal when its
+  line 1 changes during a read, at most three reads in all; if line 1 still
+  changed on the third read, they return the distinct reason
+  `journal_replaced` ("the journal's line 1 changed during each of 3
+  consecutive reads") rather than `run_dir_invalid`. `woof run show` exits
+  `3` for any of the three: `{"outcome":"rejected","reason":"run_dir_invalid"
+| "journal_corrupt" | "journal_replaced",…}`.
 
 - **An event is its journal record, one-to-one.** A `RunEvent`
   (`schemaVersion: 1`, `kind: "woof.run.event"`) carries the same `type`
@@ -133,11 +140,22 @@ cursor_expired`) and every `subscribeEvents` `resync_required` item
   transition. `foldEvents(base, events)` (`RunProjection = {snapshot,
 records}`) is the proof of this by construction: it re-derives the
   snapshot from the kept record list with the same reducer (there is no
-  second reducer), skips events at or below the base revision, and returns
-  `resync_required` for a gap, a foreign run or run id, or the no-base-and-
-  no-events case — but `journal_corrupt` for an event that does not parse
-  as a valid record or that the reducer refuses as an impossible
-  transition, matching `readJournal`'s own fail-closed behavior.
+  second reducer). For every event it first checks the envelope itself —
+  `schemaVersion !== 1` or `kind !== "woof.run.event"` is `journal_corrupt`,
+  before its cursor is even read. With no base, an envelope `runId` other
+  than the first `run.opened` event's `data.runId` is also `journal_corrupt`,
+  and — with or without a base — any `data.runId` naming a different run is
+  `journal_corrupt` too. A foreign anchor (another run at the same path) is
+  `resync_required`; once the anchor matches, a cursor whose seq does not
+  equal the event's own seq is `journal_corrupt`. An event's `data` carrying
+  one of the envelope fields (`schemaVersion`, `seq`, `ts`, `type`), an event
+  that does not otherwise parse as a valid record, or one the reducer
+  refuses as an impossible transition, is `journal_corrupt` — matching
+  `readJournal`'s own fail-closed behavior. A repeated seq at or below what
+  is already folded is skipped only when it is the identical record already
+  held there; a conflicting repeat is `journal_corrupt`, not a silent
+  overwrite. Only a genuine gap in `seq` past the kept records, or folding
+  with no base and no events at all, is `resync_required`.
 
 - **Tail-pending semantics.** A snapshot or event read never takes the
   journal lock; a final journal line without its trailing newline (a write
@@ -156,11 +174,28 @@ records}`) is the proof of this by construction: it re-derives the
   and the same line 1 while replacing later bytes with a different valid
   continuation.
 
+- **Subscription startup.** `subscribeEvents` waits — polling, never
+  failing — while the run directory or its journal does not exist yet (an
+  ENOENT on either is "not created yet"). It ends at once with
+  `{type: "error", reason: "run_dir_invalid"}` only when the failure can
+  never resolve on its own: the run-directory path exists but is not a
+  directory, or inspecting it or the journal path fails for any other
+  reason (`EACCES`, `EPERM`, `ENOTDIR`). If the very first read (before any
+  event is yielded) finds the journal's line 1 already changed — a fresh
+  subscription racing a replacement — it ends with
+  `resync_required/cursor_foreign` rather than waiting or retrying.
+
 - **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
   process to be reachable, so every snapshot says so explicitly rather than
   claiming `"active"`. `liveness.runtime` stays `"not_observed"` in every
-  derived snapshot; only an explicit, non-journaled overlay step can report
-  `"observed"`, and only when at least one agent had a tracked observation.
+  derived snapshot; only an explicit, non-journaled overlay step
+  (`overlayRuntime`) can report `"observed"`, and only when it actually laid
+  an observation over at least one agent. `overlayRuntime` uses an
+  agent's last tracked observation only when the assignment's `terminalId`
+  is null or equals the observation's terminal; otherwise that agent's
+  `runtime` stays `null` and the agent is listed in the result's `skipped`
+  (`{agentId, runtimeName, assignedTerminalId, observedTerminalId}`) instead
+  of being silently overlaid with another terminal's occupant.
 
 - **`--verify-artifacts`** (`woof run show --verify-artifacts`,
   `readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
@@ -176,11 +211,15 @@ records}`) is the proof of this by construction: it re-derives the
   reads are never seen. An observation tracker classifies each new sample
   against the last one for that runtime name as `new`, `duplicate`
   (identical terminal, sequence, lifecycle and raw status), `stale` (a
-  lower sequence number, or an equal one with a lower revision, within the
-  same terminal), or `replaced` (the pane's terminal id changed — the
-  occupant changed and is surfaced, never merged into the old occupant's
-  history). A bounded watch helper yields only `new`/`replaced` items and
-  exposes dropped-stale/dropped-duplicate counts. None of this is
+  lower sequence number, or an equal one with a lower revision — but only
+  within the same _known_, non-null terminal id), or `replaced` (the pane's
+  terminal id changed — the occupant changed and is surfaced, never merged
+  into the old occupant's history). An unknown terminal id on either side
+  is never `stale`: sequence and revision comparison is skipped and
+  classification falls back to receipt order (`new` unless the terminal,
+  lifecycle and raw status all repeat, which is `duplicate`). A bounded
+  watch helper yields only `new`/`replaced` items and exposes
+  dropped-stale/dropped-duplicate counts. None of this is
   journaled, and none of it affects a derived snapshot.
 
 - **Not covered yet (documented, not silently missing):** gate evaluation,
