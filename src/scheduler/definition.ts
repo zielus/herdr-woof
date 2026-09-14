@@ -1,4 +1,5 @@
 import { isId, isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
+import { jsonValueProblem } from "../contracts/json-value.js";
 import type { Limits, Revision } from "../domain/types.js";
 import type { AcceptedRef, EvidenceRef } from "../state/result.js";
 import type { SnapshotGate } from "../state/snapshot.js";
@@ -402,6 +403,11 @@ export function stageRequestProblem(value: unknown): string | undefined {
       !task["acceptanceCriteria"].every((item) => typeof item === "string"))
   ) {
     return "task must be { title: string, description: string, acceptanceCriteria: string[], context? }";
+  }
+  if (isPlainObject(task) && task["context"] !== undefined) {
+    // The context is rendered as JSON: a non-JSON value is the definition's fault, not the engine's.
+    const problem = jsonValueProblem(task["context"], "task.context");
+    if (problem !== undefined) return `${problem.field} ${problem.message}`;
   }
   if (value["roleInstructions"] !== undefined && typeof value["roleInstructions"] !== "string")
     return "roleInstructions must be a string";

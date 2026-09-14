@@ -1,5 +1,6 @@
 import { canonicalJson } from "../contracts/canonical-json.js";
 import { isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
+import { jsonValueProblem } from "../contracts/json-value.js";
 import { MAX_COUNT_LIMIT, MAX_DURATION_LIMIT_MS, type Limits } from "../domain/types.js";
 import {
   agentStageOf,
@@ -82,7 +83,7 @@ function validateInput(
       fail("task.acceptanceCriteria", "must be a non-empty array of non-empty strings");
     }
     if (Object.hasOwn(task, "context")) {
-      const problem = jsonValueProblem(task["context"], "task.context", new Set(), 0);
+      const problem = jsonValueProblem(task["context"], "task.context");
       if (problem !== undefined) fail(problem.field, problem.message);
     }
   }
@@ -348,52 +349,6 @@ function exact(
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) fail(`${prefix}${key}`, "unknown field");
   }
-}
-
-const MAX_CONTEXT_DEPTH = 1000;
-
-/** A JSON value: null, boolean, finite number, string, array or plain object of JSON values, acyclic. */
-function jsonValueProblem(
-  value: unknown,
-  field: string,
-  ancestors: Set<object>,
-  depth: number,
-): RejectionDetail | undefined {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return undefined;
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? undefined : { field, message: "must be a finite number" };
-  }
-  if (typeof value !== "object")
-    return { field, message: `must be a JSON value, not ${typeof value}` };
-  if (depth >= MAX_CONTEXT_DEPTH) {
-    return { field, message: `nests deeper than ${MAX_CONTEXT_DEPTH} levels` };
-  }
-  if (ancestors.has(value)) return { field, message: "must not contain a cycle" };
-  const isArray = Array.isArray(value);
-  if (
-    !isArray &&
-    Object.getPrototypeOf(value) !== Object.prototype &&
-    Object.getPrototypeOf(value) !== null
-  ) {
-    return { field, message: "must be a plain JSON object or array" };
-  }
-  ancestors.add(value);
-  try {
-    if (isArray) {
-      for (let index = 0; index < value.length; index += 1) {
-        const problem = jsonValueProblem(value[index], `${field}[${index}]`, ancestors, depth + 1);
-        if (problem !== undefined) return problem;
-      }
-    } else {
-      for (const [key, item] of Object.entries(value)) {
-        const problem = jsonValueProblem(item, `${field}.${key}`, ancestors, depth + 1);
-        if (problem !== undefined) return problem;
-      }
-    }
-  } finally {
-    ancestors.delete(value);
-  }
-  return undefined;
 }
 
 /** An absolute path of the admitted maximum run directory length, plus room for symlink resolution. */

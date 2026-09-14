@@ -298,6 +298,33 @@ describe("decide: starting, readiness and dispatch", () => {
     }
   });
 
+  it("fails the run as a contract violation when request() returns a task context that is not JSON", () => {
+    const base = [opened(CORE_PLAN), writerAssigned];
+    const agents = { writer: readyView("writer") };
+    const original = behaviour.request;
+    const cyclic: Json = {};
+    cyclic["self"] = cyclic;
+    try {
+      for (const context of [{ big: 10n }, { run: () => 1 }, cyclic]) {
+        behaviour.request = () => ({
+          goal: "g",
+          instructions: "i",
+          inputs: [],
+          task: { title: "t", description: "d", acceptanceCriteria: [], context },
+        });
+        expect(act(base, { agents })).toMatchObject({
+          type: "terminate",
+          outcome: "failed",
+          reason: expect.stringMatching(
+            /^definition_contract_violated: draft: request\(\) task\.context/,
+          ),
+        });
+      }
+    } finally {
+      behaviour.request = original;
+    }
+  });
+
   it("exhausts readinessWaitMs at its boundary", () => {
     const base = [opened(CORE_PLAN), writerAssigned];
     const agents = { writer: runtime("writer", { startedAt: T0 }) };
