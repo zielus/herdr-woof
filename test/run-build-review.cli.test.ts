@@ -481,6 +481,41 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     expect(readdirSync(outsideChecks)).toEqual([]);
   }, 60_000);
 
+  it("fails with engine_file_error, without hanging, when a FIFO sits at the request path", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(ws.repo));
+    const planted = join(ws.runDir, "requests", "build", "visit-1", "attempt-1");
+    mkdirSync(planted, { recursive: true });
+    expect(spawnSync("mkfifo", [join(planted, "request.md")]).status).toBe(0);
+    const began = Date.now();
+    const result = woof(
+      [
+        "run",
+        "build-review",
+        "--input",
+        ws.inputPath,
+        "--run-dir",
+        ws.runDir,
+        "--run-id",
+        "cli-run",
+        "--poll-ms",
+        "2",
+        "--runtime-module",
+        runtimeModule,
+      ],
+      { env: scriptedEnv(ws.log), timeoutMs: 20_000 },
+    );
+    expect(Date.now() - began).toBeLessThan(15_000);
+    expect(result.status, result.stderr).toBe(4);
+    const printed = JSON.parse(result.stdout.trim()) as { result: Json };
+    expect(printed.result).toMatchObject({ outcome: "failed" });
+    expect(String(printed.result["reason"])).toContain(
+      "engine_file_error: requests/build/visit-1/attempt-1/request.md",
+    );
+    expect(String(printed.result["reason"])).toContain("not a regular file");
+    expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+  }, 30_000);
+
   it("exits 5 when the reviewer never passes and the rounds run out", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo, { limits: { maxRounds: 2, runTimeoutMs: 60_000 } }));
