@@ -133,7 +133,7 @@ function validateEnvelope(value: Record<string, unknown>): RejectionDetail[] {
     if (!isId(value[field])) fail(field, `must match ${ID_PATTERN.source}`);
   }
   for (const field of ["visit", "attempt"]) {
-    if (!isPositiveInteger(value[field])) fail(field, "must be an integer >= 1");
+    if (!isPositiveInteger(value[field])) fail(field, "must be a safe integer >= 1");
   }
   if (value["status"] !== "completed" && value["status"] !== "failed") {
     fail("status", 'must be "completed" or "failed"');
@@ -172,8 +172,13 @@ export function isId(value: unknown): value is string {
   return typeof value === "string" && ID_PATTERN.test(value);
 }
 
+/**
+ * A safe integer >= 1. Values beyond Number.MAX_SAFE_INTEGER are refused because
+ * distinct JSON inputs (for example 9007199254740992 and 9007199254740993) parse
+ * to the same number and would collide as attempt identities.
+ */
 export function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -163,7 +163,7 @@ function validateInput(input: OpenAttemptInput): void {
     if (!isId(input[field])) problems.push(`${field} must be a valid id`);
   }
   for (const field of ["visit", "attempt"] as const) {
-    if (!isPositiveInteger(input[field])) problems.push(`${field} must be an integer >= 1`);
+    if (!isPositiveInteger(input[field])) problems.push(`${field} must be a safe integer >= 1`);
   }
   if (typeof input.runDir !== "string" || input.runDir === "") {
     problems.push("runDir must be a non-empty path");

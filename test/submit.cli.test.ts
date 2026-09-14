@@ -530,6 +530,48 @@ describe("woof submit", () => {
     expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
   });
 
+  it("rejects visit and attempt values beyond the safe integer range", () => {
+    const { runDir, envelope } = readyAttempt();
+    const raw = JSON.stringify(envelope);
+    // Written as raw JSON: these values cannot be represented exactly in JS.
+    const cases: Array<[string, string]> = [
+      ["visit", raw.replace('"visit":1,', '"visit":9007199254740992,')],
+      ["attempt", raw.replace('"attempt":1,', '"attempt":9007199254740993,')],
+    ];
+
+    for (const [field, invalid] of cases) {
+      expect(invalid).not.toBe(raw);
+      const result = submit(runDir, invalid);
+      expectRejected(result, "envelope_invalid");
+      expect(fields(result)).toEqual([field]);
+    }
+    expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
+
+    for (const [visit, attempt] of [
+      ["9007199254740993", "1"],
+      ["1", "9007199254740992"],
+    ]) {
+      const open = woof([
+        "attempt",
+        "open",
+        "--run-dir",
+        makeRunDir(),
+        "--run",
+        "run-1",
+        "--agent",
+        "worker",
+        "--stage",
+        "report",
+        "--visit",
+        visit ?? "1",
+        "--attempt",
+        attempt ?? "1",
+      ]);
+      expect(open.status, `${open.stdout}${open.stderr}`).toBe(1);
+      expect(open.stderr).toContain("must be a safe integer >= 1");
+    }
+  });
+
   it("reaches every exported rejection reason", () => {
     const exported = runNode(
       `const m = await import(${JSON.stringify(distIndexUrl)}); console.log(JSON.stringify(m.REJECTION_REASONS));`,
