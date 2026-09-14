@@ -86,6 +86,7 @@ async function scenario(options) {
     if (!loaded.ok) throw new Error(`definition refused: ${JSON.stringify(loaded)}`);
     definition = loaded.definition;
   }
+  if (options.wrapDefinition !== undefined) definition = options.wrapDefinition(definition);
   const agentIds = definition.agents.map((agent) => agent.agentId);
   const names = Object.fromEntries(
     agentIds.map((agentId) => [agentId, herdrRuntimeName(runId, agentId)]),
@@ -251,6 +252,7 @@ async function scenario(options) {
     runDir,
     definition,
     input: admitted.input,
+    repository: admitted.repository,
     runtime: wrapped,
     submitCommand: [process.execPath, join(root, "dist", "cli.js")],
     signal: controller.signal,
@@ -698,6 +700,26 @@ await withJournalLock(runDir, async () => {
         context.marks.lockHeldAt = Date.now() - opened;
       },
     }),
+
+  "repository-once": () => {
+    let calls = 0;
+    return scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // repository(input) answers admission once, then throws; the driver must not ask again.
+      wrapDefinition: (definition) => ({
+        ...definition,
+        repository: (input) => {
+          calls += 1;
+          if (calls > 1) throw new Error("repository() called again after admission");
+          return definition.repository(input);
+        },
+      }),
+      after: (context) => {
+        context.marks.repositoryCalls = calls;
+      },
+    });
+  },
 
   "fast-worker": () =>
     scenario({

@@ -259,6 +259,7 @@ async function runBuildReviewCommand(args: string[]): Promise<number> {
     runDir,
     definition: definition.definition,
     input: admitted.input,
+    repository: admitted.repository,
     runtime,
     submitCommand: [process.execPath, fileURLToPath(import.meta.url)],
     signal: controller.signal,

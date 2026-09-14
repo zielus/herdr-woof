@@ -60,6 +60,8 @@ export interface RunWorkflowOptions<Input> {
   definition: WorkflowDefinition<Input>;
   /** Input already validated by the definition. */
   input: Input;
+  /** The repository admission resolved (`AdmissionResult.repository`, the git top level). */
+  repository: string;
   runtime: RuntimeAdapter;
   /** Command that runs `woof`, placed before `submit` in worker requests. */
   submitCommand: readonly string[];
@@ -119,17 +121,8 @@ export async function runWorkflow<Input>(
   const stats = { ticks: 0, maxSnapshotMs: 0, dropped: tracker.dropped };
   let evidence: GateEvidence | null = null;
   let observeNext: string | null = null;
-  let repository = "";
-  let repositoryError: string | undefined;
-  try {
-    repository = definition.repository(options.input);
-  } catch (error) {
-    repositoryError =
-      `definition_threw: repository: ${error instanceof Error ? error.message : String(error)}`.slice(
-        0,
-        500,
-      );
-  }
+  // Admission's resolved repository; the definition's `repository(input)` is never called again.
+  const repository = options.repository;
 
   const read = (): { ok: true; snapshot: RunSnapshot } | { ok: false; message: string } => {
     const started = performance.now();
@@ -847,11 +840,6 @@ export async function runWorkflow<Input>(
     return undefined;
   };
 
-  if (repositoryError !== undefined) {
-    const ended = await end("failed", repositoryError);
-    if (!ended.ok && !ended.closed) return fatal(ended);
-    return settle();
-  }
   for (;;) {
     // Ticks are sequential by design: each reads the state the previous one wrote.
     let done: RunWorkflowResult | undefined;

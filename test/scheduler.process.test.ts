@@ -738,6 +738,22 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "PR-C. the driver uses admission's repository and never calls repository(input) again",
+    () => {
+      const report = runScenario("repository-once");
+      expect(report.marks["repositoryCalls"]).toBe(1);
+      expect(report.result).toMatchObject({
+        outcome: "completed",
+        repository: { path: report.repo },
+      });
+      const panes = report.calls.filter((call) => call.method === "openPane");
+      expect(panes.length).toBeGreaterThan(0);
+      for (const pane of panes) expect(pane.args["cwd"]).toBe(report.repo);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");
