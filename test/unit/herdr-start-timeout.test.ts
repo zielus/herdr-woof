@@ -29,7 +29,14 @@ describe("withStartTimeout", () => {
   });
 
   it("throws a TypeError for argv without a --timeout value instead of rewriting another element", () => {
-    expect(() => withStartTimeout(["agent", "start", "w-x"], 4000)).toThrow(TypeError);
-    expect(() => withStartTimeout(["agent", "start", "w-x", "--timeout"], 4000)).toThrow(TypeError);
+    // The message proves the guard threw, not a missing export.
+    const guard = /agent start argv has no "--timeout <ms>" pair/;
+    for (const args of [
+      ["agent", "start", "w-x"],
+      ["agent", "start", "w-x", "--timeout"],
+    ]) {
+      expect(() => withStartTimeout(args, 4000)).toThrow(TypeError);
+      expect(() => withStartTimeout(args, 4000)).toThrow(guard);
+    }
   });
 });
