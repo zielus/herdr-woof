@@ -720,6 +720,24 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-201. a journal lock held through the run deadline before openAttempt creates no request and delivers nothing",
+    () => {
+      const report = runScenario("lock-held-past-deadline");
+      expect(report.marks["held"]).toBe(true);
+      // The lock was taken within the budget, before the dispatch effect's first write.
+      expect(report.marks["lockHeldAt"]).toBeLessThan(1500);
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(report.error).toBeNull();
+      expect(report.types).not.toContain("attempt.opened");
+      expect(report.types).not.toContain("request.dispatched");
+      expect(report.requests).toEqual([]);
+      expect(report.calls.filter((call) => call.method === "deliver")).toEqual([]);
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

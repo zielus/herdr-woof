@@ -4,7 +4,7 @@
 // the scripted runtime. Scripted workers act on an observe that follows a
 // delivered prompt: they read their open attempt from the snapshot, write an
 // artifact and submit through the real submission path. Prints one JSON report.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -665,6 +665,37 @@ if (out.outcome !== "recorded") process.exit(1);`;
       onAction: (action, context) => {
         if (action.type !== "dispatch" || !once(context, "delay")) return;
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 450);
+      },
+    }),
+
+  "lock-held-past-deadline": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 1500 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // Another process holds journal.lock from just before the first openAttempt until
+      // 400 ms past the run deadline.
+      onAction: (action, context) => {
+        if (action.type !== "dispatch" || !once(context, "held")) return;
+        const marker = join(tmp, "lock-held");
+        const opened = Date.parse(context.journal()[0].ts);
+        const script = `const { withJournalLock } = await import(${JSON.stringify(distUrl("journal/lock.js"))});
+const { writeFileSync } = await import("node:fs");
+const [runDir, marker, releaseAt] = process.argv.slice(1);
+await withJournalLock(runDir, async () => {
+  writeFileSync(marker, "held\\n");
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(releaseAt) - Date.now())));
+});`;
+        spawn(
+          process.execPath,
+          ["--input-type=module", "--eval", script, context.runDir, marker, String(opened + 1900)],
+          { stdio: "ignore" },
+        );
+        const waitUntil = Date.now() + 5000;
+        while (!existsSync(marker) && Date.now() < waitUntil) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        context.marks.lockHeldAt = Date.now() - opened;
       },
     }),
 

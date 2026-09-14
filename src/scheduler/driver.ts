@@ -43,6 +43,15 @@ import { revisionOf } from "./revision.js";
  * runtime adapter, the state store and `openAttempt`. It never appends journal
  * records itself, never sends a second request for an attempt and never reads
  * terminal output. The run must already be opened with a plan.
+ *
+ * runTimeoutMs bounds waiting, not appending: every blocking runtime or check
+ * call and every non-terminal journal-lock acquisition is capped to the
+ * remaining budget, and an expired budget ends the run as
+ * `exhausted{runTimeoutMs}` before the next write or delivery. A store append
+ * whose lock was acquired within the budget is not interrupted and may complete
+ * after the deadline; the driver re-checks the deadline after it returns (for
+ * `openAttempt`, before the request file is created and before delivery). The
+ * terminating record itself uses the full lock timeout.
  */
 
 export interface RunWorkflowOptions<Input> {
@@ -79,6 +88,8 @@ export interface RunWorkflowResult {
 }
 
 const JOURNAL_ATTEMPTS = 3;
+/** The journal lock's own default acquisition timeout. */
+const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = 10_000;
 const HERDR_START_CAP_MS = 300_000;
 
@@ -250,6 +261,22 @@ export async function runWorkflow<Input>(
   const capped = (snapshot: RunSnapshot, ms: number): number =>
     Math.floor(Math.min(ms, remainingMs(snapshot)));
   const expired = (snapshot: RunSnapshot): boolean => remainingMs(snapshot) <= 0;
+  /**
+   * Lock options for the driver's non-terminal store writes: acquisition waits at
+   * most the remaining run budget. Terminations keep the full lock timeout, so the
+   * run-timeout outcome itself can still be recorded after the deadline.
+   */
+  const lockWithin = (snapshot: RunSnapshot): { lock: LockOptions } => ({
+    lock: {
+      ...options.lock,
+      timeoutMs: Math.max(
+        1,
+        Math.floor(
+          Math.min(options.lock?.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS, remainingMs(snapshot)),
+        ),
+      ),
+    },
+  });
   /** A capped effect that reached the run deadline ends the run as run-timeout exhaustion. */
   const runTimedOut = (snapshot: RunSnapshot): Promise<Written<unknown>> =>
     end(
@@ -411,7 +438,7 @@ export async function runWorkflow<Input>(
             runtime: { adapter: runtime.adapter, runtimeName, paneId: handle.paneId },
             terminalId: handle.terminalId,
             sessionId: handle.sessionId,
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         if (written.ok && !started.ok) {
@@ -422,7 +449,7 @@ export async function runWorkflow<Input>(
               reason: "startup_blocked",
               requiredAction: `Agent ${action.agentId} (runtime agent ${runtimeName}) is blocked while starting in pane ${handle.paneId}. Answer its prompt in that pane, or cancel the run with: woof run cancel ${runDir}`,
               observed: { runtimeStatus: null, terminalId: null, stateChangeSeq: null },
-              ...lock,
+              ...lockWithin(snapshot),
             }),
           );
         }
@@ -546,11 +573,16 @@ export async function runWorkflow<Input>(
             attempt: action.attempt,
             verdicts: stage.verdicts,
             paneId: agent.assignment?.paneId as string,
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         if (!opened.ok) {
           written = opened;
+          break;
+        }
+        if (expired(snapshot)) {
+          // The attempt append finished after the deadline: no request file, no delivery.
+          written = await runTimedOut(snapshot);
           break;
         }
         const requestPath = `requests/${action.stageId}/visit-${action.visit}/attempt-${action.attempt}/request.md`;
@@ -596,7 +628,7 @@ export async function runWorkflow<Input>(
               sessionId: seen?.sessionId ?? handle.sessionId,
             },
             revision: revision.revision,
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         if (!dispatched.ok && !dispatched.closed && dispatched.reason === "attempt_unknown") {
@@ -735,7 +767,7 @@ export async function runWorkflow<Input>(
             ...(gate.verdict !== undefined ? { verdict: gate.verdict } : {}),
             ...(gate.reviewed !== undefined ? { reviewed: gate.reviewed } : {}),
             ...(gate.check !== undefined ? { check: gate.check } : {}),
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         if (written.ok) {
@@ -766,7 +798,7 @@ export async function runWorkflow<Input>(
             requiredAction: action.requiredAction,
             observed: action.observed,
             ...(action.attempt !== null ? { attempt: action.attempt } : {}),
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         observeNext = action.agentId;
@@ -774,7 +806,12 @@ export async function runWorkflow<Input>(
 
       case "unblock":
         written = await write(() =>
-          unblockRun({ runDir, agentId: action.agentId, observed: action.observed, ...lock }),
+          unblockRun({
+            runDir,
+            agentId: action.agentId,
+            observed: action.observed,
+            ...lockWithin(snapshot),
+          }),
         );
         observeNext = action.agentId;
         break;
@@ -790,7 +827,7 @@ export async function runWorkflow<Input>(
             dispatchSeq: action.dispatchSeq,
             resolution: action.resolution,
             evidence: action.evidence,
-            ...lock,
+            ...lockWithin(snapshot),
           }),
         );
         observeNext = action.agentId;
@@ -799,6 +836,12 @@ export async function runWorkflow<Input>(
 
     if (!written.ok) {
       if (written.closed) return undefined; // Terminated by someone else: the next tick settles.
+      if (written.reason === "journal_busy" && expired(snapshot)) {
+        // The budget-capped lock wait ran into the run deadline: that is run-timeout exhaustion.
+        const ended = await runTimedOut(snapshot);
+        if (ended.ok || ended.closed) return undefined;
+        return fatal(ended);
+      }
       return fatal(written);
     }
     return undefined;
