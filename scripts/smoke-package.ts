@@ -85,6 +85,8 @@ try {
   run(installedBin, ["doctor"], consumer);
   submitRoundTrip(installedBin, consumer);
   runShow(installedBin, consumer);
+  run(installedBin, ["run", "build-review", "--help"], consumer);
+  loaderCheck(consumer);
 
   console.log("installed package entry point ok");
   console.log("installed woof --help ok");
@@ -94,6 +96,8 @@ try {
   console.log("installed scripted runtime + store round trip ok");
   console.log("installed woof attempt open + submit (accepted, duplicate) ok");
   console.log("installed woof run show ok");
+  console.log("installed woof run build-review --help ok");
+  console.log("installed loadWorkflowDefinition + buildReviewWorkflow ok");
 } finally {
   rmSync(workDir, { force: true, recursive: true });
 }
@@ -194,6 +198,35 @@ const snapshot = readSnapshot(runDir);
 if (!snapshot.ok || snapshot.snapshot.status !== "cancelled" || snapshot.snapshot.stages[0].visits[0].attempts[0].status !== "abandoned") fail(5, snapshot);
 `;
   run("node", ["--input-type=module", "--eval", script, runDir], consumer);
+}
+
+/** Loads a consumer-side .mjs workflow definition through the installed SDK. */
+function loaderCheck(consumer: string): void {
+  const definitionPath = join(consumer, "definition.mjs");
+  writeFileSync(
+    definitionPath,
+    `export default {
+  schemaVersion: 1, name: "smoke-definition", version: "1",
+  validateInput: (value) => ({ ok: true, input: value }),
+  resolveAgents: () => ({ writer: { kind: "claude", model: null, args: [] } }),
+  resolveLimits: () => ({}), repository: () => "/repo",
+  agents: [{ agentId: "writer", role: "writer" }], start: "draft", roundStage: null,
+  stages: [{ kind: "agent", stageId: "draft", agentId: "writer", verdicts: [], artifactFile: "draft.md",
+    onFailedStatus: "fail", bindsRevision: false,
+    request: () => ({ goal: "g", instructions: "i", inputs: [] }),
+    next: () => ({ decision: "pass", reason: "done", outcome: "completed" }) }],
+  edges: { draft: ["completed"] },
+};
+`,
+  );
+  const script = [
+    'import { buildReviewWorkflow, loadWorkflowDefinition, runWorkflow, validateWorkflowDefinition } from "herdr-woof";',
+    "const loaded = await loadWorkflowDefinition(process.argv[1]);",
+    'if (!loaded.ok || loaded.definition.name !== "smoke-definition") { console.error(JSON.stringify(loaded)); process.exit(1); }',
+    "if (!validateWorkflowDefinition(buildReviewWorkflow).ok) process.exit(2);",
+    'if (typeof runWorkflow !== "function") process.exit(3);',
+  ].join("\n");
+  run("node", ["--input-type=module", "--eval", script, definitionPath], consumer);
 }
 
 /** Runs the installed `woof run show` on the run the submit round trip created. */

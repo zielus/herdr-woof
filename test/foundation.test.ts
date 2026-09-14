@@ -15,7 +15,7 @@ function runCli(...args: string[]) {
 }
 
 describe("SDK foundation", () => {
-  it("exports the foundation marker and the p2 SDK contracts from the built entry", () => {
+  it("exports the foundation marker, the p2 SDK contracts and the p3 workflow engine from the built entry", () => {
     const entryPath = join(repoRoot, "dist", "index.js");
     const script = `const entry = await import(${JSON.stringify(pathToFileURL(entryPath).href)});
 console.log(JSON.stringify({
@@ -37,22 +37,32 @@ console.log(JSON.stringify({
       ObservationTracker: "function",
       REJECTION_REASONS: "object",
       SDK_FOUNDATION: "boolean",
+      admitWorkflow: "function",
       assignAgent: "function",
+      blockRun: "function",
+      buildReviewWorkflow: "object",
       createHerdrCliRuntime: "function",
+      deriveRunResult: "function",
       deriveSnapshot: "function",
       foldEvents: "function",
       herdrRuntimeName: "function",
+      loadWorkflowDefinition: "function",
       openAttempt: "function",
       openRun: "function",
       overlayRuntime: "function",
       readEvents: "function",
       readJournal: "function",
       readSnapshot: "function",
+      reconcileDelivery: "function",
       recordDispatch: "function",
+      recordGate: "function",
+      runWorkflow: "function",
       submitResult: "function",
       subscribeEvents: "function",
       terminateRun: "function",
+      unblockRun: "function",
       validateRunPlan: "function",
+      validateWorkflowDefinition: "function",
       watchAgent: "function",
     };
     expect(Object.keys(entry.types)).toEqual(Object.keys(expected).toSorted());
@@ -99,14 +109,16 @@ describe("woof CLI", () => {
     expect(result.stdout.trim()).toBe(pkg.version);
   });
 
-  it("lists the prototype result-handoff commands in help", () => {
+  it("lists the result-handoff and workflow commands in help", () => {
     const result = runCli("--help");
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("attempt open");
     expect(result.stdout).toContain("submit");
     expect(result.stdout).toContain("run show");
-    expect(result.stdout).toContain("Workflow orchestration is not implemented yet.");
+    expect(result.stdout).toContain("run build-review");
+    expect(result.stdout).toContain("run cancel");
+    expect(result.stdout).not.toContain("not implemented");
   });
 
   it("rejects workflow commands that are not implemented", () => {
