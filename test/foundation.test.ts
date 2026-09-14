@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -72,24 +73,41 @@ describe("woof CLI", () => {
 });
 
 describe("plugin placeholders", () => {
-  it("keeps only the Herdr diagnostic action", () => {
-    const manifest = readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8");
+  function readHerdrManifest(): Record<string, unknown> {
+    return parse(readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8"));
+  }
 
-    expect(manifest).toContain('id = "herdr-woof"');
-    expect(manifest).toContain('id = "doctor"');
-    expect(manifest).not.toContain('id = "runs"');
-    expect(manifest).not.toContain("[[panes]]");
+  it("wires the Herdr build and only the diagnostic action", () => {
+    const manifest = readHerdrManifest();
+
+    expect(manifest["id"]).toBe("herdr-woof");
+    expect(manifest["platforms"]).toEqual(["linux", "macos"]);
+    expect(manifest["build"]).toEqual([
+      { command: ["bun", "install", "--frozen-lockfile"] },
+      { command: ["bun", "run", "build"] },
+    ]);
+    expect(manifest["actions"]).toEqual([
+      {
+        id: "doctor",
+        title: "Woof: doctor",
+        description: "Check Herdr and Claude Code availability.",
+        command: ["bin/woof", "doctor"],
+      },
+    ]);
+    expect(manifest["panes"]).toBeUndefined();
+    expect(manifest["events"]).toBeUndefined();
   });
 
   it("keeps the Herdr manifest version in sync with package.json", () => {
-    const manifest = readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8");
     const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
       version: string;
+      os: string[];
     };
+    const manifest = readHerdrManifest();
 
-    expect(manifest).toMatch(
-      new RegExp(`^version = "${pkg.version.replaceAll(".", "\\.")}"$`, "m"),
-    );
+    expect(manifest["version"]).toBe(pkg.version);
+    // npm names macOS "darwin"; the package must not claim platforms Herdr lacks.
+    expect(pkg.os).toEqual(["darwin", "linux"]);
   });
 
   it("contains no MCP registration or launcher", () => {

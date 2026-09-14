@@ -8,6 +8,8 @@ publish a `HerdrAgentsSDK` API yet.
 
 ## Requirements
 
+- macOS or Linux, matching the Herdr plugin's supported platforms. Windows is
+  not supported.
 - Node.js 22.18 or newer to run built artifacts.
 - Bun 1.3.2 for repository installation, scripts, and the Herdr plugin build
   step.
