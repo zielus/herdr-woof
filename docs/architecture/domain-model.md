@@ -77,29 +77,37 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
 `src/journal/run-records.ts`, `src/state/reducer.ts`, `src/state/store.ts`.
 
 - **Plan types.** A `RunPlan` names a `workflow { name, version }`, a
-  non-empty unique-id `agents: AgentSpec[]` (`agentId, role, kind, model`), a
+  non-empty unique-id `agents: AgentSpec[]` (`agentId, role, kind, model`,
+  plus an optional `args: string[]` — resolved launch arguments, p3), a
   non-empty unique-id `stages: StageSpec[]` (`stageId, agentId, verdicts`,
-  each `agentId` naming a planned agent), and `limits: Limits`
+  each `agentId` naming a planned agent), an optional `checks: string[]`
+  (p3: engine-run check ids, unique and disjoint from stage ids — the
+  scheduler always writes this field for a workflow with check stages; see
+  "Implemented now (p3)" for how the reducer uses it), and `limits: Limits`
   (`maxAttemptsPerVisit, maxVisitsPerStage, maxRounds`, each a safe integer
   1–1000; `runTimeoutMs, readinessWaitMs, blockedWaitMs, deliveryTimeoutMs`,
   each a safe integer 1–604 800 000 ms, i.e. seven days — a lead decision:
-  every wait must be bounded, so an unbounded duration is not a limit). A run
-  may also be plan-less (p1's shape); every plan-referencing check below is
-  then skipped. `validateRunPlan` rejects unknown keys, duplicate ids, and an
-  unresolved stage `agentId`, one detail per offending field path. It reads
-  only the input's own enumerable properties (arrays by own index), never a
-  prototype's: a required field supplied only by inheritance (for example an
-  object built with `Object.create`) is reported missing, exactly as if it
-  were absent. A plan built entirely from null-prototype objects is accepted
-  and validated the same as an ordinary object.
+  every wait must be bounded, so an unbounded duration is not a limit; plus
+  an optional `maxFormatRepairs`, a safe integer 0–1000, absent ≡ 0 — p3,
+  format-repair attempts per visit, kept distinct from `maxAttemptsPerVisit`).
+  A run may also be plan-less (p1's shape); every plan-referencing check
+  below is then skipped. `validateRunPlan` rejects unknown keys, duplicate
+  ids, and an unresolved stage `agentId`, one detail per offending field
+  path. It reads only the input's own enumerable properties (arrays by own
+  index), never a prototype's: a required field supplied only by
+  inheritance (for example an object built with `Object.create`) is
+  reported missing, exactly as if it were absent. A plan built entirely
+  from null-prototype objects is accepted and validated the same as an
+  ordinary object.
 
 - **Run status is derived, never recorded.** There is no `run.status`
   record. `created` (only `run.opened`), `starting` (at least one
   `agent.assigned`, no dispatch yet), `running` (at least one
   `request.dispatched`, not terminated), and the terminal statuses (from
   `run.terminated.outcome`) are computed by the reducer from whichever
-  records are present so far. `blocked` is never derived in p2: it needs a
-  `run.blocked` record, which does not exist until phase 3.
+  records are present so far. `blocked` **is derived (p3):** an unresolved
+  `run.blocked` record makes the status `blocked`, ahead of `running`; see
+  "Implemented now (p3)" below.
 
 - **Run-fact record types (p2).**
 
@@ -122,24 +130,26 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   impossible states; neither decides what happens next. Reaching
   `maxAttemptsPerVisit` is not itself refused — only a scheduler's decision
   to stop (`run.terminated {outcome: "exhausted", limit}`) is a fact the
-  journal can hold. There is no reducer rule for rounds, gates, blocks,
-  format repairs or work retries, because those records and loops do not
-  exist yet (an unfinished operation must not fake success).
+  journal can hold. **The reducer now has rules for rounds, gates, blocks,
+  format repairs and work retries (p3)** — see "Implemented now (p3)" below;
+  it still only refuses impossible records, never decides what to do next.
 
-- **Limits are declared, validated and counted — not enforced.** Every
-  `Limits` field is required and bounds-checked on every plan; the
+- **Limits are declared, validated and counted, and enforced by the
+  scheduler (p3).** Every `Limits` field is required and bounds-checked on
+  every plan (plus the optional `maxFormatRepairs`, 0–1000, absent ≡ 0); the
   snapshot's `counters` (see [observability](observability.md#implemented-now-p2))
   track `attemptsOpened`, `visitsByStage`, `attemptsByVisit`, dispatch
-  outcomes and replacements next to the declared limits, but nothing refuses
-  an attempt, visit or round for exceeding one. Enforcement, and the
-  response to reaching a limit, is scheduler policy (phase 3).
+  outcomes and replacements next to the declared limits. The reducer and
+  store still never refuse an attempt, visit or round for exceeding a
+  limit — that check, and the response to reaching one
+  (`run.terminated{outcome:"exhausted", limit}`), is the scheduler (p3); see
+  "Implemented now (p3)" below for the exact map.
 
-- **Gate, block and reconciliation are types only.** `GateResult`,
-  `GateDecision`, `BlockInfo` and `DeliveryResolution` exist in
-  `src/domain/types.ts` so consumers can handle them now. Their journal
-  record types (`gate.recorded`, `run.blocked`, `run.unblocked`,
-  `delivery.reconciled`) arrive with the scheduler in phase 3; no p2 code
-  path writes or reads one.
+- **Gate, block and reconciliation are implemented (p3), not types only.**
+  `GateResult`, `GateDecision`, `BlockInfo` and `DeliveryResolution` (in
+  `src/domain/types.ts`) now have journal record types
+  (`gate.recorded`, `run.blocked`, `run.unblocked`, `delivery.reconciled`),
+  written and read by the scheduler; see "Implemented now (p3)" below.
 
 - **`abandoned` is a snapshot-only derived status.** The reducer's own
   `AttemptStatus` stays `open | superseded | accepted`; a snapshot reports
@@ -174,3 +184,190 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   transitions between two reads are not seen. See
   [observability](observability.md#implemented-now-p2) for the runtime
   adapter contract itself.
+
+## Implemented now (p3)
+
+Real shipped behavior for the scheduler, its workflow definitions, check
+gates, rounds, blocking, reconciliation and revision binding — not design
+intent. Source: `src/scheduler/{definition,core,driver,admission,request,
+launch,revision,check,loader}.ts`, `src/journal/control-records.ts`,
+`src/state/{reducer,store,snapshot,result}.ts`, `src/domain/types.ts`.
+
+- **A workflow definition (`src/scheduler/definition.ts`) is a static graph
+  the engine names no part of.** It declares `agents`, `AgentStage`/
+  `CheckStage` entries, a `start` stage, an optional `roundStage`, and a
+  static `edges` map from every stage/check id to its allowed next ids and
+  terminal outcomes. Only `validateInput`, `resolveAgents`, `resolveLimits`
+  and `repository` are called from caller input; every other function
+  (`request`, `next`, `command`) is called only from snapshot-derived
+  context, must be synchronous and side-effect free, and is guarded — a
+  throw or a malformed return ends the run
+  `failed{reason:"definition_threw: …"}` rather than propagating. See
+  [workflow authoring](../workflows/authoring.md#implemented-now-p3) for the
+  full contract, `validateWorkflowDefinition` and the loader
+  (`.js`/`.mjs` everywhere, `.ts` through Node's built-in type stripping;
+  loading executes the module's code).
+
+- **The scheduler is the only router (D1).** `decide(view) → Action` is a
+  pure function of the run snapshot, the definition, the scheduler's
+  in-memory runtime view (per-agent handle, last observation, ready-since
+  time, activity-since-dispatch) and the clock; it never reads or writes the
+  journal itself. `src/scheduler/driver.ts` executes exactly one action per
+  tick (open attempt, start agent, deliver, run a check, compute a revision,
+  record a gate, block/unblock, reconcile, terminate, or sleep), then
+  re-reads the snapshot and asks again. There is no second reducer and no
+  scheduler write that bypasses the store.
+
+- **Check gates (D3).** A `CheckStage` runs an argv (no shell) in the
+  repository with a bounded timeout (`src/scheduler/check.ts`); its combined
+  stdout/stderr tail (capped at 1 MiB) is written to an engine-owned evidence
+  file and journaled as `gate.recorded{kind:"check"}`. A check has no
+  `AgentSpec`, no visits and no attempts; its subject is the accepted
+  submission whose gate transition entered it. A failing or timed-out check
+  routes by the definition's `next`, so a verify↔repair loop is bounded by
+  `maxVisitsPerStage` on the repair stage, not by a separate check limit.
+
+- **Rounds, format repair and work retry (D5, D9).** Entering the
+  definition's `roundStage` starts a round, counted in
+  `counters.rounds`/`visitsByStage[roundStage]` and bounded by `maxRounds`.
+  Within a visit, `deriveCause` in the reducer derives each attempt's
+  `cause` from the _previous_ attempt of the same visit: no previous attempt
+  → `initial`; previous attempt accepted, or dispatched `not_delivered`, or
+  never dispatched → `work_retry`; previous attempt dispatched `started` (or
+  `ambiguous` and reconciled `abandoned`) with no acceptance → `format_repair`
+  (an `ambiguous` dispatch reconciled `delivered` also counts as
+  `format_repair`). `initial + work_retry` attempts are bounded by
+  `maxAttemptsPerVisit`; `format_repair` attempts by the separate
+  `maxFormatRepairs` (absent ≡ 0, so no plan enables format repair unless it
+  opts in). A format-repair attempt sends no new goal/task — only the
+  journaled rejections of the previous attempt (or "no submission was
+  recorded") — and is dispatched into a new attempt directory, never a
+  resend into the old one.
+
+- **Limit enforcement map (D9).** The scheduler — not the reducer — checks
+  every limit and ends the run `exhausted` with the limit's key before the
+  journal write that would exceed it: `maxRounds` before opening a new round
+  visit; `maxVisitsPerStage` before opening visit n+1 of an agent stage;
+  `maxAttemptsPerVisit` before a `work_retry` attempt; `maxFormatRepairs`
+  before a `format_repair` attempt; `readinessWaitMs` from starting an agent
+  (or first needing it ready) until it settles `ready`;
+  `blockedWaitMs` from `run.blocked` until unblocked; `deliveryTimeoutMs`
+  passed to delivery and as the ambiguous-reconciliation deadline;
+  `runTimeoutMs` checked before every blocking call and before any
+  dispatch/check/gate write, so a budget that expires mid-tick ends the run
+  with no partial dispatch (`request.dispatched`) or delivery ever recorded
+  for that step. Waiting for a worker's result after a started dispatch has
+  no separate limit; it is bounded only by `runTimeoutMs`.
+
+- **Blocking is a journaled scheduler decision (D7).** When a tracked
+  observation of an assigned agent is `blocked`, the scheduler records
+  `run.blocked{agentId, reason: "blocked_on_input"|"startup_blocked",
+requiredAction, observed, [stageId, visit, attempt]}` once; `requiredAction`
+  names the pane, the runtime agent name and `woof run cancel <run-dir>` as
+  the resolution. `status` derives `blocked` ahead of `running` while the
+  block is unresolved. Resolution paths: the scheduler observes the same
+  terminal leave `blocked` (`ready`/`working`) → `run.unblocked
+{resolution:"observed_unblocked"}`; `woof run cancel` (or a second SIGINT
+  to the CLI) → `cancelled`; or `blockedWaitMs` elapses →
+  `exhausted{limit:"blockedWaitMs"}`. A startup block (`agent_not_ready` from
+  the runtime) records the agent's assignment first, then
+  `run.blocked{reason:"startup_blocked"}` with no attempt. Nothing answers a
+  permission prompt automatically.
+
+- **Ambiguous delivery is reconciled only on evidence (D8).** After
+  `request.dispatched{delivery:"ambiguous"}` the scheduler sends nothing
+  further and waits until `dispatch.ts + deliveryTimeoutMs`: a
+  `submission.accepted`/identity-bearing `submission.rejected`, or a tracked
+  observation of the same terminal (taken after the dispatch) showing
+  `working`/`blocked`, records `delivery.reconciled
+{resolution:"delivered", evidence:"submission_recorded"|"observed_activity"}`
+  and the attempt continues as if started; neither before the deadline
+  records `delivery.reconciled{resolution:"abandoned",
+evidence:"no_evidence_before_deadline"}` and the run ends
+  `exhausted{limit:"deliveryTimeoutMs"}`. `not_delivered` stays in the
+  `DeliveryResolution` type, but no p3 record can carry it: no evidence
+  proves a prompt was never delivered after an ambiguous dispatch.
+
+- **Revision binding (D4).** `revisionOf(repo)` computes
+  `{head: git rev-parse HEAD | null, tree: <write-tree of a temporary index
+seeded with HEAD and git add -A>}` without touching the real index or
+  working tree (`git add` into the temporary index does write unreferenced
+  blobs into the repository's object store). The driver computes it at
+  dispatch (`request.dispatched.revision`) and again immediately before
+  recording a gate (`gate.recorded.revision`); a stage declared
+  `bindsRevision: true` receives both `reviewed` (the revision its accepted
+  attempt was dispatched against) and `current` (the fresh revision) in its
+  `next(ctx)`. A `pass` transition to `completed` from such a stage is
+  honoured only when `reviewed.tree === current.tree === the tree of the
+latest work-stage gate`; otherwise the engine itself records
+  `reject/revision_moved` back to the same stage (a new round) — the
+  workflow definition never has to declare that self-edge. If the repository
+  moves again between the fresh fingerprint and appending a _non-completing_
+  gate (for example a `reject → failed` gate), the fresh revision is still
+  recorded but the gate's original decision, reason and `next` are kept: the
+  re-decision path applies only to a gate that would approve completion.
+
+- **New journal record types**, written by the scheduler through the store
+  (never `appendRecord` directly): `gate.recorded`, `run.blocked`,
+  `run.unblocked`, `delivery.reconciled` (`src/journal/control-records.ts`),
+  plus optional fields on `run.opened` (`input`), `request.dispatched`
+  (`request`, `target`, `revision`) and the plan (`AgentSpec.args`,
+  `Limits.maxFormatRepairs`, `RunPlan.checks`). New reducer refusal reasons:
+  `gate_subject_unknown`, `gate_subject_stale`, `gate_mismatch`,
+  `gate_exists`, `round_invalid`, `run_blocked`, `not_blocked`,
+  `dispatch_not_ambiguous`, `reconcile_exists`, `assignment_mismatch`, and
+  `dispatch_not_latest` (an accepted-first dispatch — see below — must also
+  name the stage's current latest attempt). New counters: `rounds`,
+  `gatesByDecision {pass, reject}`, `gatesByGate`, `formatRepairsByVisit`,
+  `workRetriesByVisit`, `blocks`, `reconciliations {delivered, abandoned}`.
+  When a plan lists `checks`, the reducer additionally refuses a
+  `gate.recorded.next.stageId`/gate id that names neither a plan stage nor a
+  listed check (`stage_unknown`); a plan without `checks` keeps the lenient
+  rule.
+
+- **A worker that submits before its own dispatch is recorded still keeps
+  the dispatch's revision.** The reducer accepts exactly one
+  `request.dispatched{delivery:"started"}` for an attempt that is already
+  accepted but has no dispatch record yet, as long as that attempt is still
+  the stage's latest (`dispatch_not_latest` otherwise) — a fast worker never
+  loses the pre-delivery revision fingerprint that revision binding depends
+  on.
+
+- **Agent kind table (D10).** `src/scheduler/launch.ts` turns a resolved
+  `{kind, model, args}` into runtime launch arguments; only `"claude"` is
+  supported today (`agent_kind_unsupported` otherwise, checked at admission
+  before any pane opens). The engine adds only `--model <model>` (when given)
+  and `--add-dir <runDir>`; it never adds permission flags — those are
+  caller-supplied `args`. Before every dispatch the scheduler requires the
+  tracked observation's terminal id to equal the assignment's; a mismatch
+  ends the run `failed{reason:"agent_replaced: …"}`, and a `gone` observation
+  ends it `failed{reason:"agent_gone: …"}`.
+
+- **Worker request (D11).** The rendered request (§ see
+  [communication.md](communication.md#implemented-now-p3)) is persisted to
+  `requests/<stageId>/visit-<n>/attempt-<m>/request.md` (mode `0444`),
+  hashed and recorded, and delivered as the identical text. Before
+  rendering any request that references an accepted artifact or check
+  evidence, the driver re-hashes it against its journal record
+  (`acceptedCopyProblem`); a mismatch ends the run
+  `failed{reason:"input_artifact_altered: …"}` before any dispatch.
+
+- **Cancellation (D12).** `runWorkflow({signal})` terminates
+  `cancelled{reason:"cancel requested"}` on abort and stops owned panes
+  unless `keepPanes` is set; a second SIGINT/SIGTERM at the CLI exits at once
+  without writing. External termination (`woof run cancel`, or any
+  `terminateRun` call) is detected on the scheduler's next tick, or as soon
+  as one of its own store writes is refused `run_closed`; a late `woof
+submit` after termination is refused `run_closed` (p1).
+
+- **`woof run build-review`** (`src/cli.ts`) is the CLI entry point for the
+  scheduler: parses flags, self-validates the built-in definition, reads and
+  validates input, runs admission (`admitWorkflow`: input → repository/
+  revision → run-dir/repository overlap check → agent kind resolution →
+  limits → plan), resolves a runtime (the Herdr CLI adapter, requiring
+  `HERDR_ENV=1` and `HERDR_PANE_ID`, or `--runtime-module` for tests), opens
+  the run and calls `runWorkflow`. `woof run cancel <run-dir>` records
+  `terminateRun{outcome:"cancelled"}` for a scheduler that may still be
+  running elsewhere. Neither command is hosted: each is a foreground CLI
+  process, and a killed scheduler leaves a non-terminal run whose only
+  resolution is `woof run cancel`.

@@ -231,14 +231,68 @@ records}`) is the proof of this by construction: it re-derives the
   dropped-stale/dropped-duplicate counts. None of this is
   journaled, and none of it affects a derived snapshot.
 
-- **Not covered yet (documented, not silently missing):** gate evaluation,
-  blocking/unblocking and delivery reconciliation. Related domain _result
-  shapes_ exist (`GateResult`, `GateDecision`, `BlockInfo`,
-  `DeliveryResolution`), but their journal record types, writers, readers,
-  events and behavior are not implemented — no p2 code path parses, writes,
-  reads or emits a `gate.recorded`, `run.blocked`, `run.unblocked` or
-  `delivery.reconciled` record. Also not covered: agent runtime lifecycle
-  changes (overlay only, never an event), format repair and work retry (no
-  loop exists yet), a cancellation request distinct from plain termination,
-  and observation loss/recovery (needs a run owner, which does not exist in
-  p2).
+- **Gate evaluation, blocking/unblocking and delivery reconciliation are
+  implemented (p3).** See "Implemented now (p3)" below for the snapshot and
+  event shapes. **Still not covered:** a cancellation request distinct from
+  plain termination (`runWorkflow({signal})` and `woof run cancel` both
+  produce the same `run.terminated{outcome:"cancelled"}`), and observation
+  loss/owner liveness recovery (still needs a run owner, which does not
+  exist — every snapshot's `liveness.owner` stays `"unhosted"`).
+
+## Implemented now (p3)
+
+Real shipped behavior for the scheduler's snapshot/event additions and
+terminal outcome — not design intent. Source: `src/state/{snapshot,
+result}.ts`, `src/journal/control-records.ts`, `src/scheduler/driver.ts`.
+
+- **`gates: SnapshotGate[]`** (ordered): each entry carries `seq, at, gate`
+  (stage or check id), `kind: "stage"|"check"`, `subject` (the accepted
+  submission it decided on), `decision: "pass"|"reject"`, `reason`, `verdict`
+  (stage gates only), `round`, `next` (`{stageId}` or `{outcome}`),
+  `revision` (the fresh repository fingerprint at record time), `reviewed`
+  (the revision the accepted attempt was dispatched against, for a
+  revision-bound stage gate; `null` otherwise) and `check` (the command,
+  exit code, signal, timeout flag and evidence reference, for check gates
+  only).
+- **`attention.blocked: SnapshotBlocked | null`** — `{seq, agentId, reason,
+requiredAction, since, observed, attempt}`, reachable and non-null exactly
+  while a `run.blocked` is unresolved; this is the stated change from p2's
+  "no always-null field" rule. `attention.ambiguousDeliveries` excludes any
+  dispatch that has since been reconciled.
+- **Attempt fields:** `cause: "initial"|"format_repair"|"work_retry"`
+  (derived by the reducer from the previous attempt of the visit, never
+  recorded directly); `dispatch: {seq, at, reason}|null`; `request:
+{path, sha256, bytes}|null`; `target: {terminalId, sessionId}|null`;
+  `revision: Revision|null` (the dispatch-time fingerprint); `reconciliation:
+{seq, resolution, evidence, at}|null`; `rejectionLog` (the journaled
+  rejections a format-repair request quotes); `accepted.seq`/`outcome.seq`
+  for correlating a gate to the acceptance and termination it followed.
+- **New counters:** `rounds`, `gatesByDecision {pass, reject}`,
+  `gatesByGate {id: n}`, `formatRepairsByVisit {"stage/visit": n}`,
+  `workRetriesByVisit {"stage/visit": n}`, `blocks`, `reconciliations
+{delivered, abandoned}` — alongside p2's existing counters.
+- **`checks: string[] | null`** (the plan's declared engine-run check ids,
+  `null` for a plan without any or a plan-less run), `input:
+{path, sha256, bytes} | null` (the run's persisted `input.json`), and
+  `agents[].args: string[] | null` (resolved launch arguments) round out
+  the run plan projected onto the snapshot.
+- **`RunResult` (`deriveRunResult(snapshot, {runDir, repository})`, pure over
+  the snapshot).** Terminal summary: `outcome, reason, limit, location,
+repository {path, revision}, counters, blocked, artifacts
+{completion, review, verification, lastAcceptedByStage}`. Every field is
+  derived generically — no stage name appears in `deriveRunResult` itself:
+  `artifacts.review` is the subject of the last stage gate that carried a
+  `reviewed` revision, and is `null` on any outcome except `completed`, so a
+  passing gate from an earlier revision is never reported as approval of
+  newer work even though it stays visible in `lastAcceptedByStage`.
+- **The scheduler reads only what an observer reads.** `decide()` (D1) is a
+  pure function of the same `RunSnapshot` that `readSnapshot`/`woof run
+show`/`readEvents` project, so "an external observer agrees with the
+  engine's state" holds by construction — there is no separate in-process
+  state the scheduler consults instead.
+- **`liveness.owner` stays `"unhosted"` (unchanged).** The scheduler is a
+  foreground process, not a run owner: a killed scheduler leaves a
+  non-terminal run, and the only resolution is `woof run cancel <run-dir>`
+  (which records the termination a live scheduler would otherwise have
+  written) — there is still no daemon, liveness contract or crash-resume
+  path.

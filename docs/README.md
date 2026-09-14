@@ -6,14 +6,21 @@ and inspected project material. They describe what to build; they do not claim
 that the features exist or that proposed implementation details are approved.
 
 A first working slice now exists: result handoff (envelope v1, `woof submit`,
-`woof attempt open`, and the run journal), plus a p2 run-facts contract: run
+`woof attempt open`, and the run journal), a p2 run-facts contract (run
 plans, journaled agent assignment/dispatch/termination, derived run
 snapshots and events, a runtime adapter over the Herdr CLI, and `woof run
-show`. See
+show`), and a p3 workflow-scheduling layer: a workflow definition contract
+and loader, the built-in `build-review` workflow (build → verify → review →
+repair, with format repair, revision binding and bounded blocking/
+reconciliation), and `woof run build-review`/`woof run cancel`. See
 [Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype),
-[Domain model](architecture/domain-model.md#implemented-now-p2) and
-[Observability](architecture/observability.md#implemented-now-p2) for what is
-real today versus still proposed.
+[Domain model](architecture/domain-model.md#implemented-now-p2) (p2) and
+[Domain model](architecture/domain-model.md#implemented-now-p3) (p3),
+[Observability](architecture/observability.md#implemented-now-p2) (p2) and
+[Observability](architecture/observability.md#implemented-now-p3) (p3), and
+[Workflow authoring](workflows/authoring.md#implemented-now-p3) and
+[Initial workflows](workflows/initial-workflows.md#implemented-now-p3) for
+what is real today versus still proposed.
 
 Read in this order:
 
