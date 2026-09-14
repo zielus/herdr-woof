@@ -1,4 +1,12 @@
-import { closeSync, constants, fsyncSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
@@ -406,6 +414,8 @@ function writeInputFile(runDir: string, bytes: Buffer): string | undefined {
   try {
     writeAll(fd, bytes);
     fsyncSync(fd);
+    // The create mode is masked by the umask; the descriptor's mode is set exactly.
+    fchmodSync(fd, 0o444);
   } finally {
     closeSync(fd);
   }

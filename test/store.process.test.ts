@@ -476,4 +476,16 @@ describe("state store: p3 control records", () => {
     const snapshot = runSdk<{ snapshot: { input: unknown } }>(runDir, SNAPSHOT).snapshot;
     expect(snapshot.input).toEqual(record["input"]);
   });
+
+  it("makes input.json exactly 0444 under a restrictive umask", () => {
+    const runDir = makeRunDir();
+    const out = runSdk<Outcome>(
+      runDir,
+      `process.umask(0o077);
+out = await store.openRun({ runDir, runId: "run-1", plan: input.plan, input: input.input });`,
+      { plan: testPlan(), input: { schemaVersion: 1 } },
+    );
+    expect(out).toMatchObject({ outcome: "recorded" });
+    expect(statSync(join(runDir, "input.json")).mode & 0o777).toBe(0o444);
+  });
 });
