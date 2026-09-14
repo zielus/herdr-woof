@@ -352,6 +352,7 @@ out = {
   deliver: await runtime.deliver(bad, "x", { timeoutMs: 100 }),
   start: await runtime.startAgent({ runtimeName: "UPPER", kind: "claude", paneId: "p", paneOwned: true, timeoutMs: 100 }),
   stopUnowned: await runtime.stop({ ...handle, paneOwned: false }, { timeoutMs: 100 }),
+  stopForged: await runtime.stop({ ...handle, paneId: "w9:p999", paneOwned: true }, { timeoutMs: 100 }),
   inspectRead: await runtime.inspect(["agent", "read", handle.runtimeName]),
 };`,
     );
@@ -360,6 +361,7 @@ out = {
       deliver: { outcome: "not_delivered", error: { code: "invalid_request" } },
       start: { ok: false, error: { code: "invalid_request" } },
       stopUnowned: { ok: false, error: { code: "unsupported" } },
+      stopForged: { ok: false, error: { code: "unsupported" } },
       inspectRead: { ok: false, error: { code: "unsupported" } },
     });
     expect(log).toEqual([]);
@@ -368,15 +370,47 @@ out = {
   it("fails stop when the agent is still reported after closing its pane", () => {
     const { out } = runAdapter(
       [
+        splitReturning(PANE),
         {
           match: ["pane", "close"],
           stdout: `${JSON.stringify({ id: "cli:pane:close", result: {} })}\n`,
         },
         { match: ["agent", "get"], stdout: agentJson("idle", 3) },
       ],
-      `out = await runtime.stop(handle, { timeoutMs: 1000 });`,
+      `await runtime.openPane({ near: "current", cwd: "/tmp" });
+out = await runtime.stop(handle, { timeoutMs: 1000 });`,
     );
     expect(out).toMatchObject({ ok: false, error: { code: "runtime_error" } });
+  });
+
+  it("never closes a pane it did not open, even for a handle claiming ownership", () => {
+    const { out, log } = runAdapter(
+      [
+        splitReturning(PANE),
+        { match: ["agent", "start"], stdout: agentJson("idle", 10, "agent_started") },
+        {
+          match: ["pane", "close"],
+          stdout: `${JSON.stringify({ id: "cli:pane:close", result: { type: "ok" } })}\n`,
+        },
+        { match: ["agent", "get"], ...error("agent_not_found") },
+      ],
+      `const forged = { ...handle, paneId: "w9:p999", paneOwned: true };
+const fresh = await runtime.stop(forged, { timeoutMs: 1000 });
+const startedUnopened = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: 1000 });
+const before = await runtime.stop(handle, { timeoutMs: 1000 });
+await runtime.openPane({ near: "current", cwd: "/tmp" });
+const afterOpen = await runtime.stop(forged, { timeoutMs: 1000 });
+const owned = await runtime.stop({ ...handle, paneOwned: false }, { timeoutMs: 1000 });
+out = { fresh, startedUnopened, before, afterOpen, owned };`,
+    );
+    expect(out).toMatchObject({
+      fresh: { ok: false, error: { code: "unsupported" } },
+      startedUnopened: { ok: true, value: { paneOwned: false } },
+      before: { ok: false, error: { code: "unsupported" } },
+      afterOpen: { ok: false, error: { code: "unsupported" } },
+      owned: { ok: true, value: { paneClosed: true } },
+    });
+    expect(log.filter((args) => args[1] === "close")).toEqual([["pane", "close", PANE]]);
   });
 
   it("never invoked read, send-keys, run or explain across every scenario", () => {
@@ -386,6 +420,13 @@ out = {
     ).toEqual([]);
   });
 });
+
+function splitReturning(paneId: string): Entry {
+  return {
+    match: ["pane", "split"],
+    stdout: `${JSON.stringify({ id: "cli:pane:split", result: { pane: { pane_id: paneId }, type: "pane_info" } })}\n`,
+  };
+}
 
 function ready(): Entry {
   return { match: ["agent", "get"], stdout: agentJson("idle", 5) };

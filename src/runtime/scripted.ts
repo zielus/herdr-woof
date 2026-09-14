@@ -94,6 +94,8 @@ export function createScriptedRuntime(options: {
     });
   }
   let panes = 0;
+  /** Panes this instance opened; the only panes `stop` may close. */
+  const ownedPanes = new Set<string>();
 
   const record = (
     method: ScriptedCall["method"],
@@ -135,7 +137,9 @@ export function createScriptedRuntime(options: {
     async openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>> {
       record("openPane", null, { near: input.near, cwd: input.cwd });
       panes += 1;
-      return { ok: true, value: { paneId: `scripted:p${panes}` } };
+      const paneId = `scripted:p${panes}`;
+      ownedPanes.add(paneId);
+      return { ok: true, value: { paneId } };
     },
 
     async startAgent(input: StartAgentInput): Promise<RuntimeResult<AgentHandle>> {
@@ -148,7 +152,7 @@ export function createScriptedRuntime(options: {
         runtimeName: input.runtimeName,
         kind: input.kind,
         paneId: input.paneId,
-        paneOwned: input.paneOwned,
+        paneOwned: ownedPanes.has(input.paneId),
         terminalId: first.terminalId ?? `term-${input.runtimeName}`,
         sessionId: state.script.sessionId ?? `session-${input.runtimeName}`,
       };
@@ -230,12 +234,17 @@ export function createScriptedRuntime(options: {
 
     async stop(handle: AgentHandle, stopping: { timeoutMs: number }) {
       record("stop", handle.runtimeName, { timeoutMs: stopping.timeoutMs });
-      if (!handle.paneOwned) {
+      // The handle's paneOwned flag is caller data and is never trusted.
+      if (!ownedPanes.has(handle.paneId)) {
         return {
           ok: false as const,
-          error: runtimeError("unsupported", "stop closes only panes the adapter opened"),
+          error: runtimeError(
+            "unsupported",
+            `stop closes only panes this adapter opened; ${handle.paneId} was not opened by it`,
+          ),
         };
       }
+      ownedPanes.delete(handle.paneId);
       const state = agents.get(handle.runtimeName);
       if (state !== undefined) state.stopped = true;
       return { ok: true as const, value: { paneClosed: true as const } };

@@ -31,7 +31,11 @@ export interface AgentHandle {
   runtimeName: string;
   kind: string;
   paneId: string;
-  /** The adapter opened this pane, so stop may close it. */
+  /**
+   * Display only: whether this adapter instance opened the pane. `stop` never
+   * trusts this field; it closes a pane only when the same instance returned it
+   * from `openPane`.
+   */
   paneOwned: boolean;
   terminalId: string | null;
   sessionId: string | null;
@@ -101,7 +105,8 @@ export interface StartAgentInput {
   runtimeName: string;
   kind: string;
   paneId: string;
-  paneOwned: boolean;
+  /** Ignored: ownership comes from the adapter's own `openPane` calls. */
+  paneOwned?: boolean;
   args?: string[];
   timeoutMs: number;
 }
@@ -122,6 +127,7 @@ export interface RuntimeAdapter {
     text: string,
     options: { timeoutMs: number },
   ): Promise<DeliveryResult>;
+  /** Closes the handle's pane only when this instance opened it; otherwise `unsupported`. */
   stop(
     handle: AgentHandle,
     options: { timeoutMs: number },

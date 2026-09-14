@@ -225,12 +225,27 @@ describe("scripted runtime adapter behaviour", () => {
     expect(never).toMatchObject({ ok: false, error: { code: "timeout" } });
   });
 
-  it("stops only owned panes, after which the agent is gone", async () => {
+  it("stops only panes it opened, whatever the handle claims, after which the agent is gone", async () => {
     const { runtime, handle } = await started({ timeline: [{ status: "idle" }] });
-    expect(await runtime.stop({ ...handle, paneOwned: false }, { timeoutMs: 10 })).toMatchObject({
+    expect(handle.paneOwned).toBe(true);
+    const forged = { ...handle, paneId: "w9:p999", paneOwned: true };
+    expect(await runtime.stop(forged, { timeoutMs: 10 })).toMatchObject({
       ok: false,
       error: { code: "unsupported" },
     });
+    const other = createScriptedRuntime({ agents: { [NAME]: { timeline: [{ status: "idle" }] } } });
+    expect(await other.stop(handle, { timeoutMs: 10 })).toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+    const unopened = await other.startAgent({
+      runtimeName: NAME,
+      kind: "claude",
+      paneId: handle.paneId,
+      paneOwned: true,
+      timeoutMs: 10,
+    });
+    expect(unopened).toMatchObject({ ok: true, value: { paneOwned: false } });
     expect((await runtime.observe(handle)).ok && (await runtime.observe(handle))).toMatchObject({
       ok: true,
       value: { lifecycle: "ready" },

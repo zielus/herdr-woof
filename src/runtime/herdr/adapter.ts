@@ -55,6 +55,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
   const requireHerdrEnv = options.requireHerdrEnv ?? true;
   const commandTimeoutMs = options.commandTimeoutMs ?? 10_000;
   const graceMs = options.spawnGraceMs ?? 2000;
+  /** Panes this instance split; the only panes `stop` may close. */
+  const ownedPanes = new Set<string>();
 
   async function run(args: string[], timeoutMs: number): Promise<HerdrOutcome> {
     if (FORBIDDEN_SUBCOMMANDS.has(args[1] ?? "")) {
@@ -137,6 +139,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
           : undefined;
       if (typeof paneId !== "string" || paneId === "")
         return protocol(args, "pane split returned no pane_id");
+      ownedPanes.add(paneId);
       return { ok: true, value: { paneId } };
     },
 
@@ -159,14 +162,15 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       if (!started.ok) return started;
       const info = parseAgentInfo(started.result["agent"]);
       if (info === undefined) return protocol(args, "agent start returned no agent");
+      const paneId = info.paneId ?? input.paneId;
       return {
         ok: true,
         value: {
           adapter: "herdr",
           runtimeName: input.runtimeName,
           kind: input.kind,
-          paneId: info.paneId ?? input.paneId,
-          paneOwned: input.paneOwned,
+          paneId,
+          paneOwned: ownedPanes.has(paneId),
           terminalId: info.terminalId,
           sessionId: info.sessionId,
         },
@@ -303,12 +307,13 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     },
 
     async stop(handle: AgentHandle, stopping: { timeoutMs: number }) {
-      if (!handle.paneOwned) {
+      // The handle's paneOwned flag is caller data and is never trusted.
+      if (!ownedPanes.has(handle.paneId)) {
         return {
           ok: false as const,
           error: runtimeError(
             "unsupported",
-            "stop closes only panes the adapter opened; this pane is not owned",
+            `stop closes only panes this adapter opened; ${handle.paneId} was not opened by it`,
           ),
         };
       }
@@ -318,6 +323,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       if (!closed.ok) return closed;
       const after = await run(["agent", "get", handle.runtimeName], commandTimeoutMs);
       if (!after.ok && after.error.runtimeCode === "agent_not_found") {
+        ownedPanes.delete(handle.paneId);
         return { ok: true as const, value: { paneClosed: true as const } };
       }
       return {
