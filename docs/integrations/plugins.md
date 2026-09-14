@@ -1,68 +1,51 @@
 # Woof integration surfaces
 
-Status: intended behavior. The separate scaffold branch contains wiring and
-stubs; this checkout does not yet contain the plugin implementation. See the
-[project assessment](../research/project-assessment.md).
+Status: foundation only. The SDK, workflow runtime, agent delegation, run
+inspection, result submission, and observability contracts are not implemented.
+
+## CLI
+
+The built `woof` executable has three supported commands:
+
+- `woof --help`
+- `woof --version`
+- `woof doctor`
+
+`doctor` reports the local availability of `herdr status` and `claude --version`.
+It is diagnostic only and succeeds even when either executable is absent. All
+workflow-oriented commands fail explicitly as not implemented; the CLI does not
+invent run state or host a runtime pane.
 
 ## Herdr plugin
 
-The Woof Herdr plugin connects host actions and agent/workflow metadata to the
-same SDK used by other callers. It should make active work easy to find and
-expose useful status, cancellation and diagnostics. A managed runtime pane is a
-proposed hosting choice, not a dependency of the reusable SDK API.
+`herdr-plugin.toml` registers a build step and a single `doctor` action. It
+does not register run actions, panes, lifecycle events, or a workflow host.
 
-Herdr's API exposes plugin actions and panes, agent operations, worktree
-operations, metadata and notifications. Woof should compose these supported
-surfaces instead of reproducing them.
-[Herdr socket API](https://herdr.dev/docs/socket-api/).
+The manifest builds from a repository checkout, so it is not part of the npm
+package. For local wiring checks after a build:
 
-Generic diff review, file browsing and navigation integrations remain optional.
-A missing community plugin must not prevent the core workflow from running.
-Woof owns the review workflow and artifact contract even when an optional tool
-displays the diff or review.
+```sh
+herdr plugin link .
+```
+
+This confirms manifest integration only. It is not evidence that Woof can run
+an orchestration workflow.
 
 ## Claude Code plugin
 
-The native plugin teaches the caller to start or address agents, delegate work,
-run a named workflow with structured input, inspect progress, handle attention,
-and retrieve the result and artifacts. Commands and skills should describe those
-capabilities in terms of the common Woof model.
+`plugin/claude/` provides a command and skill that plainly state that workflow
+execution is unavailable. It registers no tools, hooks, background process, or
+transport adapter.
 
-Invocation admits work and returns its identity. Waiting may return an active
-snapshot when the caller's wait budget expires; that is distinct from failure of
-the run itself. Completion returns a structured outcome with artifact references.
-The plugin must expose a usable path through the SDK or a CLI bridge without MCP.
+For local validation:
 
-The caller should remain available while worker agents perform the workflow.
-Whether an admitted run outlives caller shutdown depends on the selected hosting
-contract and must be verified explicitly.
+```sh
+claude plugin validate plugin/claude --strict
+claude --plugin-dir plugin/claude
+```
 
-## SDK and CLI
+## Deferred adapters
 
-`HerdrAgentsSDK` exposes reusable runtime and workflow capabilities without UI
-dependencies. Keep direct agent delegation useful as well as multi-stage runs.
-
-The CLI can bridge shell-capable callers into the SDK and provide validation,
-diagnostics, run listing, status, observation, cancellation, and result submission.
-Structured input should be passable through a file or standard input. Exact
-commands and flags remain to be specified; examples in earlier drafts are not
-working commands in this checkout.
-
-## Optional MCP
-
-An MCP adapter may expose the same operations to external MCP-capable clients.
-It owns protocol translation, not gates, agent identity, storage, or scheduling.
-Neither worker completion nor Claude Code workflow invocation may require it.
-
-The scaffold currently registers MCP and its servers advertise no tools. That
-is useful protocol scaffolding, not evidence that workflows work. Review its
-manifest and skill text when integrating it so an optional adapter does not
-become a mandatory architecture by accident.
-
-## Runtime support
-
-Claude Code is the initial caller integration. Worker roles should resolve
-through an explicit runtime capability boundary, keeping Claude, Codex and other
-Herdr-supported agent kinds possible. The initial tested worker set remains open;
-the brief does not settle a Claude-only restriction. Report unsupported role
-configurations before dispatch and document the actual support matrix once tested.
+MCP is deferred and is not maintained in this repository. A future adapter may
+translate a stable SDK contract, but it must remain outside the SDK and cannot
+become a required path for workflow admission or worker completion.

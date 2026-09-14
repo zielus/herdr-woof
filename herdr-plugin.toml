@@ -1,18 +1,10 @@
-# herdr-plugin.toml registers Woof with herdr as a first-class plugin.
-#
-# This is scaffolding: the build step installs dependencies, `doctor` and
-# `runs` are read-only stubs, and the `runtime` pane just echoes its own
-# launch environment. No orchestration logic yet.
-#
-# Local development: `herdr plugin link .` from a checkout of this repo.
-
+# Foundation integration only: this plugin can diagnose local prerequisites but
+# cannot launch or host a Woof workflow yet.
 id = "herdr-woof"
 name = "Woof"
-# Kept in sync with package.json's version — test/plugin/manifest.test.ts
-# asserts the two agree.
 version = "0.0.0"
 min_herdr_version = "0.9.0"
-description = "Multi-agent orchestration for CLI coding agents on Herdr: durable TypeScript workflow graphs that run inside your live Claude Code session."
+description = "Woof SDK foundation diagnostics. Workflow orchestration is not implemented."
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -24,19 +16,5 @@ command = ["bun", "run", "build"]
 [[actions]]
 id = "doctor"
 title = "Woof: doctor"
-description = "Check herdr and Claude Code availability."
+description = "Check Herdr and Claude Code availability."
 command = ["bin/woof", "doctor"]
-
-[[actions]]
-id = "runs"
-title = "Woof: runs"
-description = "List woof runs."
-command = ["bin/woof", "runs"]
-
-# The runtime pane. herdr sets WOOF_RUN_DIR in its environment before spawning
-# this (wiring pending) so the pane knows which run it belongs to.
-[[panes]]
-id = "runtime"
-title = "Woof"
-placement = "tab"
-command = ["bin/woof", "runtime"]

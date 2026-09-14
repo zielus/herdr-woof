@@ -57,17 +57,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      # The suite runs on Node under vitest, and the CLI tests spawn a process
-      # directly, so the runtime floor has to be pinned here too.
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run test
-
-  # e2e and coverage jobs return once there is real e2e/coverage-worthy
-  # behavior — vitest.e2e.config.ts has no suites yet (E2E_GROUPS is empty)
-  # and coverage has no thresholds, so both would just be noise here.
 
   package:
     name: package
@@ -79,7 +73,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run check:version
       - run: bun run build

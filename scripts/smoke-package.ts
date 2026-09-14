@@ -1,98 +1,87 @@
 #!/usr/bin/env bun
-/**
- * Packaging smoke test: pack the source tree, install the tarball into a
- * throwaway consumer, then run the installed `woof` binary. Catches
- * entry-point and files-allowlist breakage that a source-tree run cannot see.
- *
- * Unlike the previous iteration, there is no compiled `dist/` in the runtime
- * path: `woof`, `woof-mcp` and `woof-agent-mcp` are bash launchers that exec
- * `bun run src/*.ts` directly, so the tarball ships `src/` alongside `bin/`.
- */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { readPackageJson, repoRoot } from "./lib/metadata.ts";
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+  name: string;
+  version: string;
+};
 
-function run(command: string, args: string[], cwd: string): string {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} failed (${String(result.status)})\n${result.stdout}\n${result.stderr}`,
-    );
-  }
-  return result.stdout;
+if (!existsSync(join(repoRoot, "dist", "index.js"))) {
+  throw new Error("dist/index.js is missing; run bun run build before smoke:package");
 }
 
-const pkg = await readPackageJson();
+const workDir = mkdtempSync(join(tmpdir(), "woof-package-smoke-"));
+const npmCache = join(workDir, "npm-cache");
 
-for (const required of ["bin/woof", "bin/woof-mcp", "bin/woof-agent-mcp", "src/cli.ts"]) {
-  if (!existsSync(join(repoRoot, required))) {
-    throw new Error(`${required} missing`);
-  }
-}
-
-const workDir = mkdtempSync(join(tmpdir(), "woof-smoke-"));
 try {
-  run("bun", ["pm", "pack", "--destination", workDir], repoRoot);
-  const tarball = readdirSync(workDir).find((entry) => entry.endsWith(".tgz"));
-  if (!tarball) throw new Error(`no tarball produced in ${workDir}`);
-
-  const shipped = run("tar", ["-tzf", join(workDir, tarball)], workDir)
-    .split("\n")
-    .filter(Boolean)
-    .map((entry) => entry.replace(/^package\//, ""));
-  const shippedRootFiles = new Set(["package.json", "README.md"]);
-  const strays = shipped.filter(
-    (entry) =>
-      !entry.startsWith("bin/") && !entry.startsWith("src/") && !shippedRootFiles.has(entry),
+  const packed = run(
+    "npm",
+    ["pack", "--json", "--pack-destination", workDir, "--cache", npmCache],
+    repoRoot,
   );
+  const [packInfo] = JSON.parse(packed) as Array<{
+    filename: string;
+    files: Array<{ path: string }>;
+  }>;
+  const shipped = packInfo!.files.map((file) => file.path);
+  // The Herdr manifest builds from a checkout (lockfile, sources, tsconfig), so
+  // shipping it without those inputs would advertise a build that cannot run.
+  // The Bash launcher is checkout-only; the installed bin is the Node entry.
+  const strays = shipped.filter((path) => path === "herdr-plugin.toml" || path.startsWith("bin/"));
   if (strays.length > 0) {
-    throw new Error(`tarball ships unexpected files: ${strays.join(", ")}`);
+    throw new Error(`tarball ships checkout-only files: ${strays.join(", ")}`);
   }
-  const required = [
-    "package.json",
-    "README.md",
-    "bin/woof",
-    "bin/woof-mcp",
-    "bin/woof-agent-mcp",
-    "src/cli.ts",
-    "src/mcp/woof.ts",
-    "src/mcp/agent.ts",
-  ];
-  const shippedSet = new Set(shipped);
-  const missing = required.filter((entry) => !shippedSet.has(entry));
-  if (missing.length > 0) {
-    throw new Error(`tarball is missing files a release has to carry: ${missing.join(", ")}`);
-  }
-
+  const tarball = join(workDir, packInfo!.filename);
   const consumer = join(workDir, "consumer");
-  mkdirSync(consumer, { recursive: true });
+  mkdirSync(consumer);
   writeFileSync(
     join(consumer, "package.json"),
-    `${JSON.stringify({ name: "woof-smoke-consumer", version: "0.0.0", private: true, type: "module" }, null, 2)}\n`,
+    JSON.stringify({ name: "woof-package-smoke", private: true, version: "0.0.0", type: "module" }),
   );
-  run("bun", ["add", join(workDir, tarball)], consumer);
-
-  const binary = join(consumer, "node_modules", ".bin", "woof");
-  if (!existsSync(binary)) throw new Error(`installed binary missing at ${binary}`);
-  const versionOut = run(binary, ["--version"], consumer).trim();
-  if (versionOut !== pkg.version) {
-    throw new Error(`installed \`woof --version\` printed ${versionOut}, expected ${pkg.version}`);
-  }
-  const helpOut = run(binary, ["--help"], consumer);
-  if (!helpOut.includes("Usage: woof")) {
-    throw new Error(`installed \`woof --help\` output unexpected:\n${helpOut}`);
-  }
-
-  console.log(
+  run(
+    "npm",
     [
-      `packaged ${tarball}`,
-      `installed woof --version -> ${versionOut}`,
-      "installed woof --help ok",
-    ].join("\n"),
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--no-package-lock",
+      "--cache",
+      npmCache,
+      tarball,
+    ],
+    consumer,
   );
+
+  const installedBin = join(consumer, "node_modules", ".bin", "woof");
+  const importCheck =
+    'const entry = await import("herdr-woof"); if (entry.SDK_FOUNDATION !== true) process.exit(1);';
+  run("node", ["--input-type=module", "--eval", importCheck], consumer);
+  run(installedBin, ["--help"], consumer);
+  const version = run(installedBin, ["--version"], consumer).trim();
+  if (version !== pkg.version) {
+    throw new Error(`installed woof --version printed ${version}, expected ${pkg.version}`);
+  }
+  run(installedBin, ["doctor"], consumer);
+
+  console.log("installed package entry point ok");
+  console.log("installed woof --help ok");
+  console.log("installed woof --version ok");
+  console.log("installed woof doctor ok");
 } finally {
-  rmSync(workDir, { recursive: true, force: true });
+  rmSync(workDir, { force: true, recursive: true });
+}
+
+function run(command: string, args: readonly string[], cwd: string): string {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    const detail = result.error?.message ?? `${result.stdout}\n${result.stderr}`;
+    throw new Error(`${command} ${args.join(" ")} failed:\n${detail}`);
+  }
+  return result.stdout;
 }

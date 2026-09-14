@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- Herdr plugin manifest and Claude Code plugin scaffolding for Woof: the
-  `woof` CLI stub, hand-rolled MCP stdio server stubs (`woof-mcp`,
-  `woof-agent-mcp`), and the packaging/versioning scripts. No orchestration
-  logic yet.
+- SDK foundation for Woof: a compiled Node ESM package entry point, a
+  diagnostic-only `woof` CLI (`--help`, `--version`, `doctor`), Herdr and
+  Claude Code plugin placeholders that decline workflow requests, and the
+  packaging/versioning checks. No orchestration logic or MCP adapter yet.

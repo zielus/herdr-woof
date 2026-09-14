@@ -9,7 +9,7 @@
 
 - [ ] `bun run verify` passes locally
 - [ ] Docs updated for behavior that ships (or: no behavior change)
-- [ ] `CHANGELOG.md` Unreleased updated (or: no user-visible change)
+- [ ] README or product documentation updated when the supported surface changed
 
 ## Notes
 

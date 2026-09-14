@@ -6,7 +6,7 @@
  */
 import { readFile } from "node:fs/promises";
 
-import { changelogPath, readPackageVersion, repoRoot, SEMVER } from "./lib/metadata.ts";
+import { changelogPath, readPackageVersion, repoRoot, SEMVER } from "./lib/metadata.js";
 
 const version = await readPackageVersion();
 const problems: string[] = [];

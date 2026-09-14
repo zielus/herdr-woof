@@ -1,73 +1,48 @@
 #!/usr/bin/env node
-/**
- * `woof`: the CLI entry point invoked by `bin/woof`, by the herdr plugin's
- * `doctor`/`runs` actions, and by the `runtime` pane. No orchestration logic
- * yet — each subcommand is a stub that proves the wiring end to end.
- */
-import { execFileSync } from "node:child_process";
-
-import { Command } from "commander";
+import { spawnSync } from "node:child_process";
 
 import { VERSION } from "./version.js";
 
-const program = new Command();
+const [command] = process.argv.slice(2);
 
-program.name("woof").description("Woof — orchestrate coding agents on Herdr").version(VERSION);
+if (command === undefined || command === "--help" || command === "-h") {
+  printHelp();
+} else if (command === "--version" || command === "-V") {
+  console.log(VERSION);
+} else if (command === "doctor") {
+  console.log(`woof ${VERSION}`);
+  console.log(probe("herdr", ["status"]));
+  console.log(probe("claude", ["--version"]));
+} else {
+  console.error(`woof: ${command} is not implemented in the SDK foundation`);
+  process.exitCode = 1;
+}
 
-program
-  .command("doctor")
-  .description("Check herdr and Claude Code availability")
-  .action(() => {
-    console.log(`woof ${VERSION}`);
-    console.log(probe("herdr", ["status"]));
-    console.log(probe("claude", ["--version"]));
-  });
+function printHelp(): void {
+  console.log("Usage: woof <command>");
+  console.log("");
+  console.log("Commands:");
+  console.log("  doctor     Report Herdr and Claude Code availability");
+  console.log("");
+  console.log("Workflow orchestration is not implemented in this foundation.");
+}
 
-program
-  .command("runs")
-  .description("List woof runs")
-  .action(() => {
-    console.log("no runs");
-  });
+function probe(commandName: string, args: readonly string[]): string {
+  const label = `${commandName} ${args.join(" ")}`;
+  const result = spawnSync(commandName, args, { encoding: "utf8" });
 
-program
-  .command("runtime")
-  .description("Run the herdr `runtime` pane")
-  .action(() => {
-    const runDir = process.env["WOOF_RUN_DIR"];
-    console.log(`WOOF_RUN_DIR=${runDir ?? "(unset)"}`);
-  });
-
-await program.parseAsync(process.argv);
-
-/** Runs a diagnostic command and reports its outcome; never throws. */
-function probe(command: string, args: readonly string[]): string {
-  const label = `${command} ${args.join(" ")}`;
-  try {
-    const output = execFileSync(command, [...args], { encoding: "utf8" }).trim();
-    return `${label}:\n${indent(output)}`;
-  } catch (error) {
-    // execFileSync throws with `code: "ENOENT"` when the binary itself is
-    // missing, and a plain non-zero-exit Error (carrying stderr/stdout)
-    // when the binary ran and failed — those are different diagnoses and
-    // doctor should not conflate "not installed" with "installed but broken".
-    if (isErrnoException(error) && error.code === "ENOENT") {
-      return `${label}: not found`;
-    }
-    const stderr = isExecError(error) ? error.stderr.trim() : "";
-    const detail = stderr !== "" ? stderr : error instanceof Error ? error.message : String(error);
-    return `${label}: failed (${detail.split("\n")[0]})`;
+  if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT") {
+    return `${label}: not found`;
   }
-}
+  if (result.status === 0) {
+    const output = result.stdout.trim();
+    return output === "" ? `${label}: available` : `${label}:\n${indent(output)}`;
+  }
 
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
-}
-
-// execFileSync is called with `encoding: "utf8"`, so a non-zero-exit error's
-// stderr comes back as a string, not the Buffer it would default to.
-function isExecError(error: unknown): error is Error & { stderr: string } {
-  return error instanceof Error && typeof (error as { stderr?: unknown }).stderr === "string";
+  // stdio is null when the executable exists but cannot be started (EACCES).
+  const detail =
+    (result.stderr ?? "").trim() || result.error?.message || `exit ${result.status ?? "unknown"}`;
+  return `${label}: failed (${detail.split("\n")[0]})`;
 }
 
 function indent(text: string): string {
