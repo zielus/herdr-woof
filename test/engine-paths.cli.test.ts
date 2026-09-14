@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   cpSync,
@@ -19,12 +20,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CONTENT,
   cleanupRunDirs,
+  distIndexUrl,
+  envelopeFor,
   journal,
   makeRunDir,
   ofType,
   openAttempt,
   readyAttempt,
+  runNode,
   submit,
+  woof,
   woofAsync,
   writeEnvelope,
   type ProcessResult,
@@ -165,4 +170,125 @@ describe("journal file containment", () => {
     expect(existsSync(target)).toBe(false);
     expect(lstatSync(lockPath).isSymbolicLink()).toBe(true);
   });
+
+  it("reports a FIFO at journal.jsonl as journal_corrupt without blocking submit or attempt open", () => {
+    const runDir = makeRunDir();
+    const journalPath = join(runDir, "journal.jsonl");
+    mkfifo(journalPath);
+    const envelopePath = writeEnvelope(runDir, envelopeFor());
+    const openArgs = [
+      "attempt",
+      "open",
+      "--run-dir",
+      runDir,
+      "--run",
+      "run-1",
+      "--agent",
+      "worker",
+      "--stage",
+      "report",
+      "--visit",
+      "1",
+      "--attempt",
+      "1",
+    ];
+
+    for (const args of [["submit", "--run-dir", runDir, "--envelope", envelopePath], openArgs]) {
+      const started = Date.now();
+      const result = woof(args, { timeoutMs: BLOCKING_GUARD_MS });
+      const elapsed = Date.now() - started;
+
+      expectRejected(result, "journal_corrupt", 3, "is not a regular file (FIFO)");
+      expect(elapsed).toBeLessThan(2000);
+    }
+    expect(lstatSync(journalPath).isFIFO()).toBe(true);
+  });
+
+  it("reports a directory at journal.jsonl as journal_corrupt, not a missing journal", () => {
+    const runDir = makeRunDir();
+    mkdirSync(join(runDir, "journal.jsonl"));
+
+    const result = submit(runDir, envelopeFor());
+
+    expectRejected(result, "journal_corrupt", 3, "is not a regular file (directory)");
+  });
+
+  it("treats a FIFO at journal.lock as an unreadable holder and returns within the timeout", () => {
+    const { runDir, envelope } = readyAttempt();
+    mkfifo(join(runDir, "journal.lock"));
+    // Lock options are SDK-only, so the check runs submitResult in a child process.
+    const script = `
+const sdk = await import(${JSON.stringify(distIndexUrl)});
+const started = Date.now();
+const outcome = await sdk.submitResult({
+  runDir: process.argv[1],
+  envelopeRaw: process.argv[2],
+  lock: { timeoutMs: 300, pollMs: 25 },
 });
+console.log(JSON.stringify({ outcome, elapsed: Date.now() - started }));
+`;
+
+    const started = Date.now();
+    const result = runNode(script, [runDir, JSON.stringify(envelope)], {
+      timeoutMs: BLOCKING_GUARD_MS,
+    });
+    const wall = Date.now() - started;
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      outcome: { outcome: string; reason: string; message: string };
+      elapsed: number;
+    };
+    expect(output.outcome).toMatchObject({ outcome: "rejected", reason: "journal_busy" });
+    expect(output.outcome.message).toContain("unknown holder");
+    expect(output.elapsed).toBeLessThan(2000);
+    expect(wall).toBeLessThan(2000);
+  });
+});
+
+describe("non-regular artifact entries", () => {
+  it("reports a FIFO in place of the accepted copy as journal_corrupt without blocking", () => {
+    const { runDir, envelope } = readyAttempt();
+    const first = submit(runDir, envelope);
+    expect(first.json?.outcome, `${first.stdout}${first.stderr}`).toBe("accepted");
+    const copy = join(runDir, first.json?.receipt?.artifact.acceptedPath ?? "missing");
+    rmSync(copy);
+    mkfifo(copy);
+
+    const started = Date.now();
+    const retry = woof(
+      ["submit", "--run-dir", runDir, "--envelope", writeEnvelope(runDir, envelope)],
+      { timeoutMs: BLOCKING_GUARD_MS },
+    );
+    const elapsed = Date.now() - started;
+
+    expectRejected(retry, "journal_corrupt", 3, "is not a regular file (FIFO)");
+    expect(elapsed).toBeLessThan(2000);
+    expect(ofType(journal(runDir), "submission.duplicate")).toHaveLength(0);
+  });
+
+  it("reports a FIFO submitted as the artifact as artifact_missing without blocking", () => {
+    const { runDir, envelope } = readyAttempt();
+    const artifactPath = join(runDir, envelope.artifact.path);
+    rmSync(artifactPath);
+    mkfifo(artifactPath);
+
+    const started = Date.now();
+    const result = woof(
+      ["submit", "--run-dir", runDir, "--envelope", writeEnvelope(runDir, envelope)],
+      { timeoutMs: BLOCKING_GUARD_MS },
+    );
+    const elapsed = Date.now() - started;
+
+    expectRejected(result, "artifact_missing", 2, "is not a regular file (FIFO)");
+    expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+/** Upper bound for a child that must not block; a blocked child is killed and the test fails. */
+const BLOCKING_GUARD_MS = 10_000;
+
+function mkfifo(path: string): void {
+  const result = spawnSync("mkfifo", [path], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`mkfifo ${path} failed: ${result.stderr}`);
+}

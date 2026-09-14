@@ -24,6 +24,7 @@ export const REJECTION_REASONS = [
   "artifact_out_of_scope",
   "artifact_missing",
   "artifact_empty",
+  "artifact_too_large",
   "artifact_hash_mismatch",
   "journal_write_failed",
 ] as const;

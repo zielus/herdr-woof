@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, openSync, readSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
@@ -16,6 +16,7 @@ import {
   JournalFileError,
   appendRecord,
   attemptKey,
+  inspectJournalPath,
   readJournal,
   replay,
   verdictAllowed,
@@ -49,7 +50,8 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * run journal. The first failing check wins, in this order (pinned by
  * test/precedence.cli.test.ts):
  *
- *  1. run directory given and holds a journal         → run_dir_invalid
+ *  1. run directory given and holds a journal entry    → run_dir_invalid
+ *     journal entry is a symlink or not a regular file → journal_corrupt
  *  2. journal lock acquired                            → journal_busy
  *  3. journal file is regular and replays cleanly      → journal_corrupt
  *  4. journal holds run.opened (the run was opened)    → run_dir_invalid
@@ -66,8 +68,9 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * 13. artifact path resolves inside the attempt dir    → artifact_out_of_scope
  * 14. artifact exists and is a regular file            → artifact_missing
  * 15. artifact has non-whitespace content              → artifact_empty
- * 16. artifact sha256 matches the envelope             → artifact_hash_mismatch
- * 17. publish the accepted copy, append the record     → accepted / journal_write_failed
+ * 16. artifact size ≤ MAX_ARTIFACT_BYTES (32 MiB)      → artifact_too_large
+ * 17. artifact sha256 matches the envelope             → artifact_hash_mismatch
+ * 18. publish the accepted copy, append the record     → accepted / journal_write_failed
  *
  * The envelope is read and parsed before the lock is taken, but an envelope
  * rejection is reported only once checks 2–4 pass, because every contract
@@ -75,15 +78,21 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * `run.opened` record is never appended to: a record there would precede
  * `run.opened` and make the run permanently unreadable.
  *
+ * Check 16 is decided from the file's size before it is read, so only artifacts
+ * within the cap reach check 15's content read; a whitespace-only file larger
+ * than the cap is therefore `artifact_too_large`.
+ *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
  *
- * The journal must be a regular, non-symlink file in the run directory; it is
- * opened without following symlinks, so a journal replaced by a link at any point
- * is `journal_corrupt` and its target is never read or written. Accepted copies
- * live under real in-run `accepted/` directories: a symlinked destination
- * component refuses publication (`journal_write_failed`, naming the component)
- * and, on the duplicate path, makes the copy check fail (`journal_corrupt`).
+ * Engine-owned entries are inspected with lstat before any open, so a FIFO,
+ * socket, directory or symlink cannot block or redirect the engine. The journal
+ * must be a regular, non-symlink file in the run directory and is opened without
+ * following symlinks; anything else is `journal_corrupt` and its target is never
+ * read or written. Accepted copies live under real in-run `accepted/`
+ * directories: a symlinked destination component refuses publication
+ * (`journal_write_failed`, naming the component) and, on the duplicate path, a
+ * non-regular or relocated copy makes the copy check fail (`journal_corrupt`).
  *
  * Only a copy referenced by a `submission.accepted` record is accepted. When the
  * acceptance cannot be journaled, the copy this call published is removed while
@@ -91,13 +100,26 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  * still leave an unreferenced file under `accepted/`, which is not accepted.
  */
 export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
-  // 1. Run directory.
+  // 1. Run directory and journal entry (lstat only, never opened here).
   if (input.runDir === undefined || input.runDir === "") {
     return rejection("run_dir_invalid", "no run directory given (--run-dir or WOOF_RUN_DIR)");
   }
   const runDir = resolve(input.runDir);
-  if (!journalPresent(join(runDir, JOURNAL_FILE))) {
+  const journalPath = join(runDir, JOURNAL_FILE);
+  let journalEntry: ReturnType<typeof inspectJournalPath>;
+  try {
+    journalEntry = inspectJournalPath(journalPath);
+  } catch (error) {
+    return rejection(
+      "run_dir_invalid",
+      `cannot inspect ${journalPath}: ${(error as Error).message}`,
+    );
+  }
+  if (journalEntry === "missing") {
     return rejection("run_dir_invalid", `${runDir} does not contain ${JOURNAL_FILE}`);
+  }
+  if (journalEntry instanceof JournalFileError) {
+    return rejection("journal_corrupt", journalEntry.message);
   }
   const paneId = input.paneId === "" ? undefined : input.paneId;
 
@@ -118,8 +140,8 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
     }
   }
 
-  // 2–4. Lock, journal replay and opened run. readJournal re-validates the
-  // journal file under the lock, so a link swapped in after check 1 is caught.
+  // 2–4. Lock, journal replay and opened run. readJournal re-inspects the
+  // journal entry under the lock, so an entry swapped in after check 1 is caught.
   let locked;
   try {
     locked = await withJournalLock(
@@ -131,7 +153,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
         if (records.length === 0) {
           return rejection(
             "run_dir_invalid",
-            `${join(runDir, JOURNAL_FILE)} has no run.opened record; the run has not been opened (open an attempt first)`,
+            `${journalPath} has no run.opened record; the run has not been opened (open an attempt first)`,
           );
         }
 
@@ -159,7 +181,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
   return locked.ok ? locked.value : rejection(locked.reason, locked.message);
 }
 
-/** Checks 7–17, run while holding the journal lock on an opened run. */
+/** Checks 7–18, run while holding the journal lock on an opened run. */
 function decide(
   runDir: string,
   records: JournalRecord[],
@@ -282,7 +304,7 @@ function decide(
     );
   }
 
-  // 13–15. Artifact scope, existence, content.
+  // 13–16. Artifact scope, existence, content and size.
   const artifact = resolveArtifact(runDir, attempt.opened.artifactDir, envelope.artifact.path);
   if (!artifact.ok) {
     return reject(artifact.reason, artifact.message, [
@@ -290,7 +312,7 @@ function decide(
     ]);
   }
 
-  // 16. Hash of the exact bytes checked above.
+  // 17. Hash of the exact bytes checked above.
   const actual = sha256Hex(artifact.bytes);
   if (actual !== envelope.artifact.sha256) {
     return reject("artifact_hash_mismatch", "artifact content does not match artifact.sha256", [
@@ -298,7 +320,7 @@ function decide(
     ]);
   }
 
-  // 17. Publish the immutable accepted copy, then persist acceptance.
+  // 18. Publish the immutable accepted copy, then persist acceptance.
   const acceptedPath = acceptedPathFor(
     envelope.stageId,
     envelope.visit,
@@ -398,19 +420,6 @@ function readEnvelopeFile(path: string): Uint8Array | { error: string } {
     return { error: `cannot read envelope ${path}: ${(error as Error).message}` };
   } finally {
     closeSync(fd);
-  }
-}
-
-/**
- * Preliminary check only: a regular file or a symlink counts as present, so a
- * symlinked journal reaches the locked read and is reported as journal_corrupt.
- */
-function journalPresent(path: string): boolean {
-  try {
-    const stats = lstatSync(path);
-    return stats.isFile() || stats.isSymbolicLink();
-  } catch {
-    return false;
   }
 }
 

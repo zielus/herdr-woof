@@ -32,6 +32,7 @@ console.log(JSON.stringify({
     expect(entry.marker).toBe(true);
     // Module namespace keys are ordered by name, not by declaration.
     expect(Object.keys(entry.types)).toEqual([
+      "MAX_ARTIFACT_BYTES",
       "REJECTION_REASONS",
       "SDK_FOUNDATION",
       "openAttempt",
@@ -39,6 +40,7 @@ console.log(JSON.stringify({
       "submitResult",
     ]);
     expect(entry.types).toEqual({
+      MAX_ARTIFACT_BYTES: "number",
       REJECTION_REASONS: "object",
       SDK_FOUNDATION: "boolean",
       openAttempt: "function",

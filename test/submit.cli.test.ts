@@ -572,6 +572,26 @@ describe("woof submit", () => {
     }
   });
 
+  it("rejects an artifact above 32 MiB and accepts one exactly at the limit", () => {
+    const { runDir, envelope } = readyAttempt();
+    const limit = 32 * 1024 * 1024;
+
+    const hugeRel = artifactRel("report", 1, 1, "huge.md");
+    const hugeSha = writeArtifact(runDir, hugeRel, Buffer.alloc(limit + 1, 0x61));
+    const huge = submit(runDir, { ...envelope, artifact: { path: hugeRel, sha256: hugeSha } });
+    expectRejected(huge, "artifact_too_large");
+    expect(huge.json?.message).toContain(`${limit + 1} bytes; the limit is ${limit}`);
+
+    const atLimitRel = artifactRel("report", 1, 1, "at-limit.md");
+    const atLimitSha = writeArtifact(runDir, atLimitRel, Buffer.alloc(limit, 0x61));
+    const atLimit = submit(runDir, {
+      ...envelope,
+      artifact: { path: atLimitRel, sha256: atLimitSha },
+    });
+    expectOutcome(atLimit, "accepted");
+    expect(atLimit.json?.receipt?.artifact.bytes).toBe(limit);
+  });
+
   it("reaches every exported rejection reason", () => {
     const exported = runNode(
       `const m = await import(${JSON.stringify(distIndexUrl)}); console.log(JSON.stringify(m.REJECTION_REASONS));`,

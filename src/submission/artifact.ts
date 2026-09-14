@@ -5,35 +5,55 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
+import { describeEntryKind } from "../journal/journal.js";
 import { writeAll } from "../journal/write-all.js";
 import { ensureRealDirectory, symlinkComponentProblem } from "./containment.js";
 
-const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constants;
+
+/**
+ * Largest artifact `submitResult` accepts: 32 MiB. The size is checked from
+ * lstat before the artifact is opened, and reads never go past this cap.
+ */
+export const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
 export type ResolveArtifactResult =
   | { ok: true; realPath: string; bytes: Buffer }
   | {
       ok: false;
-      reason: "artifact_out_of_scope" | "artifact_missing" | "artifact_empty";
+      reason:
+        "artifact_out_of_scope" | "artifact_missing" | "artifact_empty" | "artifact_too_large";
       message: string;
     };
+
+class FileTooLargeError extends Error {
+  constructor(
+    readonly path: string,
+    readonly size: number,
+  ) {
+    super(`${path} is ${size} bytes; the limit is ${MAX_ARTIFACT_BYTES}`);
+  }
+}
 
 /**
  * Resolves an envelope artifact path and reads it once. The attempt directory
  * must be a real directory strictly inside the run directory, and the path,
- * after following symlinks, must lie strictly inside that attempt directory;
- * the artifact must be a regular file with non-whitespace content. Returning the
- * bytes that were checked lets the caller hash and publish exactly those bytes.
+ * after following symlinks, must lie strictly inside that attempt directory.
+ * The artifact must be a regular file (inspected with lstat; a FIFO, socket or
+ * device is `artifact_missing` and never opened), at most MAX_ARTIFACT_BYTES
+ * (`artifact_too_large`, decided from its size without reading it), with
+ * non-whitespace content (`artifact_empty`). Returning the bytes that were
+ * checked lets the caller hash and publish exactly those bytes.
  */
 export function resolveArtifact(
   runDir: string,
@@ -88,10 +108,19 @@ export function resolveArtifact(
     return missing(`${relPath} does not exist`);
   }
 
-  if (!statSync(probeReal).isFile()) {
-    return missing(`${relPath} is not a regular file`);
+  let bytes: Buffer;
+  try {
+    bytes = readRegularFile(probeReal);
+  } catch (error) {
+    if (error instanceof FileTooLargeError) {
+      return {
+        ok: false,
+        reason: "artifact_too_large",
+        message: `${relPath} is ${error.size} bytes; the limit is ${MAX_ARTIFACT_BYTES}`,
+      };
+    }
+    return missing(`${relPath} cannot be read: ${(error as Error).message}`);
   }
-  const bytes = readFileSync(probeReal);
   if (bytes.toString("utf8").trim() === "") {
     return {
       ok: false,
@@ -102,12 +131,35 @@ export function resolveArtifact(
   return { ok: true, realPath: probeReal, bytes };
 }
 
-/** Reads a regular file without following a symlink at its final component. */
+/**
+ * Reads a regular file of at most MAX_ARTIFACT_BYTES. The entry is inspected
+ * with lstat first, so a FIFO, socket, device, directory or symlink is refused
+ * without being opened; the open uses O_NOFOLLOW | O_NONBLOCK and the descriptor
+ * must still be the same regular file. Throws FileTooLargeError above the cap.
+ */
 function readRegularFile(path: string): Buffer {
-  const fd = openSync(path, O_RDONLY | O_NOFOLLOW);
+  const named = lstatSync(path);
+  if (!named.isFile()) {
+    throw new Error(`${path} is not a regular file (${describeEntryKind(named)})`);
+  }
+  if (named.size > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, named.size);
+
+  const fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   try {
-    if (!fstatSync(fd).isFile()) throw new Error(`${path} is not a regular file`);
-    return readFileSync(fd);
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.ino !== named.ino || opened.dev !== named.dev) {
+      throw new Error(`${path} changed while it was opened`);
+    }
+    // One byte past the expected size (capped) detects growth beyond the limit.
+    const buffer = Buffer.alloc(Math.min(opened.size, MAX_ARTIFACT_BYTES) + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const read = readSync(fd, buffer, length, buffer.length - length, null);
+      if (read === 0) break;
+      length += read;
+    }
+    if (length > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, length);
+    return buffer.subarray(0, length);
   } finally {
     closeSync(fd);
   }
@@ -173,8 +225,9 @@ export function removePublished(runDir: string, acceptedPath: string, publishedS
 
 /**
  * Checks that an accepted copy is still a regular file at its place inside the
- * run and matches its journal record. Returns a description of the problem, or
- * undefined when the copy is intact.
+ * run and matches its journal record. A non-regular entry (FIFO, socket,
+ * directory, symlink) is reported without being opened. Returns a description
+ * of the problem, or undefined when the copy is intact.
  */
 export function acceptedCopyProblem(
   runDir: string,

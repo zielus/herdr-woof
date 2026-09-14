@@ -46,6 +46,8 @@ export interface RunOptions {
   /** Extra environment; `undefined` removes a variable. */
   env?: Record<string, string | undefined>;
   input?: string;
+  /** Kill the child after this many ms, so a regression that blocks fails instead of hanging. */
+  timeoutMs?: number;
 }
 
 export interface JournalLine {
@@ -96,6 +98,7 @@ export function woof(args: readonly string[], options: RunOptions = {}): Process
     env: childEnv(options.env),
     cwd: repoRoot,
     ...(options.input !== undefined ? { input: options.input } : {}),
+    ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
   });
   return toResult(result.status, result.stdout, result.stderr);
 }
@@ -127,6 +130,7 @@ export function runNode(
     encoding: "utf8",
     env: childEnv(options.env),
     cwd: repoRoot,
+    ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
   });
   return toResult(result.status, result.stdout, result.stderr);
 }

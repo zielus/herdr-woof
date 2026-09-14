@@ -210,6 +210,21 @@ const cases: PrecedenceCase[] = [
     exit: 2,
     journal: { type: "submission.rejected", reason: "artifact_empty" },
   },
+  {
+    name: "an oversized artifact outranks a hash mismatch",
+    arrange: () => {
+      const { runDir, envelope } = readyAttempt();
+      const rel = artifactRel("report", 1, 1, "huge.md");
+      writeArtifact(runDir, rel, Buffer.alloc(32 * 1024 * 1024 + 1, 0x61));
+      return {
+        runDir,
+        envelope: { ...envelope, artifact: { path: rel, sha256: sha256(CONTENT) } },
+      };
+    },
+    expected: "artifact_too_large",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "artifact_too_large" },
+  },
 ];
 
 describe("submitResult check precedence", () => {
