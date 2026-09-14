@@ -161,6 +161,14 @@ const corruptions: CorruptionCase[] = [
       envelopeDigest: "f".repeat(64),
     }),
   },
+  {
+    name: "an attempt record whose stageId is a dot path component",
+    corrupt: (runDir) => ({
+      ...rawRecords(runDir).find((record) => record["type"] === "attempt.opened"),
+      stageId: ".",
+      artifactDir: "artifacts/./visit-1/attempt-1",
+    }),
+  },
 ];
 
 describe("journal integrity", () => {
@@ -178,6 +186,28 @@ describe("journal integrity", () => {
       expect(readFileSync(journalPath).equals(before)).toBe(true);
     });
   }
+
+  it("fails closed on a journal line that is not valid UTF-8", () => {
+    const { runDir, envelope } = readyAttempt();
+    const journalPath = join(runDir, "journal.jsonl");
+    const seq = rawRecords(runDir).length + 1;
+    // An otherwise valid rejection record with a raw 0xff byte inside a string.
+    const line = Buffer.concat([
+      Buffer.from(
+        `{"schemaVersion":1,"seq":${seq},"ts":"${new Date().toISOString()}","type":"submission.rejected","reason":"attempt_unknown","message":"bad `,
+      ),
+      Buffer.from([0xff]),
+      Buffer.from('","details":[]}\n'),
+    ]);
+    appendFileSync(journalPath, line);
+    const before = readFileSync(journalPath);
+
+    expectCorrupt(submit(runDir, envelope), `line ${seq}: line is not valid UTF-8`);
+    const open = openAttempt(runDir, { stage: "later" });
+    expect(open.status).toBe(3);
+    expect(open.json).toMatchObject({ outcome: "rejected", reason: "journal_corrupt" });
+    expect(readFileSync(journalPath).equals(before)).toBe(true);
+  });
 
   it("fails closed on an acceptance whose bytes is not a safe integer", () => {
     const { runDir, envelope, accepted } = acceptedRun();

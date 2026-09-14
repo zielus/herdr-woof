@@ -24,6 +24,21 @@ export const JOURNAL_FILE = "journal.jsonl";
 
 const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constants;
 
+/** Strict decoder: invalid UTF-8 throws; a byte-order mark is kept (and then fails JSON parsing). */
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** Splits on newline bytes like String.prototype.split("\n"), keeping a trailing empty piece. */
+function splitLines(content: Buffer): Buffer[] {
+  const lines: Buffer[] = [];
+  let start = 0;
+  for (let end = content.indexOf(0x0a); end !== -1; end = content.indexOf(0x0a, start)) {
+    lines.push(content.subarray(start, end));
+    start = end + 1;
+  }
+  lines.push(content.subarray(start));
+  return lines;
+}
+
 /** A short name for a filesystem entry type, for error messages. */
 export function describeEntryKind(stats: Stats): string {
   if (stats.isFile()) return "regular file";
@@ -139,11 +154,11 @@ export function createJournal(runDir: string): void {
  */
 export function readJournal(runDir: string): ReadJournalResult {
   const journalPath = join(runDir, JOURNAL_FILE);
-  let content: string;
+  let content: Buffer;
   try {
     const fd = openJournalFile(journalPath, O_RDONLY);
     try {
-      content = readFileSync(fd, "utf8");
+      content = readFileSync(fd);
     } finally {
       closeSync(fd);
     }
@@ -161,16 +176,25 @@ export function readJournal(runDir: string): ReadJournalResult {
           : `cannot read ${journalPath}: ${(error as Error).message}`,
     };
   }
-  if (content === "") return { ok: true, records: [] };
+  if (content.byteLength === 0) return { ok: true, records: [] };
 
-  const lines = content.split("\n");
+  // Lines are split on raw newline bytes (never part of a multi-byte UTF-8
+  // sequence) and decoded strictly, so invalid bytes fail closed with their line
+  // number instead of being replaced with U+FFFD.
+  const lines = splitLines(content);
   const records: JournalRecord[] = [];
-  for (const [index, line] of lines.entries()) {
+  for (const [index, rawLine] of lines.entries()) {
     const lineNumber = index + 1;
     const isLast = index === lines.length - 1;
-    if (isLast && line === "") break;
+    if (isLast && rawLine.byteLength === 0) break;
     if (isLast) {
       return corrupt(journalPath, lineNumber, "final line has no trailing newline (torn write)");
+    }
+    let line: string;
+    try {
+      line = STRICT_UTF8.decode(rawLine);
+    } catch {
+      return corrupt(journalPath, lineNumber, "line is not valid UTF-8");
     }
     const record = parseRecordLine(line);
     if (typeof record === "string") return corrupt(journalPath, lineNumber, record);

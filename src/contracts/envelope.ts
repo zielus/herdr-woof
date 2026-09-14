@@ -168,8 +168,12 @@ export function relativePathProblem(path: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Ids are used as path components (stage directories), so `.` and `..` are
+ * refused explicitly in addition to the pattern.
+ */
 export function isId(value: unknown): value is string {
-  return typeof value === "string" && ID_PATTERN.test(value);
+  return typeof value === "string" && value !== "." && value !== ".." && ID_PATTERN.test(value);
 }
 
 /**
