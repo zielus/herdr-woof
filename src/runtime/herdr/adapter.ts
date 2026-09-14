@@ -116,7 +116,11 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
   return {
     adapter: "herdr",
 
-    inspect: (args, timeoutMs = commandTimeoutMs) => run([...args], timeoutMs),
+    inspect: async (args, timeoutMs = commandTimeoutMs) => {
+      const refused = notInspectable(args);
+      if (refused !== undefined) return { ok: false, error: refused };
+      return run([...args], timeoutMs);
+    },
 
     async openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>> {
       const args = [
@@ -183,7 +187,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       const bad = invalidName(handle.runtimeName);
       if (bad !== undefined) return { ok: false as const, error: bad };
       const untils = [...new Set(states.flatMap(herdrStatuses))];
-      if (untils.length === 0) {
+      // Herdr can wait for neither `gone` nor an unrecognized status; refuse before spawning.
+      if (untils.length === 0 || states.includes("unknown")) {
         return {
           ok: false as const,
           error: runtimeError(
@@ -320,9 +325,11 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       if (bad !== undefined) return { ok: false as const, error: bad };
       const closed = await run(["pane", "close", handle.paneId], stopping.timeoutMs);
       if (!closed.ok) return closed;
+      // The pane is closed: it is no longer ours whatever the verification read reports,
+      // so a retry can never close a reused pane id.
+      ownedPanes.delete(handle.paneId);
       const after = await run(["agent", "get", handle.runtimeName], commandTimeoutMs);
       if (!after.ok && after.error.runtimeCode === "agent_not_found") {
-        ownedPanes.delete(handle.paneId);
         return { ok: true as const, value: { paneClosed: true as const } };
       }
       return {
@@ -351,18 +358,41 @@ function invalidName(name: string): (RuntimeError & { code: "invalid_request" })
       );
 }
 
-/** Herdr --until statuses for a lifecycle; `gone` has none. */
+/** Herdr --until statuses for a lifecycle; `unknown` and `gone` have none. */
 function herdrStatuses(lifecycle: Lifecycle): string[] {
   switch (lifecycle) {
     case "ready":
       return ["idle", "done"];
     case "working":
     case "blocked":
-    case "unknown":
       return [lifecycle];
+    case "unknown":
     case "gone":
       return [];
   }
+}
+
+/**
+ * `inspect` runs only these read-only commands: `agent list`, `workspace list`,
+ * `agent get <target>`, `pane get <id>` and `pane list [args…]`. Anything else
+ * is `invalid_request` without spawning.
+ */
+function notInspectable(args: readonly string[]): RuntimeError | undefined {
+  const [group, command, target] = args;
+  const isTarget = typeof target === "string" && target !== "" && !target.startsWith("-");
+  const allowed =
+    (group === "agent" && command === "list" && args.length === 2) ||
+    (group === "workspace" && command === "list" && args.length === 2) ||
+    (group === "agent" && command === "get" && args.length === 3 && isTarget) ||
+    (group === "pane" && command === "get" && args.length === 3 && isTarget) ||
+    (group === "pane" && command === "list");
+  return allowed
+    ? undefined
+    : runtimeError(
+        "invalid_request",
+        `inspect runs only agent list, agent get <target>, pane get <id>, pane list and workspace list; refused: herdr ${args.join(" ")}`,
+        { command: [...args] },
+      );
 }
 
 function protocol(command: string[], message: string): { ok: false; error: RuntimeError } {

@@ -362,7 +362,7 @@ out = {
       start: { ok: false, error: { code: "invalid_request" } },
       stopUnowned: { ok: false, error: { code: "unsupported" } },
       stopForged: { ok: false, error: { code: "unsupported" } },
-      inspectRead: { ok: false, error: { code: "unsupported" } },
+      inspectRead: { ok: false, error: { code: "invalid_request" } },
     });
     expect(log).toEqual([]);
   });
@@ -411,6 +411,96 @@ out = { fresh, startedUnopened, before, afterOpen, owned };`,
       owned: { ok: true, value: { paneClosed: true } },
     });
     expect(log.filter((args) => args[1] === "close")).toEqual([["pane", "close", PANE]]);
+  });
+
+  it("inspects only allowlisted read-only commands and refuses the rest without spawning", () => {
+    const refused = runAdapter(
+      [],
+      `const results = [];
+for (const args of [
+  ["pane", "close", "w1:p1"],
+  ["pane", "split", "--current"],
+  ["agent", "start", "w-x", "--kind", "claude"],
+  ["agent", "prompt", "w-x", "hi"],
+  ["agent", "wait", "w-x", "--until", "idle"],
+  ["agent", "read", "w-x"],
+  ["agent", "get"],
+  ["agent", "get", "--help"],
+  ["pane", "get", "w1:p1", "--extra"],
+  ["agent", "list", "extra"],
+  ["workspace", "list", "--all"],
+  ["workspace", "close", "w1"],
+  [],
+]) results.push((await runtime.inspect(args)).error?.code ?? "spawned");
+out = { results };`,
+    );
+    expect(refused.out["results"]).toEqual(Array.from({ length: 13 }, () => "invalid_request"));
+    expect(refused.log).toEqual([]);
+
+    const ok = `${JSON.stringify({ id: "cli:inspect", result: {} })}\n`;
+    const allowed = runAdapter(
+      [
+        { match: ["agent", "list"], stdout: ok },
+        { match: ["agent", "get"], stdout: ok },
+        { match: ["pane", "get"], stdout: ok },
+        { match: ["pane", "list"], stdout: ok },
+        { match: ["workspace", "list"], stdout: ok },
+      ],
+      `out = { results: [
+  await runtime.inspect(["agent", "list"]),
+  await runtime.inspect(["agent", "get", handle.runtimeName]),
+  await runtime.inspect(["pane", "get", ${JSON.stringify(PANE)}]),
+  await runtime.inspect(["pane", "list", "--workspace", "w9"]),
+  await runtime.inspect(["workspace", "list"]),
+].map((result) => result.ok) };`,
+    );
+    expect(allowed.out["results"]).toEqual([true, true, true, true, true]);
+    expect(allowed.log).toEqual([
+      ["agent", "list"],
+      ["agent", "get", NAME],
+      ["pane", "get", PANE],
+      ["pane", "list", "--workspace", "w9"],
+      ["workspace", "list"],
+    ]);
+  });
+
+  it("gives up pane ownership once pane close succeeds, even when verification still reports the agent", () => {
+    const { out, log } = runAdapter(
+      [
+        splitReturning(PANE),
+        {
+          match: ["pane", "close"],
+          stdout: `${JSON.stringify({ id: "cli:pane:close", result: { type: "ok" } })}\n`,
+        },
+        { match: ["agent", "get"], stdout: agentJson("idle", 3) },
+      ],
+      `await runtime.openPane({ near: "current", cwd: "/tmp" });
+const first = await runtime.stop(handle, { timeoutMs: 1000 });
+const second = await runtime.stop(handle, { timeoutMs: 1000 });
+out = { first, second };`,
+    );
+    expect(out).toMatchObject({
+      first: { ok: false, error: { code: "runtime_error" } },
+      second: { ok: false, error: { code: "unsupported" } },
+    });
+    expect(log.filter((args) => args[1] === "close")).toEqual([["pane", "close", PANE]]);
+  });
+
+  it("refuses to wait for unknown (or only gone) without spawning", () => {
+    const { out, log } = runAdapter(
+      [ready()],
+      `out = {
+  unknown: await runtime.waitFor(handle, ["unknown"], 1000),
+  mixed: await runtime.waitFor(handle, ["ready", "unknown"], 1000),
+  gone: await runtime.waitFor(handle, ["gone"], 1000),
+};`,
+    );
+    expect(out).toMatchObject({
+      unknown: { ok: false, error: { code: "unsupported" } },
+      mixed: { ok: false, error: { code: "unsupported" } },
+      gone: { ok: false, error: { code: "unsupported" } },
+    });
+    expect(log).toEqual([]);
   });
 
   it("never invoked read, send-keys, run or explain across every scenario", () => {
