@@ -64,6 +64,7 @@ const journalOf = (runDir) =>
  * - runtime.<agentId>: ScriptedAgent overrides
  * - idleAfterWork(agentId) → boolean (default true): advance the timeline after the worker acted
  * - skipObserves(agentId) → n: observes to let pass (advancing the timeline) before the worker acts
+ * - submitInDeliver(agentId) → boolean: the worker submits inside deliver, before it returns
  * - onObserve(handle, context), after(context)
  * - verify: false | {command, timeoutMs}; limits: overrides
  * - definitionPath, makeInput(repo): another workflow
@@ -176,6 +177,10 @@ async function scenario(options) {
     waitFor: (handle, states, timeoutMs) => runtime.waitFor(handle, states, timeoutMs),
     stop: (handle, input) => runtime.stop(handle, input),
     async deliver(handle, text, input) {
+      // A fast worker submits while the prompt is still being delivered.
+      if (options.submitInDeliver?.(agentOf[handle.runtimeName]) === true) {
+        await work(agentOf[handle.runtimeName], text);
+      }
       const result = await runtime.deliver(handle, text, input);
       if (runtime.calls().at(-1)?.args.sent === true) {
         pending.set(handle.runtimeName, {
@@ -570,6 +575,13 @@ if (out.outcome !== "recorded") process.exit(1);`;
         chmodSync(copy, 0o644);
         writeFileSync(copy, "# Tampered review\n");
       },
+    }),
+
+  "fast-worker": () =>
+    scenario({
+      verify: false,
+      submitInDeliver: () => true,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
     }),
 
   "builder-failed": () =>

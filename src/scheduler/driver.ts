@@ -524,7 +524,9 @@ export async function runWorkflow<Input>(
           }),
         );
         if (!dispatched.ok && !dispatched.closed && dispatched.reason === "attempt_unknown") {
-          // The worker submitted before the dispatch was recorded; its acceptance is the evidence.
+          // A started delivery is still recorded for an accepted attempt (with its revision);
+          // only a non-started delivery of an already accepted attempt is refused here, and
+          // its acceptance is the evidence.
           const after = read();
           const attempt = after.ok ? attemptOf(after.snapshot, action) : undefined;
           if (attempt?.accepted != null) {

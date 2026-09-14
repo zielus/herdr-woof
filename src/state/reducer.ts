@@ -223,6 +223,9 @@ export function emptyRunState(): RunState {
  *   none → initial; previous accepted, undispatched, not delivered, or ambiguous
  *   without a `delivered` reconciliation → work_retry; previous started (or
  *   reconciled delivered) and not accepted → format_repair.
+ * - request.dispatched: an attempt already accepted but not yet dispatched
+ *   accepts exactly one `started` dispatch (the worker submitted before the
+ *   engine recorded the delivery); any other delivery stays attempt_unknown.
  * - request.dispatched: after agent_unassigned, assignment_mismatch when
  *   `target.terminalId` and the current assignment's terminal id are both known
  *   and differ.
@@ -523,7 +526,10 @@ function applyDispatched(state: RunState, record: RequestDispatchedRecord): Refu
       `attempt ${key} was already dispatched; trying again requires a new attempt`,
     ];
   }
-  if (attempt.status !== "open") {
+  // A worker can submit before the engine records its started delivery: that one
+  // dispatch fact (with its revision) is still accepted for the accepted attempt.
+  const acceptedFirst = attempt.status === "accepted" && record.delivery === "started";
+  if (attempt.status !== "open" && !acceptedFirst) {
     return ["attempt_unknown", `attempt ${key} is ${attempt.status}, not open`];
   }
   const assignment = state.assignments.get(record.agentId)?.at(-1);

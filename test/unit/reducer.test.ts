@@ -328,6 +328,25 @@ describe("request.dispatched rules", () => {
       );
     }
   });
+  it("accepts exactly one started dispatch for an attempt accepted before its dispatch was recorded", () => {
+    const acceptedFirst = () => [...base(), accepted(4, "build", "builder", null)];
+    const state = expectOk(journalOf(...acceptedFirst(), dispatched("build", "builder")));
+    expect(state.dispatches.get("build/1/1")).toMatchObject({ delivery: "started" });
+    expect(state.attempts.get("build/1/1")?.status).toBe("accepted");
+    expectRefused(
+      journalOf(...acceptedFirst(), dispatched("build", "builder"), dispatched("build", "builder")),
+      "dispatch_exists",
+    );
+    for (const [delivery, reason] of [
+      ["ambiguous", "stalled"],
+      ["not_delivered", "agent_busy"],
+    ] as const) {
+      expectRefused(
+        journalOf(...acceptedFirst(), dispatched("build", "builder", 1, 1, delivery, reason)),
+        "attempt_unknown",
+      );
+    }
+  });
   it("refuses a dispatch for a superseded attempt", () => {
     expectRefused(
       journalOf(...base(), attempt("build", "builder", 1, 2), dispatched("build", "builder")),

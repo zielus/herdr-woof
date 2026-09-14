@@ -611,6 +611,38 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
+    () => {
+      const report = runScenario("fast-worker");
+      expect(report.result).toMatchObject({ outcome: "completed", limit: null });
+      const acceptances = ofType(report, "submission.accepted");
+      const dispatches = ofType(report, "request.dispatched");
+      expect(dispatches.map((record) => [record["stageId"], record["delivery"]])).toEqual([
+        ["build", "started"],
+        ["review", "started"],
+      ]);
+      for (const dispatch of dispatches) {
+        const acceptance = acceptances.find(
+          (record) =>
+            record["stageId"] === dispatch["stageId"] &&
+            record["visit"] === dispatch["visit"] &&
+            record["attempt"] === dispatch["attempt"],
+        );
+        // The acceptance won the race, and the dispatch fact is still journaled with its revision.
+        expect(acceptance?.seq).toBeLessThan(dispatch.seq);
+        expect(dispatch["revision"]).toMatchObject({ tree: expect.any(String) });
+      }
+      const review = gatesOf(report).find((gate) => gate["gate"] === "review");
+      expect(review).toMatchObject({ decision: "pass", reason: "approved" });
+      expect(review?.["reviewed"]).toEqual(
+        dispatches.find((record) => record["stageId"] === "review")?.["revision"],
+      );
+      expect(gatesOf(report).some((gate) => gate["reason"] === "revision_moved")).toBe(false);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "14. another definition with its own ids and verdicts runs on the same engine",
     () => {
       const report = runScenario("reuse");
