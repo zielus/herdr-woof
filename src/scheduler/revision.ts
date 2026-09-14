@@ -32,9 +32,17 @@ export async function revisionOf(
     signal?: AbortSignal;
     /** Total bound for all git steps; past it the result is `timeout`. */
     timeoutMs?: number;
+    /** Bound for each git step (default 120 000 ms). */
+    stepTimeoutMs?: number;
   } = {},
 ): Promise<RevisionResult> {
   const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  const stepTimeoutMs = options.stepTimeoutMs ?? GIT_TIMEOUT_MS;
+  // The bound a timeout actually hit: the overall deadline when given, otherwise one git step's.
+  const timeoutText =
+    options.timeoutMs === undefined
+      ? `a git step did not finish within ${stepTimeoutMs} ms`
+      : `did not finish within ${options.timeoutMs} ms`;
   const run = async (
     command: string,
     args: string[],
@@ -42,9 +50,9 @@ export async function revisionOf(
     signal: AbortSignal | undefined,
   ): Promise<GitRun> => {
     if (signal?.aborted === true) return { ok: false, stop: "aborted", message: "aborted" };
-    const left = deadline === undefined ? GIT_TIMEOUT_MS : deadline - Date.now();
+    const left = deadline === undefined ? stepTimeoutMs : deadline - Date.now();
     if (left <= 0) return { ok: false, stop: "timeout", message: "no time left" };
-    const result = await runGit(command, args, env, signal, Math.min(GIT_TIMEOUT_MS, left));
+    const result = await runGit(command, args, env, signal, Math.min(stepTimeoutMs, left));
     // A step stopped by the overall deadline is a timeout, not a repository problem.
     if (!result.ok && deadline !== undefined && result.stop === undefined && Date.now() >= deadline)
       return { ...result, stop: "timeout" };
@@ -55,7 +63,7 @@ export async function revisionOf(
       ? {
           ok: false,
           reason: result.stop,
-          message: `revision of ${repo} ${result.stop === "timeout" ? `did not finish within ${String(options.timeoutMs)} ms` : "was aborted"}`,
+          message: `revision of ${repo} ${result.stop === "timeout" ? timeoutText : "was aborted"}`,
         }
       : undefined;
   const git = options.git ?? "git";

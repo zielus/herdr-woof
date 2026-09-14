@@ -142,6 +142,31 @@ describe("revisionOf", () => {
     expect(revision(join(repo, "src")).revision?.tree).toBe(treeOf(repo));
   });
 
+  it("names the bound a timeout hit: the overall deadline, or one git step's", () => {
+    const repo = makeRepo();
+    const bin = mkdtempSync(join(tmpdir(), "woof-slow-git-"));
+    dirs.push(bin);
+    const slowGit = join(bin, "git");
+    writeFileSync(slowGit, "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+    const timedOut = (options: Record<string, number>) => {
+      const result = runNode(
+        `const { revisionOf } = await import(${JSON.stringify(distUrl("scheduler/revision.js"))});
+console.log(JSON.stringify(await revisionOf(process.argv[1], { git: process.argv[2], ...JSON.parse(process.argv[3]) })));`,
+        [repo, slowGit, JSON.stringify(options)],
+        { timeoutMs: 30_000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return result.json as unknown as RevisionOut;
+    };
+    const overall = timedOut({ timeoutMs: 200 });
+    expect(overall).toMatchObject({ ok: false, reason: "timeout" });
+    expect(overall.message).toContain("did not finish within 200 ms");
+    const step = timedOut({ stepTimeoutMs: 200 });
+    expect(step).toMatchObject({ ok: false, reason: "timeout" });
+    expect(step.message).toContain("a git step did not finish within 200 ms");
+    for (const out of [overall, step]) expect(out.message).not.toContain("undefined");
+  });
+
   it("refuses a directory that is not a git work tree", () => {
     const dir = mkdtempSync(join(tmpdir(), "woof-norepo-"));
     dirs.push(dir);
