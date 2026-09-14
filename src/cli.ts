@@ -29,7 +29,10 @@ const RUN_SHOW_USAGE = `Usage: woof run show <run-dir> [--verify-artifacts]
 Prints one JSON line with a snapshot of the run journal in <run-dir>. It takes
 no journal lock, never contacts Herdr and works on terminated runs.
 --verify-artifacts re-hashes every accepted copy against its journal record.
-Exits 0 with the snapshot, 3 when the run directory or journal is invalid.`;
+Exits 0 with the snapshot. Exits 3 with a rejection (outcome "rejected") when
+the run directory has no journal or records (run_dir_invalid), the journal is
+corrupt (journal_corrupt), or its line 1 changed during each of three
+consecutive reads (journal_replaced).`;
 
 class UsageError extends Error {}
 

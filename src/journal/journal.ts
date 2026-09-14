@@ -232,13 +232,20 @@ export function readJournalPrefix(
 
 /**
  * `readJournalPrefix` from offset 0, read again while the journal is replaced
- * during the read, at most `reads` times in all. The last result is returned,
- * so it can still be `journal_replaced`.
+ * during the read, at most `reads` times in all. When every read saw line 1
+ * change, the result is `journal_replaced` naming how many reads were made.
  */
 export function readJournalPrefixSettled(runDir: string, reads = 3): ReadJournalPrefixResult {
   let read = readJournalPrefix(runDir);
   for (let count = 1; count < reads && !read.ok && read.reason === "journal_replaced"; count += 1) {
     read = readJournalPrefix(runDir);
+  }
+  if (!read.ok && read.reason === "journal_replaced") {
+    return {
+      ok: false,
+      reason: "journal_replaced",
+      message: `${join(runDir, JOURNAL_FILE)}: the journal's line 1 changed during each of ${reads} consecutive reads`,
+    };
   }
   return read;
 }

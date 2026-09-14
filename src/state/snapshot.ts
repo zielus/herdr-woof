@@ -120,7 +120,20 @@ export type DeriveSnapshotResult =
   | { ok: true; snapshot: RunSnapshot }
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
 
-export type ReadSnapshotResult = DeriveSnapshotResult;
+/**
+ * `run_dir_invalid`: the journal is missing or holds no records.
+ * `journal_corrupt`: a complete line is invalid or impossible.
+ * `journal_replaced`: the journal's line 1 changed during each of the bounded
+ * consecutive reads (three), so there is no stable run to show.
+ */
+export type ReadSnapshotResult =
+  | { ok: true; snapshot: RunSnapshot }
+  | {
+      ok: false;
+      reason: "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
+      message: string;
+      line?: number;
+    };
 
 const CURSOR_PATTERN = /^v1\.(0|[1-9][0-9]*)\.([0-9a-f]{12})$/;
 
@@ -141,9 +154,10 @@ export function parseCursor(cursor: string): { seq: number; anchor: string } | u
 /**
  * Reads a snapshot of `<runDir>` without taking the journal lock. A final line
  * still being written is excluded (`journal.tailPending`); a journal with no
- * records is `run_dir_invalid`. A journal whose line 1 changes while it is read
- * is read again, so a replaced run is shown whole, never as a mixed prefix; one
- * still being replaced after three reads is `run_dir_invalid`. With `verifyArtifacts`, every accepted copy is
+ * records (or no journal) is `run_dir_invalid`. A journal whose line 1 changes
+ * while it is read is read again, so a replaced run is shown whole, never as a
+ * mixed prefix; one whose line 1 changed during each of three consecutive reads
+ * is `journal_replaced`. With `verifyArtifacts`, every accepted copy is
  * re-hashed against its journal record and reported in `integrity.artifacts`.
  */
 export function readSnapshot(
@@ -151,15 +165,7 @@ export function readSnapshot(
   options: { verifyArtifacts?: boolean } = {},
 ): ReadSnapshotResult {
   const read = readJournalPrefixSettled(runDir);
-  if (!read.ok) {
-    // A journal still being replaced after the bounded re-reads has no stable run to show.
-    return {
-      ok: false,
-      reason: read.reason === "journal_replaced" ? "run_dir_invalid" : read.reason,
-      message: read.message,
-      ...(read.line === undefined ? {} : { line: read.line }),
-    };
-  }
+  if (!read.ok) return read;
   if (read.records.length === 0 || read.anchor === null) {
     return { ok: false, reason: "run_dir_invalid", message: `${runDir} holds no run records` };
   }

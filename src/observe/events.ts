@@ -91,18 +91,26 @@ function subjectOf(
   }
 }
 
+/**
+ * `run_dir_invalid`: the journal is missing or holds no records.
+ * `journal_corrupt`: a complete line is invalid or impossible.
+ * `journal_replaced`: the journal's line 1 changed during each of the bounded
+ * consecutive reads (three), so there is no stable run to page.
+ * A `CursorProblem` means the `after` cursor cannot resume here.
+ */
 export type ReadEventsResult =
   | { ok: true; events: RunEvent[]; cursor: string; tailPending: boolean }
   | {
       ok: false;
-      reason: CursorProblem | "run_dir_invalid" | "journal_corrupt";
+      reason: CursorProblem | "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
       message: string;
     };
 
 /**
  * Reads events after `after` (from the beginning when omitted), at most `limit`
  * (default 1000, at most 10000), without taking the journal lock. The returned
- * cursor is positioned after the last returned event.
+ * cursor is positioned after the last returned event. A journal whose line 1
+ * changes while it is read is read again, at most three times in all.
  */
 export function readEvents(
   runDir: string,
@@ -113,14 +121,7 @@ export function readEvents(
     throw new TypeError(`limit must be an integer between 1 and ${MAX_EVENTS_LIMIT}`);
   }
   const read = readJournalPrefixSettled(runDir);
-  if (!read.ok) {
-    // A journal still being replaced after the bounded re-reads has no stable run to page.
-    return {
-      ok: false,
-      reason: read.reason === "journal_replaced" ? "run_dir_invalid" : read.reason,
-      message: read.message,
-    };
-  }
+  if (!read.ok) return { ok: false, reason: read.reason, message: read.message };
   if (read.records.length === 0 || read.anchor === null) {
     return { ok: false, reason: "run_dir_invalid", message: `${runDir} holds no run records` };
   }

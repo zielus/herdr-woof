@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -21,6 +22,7 @@ import {
   makeRunDir,
   openPlannedRun,
   repoRoot,
+  runNode,
   runNodeAsync,
   runSdk,
   sdkScript,
@@ -438,6 +440,87 @@ out = { ok: read.ok, runId: read.snapshot?.runId, revision: read.snapshot?.revis
       revision: 2,
       status: "cancelled",
       reads: 2,
+    });
+  });
+
+  it("reports journal_replaced from readSnapshot, readEvents and woof run show when line 1 changes on every read", () => {
+    const runDir = makeRunDir();
+    const journalPath = join(runDir, "journal.jsonl");
+    writeFileSync(journalPath, openedLine("run-a"));
+    const lines = [openedLine("run-b"), openedLine("run-a")];
+    // Every offset-0 read sees its line 1 rewritten in place (alternating run-b/run-a) by a separate process.
+    const preload = join(runDir, "rewrite-every-read.mjs");
+    writeFileSync(
+      preload,
+      `import { spawnSync } from "node:child_process";
+const { journalReadHooks } = await import(${JSON.stringify(distUrl("journal/journal.js"))});
+const journal = ${JSON.stringify(journalPath)};
+const lines = ${JSON.stringify(lines)};
+let reads = 0;
+journalReadHooks.afterPrefixRead = () => {
+  const line = lines[reads % 2];
+  reads += 1;
+  globalThis.__woofPrefixReads = reads;
+  const code = 'import { writeFileSync } from "node:fs"; writeFileSync(process.argv[1], process.argv[2]);';
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", code, journal, line]);
+  if (result.status !== 0) throw new Error(String(result.stderr));
+};
+`,
+    );
+
+    const sdk = runNode(
+      `await import(${JSON.stringify(pathToFileURL(preload).href)});
+const snapshots = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
+const { readEvents } = await import(${JSON.stringify(distUrl("observe/events.js"))});
+const snapshot = snapshots.readSnapshot(process.argv[1]);
+const afterSnapshot = globalThis.__woofPrefixReads;
+const events = readEvents(process.argv[1]);
+const afterEvents = globalThis.__woofPrefixReads;
+const missingSnapshot = snapshots.readSnapshot(process.argv[1] + "/nope");
+const missingEvents = readEvents(process.argv[1] + "/nope");
+console.log(JSON.stringify({ snapshot, events, afterSnapshot, afterEvents, missingSnapshot, missingEvents }));`,
+      [runDir],
+    );
+    expect(sdk.status, sdk.stderr).toBe(0);
+    const out = JSON.parse(sdk.stdout) as Record<string, Json>;
+    const replaced = {
+      ok: false,
+      reason: "journal_replaced",
+      message: `${journalPath}: the journal's line 1 changed during each of 3 consecutive reads`,
+    };
+    expect(out["snapshot"]).toEqual(replaced);
+    expect(out["events"]).toEqual(replaced);
+    expect([out["afterSnapshot"], out["afterEvents"]]).toEqual([3, 6]);
+    expect(out["missingSnapshot"]).toMatchObject({ ok: false, reason: "run_dir_invalid" });
+    expect(out["missingEvents"]).toMatchObject({ ok: false, reason: "run_dir_invalid" });
+
+    const shown = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        pathToFileURL(preload).href,
+        join(repoRoot, "dist", "cli.js"),
+        "run",
+        "show",
+        runDir,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(shown.status, shown.stderr).toBe(3);
+    expect(JSON.parse(shown.stdout)).toEqual({
+      outcome: "rejected",
+      reason: "journal_replaced",
+      message: replaced.message,
+    });
+    const missing = spawnSync(
+      process.execPath,
+      [join(repoRoot, "dist", "cli.js"), "run", "show", join(runDir, "nope")],
+      { encoding: "utf8" },
+    );
+    expect(missing.status).toBe(3);
+    expect(JSON.parse(missing.stdout)).toMatchObject({
+      outcome: "rejected",
+      reason: "run_dir_invalid",
     });
   });
 
