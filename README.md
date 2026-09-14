@@ -185,15 +185,18 @@ key optional, same bounds as elsewhere) and defaults to
 maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs: 180000,
 blockedWaitMs: 600000, deliveryTimeoutMs: 60000`.
 
+`--poll-ms` must be an integer of at least 1 (usage error otherwise).
 Progress goes to stderr; stdout prints exactly one JSON line. Exit codes:
 `0` completed, `4` failed, `5` exhausted, `6` cancelled, `2` rejected before
-launch (bad input, a repository that is not the git work tree's top level,
-an unsupported agent kind, a run directory overlapping the repository, an
-existing run directory), `3` a runtime or journal infrastructure failure
-(including `HERDR_ENV`/`HERDR_PANE_ID` unset without `--runtime-module`, or a
-`--runtime-module` factory whose result is missing or misshapes a
-`RuntimeAdapter` method — checked before any run opens), `1` a usage error.
-`woof run cancel <run-dir>` records
+launch (bad input, a repository that is not the git work tree's top level or
+one git itself cannot take, an unsupported agent kind, a run directory
+overlapping the repository, an existing run directory), `3` a runtime or
+journal infrastructure failure (including `HERDR_ENV`/`HERDR_PANE_ID` unset
+without `--runtime-module`, a `--runtime-module` factory whose result is
+missing or misshapes a `RuntimeAdapter` method — checked before any run
+opens — or a run that finished but left a pane the driver could not stop,
+returned as `RunResult` plus an attached `runtime_cleanup_failed` error), `1`
+a usage error. `woof run cancel <run-dir>` records
 `run.terminated{outcome:"cancelled"}` for a scheduler that may still be
 running elsewhere (its own next tick then stops it); exit `0` when
 recorded, `2` when the run is already terminated, `3` on a journal failure.

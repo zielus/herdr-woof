@@ -28,12 +28,14 @@ The built `woof` executable has eight supported commands:
   and any ambiguous deliveries still open. It takes no journal lock, never
   contacts Herdr, and works on a terminated run and on a p1 journal.
 - `woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>]
-[--poll-ms <n>] [--keep-panes] [--runtime-module <path>]` — runs the
+[--poll-ms <n>] [--keep-panes] [--runtime-module <path>]` (`--poll-ms` must
+  be an integer of at least 1) — runs the
   built-in `build-review` workflow's scheduler in the foreground against a
   Herdr runtime (requires `HERDR_ENV=1` and `HERDR_PANE_ID`) or, for tests, a
   `--runtime-module`. Prints one JSON line and exits `0` completed, `4`
   failed, `5` exhausted, `6` cancelled, `2` rejected before launch, `3` a
-  runtime/journal infrastructure failure, `1` usage.
+  runtime/journal infrastructure failure (including a pane that could not be
+  stopped while settling), `1` usage.
 - `woof run cancel <run-dir> [--reason <text>]` — records
   `run.terminated{outcome:"cancelled"}` for a run whose scheduler may still
   be running elsewhere; the scheduler stops at its next tick and refuses

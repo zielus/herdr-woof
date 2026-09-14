@@ -151,9 +151,17 @@ v1`) for one attempt: run/workflow/agent/role identity; stage, visit,
   was recorded") and keeps everything else. The driver persists the rendered
   text to `requests/<stageId>/visit-<n>/attempt-<m>/request.md` (mode `0444`),
   records its path/sha256/bytes on `request.dispatched.request`, and delivers
-  the identical text. The rendered request is capped at 32 KiB
-  (`request_too_large` otherwise, at admission time via the input's own
-  24 KiB task cap for the built-in `build-review` workflow).
+  the identical text. Every rendered request is capped at 32 KiB
+  (`request_too_large` at dispatch time otherwise). The built-in
+  `build-review` workflow also enforces this at admission, before a run
+  opens: beyond the 24 KiB compact-JSON cap on `task`/`instructions`, it
+  renders (with the real `renderRequest` and its own `request()` functions)
+  the largest request the given input could produce — the review, and the
+  repair entered by either the review or the verify check, each with every
+  input it names, at the admitted maximum run-directory length and maximal
+  counters/ids/digests — and rejects the input if that render would exceed
+  32 KiB, so a compact-JSON `task.context` that expands large once
+  pretty-printed into a request is caught before any agent starts.
 - **Revision binding is engine-owned, not carried in the envelope.** The
   scheduler computes and journals the repository revision at dispatch
   (`request.dispatched.revision`) and again immediately before recording a

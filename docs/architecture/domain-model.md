@@ -252,7 +252,11 @@ launch,revision,check,loader}.ts`, `src/journal/control-records.ts`,
   before a `format_repair` attempt; `readinessWaitMs` from starting an agent
   (or first needing it ready) until it settles `ready`;
   `blockedWaitMs` from `run.blocked` until unblocked; `deliveryTimeoutMs`
-  passed to delivery and as the ambiguous-reconciliation deadline;
+  passed to delivery as one deadline covering both the precondition read
+  (checking the agent is not gone/working/blocked before anything is sent)
+  and the prompt itself — if the read alone exhausts it, nothing is sent and
+  the dispatch is `not_delivered` — and as the ambiguous-reconciliation
+  deadline;
   `runTimeoutMs` checked before every blocking call and before any
   dispatch/check/gate write, so a budget that expires mid-tick ends the run
   with no partial dispatch (`request.dispatched`) or delivery ever recorded
@@ -392,7 +396,13 @@ latest work-stage gate`; otherwise the engine itself records
   without writing. External termination (`woof run cancel`, or any
   `terminateRun` call) is detected on the scheduler's next tick, or as soon
   as one of its own store writes is refused `run_closed`; a late `woof
-submit` after termination is refused `run_closed` (p1).
+submit` after termination is refused `run_closed` (p1). Settling always keeps
+  the recorded terminal outcome: a pane that cannot be stopped (an agent last
+  observed `gone` is skipped, since it has no pane left) does not change
+  `RunResult.outcome`, but the driver returns `error: {reason:
+"runtime_cleanup_failed", message: "could not stop <runtime> (pane <id>):
+…"}` naming every pane it could not close; the CLI prints its normal
+  rejection line with that `result` attached and exits 3.
 
 - **`woof run build-review`** (`src/cli.ts`) is the CLI entry point for the
   scheduler: parses flags, self-validates the built-in definition, reads and
@@ -405,7 +415,15 @@ submit` after termination is refused `run_closed` (p1).
   invalid, before any run opens), opens the run and calls `runWorkflow` with
   the repository admission already resolved: the driver runs every pane,
   check and fingerprint against that same path and never calls
-  `definition.repository(input)` again. `woof run cancel <run-dir>` records
+  `definition.repository(input)` again. `runWorkflow` also resolves
+  `options.runDir` once to one absolute, symlink-resolved canonical path
+  (`realpath(resolve(runDir))`, falling back to the plain resolved path when
+  it cannot be resolved) and uses that same canonical path for every read,
+  write, env var, rendered request text and the returned `RunResult` —
+  including `RunResult.runDir` — even when a relative or symlinked `runDir`
+  was passed in; admission and the launched agent's `--add-dir` still use the
+  run directory exactly as given, so both name the same directory, one
+  canonical and one as supplied. `woof run cancel <run-dir>` records
   `terminateRun{outcome:"cancelled"}` for a scheduler that may still be
   running elsewhere. Neither command is hosted: each is a foreground CLI
   process, and a killed scheduler leaves a non-terminal run whose only

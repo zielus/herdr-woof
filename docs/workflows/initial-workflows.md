@@ -60,9 +60,21 @@ context?}`, optional `instructions {builder?, reviewer?}`, optional `verify
   `{kind, model, args}`, and optional `limits` (each key optional, same bounds
   as `Limits`, defaulting to `maxAttemptsPerVisit: 2, maxVisitsPerStage: 3,
 maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs:
-180000, blockedWaitMs: 600000, deliveryTimeoutMs: 60000`). `task` and
-  `instructions` together are capped at 24 KiB (headroom under the 32 KiB
-  request cap).
+180000, blockedWaitMs: 600000, deliveryTimeoutMs: 60000`). `task.context`,
+  when given, is validated recursively as a JSON value: `null`, booleans,
+  finite numbers, strings, arrays (checked by index, so a hole is refused) and
+  plain objects only — `undefined`, functions, `bigint`, symbols, non-finite
+  numbers, non-plain objects (for example a `Date`), a cycle, or nesting past
+  1000 levels are all refused, each reported at its exact path (for example
+  `task.context.nested`). `task` and `instructions` together are still capped
+  at 24 KiB compact JSON, and admission additionally renders, with the real
+  `renderRequest` and the definition's own `request()` functions, the largest
+  request this input could produce (the review, and the repair entered by
+  either the review or the verify check, each with every input it names, at
+  the admitted maximum run-directory length and maximal counters/ids/digests)
+  and refuses the input when that render would exceed the 32 KiB request cap
+  — a compact-JSON context can still be too large once pretty-printed into a
+  request.
 - **Stages:** `build` (builder) → `verify` (an engine-run check, only when
   `input.verify` is given — otherwise the build/repair gate routes straight to
   `review`) → `review` (reviewer, verdicts `pass`/`fail`) → `repair`

@@ -102,17 +102,25 @@ not design intent. Source: `src/scheduler/definition.ts`,
   `definition_invalid` (no default export, or a default export that fails
   `validateWorkflowDefinition`). The built-in `build-review` definition ships
   as a compiled module.
-- **Admission** (`admitWorkflow`) then calls the definition's four input
-  callbacks in order — `validateInput`, `repository`, `resolveAgents`,
-  `resolveLimits` — each guarded individually; a throw or a return shape that
-  does not match the contract (missing `{ok}`, a non-string repository path, an
-  agent map entry that is not `{kind, model, args?}`, a non-object limits
-  result) is `definition_invalid` naming the callback, never an exception.
-  `repository(input)` must return the **top level** of a git work tree —
+- **Admission** (`admitWorkflow`) first checks the run directory itself:
+  absolute and at most `MAX_RUN_DIR_BYTES` (512) bytes, otherwise
+  `input_invalid` (field `runDir`) before any callback runs — the run
+  directory is used verbatim in launch arguments and requests. It then calls
+  the definition's four input callbacks in order — `validateInput`,
+  `repository`, `resolveAgents`, `resolveLimits` — each guarded individually;
+  a throw or a return shape that does not match the contract (missing `{ok}`,
+  a `details` entry that is not exactly `{field: string, message: string}`, a
+  non-string repository path, an agent map entry that is not `{kind, model,
+args?}`, a non-object limits result) is `definition_invalid` naming the
+  callback, never an exception. `repository(input)` must return the **top
+  level** of a git work tree —
   `revisionOf` resolves `git rev-parse --show-toplevel` from the given path and
   fingerprints the whole tree from there; a path that is not that top level
   (a nested directory) is rejected `repo_invalid`, naming both the given path
-  and the resolved top level. A run directory that equals, contains, or lies
+  and the resolved top level. A repository path git itself cannot take (for
+  example one containing a NUL byte) makes `revisionOf` throw; admission
+  catches that and rejects it `repo_invalid` too, naming the path, rather than
+  letting the exception escape. A run directory that equals, contains, or lies
   inside that repository is rejected `input_invalid` before any agent kind is
   resolved. Agent kind/model/args resolve through the kind table
   (`src/scheduler/launch.ts`; only `"claude"` is currently supported —
@@ -130,7 +138,15 @@ not design intent. Source: `src/scheduler/definition.ts`,
   `edges[from]` list; a target outside that list ends the run
   `failed{reason:"transition_undeclared: …"}` before any dispatch or gate
   write, even though the same shape already passed
-  `validateWorkflowDefinition`.
+  `validateWorkflowDefinition`. An agent stage's `request()` return is checked
+  the same way for every dispatch cause except `format_repair`
+  (`stageRequestProblem`: `{goal: string, instructions: string, inputs:
+InputRef[]}` plus optional `task`/`roleInstructions`, each `InputRef`
+  `{label: non-empty string, from: {stageId: string} xor {checkId: string}}`);
+  a malformed return ends the run
+  `failed{reason:"definition_contract_violated: <stage>: request() …"}` before
+  any dispatch. `null` is reserved for a format-repair dispatch (which never
+  calls `request()`) and is never a valid return otherwise.
 - **Check stages** (`kind: "check"`) run an engine-owned command instead of an
   agent: `command(input) → {argv, timeoutMs}`, executed with no shell in the
   repository (`src/scheduler/check.ts`), and `next(ctx)` receives the exit code,
