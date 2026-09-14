@@ -108,19 +108,28 @@ not design intent. Source: `src/scheduler/definition.ts`,
   does not match the contract (missing `{ok}`, a non-string repository path, an
   agent map entry that is not `{kind, model, args?}`, a non-object limits
   result) is `definition_invalid` naming the callback, never an exception.
-  `repository(input)` must return an absolute path to a git work tree, checked
-  with `revisionOf` (D4); a run directory that equals, contains, or lies inside
-  that repository is rejected `input_invalid` before any agent kind is
+  `repository(input)` must return the **top level** of a git work tree —
+  `revisionOf` resolves `git rev-parse --show-toplevel` from the given path and
+  fingerprints the whole tree from there; a path that is not that top level
+  (a nested directory) is rejected `repo_invalid`, naming both the given path
+  and the resolved top level. A run directory that equals, contains, or lies
+  inside that repository is rejected `input_invalid` before any agent kind is
   resolved. Agent kind/model/args resolve through the kind table
   (`src/scheduler/launch.ts`; only `"claude"` is currently supported —
-  `agent_kind_unsupported` otherwise) into the run plan.
+  `agent_kind_unsupported` otherwise) into the run plan. The repository
+  admission resolved is the one the scheduler uses for every later pane, check
+  and fingerprint; `runWorkflow` never calls `definition.repository(input)`
+  again after admission.
 - **Static edges are enforced at transition time, not only at validation.**
   `transitionProblem` checks every value a stage/check `next()` returns against
   its contract (a `pass`/`reject` decision, a non-empty reason of at most 200
   characters, exactly one of `to`/`outcome`, `completed` only from `pass` and
-  `failed` only from `reject`) and against the static `edges[from]` list; a
-  target outside that list ends the run `failed{reason:"transition_undeclared: …"}`
-  before any dispatch or gate write, even though the same shape already passed
+  `failed` only from `reject`; `requires: "round"` is valid only when the
+  definition declares a `roundStage` — `requires: "round"` in a definition with
+  `roundStage: null` is `definition_contract_violated`) and against the static
+  `edges[from]` list; a target outside that list ends the run
+  `failed{reason:"transition_undeclared: …"}` before any dispatch or gate
+  write, even though the same shape already passed
   `validateWorkflowDefinition`.
 - **Check stages** (`kind: "check"`) run an engine-owned command instead of an
   agent: `command(input) → {argv, timeoutMs}`, executed with no shell in the
@@ -132,4 +141,7 @@ not design intent. Source: `src/scheduler/definition.ts`,
 - **What remains open:** `.woof`/`~/.woof` configuration-driven role catalogs
   and provenance (phase 4); a definition can still only be loaded by explicit
   path (`--runtime-module`-style loading is documented, unstable, and
-  test-oriented for the runtime adapter, not the definition).
+  test-oriented for the runtime adapter, not the definition — its factory
+  result is shape-validated against every `RuntimeAdapter` method before any
+  run opens; a missing or non-function member is `runtime_unavailable`,
+  exit 3, naming what is missing or invalid).

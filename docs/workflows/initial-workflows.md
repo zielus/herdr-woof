@@ -50,8 +50,11 @@ Real shipped behavior for the built-in `build-review` definition — not design
 intent. Source: `src/workflows/build-review.ts`.
 
 - **Executable via `woof run build-review --input <path|-> --run-dir <dir>`.**
-  Input is validated with an exact key set: `schemaVersion: 1`, `repo` (absolute
-  git work tree path), `task {title, description, acceptanceCriteria,
+  Input is validated with an exact key set: `schemaVersion: 1`, `repo` (an
+  absolute path, required at admission to be the top level of a git work tree
+  — `git rev-parse --show-toplevel`; a nested directory is rejected
+  `repo_invalid`, naming both the given path and the resolved top level),
+  `task {title, description, acceptanceCriteria,
 context?}`, optional `instructions {builder?, reviewer?}`, optional `verify
 {command, timeoutMs}`, `agents {builder, reviewer}` each
   `{kind, model, args}`, and optional `limits` (each key optional, same bounds

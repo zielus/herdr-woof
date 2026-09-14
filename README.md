@@ -152,7 +152,9 @@ operator must have trusted the target repository in Claude Code at least
 once (open `claude` there and answer its folder-trust question) before
 `woof run build-review` can start an agent in it; Woof surfaces an untrusted
 repository as `run.blocked{reason:"startup_blocked"}` and never bypasses
-that dialog:
+that dialog. `repo` must be the top level of that git work tree (`git
+rev-parse --show-toplevel`); a nested directory is rejected `repo_invalid`,
+naming both the given path and the resolved top level:
 
 ```sh
 cat > input.json <<'EOF'
@@ -185,10 +187,13 @@ blockedWaitMs: 600000, deliveryTimeoutMs: 60000`.
 
 Progress goes to stderr; stdout prints exactly one JSON line. Exit codes:
 `0` completed, `4` failed, `5` exhausted, `6` cancelled, `2` rejected before
-launch (bad input, an unsupported agent kind, a run directory overlapping
-the repository, an existing run directory), `3` a runtime or journal
-infrastructure failure (including `HERDR_ENV`/`HERDR_PANE_ID` unset without
-`--runtime-module`), `1` a usage error. `woof run cancel <run-dir>` records
+launch (bad input, a repository that is not the git work tree's top level,
+an unsupported agent kind, a run directory overlapping the repository, an
+existing run directory), `3` a runtime or journal infrastructure failure
+(including `HERDR_ENV`/`HERDR_PANE_ID` unset without `--runtime-module`, or a
+`--runtime-module` factory whose result is missing or misshapes a
+`RuntimeAdapter` method — checked before any run opens), `1` a usage error.
+`woof run cancel <run-dir>` records
 `run.terminated{outcome:"cancelled"}` for a scheduler that may still be
 running elsewhere (its own next tick then stops it); exit `0` when
 recorded, `2` when the run is already terminated, `3` on a journal failure.

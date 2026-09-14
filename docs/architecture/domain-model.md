@@ -259,6 +259,22 @@ launch,revision,check,loader}.ts`, `src/journal/control-records.ts`,
   for that step. Waiting for a worker's result after a started dispatch has
   no separate limit; it is bounded only by `runTimeoutMs`.
 
+- **`runTimeoutMs` bounds every blocking step, not only writes (PR fix
+  round 1).** Once the first snapshot is read, the deadline
+  (`openedAt + runTimeoutMs`) caps the timeout passed to each observe call, to
+  `openPane`, to `startAgent`, to every repository fingerprint (dispatch,
+  `compute_revision`, after a check, and again immediately before a
+  revision-bound gate append), and to the tick's own sleep — each gets
+  `min(its own cap, the remaining budget)` (observe and pane-open share a
+  10-second adapter command cap; deadline expiry is re-checked immediately
+  before every gate append, after the subject re-hash and fingerprint). A
+  remaining start budget under the Herdr adapter's own minimum start timeout
+  (3001 ms) ends the run `exhausted{runTimeoutMs}` before `startAgent` is even
+  called, rather than attempting a start Herdr would refuse outright. A
+  fingerprint that hits the deadline reports `timeout` (mapped to
+  `exhausted{runTimeoutMs}`); one that is aborted mid-flight is picked up
+  again on the next tick as a cancellation.
+
 - **Blocking is a journaled scheduler decision (D7).** When a tracked
   observation of an assigned agent is `blocked`, the scheduler records
   `run.blocked{agentId, reason: "blocked_on_input"|"startup_blocked",
@@ -288,12 +304,20 @@ evidence:"no_evidence_before_deadline"}` and the run ends
   `DeliveryResolution` type, but no p3 record can carry it: no evidence
   proves a prompt was never delivered after an ambiguous dispatch.
 
-- **Revision binding (D4).** `revisionOf(repo)` computes
-  `{head: git rev-parse HEAD | null, tree: <write-tree of a temporary index
-seeded with HEAD and git add -A>}` without touching the real index or
-  working tree (`git add` into the temporary index does write unreferenced
-  blobs into the repository's object store). The driver computes it at
-  dispatch (`request.dispatched.revision`) and again immediately before
+- **Revision binding (D4).** `revisionOf(repo, {timeoutMs?, signal?})` first
+  resolves `git rev-parse --show-toplevel` from the given path — the
+  fingerprint always covers the whole work tree from its root, whatever
+  directory inside it is given — then computes `{head: git rev-parse HEAD |
+null, tree: <write-tree of a temporary index seeded with HEAD and git add
+-A>, root}` without touching the real index or working tree (`git add` into
+  the temporary index does write unreferenced blobs into the repository's
+  object store). Admission requires the workflow's `repository(input)` to
+  already name that top level (`realpath(repository) === realpath(root)`,
+  else `repo_invalid` naming both); every later fingerprint therefore starts
+  from the same root. Given a `timeoutMs`, one deadline covers every git step;
+  hitting it returns `{ok:false, reason:"timeout"}` (an aborted call returns
+  `"aborted"`) rather than a `repo_invalid` git error. The driver computes the
+  fingerprint at dispatch (`request.dispatched.revision`) and again immediately before
   recording a gate (`gate.recorded.revision`); a stage declared
   `bindsRevision: true` receives both `reviewed` (the revision its accepted
   attempt was dispatched against) and `current` (the fresh revision) in its
@@ -345,12 +369,22 @@ latest work-stage gate`; otherwise the engine itself records
 
 - **Worker request (D11).** The rendered request (§ see
   [communication.md](communication.md#implemented-now-p3)) is persisted to
-  `requests/<stageId>/visit-<n>/attempt-<m>/request.md` (mode `0444`),
-  hashed and recorded, and delivered as the identical text. Before
-  rendering any request that references an accepted artifact or check
-  evidence, the driver re-hashes it against its journal record
-  (`acceptedCopyProblem`); a mismatch ends the run
-  `failed{reason:"input_artifact_altered: …"}` before any dispatch.
+  `requests/<stageId>/visit-<n>/attempt-<m>/request.md` (mode `0444`, set on
+  the still-open file descriptor with `fchmodSync` after `fsync` and before
+  `close`, never by path — this applies to every engine-owned file, including
+  check evidence), hashed and recorded, and delivered as the identical text.
+  Before rendering any request that references an accepted artifact or check
+  evidence, the driver resolves each declared `InputRef` and re-hashes it
+  against its journal record (`acceptedCopyProblem`); a mismatch ends the run
+  `failed{reason:"input_artifact_altered: …"}` before any dispatch, and a
+  declared input whose accepted artifact or check evidence does not exist at
+  all ends the run `failed{reason:"input_unresolved: <label>: …"}` before any
+  fingerprint, attempt or request write — a declared input is never silently
+  dropped. An observe call that fails with a structured runtime error (not a
+  timeout) ends the run at once, `failed{reason:"runtime_error: <code>: agent
+<id>: <message>"}`; a `timeout` ends the run the same way only after three
+  consecutive timeouts for that agent (any successful observation resets the
+  count), since one slow poll is not evidence the agent is gone.
 
 - **Cancellation (D12).** `runWorkflow({signal})` terminates
   `cancelled{reason:"cancel requested"}` on abort and stops owned panes
@@ -363,10 +397,15 @@ submit` after termination is refused `run_closed` (p1).
 - **`woof run build-review`** (`src/cli.ts`) is the CLI entry point for the
   scheduler: parses flags, self-validates the built-in definition, reads and
   validates input, runs admission (`admitWorkflow`: input → repository/
-  revision → run-dir/repository overlap check → agent kind resolution →
-  limits → plan), resolves a runtime (the Herdr CLI adapter, requiring
-  `HERDR_ENV=1` and `HERDR_PANE_ID`, or `--runtime-module` for tests), opens
-  the run and calls `runWorkflow`. `woof run cancel <run-dir>` records
+  top-level/revision → run-dir/repository overlap check → agent kind
+  resolution → limits → plan), resolves a runtime (the Herdr CLI adapter,
+  requiring `HERDR_ENV=1` and `HERDR_PANE_ID`, or `--runtime-module` for
+  tests — a factory result missing or misshaping any `RuntimeAdapter` method
+  is rejected `runtime_unavailable`, exit 3, naming what is missing or
+  invalid, before any run opens), opens the run and calls `runWorkflow` with
+  the repository admission already resolved: the driver runs every pane,
+  check and fingerprint against that same path and never calls
+  `definition.repository(input)` again. `woof run cancel <run-dir>` records
   `terminateRun{outcome:"cancelled"}` for a scheduler that may still be
   running elsewhere. Neither command is hosted: each is a foreground CLI
   process, and a killed scheduler leaves a non-terminal run whose only
