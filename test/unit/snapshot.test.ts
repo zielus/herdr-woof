@@ -475,6 +475,11 @@ describe("deriveSnapshot p3 projection", () => {
     expect(withRepairs.limits?.["maxFormatRepairs"]).toBe(2);
   });
 
+  it("reports checks null when the plan lists none, including an explicit empty list", () => {
+    expect(snapshotOf(opened({ ...PLAN, checks: [] })).checks).toBeNull();
+    expect(snapshotOf(opened(PLAN)).checks).toBeNull();
+  });
+
   it("projects attempt cause, dispatch, request, target and revision", () => {
     const snapshot = snapshotOf(...built(), attempt("build", "builder", 2, 1));
     expect(attemptAt(snapshot, "build", 1, 1)).toMatchObject({

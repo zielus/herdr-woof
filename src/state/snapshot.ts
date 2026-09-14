@@ -317,7 +317,11 @@ export function deriveSnapshot(
         state.plan === null
           ? null
           : { ...state.plan.limits, maxFormatRepairs: state.plan.limits.maxFormatRepairs ?? 0 },
-      checks: state.plan?.checks === undefined ? null : [...state.plan.checks],
+      // An explicit `checks: []` lists no checks either.
+      checks:
+        state.plan?.checks === undefined || state.plan.checks.length === 0
+          ? null
+          : [...state.plan.checks],
       counters: cloneCounters(state.counters),
       agents: deriveAgents(state, records),
       stages: deriveStages(state, records),
