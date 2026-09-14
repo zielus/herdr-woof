@@ -122,12 +122,18 @@ marked as an unstable p2 contract in `src/index.ts`.
 spawning. Its `waitFor` returns `unsupported` without spawning whenever the
 requested states include `gone` or `unknown` (Herdr cannot wait for either),
 and `stop` gives up the closed pane's ownership immediately once `pane
-close` succeeds, before it even verifies the agent is gone. A deterministic
-in-memory double for the same runtime contract, `createScriptedRuntime`,
-ships from the `herdr-woof/testing` subpath for workflow-author tests; it is
-never exported from the main entry. Its `advance` throws a TypeError for a
-negative or non-integer step count, and construction throws a TypeError for
-an empty `afterDeliver` sequence (flat or nested).
+close` succeeds, before it even verifies the agent is gone. Any exit-0
+Herdr response is treated as `protocol_error`, not success, unless it
+carries both a non-empty string request `id` and an object `result`. A
+deterministic in-memory double for the same runtime contract,
+`createScriptedRuntime`, ships from the `herdr-woof/testing` subpath for
+workflow-author tests; it is never exported from the main entry. Its
+`advance` throws a TypeError for a negative or non-integer step count, and
+construction throws a TypeError for an empty `afterDeliver` sequence (flat
+or nested). A scripted `started` delivery is also checked like the Herdr
+adapter's own: if the observation right after delivery is not `working` or
+`blocked`, the outcome is downgraded to `ambiguous/protocol_error` (the call
+is still logged as `sent`).
 
 What still does not exist: a scheduler or workflow engine, workflow
 definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or

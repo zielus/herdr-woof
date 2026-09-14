@@ -86,7 +86,12 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   every wait must be bounded, so an unbounded duration is not a limit). A run
   may also be plan-less (p1's shape); every plan-referencing check below is
   then skipped. `validateRunPlan` rejects unknown keys, duplicate ids, and an
-  unresolved stage `agentId`, one detail per offending field path.
+  unresolved stage `agentId`, one detail per offending field path. It reads
+  only the input's own enumerable properties (arrays by own index), never a
+  prototype's: a required field supplied only by inheritance (for example an
+  object built with `Object.create`) is reported missing, exactly as if it
+  were absent. A plan built entirely from null-prototype objects is accepted
+  and validated the same as an ordinary object.
 
 - **Run status is derived, never recorded.** There is no `run.status`
   record. `created` (only `run.opened`), `starting` (at least one

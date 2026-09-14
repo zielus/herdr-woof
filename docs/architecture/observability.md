@@ -116,7 +116,11 @@ design intent. Source: `src/state/snapshot.ts`,
   the four journal/event metadata fields `schemaVersion`, `seq`, `ts` and
   `type`). There are no synthetic events: `readEvents` and
   `subscribeEvents` project the journal directly, so an event and its
-  record can never drift apart.
+  record can never drift apart. `foldEvents` does not trust an incoming
+  event's `subject`: it recomputes the canonical subject from the parsed
+  record (for a duplicate, from the acceptance it names) and fails closed
+  with `journal_corrupt` when the two differ — with or without a base, and
+  for a repeated seq as well as a new one.
 
 - **Cursor `v1.<seq>.<anchor>`.** `anchor` is the first 12 hex characters of
   sha256 over journal line 1 (the `run.opened` bytes). A cursor whose
@@ -165,7 +169,12 @@ records}`) is the proof of this by construction: it re-derives the
   `tornTailGraceMs` (default 2000 ms) performs exactly one **locked**
   `readJournal`: under the lock no append is in flight, so a line still
   torn there is persisted corruption (`error/journal_corrupt`), not a slow
-  writer. A subscription also detects the journal being replaced at its
+  writer. This applies before any event is yielded, too: a partial first
+  `run.opened` line (the journal has been created but its first line is
+  still being written) is normally a write in flight, but if it stays torn
+  past the same grace period the subscription ends with
+  `error/journal_corrupt` rather than waiting forever. A subscription also
+  detects the journal being replaced at its
   path — an inode change (rename into place) or a changed line 1 at the
   same inode, including at identical length — via a device/inode and
   line-1-bytes check on every incremental read, ending with
