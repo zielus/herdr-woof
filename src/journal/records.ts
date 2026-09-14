@@ -201,13 +201,13 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
     case "run.terminated":
       return runTerminatedProblem(value);
     case "gate.recorded":
-      return gateRecordedProblem(value, seq);
+      return gateRecordedProblem(value);
     case "run.blocked":
       return runBlockedProblem(value);
     case "run.unblocked":
       return runUnblockedProblem(value);
     case "delivery.reconciled":
-      return deliveryReconciledProblem(value, seq);
+      return deliveryReconciledProblem(value);
     default:
       return "unknown record type";
   }

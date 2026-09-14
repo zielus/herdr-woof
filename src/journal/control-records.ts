@@ -111,10 +111,12 @@ export function checkEvidencePath(
   return `checks/${gate}/${stageId}-v${visit}-a${attempt}/output.log`;
 }
 
-export function gateRecordedProblem(
-  value: Record<string, unknown>,
-  seq: number,
-): string | undefined {
+/**
+ * Field contract of gate.recorded. Whether `subject.acceptedSeq` names an
+ * earlier acceptance is a reducer rule (gate_subject_unknown), so a store can
+ * check the contract before it knows the next seq.
+ */
+export function gateRecordedProblem(value: Record<string, unknown>): string | undefined {
   const problem =
     keysProblem(
       value,
@@ -137,7 +139,7 @@ export function gateRecordedProblem(
       `reason is not a non-empty string of at most ${MAX_GATE_REASON} characters`,
     ) ??
     check(nonNegativeInteger(value["round"]), "round is not a non-negative safe integer") ??
-    subjectProblem(value["subject"], seq) ??
+    subjectProblem(value["subject"]) ??
     nextProblem(value["next"]) ??
     revisionProblem(value["revision"], "revision");
   if (problem !== undefined) return problem;
@@ -164,7 +166,7 @@ export function gateRecordedProblem(
   );
 }
 
-function subjectProblem(value: unknown, seq: number): string | undefined {
+function subjectProblem(value: unknown): string | undefined {
   if (!isPlainObject(value)) return "subject is not an object";
   return (
     exactKeysProblem(
@@ -176,10 +178,7 @@ function subjectProblem(value: unknown, seq: number): string | undefined {
     check(isId(value["stageId"]), "subject.stageId is invalid") ??
     check(isPositiveInteger(value["visit"]), "subject.visit is invalid") ??
     check(isPositiveInteger(value["attempt"]), "subject.attempt is invalid") ??
-    check(
-      isPositiveInteger(value["acceptedSeq"]) && value["acceptedSeq"] < seq,
-      "subject.acceptedSeq does not name an earlier record",
-    ) ??
+    check(isPositiveInteger(value["acceptedSeq"]), "subject.acceptedSeq is invalid") ??
     check(
       typeof value["receiptId"] === "string" && RECEIPT_ID_PATTERN.test(value["receiptId"]),
       "subject.receiptId is invalid",
@@ -292,10 +291,8 @@ export function runUnblockedProblem(value: Record<string, unknown>): string | un
   );
 }
 
-export function deliveryReconciledProblem(
-  value: Record<string, unknown>,
-  seq: number,
-): string | undefined {
+/** Field contract of delivery.reconciled; the dispatch it names is checked by the reducer. */
+export function deliveryReconciledProblem(value: Record<string, unknown>): string | undefined {
   const resolution = value["resolution"];
   const problem =
     keysProblem(value, [
@@ -311,10 +308,7 @@ export function deliveryReconciledProblem(
     check(isId(value["stageId"]), "stageId is invalid") ??
     check(isPositiveInteger(value["visit"]), "visit is invalid") ??
     check(isPositiveInteger(value["attempt"]), "attempt is invalid") ??
-    check(
-      isPositiveInteger(value["dispatchSeq"]) && value["dispatchSeq"] < seq,
-      "dispatchSeq does not name an earlier record",
-    ) ??
+    check(isPositiveInteger(value["dispatchSeq"]), "dispatchSeq is invalid") ??
     check(
       resolution === "delivered" || resolution === "abandoned",
       'resolution is not "delivered" or "abandoned"',

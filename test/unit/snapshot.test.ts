@@ -6,15 +6,22 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadDist, repoRoot } from "../helpers/dist.js";
 import {
+  HEX,
   PLAN,
+  REV,
   accepted,
   assigned,
   attempt,
+  blocked,
+  checkGate,
   dispatched,
+  gate,
   journalOf,
   opened,
+  reconciled,
   rejected,
   terminated,
+  unblocked,
 } from "../helpers/records.js";
 
 type Json = Record<string, unknown>;
@@ -36,7 +43,10 @@ interface Snapshot {
     verdicts: string[] | null;
     visits: Array<{ visit: number; attempts: Array<Json & { status: string }> }>;
   }>;
-  attention: { ambiguousDeliveries: Json[] };
+  input: Json | null;
+  checks: string[] | null;
+  gates: Json[];
+  attention: { ambiguousDeliveries: Json[]; blocked: Json | null };
   outputs: { latestAcceptedByStage: Record<string, Json> };
   liveness: Json;
   integrity: Json;
@@ -132,6 +142,7 @@ describe("deriveSnapshot documents", () => {
         role: "builder",
         kind: "claude",
         model: null,
+        args: null,
         assignment: {
           adapter: "scripted",
           runtimeName: "w-builder",
@@ -148,6 +159,7 @@ describe("deriveSnapshot documents", () => {
         role: "reviewer",
         kind: "claude",
         model: "opus",
+        args: null,
         assignment: null,
         activeAttempt: null,
         runtime: null,
@@ -177,6 +189,10 @@ describe("deriveSnapshot documents", () => {
     const snapshot = result.snapshot;
     expect(snapshot.workflow).toBeNull();
     expect(snapshot.limits).toBeNull();
+    expect(snapshot.checks).toBeNull();
+    expect(snapshot.input).toBeNull();
+    expect(snapshot.gates).toEqual([]);
+    expect(snapshot.attention).toEqual({ ambiguousDeliveries: [], blocked: null });
     expect(snapshot.status).toBe("created");
     expect(snapshot.agents).toEqual([
       {
@@ -184,6 +200,7 @@ describe("deriveSnapshot documents", () => {
         role: null,
         kind: null,
         model: null,
+        args: null,
         assignment: null,
         activeAttempt: null,
         runtime: null,
@@ -200,13 +217,28 @@ describe("deriveSnapshot documents", () => {
             attempts: [
               {
                 attempt: 1,
+                seq: 2,
                 agentId: "worker",
                 status: "accepted",
+                cause: "initial",
                 openedAt: "2026-09-10T10:00:01.000Z",
                 paneId: "w1:p1",
                 delivery: "undispatched",
+                dispatch: null,
+                request: null,
+                target: null,
+                revision: null,
+                reconciliation: null,
                 rejections: { artifact_missing: 1 },
+                rejectionLog: [
+                  {
+                    seq: 3,
+                    reason: "artifact_missing",
+                    message: "artifacts/report/visit-1/attempt-1/report.md does not exist",
+                  },
+                ],
                 accepted: {
+                  seq: 4,
                   receiptId: "rcpt-4-ace34e83039e",
                   status: "completed",
                   verdict: "pass",
@@ -251,6 +283,7 @@ describe("deriveSnapshot documents", () => {
     const text = JSON.stringify(snapshot);
     expect(text).not.toContain("envelopeDigest");
     expect(Object.keys(attemptAt(snapshot, "build", 1, 1)?.["accepted"] as Json)).toEqual([
+      "seq",
       "receiptId",
       "status",
       "verdict",
@@ -403,5 +436,197 @@ describe("deriveSnapshot attention and outputs", () => {
       accepted(5, "build", "builder", null, 2, 1),
     );
     expect(snapshot.outputs.latestAcceptedByStage["build"]).toMatchObject({ visit: 2, attempt: 1 });
+  });
+});
+
+describe("deriveSnapshot p3 projection", () => {
+  const request = { path: "requests/build/visit-1/attempt-1/request.md", sha256: HEX, bytes: 42 };
+  // seq: 1 opened, 2 assigned, 3 attempt, 4 dispatch, 5 accepted.
+  const built = (plan: Json = PLAN) => [
+    opened(plan),
+    { ...assigned("builder"), terminalId: "term-1" },
+    attempt("build", "builder"),
+    {
+      ...dispatched("build", "builder"),
+      request,
+      target: { terminalId: "term-1", sessionId: "sess-1" },
+      revision: REV,
+    },
+    accepted(5, "build", "builder", null),
+  ];
+
+  it("reports limits with maxFormatRepairs, planned checks, agent args and the input digest", () => {
+    const plan = {
+      ...PLAN,
+      checks: ["verify"],
+      agents: [{ ...PLAN.agents[0], args: ["--add-dir", "/run"] }, PLAN.agents[1]],
+    };
+    const snapshot = snapshotOf({
+      ...opened(plan),
+      input: { path: "input.json", sha256: HEX, bytes: 7 },
+    });
+    expect(snapshot.limits).toEqual({ ...PLAN.limits, maxFormatRepairs: 0 });
+    expect(snapshot.checks).toEqual(["verify"]);
+    expect(snapshot.agents.map((agent) => agent["args"])).toEqual([["--add-dir", "/run"], null]);
+    expect(snapshot.input).toEqual({ path: "input.json", sha256: HEX, bytes: 7 });
+    const withRepairs = snapshotOf(
+      opened({ ...PLAN, limits: { ...PLAN.limits, maxFormatRepairs: 2 } }),
+    );
+    expect(withRepairs.limits?.["maxFormatRepairs"]).toBe(2);
+  });
+
+  it("projects attempt cause, dispatch, request, target and revision", () => {
+    const snapshot = snapshotOf(...built(), attempt("build", "builder", 2, 1));
+    expect(attemptAt(snapshot, "build", 1, 1)).toMatchObject({
+      seq: 3,
+      cause: "initial",
+      delivery: "started",
+      dispatch: { seq: 4, at: expect.any(String), reason: "observed_working" },
+      request,
+      target: { terminalId: "term-1", sessionId: "sess-1" },
+      revision: REV,
+      reconciliation: null,
+      accepted: { seq: 5 },
+    });
+    expect(attemptAt(snapshot, "build", 2, 1)).toMatchObject({
+      seq: 6,
+      cause: "initial",
+      dispatch: null,
+      request: null,
+      target: null,
+      revision: null,
+    });
+    const repaired = snapshotOf(
+      opened(),
+      assigned("builder"),
+      attempt("build", "builder"),
+      dispatched("build", "builder"),
+      attempt("build", "builder", 1, 2),
+    );
+    expect(attemptAt(repaired, "build", 1, 2)?.["cause"]).toBe("format_repair");
+  });
+
+  it("lists gates in journal order with their subject, next step and evidence", () => {
+    const snapshot = snapshotOf(
+      ...built(),
+      gate(5, "build", 1, 1, { next: { stageId: "verify" } }),
+      checkGate(5, "verify", "build", 1, 1, {
+        decision: "reject",
+        reason: "checks_failed",
+        next: { stageId: "repair" },
+      }),
+    );
+    expect(snapshot.gates).toEqual([
+      {
+        seq: 6,
+        at: expect.any(String),
+        gate: "build",
+        kind: "stage",
+        subject: {
+          stageId: "build",
+          visit: 1,
+          attempt: 1,
+          acceptedSeq: 5,
+          receiptId: `rcpt-5-${HEX.slice(0, 12)}`,
+        },
+        decision: "pass",
+        reason: "built",
+        verdict: null,
+        round: 0,
+        next: { stageId: "verify" },
+        revision: REV,
+        reviewed: null,
+        check: null,
+      },
+      {
+        seq: 7,
+        at: expect.any(String),
+        gate: "verify",
+        kind: "check",
+        subject: {
+          stageId: "build",
+          visit: 1,
+          attempt: 1,
+          acceptedSeq: 5,
+          receiptId: `rcpt-5-${HEX.slice(0, 12)}`,
+        },
+        decision: "reject",
+        reason: "checks_failed",
+        verdict: null,
+        round: 0,
+        next: { stageId: "repair" },
+        revision: REV,
+        reviewed: null,
+        check: {
+          command: ["node", "--test"],
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          evidence: { path: "checks/verify/build-v1-a1/output.log", sha256: HEX, bytes: 10 },
+        },
+      },
+    ]);
+    expect(snapshot.counters).toMatchObject({
+      rounds: 0,
+      gatesByDecision: { pass: 1, reject: 1 },
+      gatesByGate: { build: 1, verify: 1 },
+    });
+  });
+
+  it("shows the unresolved block in attention and clears it after unblock", () => {
+    const base = [
+      opened(),
+      assigned("builder"),
+      attempt("build", "builder"),
+      dispatched("build", "builder"),
+    ];
+    const snapshot = snapshotOf(...base, blocked("builder", ["build", 1, 1]));
+    expect(snapshot.status).toBe("blocked");
+    expect(snapshot.attention.blocked).toEqual({
+      seq: 5,
+      agentId: "builder",
+      reason: "blocked_on_input",
+      requiredAction: "answer the prompt in the pane of builder",
+      since: expect.any(String),
+      observed: { runtimeStatus: "blocked", terminalId: "term-1", stateChangeSeq: 3 },
+      attempt: { stageId: "build", visit: 1, attempt: 1 },
+    });
+    const resumed = snapshotOf(...base, blocked("builder"), unblocked("builder"));
+    expect(resumed.status).toBe("running");
+    expect(resumed.attention.blocked).toBeNull();
+    expect(resumed.counters["blocks"]).toBe(1);
+  });
+
+  it("removes a reconciled ambiguous delivery from attention and projects the reconciliation", () => {
+    const base = [
+      opened(),
+      assigned("builder"),
+      attempt("build", "builder"),
+      dispatched("build", "builder", 1, 1, "ambiguous", "stalled"),
+    ];
+    expect(snapshotOf(...base).attention.ambiguousDeliveries).toHaveLength(1);
+    const snapshot = snapshotOf(...base, reconciled(4, "build", "builder"));
+    expect(snapshot.attention.ambiguousDeliveries).toEqual([]);
+    expect(attemptAt(snapshot, "build", 1, 1)).toMatchObject({
+      status: "open",
+      delivery: "ambiguous",
+      reconciliation: { seq: 5, resolution: "delivered", evidence: "observed_activity" },
+    });
+    expect(snapshot.counters["reconciliations"]).toEqual({ delivered: 1, abandoned: 0 });
+  });
+
+  it("carries the termination seq on the outcome", () => {
+    const snapshot = snapshotOf(
+      opened(),
+      assigned("builder"),
+      terminated("exhausted", "maxFormatRepairs"),
+    );
+    expect(snapshot.outcome).toEqual({
+      outcome: "exhausted",
+      reason: "test",
+      limit: "maxFormatRepairs",
+      at: expect.any(String),
+      seq: 3,
+    });
   });
 });

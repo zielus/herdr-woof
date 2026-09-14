@@ -695,7 +695,7 @@ describe("p3 record field contracts", () => {
       { ...stageGate, next: { stageId: "review", outcome: "completed" } },
     ],
     ["gate: next outcome cancelled", { ...stageGate, next: { outcome: "cancelled" } }],
-    ["gate: acceptedSeq not earlier", gate(9, "build")],
+    ["gate: acceptedSeq 0", gate(0, "build")],
     [
       "gate: bad receipt id",
       { ...stageGate, subject: { ...(stageGate["subject"] as Json), receiptId: "r-1" } },
@@ -725,7 +725,7 @@ describe("p3 record field contracts", () => {
       "delivery.reconciled: evidence of another resolution",
       reconciled(4, "build", "builder", 1, 1, "abandoned", "observed_activity"),
     ],
-    ["delivery.reconciled: dispatchSeq not earlier", reconciled(9, "build", "builder")],
+    ["delivery.reconciled: dispatchSeq 0", reconciled(0, "build", "builder")],
     [
       "request.dispatched: request path of another attempt",
       {

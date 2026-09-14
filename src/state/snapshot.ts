@@ -1,19 +1,29 @@
 import { isPositiveInteger } from "../contracts/envelope.js";
 import type {
+  AttemptCause,
   AttemptRef,
   AttemptStatus,
+  BlockReason,
   DeliveryState,
   Limits,
   Outcome,
+  Revision,
   RunStatus,
 } from "../domain/types.js";
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
+import type {
+  CheckResultRecord,
+  GateNext,
+  GateSubject,
+  ObservedState,
+} from "../journal/control-records.js";
 import { journalAnchor, readJournalPrefixSettled } from "../journal/journal.js";
 import type { JournalRecord } from "../journal/records.js";
 import {
   attemptKey,
   compareAttempts,
   copyDict,
+  currentBlock,
   dict,
   replay,
   type Counters,
@@ -33,6 +43,8 @@ export interface SnapshotAgent {
   role: string | null;
   kind: string | null;
   model: string | null;
+  /** Resolved launch arguments from the plan; null when the plan has none. */
+  args: string[] | null;
   assignment: {
     adapter: string;
     runtimeName: string;
@@ -49,13 +61,32 @@ export interface SnapshotAgent {
 
 export interface SnapshotAttempt {
   attempt: number;
+  /** Seq of the attempt.opened record. */
+  seq: number;
   agentId: string;
   status: AttemptStatus;
+  cause: AttemptCause;
   openedAt: string;
   paneId: string | null;
   delivery: DeliveryState;
+  /** The dispatch record's seq, time and reason; null while undispatched. */
+  dispatch: { seq: number; at: string; reason: string } | null;
+  request: { path: string; sha256: string; bytes: number } | null;
+  target: { terminalId: string | null; sessionId: string | null } | null;
+  /** Repository revision recorded on the dispatch. */
+  revision: Revision | null;
+  reconciliation: {
+    seq: number;
+    resolution: "delivered" | "abandoned";
+    evidence: string;
+    at: string;
+  } | null;
   rejections: Record<string, number>;
+  /** Journaled rejections naming this attempt, in order. */
+  rejectionLog: Array<{ seq: number; reason: string; message: string }>;
   accepted: {
+    /** Seq of the submission.accepted record. */
+    seq: number;
     receiptId: string;
     status: "completed" | "failed";
     verdict: string | null;
@@ -69,6 +100,34 @@ export interface SnapshotStage {
   agentId: string | null;
   verdicts: string[] | null;
   visits: Array<{ visit: number; attempts: SnapshotAttempt[] }>;
+}
+
+export interface SnapshotGate {
+  seq: number;
+  at: string;
+  gate: string;
+  kind: "stage" | "check";
+  subject: GateSubject;
+  decision: "pass" | "reject";
+  reason: string;
+  /** The accepted verdict for stage gates; null for check gates. */
+  verdict: string | null;
+  round: number;
+  next: GateNext;
+  revision: Revision;
+  reviewed: Revision | null;
+  check: CheckResultRecord | null;
+}
+
+export interface SnapshotBlocked {
+  seq: number;
+  agentId: string;
+  reason: BlockReason;
+  requiredAction: string;
+  since: string;
+  observed: ObservedState;
+  /** The blocked agent's attempt named by the record, if any. */
+  attempt: AttemptRef | null;
 }
 
 export interface ArtifactIntegrity {
@@ -86,17 +145,27 @@ export interface RunSnapshot {
   cursor: string;
   journal: { records: number; tailPending: boolean };
   workflow: { name: string; version: string } | null;
+  /** Digest of the persisted caller input, when run.opened carries one. */
+  input: { path: string; sha256: string; bytes: number } | null;
   status: RunStatus;
   openedAt: string;
   updatedAt: string;
-  outcome: (Outcome & { at: string }) | null;
-  limits: Limits | null;
+  /** `seq` is the run.terminated record's seq. */
+  outcome: (Outcome & { at: string; seq: number }) | null;
+  /** Plan limits; `maxFormatRepairs` is 0 when the plan omits it. */
+  limits: (Limits & { maxFormatRepairs: number }) | null;
+  /** Planned engine-run checks; null when the plan lists none. */
+  checks: string[] | null;
   counters: Counters;
   agents: SnapshotAgent[];
   stages: SnapshotStage[];
+  /** Gate decisions in journal order. */
+  gates: SnapshotGate[];
   attention: {
-    /** Ambiguous deliveries whose attempt is neither accepted nor superseded. */
+    /** Ambiguous deliveries whose attempt is open and that were not reconciled. */
     ambiguousDeliveries: Array<AttemptRef & { agentId: string; reason: string }>;
+    /** The unresolved block, if any. */
+    blocked: SnapshotBlocked | null;
   };
   outputs: {
     /** Highest accepted (visit, attempt) per stage; a newer unaccepted attempt never hides or replaces it. */
@@ -230,6 +299,7 @@ export function deriveSnapshot(
       cursor: formatCursor(state.revision, anchor),
       journal: { records: records.length, tailPending: options.tailPending ?? false },
       workflow: state.plan === null ? null : { ...state.plan.workflow },
+      input: first.input === undefined ? null : { ...first.input },
       status: state.status,
       openedAt: state.openedAt ?? first.ts,
       updatedAt: state.updatedAt ?? first.ts,
@@ -241,12 +311,21 @@ export function deriveSnapshot(
               reason: state.termination.reason,
               limit: state.termination.limit ?? null,
               at: state.termination.ts,
+              seq: state.termination.seq,
             },
-      limits: state.plan === null ? null : { ...state.plan.limits },
+      limits:
+        state.plan === null
+          ? null
+          : { ...state.plan.limits, maxFormatRepairs: state.plan.limits.maxFormatRepairs ?? 0 },
+      checks: state.plan?.checks === undefined ? null : [...state.plan.checks],
       counters: cloneCounters(state.counters),
       agents: deriveAgents(state, records),
       stages: deriveStages(state, records),
-      attention: { ambiguousDeliveries: ambiguousDeliveries(state) },
+      gates: deriveGates(state),
+      attention: {
+        ambiguousDeliveries: ambiguousDeliveries(state),
+        blocked: deriveBlocked(state),
+      },
       outputs: { latestAcceptedByStage: latestAccepted(state) },
       liveness: { owner: "unhosted", runtime: "not_observed" },
       integrity: { artifacts: "unchecked" },
@@ -285,6 +364,7 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
       role: spec?.role ?? null,
       kind: spec?.kind ?? null,
       model: spec?.model ?? null,
+      args: spec?.args === undefined ? null : [...spec.args],
       assignment:
         assignment === undefined
           ? null
@@ -322,18 +402,44 @@ function deriveStages(state: RunState, records: readonly JournalRecord[]): Snaps
       const dispatch = state.dispatches.get(attemptKey(stageId, opened.visit, opened.attempt));
       const accepted = attempt.accepted;
       const list = visits.get(opened.visit) ?? [];
+      const reconciliation =
+        dispatch === undefined ? undefined : state.reconciliations.get(dispatch.seq);
       list.push({
         attempt: opened.attempt,
+        seq: opened.seq,
         agentId: opened.agentId,
         status: attempt.status === "open" && terminated ? "abandoned" : attempt.status,
+        cause: attempt.cause,
         openedAt: opened.ts,
         paneId: opened.paneId ?? null,
         delivery: dispatch?.delivery ?? "undispatched",
+        dispatch:
+          dispatch === undefined
+            ? null
+            : { seq: dispatch.seq, at: dispatch.ts, reason: dispatch.reason },
+        request: dispatch?.request === undefined ? null : { ...dispatch.request },
+        target: dispatch?.target === undefined ? null : { ...dispatch.target },
+        revision: dispatch?.revision === undefined ? null : { ...dispatch.revision },
+        reconciliation:
+          reconciliation === undefined
+            ? null
+            : {
+                seq: reconciliation.seq,
+                resolution: reconciliation.resolution,
+                evidence: reconciliation.evidence,
+                at: reconciliation.ts,
+              },
         rejections: copyDict(attempt.rejections),
+        rejectionLog: attempt.rejectionLog.map(({ seq, reason, message }) => ({
+          seq,
+          reason,
+          message,
+        })),
         accepted:
           accepted === undefined
             ? null
             : {
+                seq: accepted.seq,
                 receiptId: accepted.receiptId,
                 status: accepted.status,
                 verdict: accepted.verdict,
@@ -357,10 +463,49 @@ function deriveStages(state: RunState, records: readonly JournalRecord[]): Snaps
   });
 }
 
+function deriveGates(state: RunState): SnapshotGate[] {
+  return state.gates.map((gate) => ({
+    seq: gate.seq,
+    at: gate.ts,
+    gate: gate.gate,
+    kind: gate.kind,
+    subject: { ...gate.subject },
+    decision: gate.decision,
+    reason: gate.reason,
+    verdict: gate.verdict ?? null,
+    round: gate.round,
+    next: { ...gate.next },
+    revision: { ...gate.revision },
+    reviewed: gate.reviewed === undefined ? null : { ...gate.reviewed },
+    check:
+      gate.check === undefined
+        ? null
+        : { ...gate.check, command: [...gate.check.command], evidence: { ...gate.check.evidence } },
+  }));
+}
+
+function deriveBlocked(state: RunState): SnapshotBlocked | null {
+  const current = currentBlock(state)?.blocked;
+  if (current === undefined) return null;
+  return {
+    seq: current.seq,
+    agentId: current.agentId,
+    reason: current.reason,
+    requiredAction: current.requiredAction,
+    since: current.ts,
+    observed: { ...current.observed },
+    attempt:
+      current.stageId === undefined || current.visit === undefined || current.attempt === undefined
+        ? null
+        : { stageId: current.stageId, visit: current.visit, attempt: current.attempt },
+  };
+}
+
 function ambiguousDeliveries(state: RunState): RunSnapshot["attention"]["ambiguousDeliveries"] {
   return [...state.dispatches.values()]
     .filter((dispatch) => {
       if (dispatch.delivery !== "ambiguous") return false;
+      if (state.reconciliations.has(dispatch.seq)) return false;
       const attempt = state.attempts.get(
         attemptKey(dispatch.stageId, dispatch.visit, dispatch.attempt),
       );
