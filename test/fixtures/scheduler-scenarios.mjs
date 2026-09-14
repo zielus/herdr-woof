@@ -625,6 +625,18 @@ if (out.outcome !== "recorded") process.exit(1);`;
       },
     }),
 
+  "moving-repo": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // The repository changes before every review gate, so no review tree ever holds still.
+      onAction: (action, context) => {
+        if (action.type !== "record_gate" || action.gate.gate !== "review") return;
+        context.marks.moves = (context.marks.moves ?? 0) + 1;
+        writeFileSync(join(context.repo, "stray.txt"), `move ${context.marks.moves}\n`);
+      },
+    }),
+
   "fast-worker": () =>
     scenario({
       verify: false,

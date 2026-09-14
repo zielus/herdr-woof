@@ -680,8 +680,11 @@ export async function runWorkflow<Input>(
             written = await end("failed", `repo_invalid: ${fresh.message}`);
             break;
           }
-          if (fresh.revision.tree !== gate.revision.tree) {
-            // The repository moved after the evidence was computed: decide again on the fresh tree.
+          if (fresh.revision.tree !== gate.revision.tree && "outcome" in gate.next) {
+            // The repository moved after the evidence was computed: a gate that would end the
+            // run is decided again on the fresh tree (the completion fence then rejects it).
+            // Any other gate is appended with the fresh revision, so a repository that keeps
+            // moving still makes journal progress.
             evidence = {
               gate: gate.gate,
               acceptedSeq: gate.subject.acceptedSeq,

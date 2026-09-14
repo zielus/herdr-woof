@@ -658,6 +658,24 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-001. a repository that moves before every review gate still makes bounded journal progress",
+    () => {
+      const report = runScenario("moving-repo");
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "maxRounds" });
+      const reviews = gatesOf(report).filter((gate) => gate["gate"] === "review");
+      expect(reviews.map((gate) => gate["reason"])).toEqual([
+        "revision_moved",
+        "revision_moved",
+        "revision_moved",
+      ]);
+      // At most one re-decision per round: a pass attempt, then the appended rejection.
+      expect(report.marks["moves"]).toBeLessThanOrEqual(2 * reviews.length);
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");
