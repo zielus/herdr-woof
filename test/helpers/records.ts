@@ -144,3 +144,106 @@ export function rejected(reason: string, identity?: Json): Json {
     ...(identity !== undefined ? { identity } : {}),
   };
 }
+
+/** A git revision fixture: 40-hex head and tree. */
+export const REV = { head: "b".repeat(40), tree: "c".repeat(40) };
+
+const receiptOf = (acceptedSeq: number): string => `rcpt-${acceptedSeq}-${HEX.slice(0, 12)}`;
+
+/** A stage gate on the acceptance at `acceptedSeq` of (stage, visit, attempt). */
+export function gate(
+  acceptedSeq: number,
+  stageId: string,
+  visit = 1,
+  attemptNo = 1,
+  overrides: Json = {},
+): Json {
+  return {
+    type: "gate.recorded",
+    gate: stageId,
+    kind: "stage",
+    subject: { stageId, visit, attempt: attemptNo, acceptedSeq, receiptId: receiptOf(acceptedSeq) },
+    decision: "pass",
+    reason: "built",
+    round: 0,
+    next: { stageId: "review" },
+    revision: REV,
+    verdict: null,
+    ...overrides,
+  };
+}
+
+/** A check gate named `gateId` whose subject is the acceptance at `acceptedSeq`. */
+export function checkGate(
+  acceptedSeq: number,
+  gateId: string,
+  stageId: string,
+  visit = 1,
+  attemptNo = 1,
+  overrides: Json = {},
+): Json {
+  return {
+    type: "gate.recorded",
+    gate: gateId,
+    kind: "check",
+    subject: { stageId, visit, attempt: attemptNo, acceptedSeq, receiptId: receiptOf(acceptedSeq) },
+    decision: "pass",
+    reason: "checks_passed",
+    round: 0,
+    next: { stageId: "review" },
+    revision: REV,
+    check: {
+      command: ["node", "--test"],
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      evidence: {
+        path: `checks/${gateId}/${stageId}-v${visit}-a${attemptNo}/output.log`,
+        sha256: HEX,
+        bytes: 10,
+      },
+    },
+    ...overrides,
+  };
+}
+
+export function blocked(agentId: string, attemptRef?: [string, number, number]): Json {
+  return {
+    type: "run.blocked",
+    agentId,
+    reason: "blocked_on_input",
+    requiredAction: `answer the prompt in the pane of ${agentId}`,
+    observed: { runtimeStatus: "blocked", terminalId: "term-1", stateChangeSeq: 3 },
+    ...(attemptRef !== undefined
+      ? { stageId: attemptRef[0], visit: attemptRef[1], attempt: attemptRef[2] }
+      : {}),
+  };
+}
+
+export const unblocked = (agentId: string): Json => ({
+  type: "run.unblocked",
+  agentId,
+  resolution: "observed_unblocked",
+  observed: { runtimeStatus: "working", terminalId: "term-1", stateChangeSeq: 4 },
+});
+
+export function reconciled(
+  dispatchSeq: number,
+  stageId: string,
+  agentId: string,
+  visit = 1,
+  attemptNo = 1,
+  resolution = "delivered",
+  evidence = "observed_activity",
+): Json {
+  return {
+    type: "delivery.reconciled",
+    agentId,
+    stageId,
+    visit,
+    attempt: attemptNo,
+    dispatchSeq,
+    resolution,
+    evidence,
+  };
+}

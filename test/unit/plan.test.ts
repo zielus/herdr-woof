@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadDist } from "../helpers/dist.js";
 
+type Json = Record<string, unknown>;
+
 interface Detail {
   field: string;
   message: string;
@@ -302,5 +304,66 @@ describe("validateRunPlan", () => {
       }),
     );
     expect(fields).toEqual(["workflow", "limits.maxRounds", "limits.runTimeoutMs"]);
+  });
+
+  it("accepts a plan without p3 fields and copies none into it", () => {
+    const result = validateRunPlan(plan());
+    expect(result.ok && Object.keys(result.plan)).toEqual([
+      "workflow",
+      "agents",
+      "stages",
+      "limits",
+    ]);
+    expect(result.ok && Object.keys(result.plan["limits"] as object)).not.toContain(
+      "maxFormatRepairs",
+    );
+  });
+
+  it("bounds the optional limits.maxFormatRepairs between 0 and 1000", () => {
+    const base = plan();
+    const withRepairs = (value: unknown) =>
+      plan({ limits: { ...(base["limits"] as Record<string, unknown>), maxFormatRepairs: value } });
+    for (const good of [0, 1, 1000]) {
+      const result = validateRunPlan(withRepairs(good));
+      expect(result.ok, String(good)).toBe(true);
+      expect(
+        result.ok && (result.plan["limits"] as Record<string, unknown>)["maxFormatRepairs"],
+      ).toBe(good);
+    }
+    for (const bad of [1001, -1, 1.5, "2", null, NaN]) {
+      expect(fieldsOf(withRepairs(bad)), String(bad)).toEqual(["limits.maxFormatRepairs"]);
+    }
+  });
+
+  it("accepts string agent args, copies them, and rejects anything else", () => {
+    const agents = (args: unknown) =>
+      plan({
+        agents: [
+          { agentId: "builder", role: "builder", kind: "claude", model: null, args },
+          { agentId: "reviewer", role: "reviewer", kind: "claude", model: null },
+        ],
+      });
+    const input = agents(["--model", "sonnet", ""]);
+    const result = validateRunPlan(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const copied = (result.plan["agents"] as Array<Record<string, unknown>>)[0]?.["args"];
+      expect(copied).toEqual(["--model", "sonnet", ""]);
+      expect(copied).not.toBe(((input["agents"] as Json[])[0] as Json)["args"]);
+      expect(Object.keys((result.plan["agents"] as Json[])[1] as Json)).not.toContain("args");
+    }
+    for (const bad of ["--model", [1], [null], {}]) {
+      expect(fieldsOf(agents(bad)), JSON.stringify(bad)).toEqual(["agents[0].args"]);
+    }
+  });
+
+  it("accepts unique check ids disjoint from stage ids", () => {
+    const result = validateRunPlan(plan({ checks: ["verify", "lint"] }));
+    expect(result.ok && result.plan["checks"]).toEqual(["verify", "lint"]);
+    expect(validateRunPlan(plan({ checks: [] })).ok).toBe(true);
+    expect(fieldsOf(plan({ checks: "verify" }))).toEqual(["checks"]);
+    expect(fieldsOf(plan({ checks: ["verify", "verify"] }))).toEqual(["checks[1]"]);
+    expect(fieldsOf(plan({ checks: ["build"] }))).toEqual(["checks[0]"]);
+    expect(fieldsOf(plan({ checks: ["../x"] }))).toEqual(["checks[0]"]);
   });
 });

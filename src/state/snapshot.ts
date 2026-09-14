@@ -388,6 +388,13 @@ function cloneCounters(counters: Counters): Counters {
     rejectionsByReason: copyDict(counters.rejectionsByReason),
     dispatches: { ...counters.dispatches },
     replacementsByAgent: copyDict(counters.replacementsByAgent),
+    rounds: counters.rounds,
+    gatesByDecision: { ...counters.gatesByDecision },
+    gatesByGate: copyDict(counters.gatesByGate),
+    formatRepairsByVisit: copyDict(counters.formatRepairsByVisit),
+    workRetriesByVisit: copyDict(counters.workRetriesByVisit),
+    blocks: counters.blocks,
+    reconciliations: { ...counters.reconciliations },
   };
 }
 

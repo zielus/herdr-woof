@@ -77,7 +77,17 @@ export type StoreReason =
   | "attempt_unknown"
   | "owner_mismatch"
   | "verdicts_mismatch"
-  | "dispatch_exists";
+  | "dispatch_exists"
+  | "gate_subject_unknown"
+  | "gate_subject_stale"
+  | "gate_mismatch"
+  | "gate_exists"
+  | "round_invalid"
+  | "run_blocked"
+  | "not_blocked"
+  | "dispatch_not_ambiguous"
+  | "reconcile_exists"
+  | "assignment_mismatch";
 
 export function isInfraReason(reason: string): reason is InfraReason {
   return (INFRA_REASONS as readonly string[]).includes(reason);

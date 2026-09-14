@@ -4,22 +4,26 @@ import {
   DURATION_LIMIT_KEYS,
   MAX_COUNT_LIMIT,
   MAX_DURATION_LIMIT_MS,
+  OPTIONAL_COUNT_LIMIT_KEYS,
+  type AgentSpec,
   type RunPlan,
 } from "./types.js";
 
 export type ValidateRunPlanResult =
   { ok: true; plan: RunPlan } | { ok: false; details: RejectionDetail[] };
 
-const PLAN_KEYS = ["workflow", "agents", "stages", "limits"];
+const PLAN_KEYS = ["workflow", "agents", "stages", "limits", "checks"];
 const WORKFLOW_KEYS = ["name", "version"];
-const AGENT_KEYS = ["agentId", "role", "kind", "model"];
+const AGENT_KEYS = ["agentId", "role", "kind", "model", "args"];
 const STAGE_KEYS = ["stageId", "agentId", "verdicts"];
 
 /**
  * Validates a resolved run plan. Every object has an exact key set; ids use
  * the envelope id rule; agent and stage ids are unique; every stage names a
  * planned agent; verdicts are non-empty unique strings; every limit is a safe
- * integer between 1 and its cap. Only own enumerable properties are read, so a
+ * integer between 1 and its cap. p3 optional fields: `agents[].args` (strings),
+ * `limits.maxFormatRepairs` (0–1000; absent means 0) and `checks` (unique ids
+ * disjoint from stage ids). Only own enumerable properties are read, so a
  * field inherited from a prototype counts as missing. Returns one detail per
  * offending field path and never throws. The returned plan is a copy of the
  * validated fields.
@@ -73,6 +77,13 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
       if (model !== null && (typeof model !== "string" || model === "")) {
         fail(`${path}.model`, "must be a non-empty string or null");
       }
+      const args = agent["args"];
+      if (
+        args !== undefined &&
+        (!Array.isArray(args) || !args.every((item) => typeof item === "string"))
+      ) {
+        fail(`${path}.args`, "must be an array of strings");
+      }
     }
   }
 
@@ -110,12 +121,42 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
   if (!isPlainObject(limits)) {
     fail("limits", "must be an object");
   } else {
-    exactKeys(limits, [...COUNT_LIMIT_KEYS, ...DURATION_LIMIT_KEYS], "limits.", fail);
+    exactKeys(
+      limits,
+      [...COUNT_LIMIT_KEYS, ...OPTIONAL_COUNT_LIMIT_KEYS, ...DURATION_LIMIT_KEYS],
+      "limits.",
+      fail,
+    );
     for (const key of COUNT_LIMIT_KEYS) {
       boundedInteger(limits[key], `limits.${key}`, MAX_COUNT_LIMIT, fail);
     }
+    for (const key of OPTIONAL_COUNT_LIMIT_KEYS) {
+      if (limits[key] !== undefined) {
+        boundedInteger(limits[key], `limits.${key}`, MAX_COUNT_LIMIT, fail, 0);
+      }
+    }
     for (const key of DURATION_LIMIT_KEYS) {
       boundedInteger(limits[key], `limits.${key}`, MAX_DURATION_LIMIT_MS, fail);
+    }
+  }
+
+  const checks = value["checks"];
+  if (checks !== undefined) {
+    if (!Array.isArray(checks)) {
+      fail("checks", "must be an array of ids");
+    } else {
+      const seen = new Set<string>();
+      for (const [index, checkId] of checks.entries()) {
+        if (!isId(checkId)) {
+          fail(`checks[${index}]`, "must be a valid id");
+        } else if (seen.has(checkId)) {
+          fail(`checks[${index}]`, `duplicates check ${checkId}`);
+        } else if (stageIds.has(checkId)) {
+          fail(`checks[${index}]`, `duplicates stage ${checkId}`);
+        } else {
+          seen.add(checkId);
+        }
+      }
     }
   }
 
@@ -123,16 +164,24 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
   return { ok: true, plan: copyPlan(value as unknown as RunPlan) };
 }
 
+/** A copy of the validated fields; optional p3 fields are copied only when present. */
 function copyPlan(plan: RunPlan): RunPlan {
   return {
     workflow: { name: plan.workflow.name, version: plan.workflow.version },
-    agents: plan.agents.map(({ agentId, role, kind, model }) => ({ agentId, role, kind, model })),
+    agents: plan.agents.map(({ agentId, role, kind, model, args }): AgentSpec => ({
+      agentId,
+      role,
+      kind,
+      model,
+      ...(args !== undefined ? { args: [...args] } : {}),
+    })),
     stages: plan.stages.map(({ stageId, agentId, verdicts }) => ({
       stageId,
       agentId,
       verdicts: [...verdicts],
     })),
     limits: { ...plan.limits },
+    ...(plan.checks !== undefined ? { checks: [...plan.checks] } : {}),
   };
 }
 
@@ -202,8 +251,9 @@ function boundedInteger(
   path: string,
   max: number,
   fail: (field: string, message: string) => void,
+  min = 1,
 ): void {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > max) {
-    fail(path, `must be an integer between 1 and ${max}`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
+    fail(path, `must be an integer between ${min} and ${max}`);
   }
 }
