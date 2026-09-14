@@ -1,0 +1,50 @@
+/**
+ * Closed set of reasons `submitResult` can reject a submission with, listed in
+ * decision order (the first failing check wins). Adding a check means adding a
+ * code here, a branch in `submitResult`, and a process test that reaches it.
+ */
+export const REJECTION_REASONS = [
+  "run_dir_invalid",
+  "envelope_malformed",
+  "envelope_invalid",
+  "journal_busy",
+  "journal_corrupt",
+  "run_mismatch",
+  "attempt_unknown",
+  "owner_mismatch",
+  "attempt_closed_conflict",
+  "attempt_stale",
+  "verdict_not_allowed",
+  "artifact_out_of_scope",
+  "artifact_missing",
+  "artifact_empty",
+  "artifact_hash_mismatch",
+  "journal_write_failed",
+] as const;
+
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
+
+/**
+ * Reasons caused by the run directory or journal rather than by the submitted
+ * envelope. They cannot be journaled and the CLI exits 3 for them.
+ */
+export const INFRA_REASONS = [
+  "run_dir_invalid",
+  "journal_busy",
+  "journal_corrupt",
+  "journal_write_failed",
+] as const satisfies readonly RejectionReason[];
+
+export type InfraReason = (typeof INFRA_REASONS)[number];
+
+/** Reasons `openAttempt` can refuse to declare an attempt with. */
+export type AttemptOpenReason =
+  | "attempt_open_conflict"
+  | "run_mismatch"
+  | "journal_busy"
+  | "journal_corrupt"
+  | "journal_write_failed";
+
+export function isInfraReason(reason: string): reason is InfraReason {
+  return (INFRA_REASONS as readonly string[]).includes(reason);
+}
