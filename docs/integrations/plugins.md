@@ -21,7 +21,8 @@ invent run state or host a runtime pane.
 `herdr-plugin.toml` registers a build step and a single `doctor` action. It
 does not register run actions, panes, lifecycle events, or a workflow host.
 
-For local wiring checks after a build:
+The manifest builds from a repository checkout, so it is not part of the npm
+package. For local wiring checks after a build:
 
 ```sh
 herdr plugin link .

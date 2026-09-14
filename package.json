@@ -22,12 +22,10 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "woof": "./bin/woof"
+    "woof": "./dist/cli.js"
   },
   "files": [
     "dist/",
-    "bin/",
-    "herdr-plugin.toml",
     "plugin/claude/",
     "README.md"
   ],
@@ -40,7 +38,7 @@
     "test": "bun run build && bun x vitest run",
     "check:version": "bun run scripts/check-version.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
-    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run check:version && bun run test && bun run build && bun run smoke:package"
+    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run check:version && bun run test && bun run smoke:package"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

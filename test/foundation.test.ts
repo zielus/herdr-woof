@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +48,26 @@ describe("woof CLI", () => {
     expect(result.stdout).toContain("woof");
     expect(result.stdout).toContain("herdr");
     expect(result.stdout).toContain("claude");
+  });
+
+  it("reports a probe that exists but cannot be started", () => {
+    const binDir = mkdtempSync(join(tmpdir(), "woof-doctor-"));
+    try {
+      for (const name of ["herdr", "claude"]) {
+        writeFileSync(join(binDir, name), "not executable\n", { mode: 0o644 });
+      }
+
+      const result = spawnSync(process.execPath, [join(repoRoot, "dist", "cli.js"), "doctor"], {
+        encoding: "utf8",
+        env: { PATH: binDir },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("herdr status: failed");
+      expect(result.stdout).toContain("claude --version: failed");
+    } finally {
+      rmSync(binDir, { force: true, recursive: true });
+    }
   });
 });
 

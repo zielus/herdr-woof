@@ -39,8 +39,9 @@ function probe(commandName: string, args: readonly string[]): string {
     return output === "" ? `${label}: available` : `${label}:\n${indent(output)}`;
   }
 
+  // stdio is null when the executable exists but cannot be started (EACCES).
   const detail =
-    result.stderr.trim() || result.error?.message || `exit ${result.status ?? "unknown"}`;
+    (result.stderr ?? "").trim() || result.error?.message || `exit ${result.status ?? "unknown"}`;
   return `${label}: failed (${detail.split("\n")[0]})`;
 }
 

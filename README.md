@@ -19,8 +19,10 @@ bun install --frozen-lockfile
 bun run verify
 ```
 
-`bun run build` compiles the ESM package and declarations to `dist/`. The only
-current executable behavior is diagnostic:
+`bun run build` compiles the ESM package and declarations to `dist/`. The
+installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
+`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action. The
+only current executable behavior is diagnostic:
 
 ```sh
 bin/woof --help

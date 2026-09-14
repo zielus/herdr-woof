@@ -24,7 +24,19 @@ try {
     ["pack", "--json", "--pack-destination", workDir, "--cache", npmCache],
     repoRoot,
   );
-  const tarball = join(workDir, (JSON.parse(packed) as Array<{ filename: string }>)[0]!.filename);
+  const [packInfo] = JSON.parse(packed) as Array<{
+    filename: string;
+    files: Array<{ path: string }>;
+  }>;
+  const shipped = packInfo!.files.map((file) => file.path);
+  // The Herdr manifest builds from a checkout (lockfile, sources, tsconfig), so
+  // shipping it without those inputs would advertise a build that cannot run.
+  // The Bash launcher is checkout-only; the installed bin is the Node entry.
+  const strays = shipped.filter((path) => path === "herdr-plugin.toml" || path.startsWith("bin/"));
+  if (strays.length > 0) {
+    throw new Error(`tarball ships checkout-only files: ${strays.join(", ")}`);
+  }
+  const tarball = join(workDir, packInfo!.filename);
   const consumer = join(workDir, "consumer");
   mkdirSync(consumer);
   writeFileSync(
