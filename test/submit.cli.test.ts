@@ -26,6 +26,7 @@ import {
   openAttempt,
   openAttemptOk,
   readyAttempt,
+  repoRoot,
   runNode,
   sha256,
   submit,
@@ -392,6 +393,27 @@ describe("woof submit", () => {
     });
 
     expectOutcome(result, "accepted");
+  });
+
+  it("rejects empty and oversized stdin envelopes as malformed", () => {
+    const { runDir, envelope } = readyAttempt();
+    const args = ["submit", "--run-dir", runDir, "--envelope", "-"];
+
+    expectRejected(woof(args, { input: "" }), "envelope_malformed");
+    const oversized = woof(args, {
+      input: JSON.stringify({ ...envelope, padding: "x".repeat(200_000) }),
+    });
+    expectRejected(oversized, "envelope_malformed");
+    expect(oversized.json?.message).toContain("the limit is 65536");
+
+    expect(ofType(journal(runDir), "submission.rejected").map((line) => line.reason)).toEqual([
+      "envelope_malformed",
+      "envelope_malformed",
+    ]);
+  });
+
+  it("never opens /dev/stdin by path (it fails with ENXIO on Linux when stdin is a socket)", () => {
+    expect(readFileSync(join(repoRoot, "dist", "cli.js"), "utf8")).not.toContain("/dev/stdin");
   });
 
   it("reports usage errors on stderr with exit 1", () => {

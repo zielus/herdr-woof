@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
 
+import { MAX_ENVELOPE_BYTES } from "./contracts/envelope.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import { openAttempt } from "./submission/attempt.js";
 import { submitResult } from "./submission/submit.js";
@@ -97,7 +98,7 @@ async function submitCommand(args: string[]): Promise<number> {
   const paneId = process.env["HERDR_PANE_ID"];
 
   const outcome = await submitResult({
-    envelopePath: envelope === "-" ? "/dev/stdin" : envelope,
+    ...(envelope === "-" ? { envelopeRaw: await readStdin() } : { envelopePath: envelope }),
     ...(runDir !== undefined ? { runDir } : {}),
     ...(paneId !== undefined ? { paneId } : {}),
   });
@@ -160,6 +161,28 @@ async function attemptOpenCommand(args: string[]): Promise<number> {
   console.log(JSON.stringify(outcome));
   if (outcome.outcome === "opened") return 0;
   return isInfraReason(outcome.reason) ? 3 : 2;
+}
+
+/**
+ * Reads the envelope from file descriptor 0 through the stdin stream, stopping
+ * one chunk past MAX_ENVELOPE_BYTES so submitResult can report the size. The
+ * stdin device is never opened by path: on Linux that fails with ENXIO when
+ * stdin is a socket, as it is for many process spawners.
+ */
+async function readStdin(): Promise<Uint8Array> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of process.stdin) {
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer);
+      chunks.push(buffer);
+      size += buffer.byteLength;
+      if (size > MAX_ENVELOPE_BYTES) break;
+    }
+  } catch (error) {
+    throw new UsageError(`cannot read the envelope from stdin: ${(error as Error).message}`);
+  }
+  return Buffer.concat(chunks);
 }
 
 function parse<T>(run: () => T, usage: string): T {
