@@ -46,6 +46,15 @@ function fieldsOf(value: unknown): string[] {
   return result.details.map((detail) => detail.field);
 }
 
+/** Deep copy whose objects all have a null prototype. */
+function nullPrototype(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item: unknown) => nullPrototype(item));
+  if (typeof value !== "object" || value === null) return value;
+  const copy: Record<string, unknown> = Object.create(null);
+  for (const [key, item] of Object.entries(value)) copy[key] = nullPrototype(item);
+  return copy;
+}
+
 describe("validateRunPlan", () => {
   it("accepts a valid plan and returns a copy", () => {
     const input = plan();
@@ -175,6 +184,111 @@ describe("validateRunPlan", () => {
       expect(validateRunPlan(withLimit(cap)).ok).toBe(true);
     });
   }
+
+  it("reads only own enumerable properties, never inherited ones", () => {
+    const valid = plan();
+    const inheritedRoot = validateRunPlan(Object.create(valid));
+    expect(inheritedRoot.ok).toBe(false);
+    if (!inheritedRoot.ok) {
+      expect(inheritedRoot.details.map((detail) => detail.field)).toEqual(
+        expect.arrayContaining(["workflow", "agents", "stages", "limits"]),
+      );
+    }
+
+    const nested = validateRunPlan(
+      plan({ workflow: Object.create({ name: "build-review", version: "1" }) }),
+    );
+    expect(nested).toMatchObject({
+      ok: false,
+      details: [{ field: "workflow.name" }, { field: "workflow.version" }],
+    });
+
+    const inheritedAgent = plan({
+      agents: [
+        Object.create({ agentId: "builder", role: "builder", kind: "claude", model: null }),
+        { agentId: "reviewer", role: "reviewer", kind: "codex", model: "gpt-5" },
+      ],
+    });
+    expect(validateRunPlan(inheritedAgent).ok).toBe(false);
+
+    // A field supplied only by Object.prototype is still missing.
+    const { limits, ...withoutLimits } = valid;
+    // Deliberate, removed in finally: proves no field is read from Object.prototype.
+    // oxlint-disable-next-line no-extend-native
+    Object.defineProperty(Object.prototype, "limits", {
+      value: limits,
+      configurable: true,
+      writable: true,
+    });
+    let polluted: Result;
+    try {
+      polluted = validateRunPlan(withoutLimits);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)["limits"];
+    }
+    expect(polluted).toMatchObject({ ok: false, details: [{ field: "limits" }] });
+  });
+
+  it("accepts a valid plan built from null-prototype objects and returns plain data", () => {
+    const result = validateRunPlan(nullPrototype(plan()));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(JSON.parse(JSON.stringify(result.plan))).toEqual(plan());
+  });
+
+  it("never throws on a cyclic plan", () => {
+    const cyclic = plan();
+    cyclic["workflow"] = cyclic;
+    const agents = cyclic["agents"] as unknown[];
+    agents.push(agents);
+    expect(() => validateRunPlan(cyclic)).not.toThrow();
+    expect(validateRunPlan(cyclic).ok).toBe(false);
+  });
+
+  it("treats a record field inherited from a prototype as missing", async () => {
+    const { exactKeysProblem } = await loadDist<{
+      exactKeysProblem: (
+        value: Record<string, unknown>,
+        required: string[],
+        optional: string[],
+        prefix: string,
+      ) => string | undefined;
+    }>("journal/record-fields.js");
+    expect(exactKeysProblem(Object.create({ runId: "run-1" }), ["runId"], [], "")).toBe(
+      "missing field runId",
+    );
+    expect(exactKeysProblem({ runId: "run-1" }, ["runId"], [], "")).toBeUndefined();
+  });
+
+  it("treats an envelope verdict supplied only by Object.prototype as missing", async () => {
+    const { parseEnvelope } = await loadDist<{
+      parseEnvelope: (raw: string) => { ok: boolean; reason?: string; details?: Detail[] };
+    }>("contracts/envelope.js");
+    const envelope = JSON.stringify({
+      schemaVersion: 1,
+      runId: "run-1",
+      agentId: "worker",
+      stageId: "report",
+      visit: 1,
+      attempt: 1,
+      status: "completed",
+      artifact: { path: "artifacts/report/visit-1/attempt-1/report.md", sha256: "a".repeat(64) },
+    });
+    // Deliberate, removed in finally: proves the envelope check reads own properties only.
+    // oxlint-disable-next-line no-extend-native
+    Object.defineProperty(Object.prototype, "verdict", {
+      value: null,
+      configurable: true,
+      writable: true,
+    });
+    let parsed: ReturnType<typeof parseEnvelope>;
+    try {
+      parsed = parseEnvelope(envelope);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)["verdict"];
+    }
+    expect(parsed).toMatchObject({ ok: false, reason: "envelope_invalid" });
+    expect(parsed.details?.map((detail) => detail.field)).toEqual(["verdict"]);
+  });
 
   it("reports every offending field at once", () => {
     const fields = fieldsOf(

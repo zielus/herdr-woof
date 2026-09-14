@@ -22,8 +22,9 @@ export function exactKeysProblem(
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) return `unexpected field ${prefix}${key}`;
   }
+  // Own properties only: a field inherited from a prototype is missing.
   for (const key of required) {
-    if (!(key in value)) return `missing field ${prefix}${key}`;
+    if (!Object.hasOwn(value, key)) return `missing field ${prefix}${key}`;
   }
   return undefined;
 }

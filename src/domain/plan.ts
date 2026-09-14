@@ -19,16 +19,20 @@ const STAGE_KEYS = ["stageId", "agentId", "verdicts"];
  * Validates a resolved run plan. Every object has an exact key set; ids use
  * the envelope id rule; agent and stage ids are unique; every stage names a
  * planned agent; verdicts are non-empty unique strings; every limit is a safe
- * integer between 1 and its cap. Returns one detail per offending field path
- * and never throws. The returned plan is a copy of the validated fields.
+ * integer between 1 and its cap. Only own enumerable properties are read, so a
+ * field inherited from a prototype counts as missing. Returns one detail per
+ * offending field path and never throws. The returned plan is a copy of the
+ * validated fields.
  */
-export function validateRunPlan(value: unknown): ValidateRunPlanResult {
+export function validateRunPlan(input: unknown): ValidateRunPlanResult {
   const details: RejectionDetail[] = [];
   const fail = (field: string, message: string) => details.push({ field, message });
 
-  if (!isPlainObject(value)) {
+  if (!isPlainObject(input)) {
     return { ok: false, details: [{ field: "plan", message: "must be an object" }] };
   }
+  // Validate a copy of own enumerable data only: no field is ever read from a prototype.
+  const value = ownData(input, new Set()) as Record<string, unknown>;
   exactKeys(value, PLAN_KEYS, "", fail);
 
   const workflow = value["workflow"];
@@ -130,6 +134,34 @@ function copyPlan(plan: RunPlan): RunPlan {
     })),
     limits: { ...plan.limits },
   };
+}
+
+const CYCLE = Symbol("cycle");
+
+/**
+ * Own enumerable data of a plan-shaped value: plain objects become
+ * null-prototype copies of their own enumerable properties and arrays are copied
+ * by own index, so no later read can reach a prototype. A cyclic reference is
+ * replaced by a marker that fails validation, keeping validation from throwing.
+ */
+function ownData(value: unknown, path: Set<object>): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  if (path.has(value)) return CYCLE;
+  path.add(value);
+  let copy: unknown;
+  if (Array.isArray(value)) {
+    copy = Array.from({ length: value.length }, (_, index) =>
+      Object.hasOwn(value, index) ? ownData(value[index], path) : undefined,
+    );
+  } else {
+    const record: Record<string, unknown> = Object.create(null);
+    for (const key of Object.keys(value)) {
+      record[key] = ownData((value as Record<string, unknown>)[key], path);
+    }
+    copy = record;
+  }
+  path.delete(value);
+  return copy;
 }
 
 /** Reports unknown keys; each field check reports a missing field itself. */
