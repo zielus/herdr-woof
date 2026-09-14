@@ -473,6 +473,7 @@ describe("decide: gates", () => {
       type: "compute_revision",
       gate: "draft",
       acceptedSeq: 5,
+      subject: { stageId: "draft", visit: 1, attempt: 1 },
     });
     seen.length = 0;
     const evidence = { gate: "draft", acceptedSeq: 5, revision: REV };

@@ -630,6 +630,19 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-006. a passing review altered after acceptance fails the run before its gate",
+    () => {
+      const report = runScenario("tamper-passing-review");
+      expect(report.marks["tamper"]).toBe(true);
+      expect(report.result).toMatchObject({ outcome: "failed", limit: null });
+      expect(report.result.reason).toMatch(/^input_artifact_altered: /);
+      expect(gatesOf(report).some((gate) => gate["gate"] === "review")).toBe(false);
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

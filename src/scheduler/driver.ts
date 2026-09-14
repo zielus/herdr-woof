@@ -231,6 +231,18 @@ export async function runWorkflow<Input>(
       }),
     );
 
+  /** A gate subject's canonical accepted copy must still match its acceptance before any gate uses it. */
+  const subjectAltered = (
+    snapshot: RunSnapshot,
+    ref: { stageId: string; visit: number; attempt: number },
+  ): string | undefined => {
+    const accepted = attemptOf(snapshot, ref)?.accepted;
+    if (accepted == null) {
+      return `${ref.stageId} visit ${ref.visit} attempt ${ref.attempt} has no accepted artifact`;
+    }
+    return acceptedCopyProblem(runDir, accepted.artifact);
+  };
+
   /** Engine files (requests, check evidence); a refused or failed write is a run failure, never a throw. */
   const engineFile = (
     relPath: string,
@@ -544,6 +556,11 @@ export async function runWorkflow<Input>(
       }
 
       case "compute_revision": {
+        const altered = subjectAltered(snapshot, action.subject);
+        if (altered !== undefined) {
+          written = await end("failed", `input_artifact_altered: ${altered}`);
+          break;
+        }
         const revision = await revisionOf(repository);
         if (!revision.ok) {
           written = await end("failed", `repo_invalid: ${revision.message}`);
@@ -558,6 +575,11 @@ export async function runWorkflow<Input>(
       }
 
       case "run_check": {
+        const altered = subjectAltered(snapshot, action.subject);
+        if (altered !== undefined) {
+          written = await end("failed", `input_artifact_altered: ${altered}`);
+          break;
+        }
         const run = await runCheck({
           argv: action.argv,
           cwd: repository,
@@ -594,6 +616,11 @@ export async function runWorkflow<Input>(
 
       case "record_gate": {
         const gate = action.gate;
+        const altered = subjectAltered(snapshot, gate.subject);
+        if (altered !== undefined) {
+          written = await end("failed", `input_artifact_altered: ${altered}`);
+          break;
+        }
         let revision = gate.revision;
         if (gate.kind === "stage" && agentStageOf(definition, gate.gate)?.bindsRevision === true) {
           // Fingerprint again immediately before appending a revision-bound gate.

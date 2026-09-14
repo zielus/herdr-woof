@@ -597,6 +597,23 @@ if (out.outcome !== "recorded") process.exit(1);`;
       },
     }),
 
+  "tamper-passing-review": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // The accepted passing review is altered before its gate is computed.
+      onAction: (action, context) => {
+        if (action.type !== "compute_revision" || action.gate !== "review") return;
+        if (!once(context, "tamper")) return;
+        const review = context
+          .journal()
+          .find((record) => record.type === "submission.accepted" && record.stageId === "review");
+        const copy = join(context.runDir, review.artifact.acceptedPath);
+        chmodSync(copy, 0o644);
+        writeFileSync(copy, "# Tampered passing review\n");
+      },
+    }),
+
   "fast-worker": () =>
     scenario({
       verify: false,

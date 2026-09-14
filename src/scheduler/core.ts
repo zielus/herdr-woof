@@ -118,7 +118,13 @@ export type Action =
       /** The previous attempt of the visit, for a format repair. */
       previous: { attempt: number; rejections: Array<{ reason: string; message: string }> } | null;
     }
-  | { type: "compute_revision"; gate: string; acceptedSeq: number }
+  | {
+      type: "compute_revision";
+      gate: string;
+      acceptedSeq: number;
+      /** The accepted attempt the gate is about; its copy is re-hashed first. */
+      subject: { stageId: string; visit: number; attempt: number };
+    }
   | {
       type: "run_check";
       gate: string;
@@ -415,7 +421,12 @@ function decideRun<Input>(
       evidence.gate !== targetId ||
       evidence.acceptedSeq !== attempt.accepted.seq
     ) {
-      return { type: "compute_revision", gate: targetId, acceptedSeq: attempt.accepted.seq };
+      return {
+        type: "compute_revision",
+        gate: targetId,
+        acceptedSeq: attempt.accepted.seq,
+        subject: { stageId: targetId, visit: current.visit, attempt: attempt.attempt },
+      };
     }
     const acceptedRef = acceptedRefOf(snapshot, view.runDir, located) as AcceptedRef;
     const reviewed = stage.bindsRevision ? attempt.revision : null;
