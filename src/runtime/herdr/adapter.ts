@@ -187,8 +187,9 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       const bad = invalidName(handle.runtimeName);
       if (bad !== undefined) return { ok: false as const, error: bad };
       const untils = [...new Set(states.flatMap(herdrStatuses))];
-      // Herdr can wait for neither `gone` nor an unrecognized status; refuse before spawning.
-      if (untils.length === 0 || states.includes("unknown")) {
+      // Herdr can wait for neither `gone` nor an unrecognized status: a request naming
+      // either (alone or with other states) is refused before spawning.
+      if (untils.length === 0 || states.includes("unknown") || states.includes("gone")) {
         return {
           ok: false as const,
           error: runtimeError(

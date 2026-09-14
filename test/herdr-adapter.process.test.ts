@@ -486,19 +486,23 @@ out = { first, second };`,
     expect(log.filter((args) => args[1] === "close")).toEqual([["pane", "close", PANE]]);
   });
 
-  it("refuses to wait for unknown (or only gone) without spawning", () => {
+  it("refuses to wait for unknown or gone, alone or mixed, without spawning", () => {
     const { out, log } = runAdapter(
       [ready()],
       `out = {
   unknown: await runtime.waitFor(handle, ["unknown"], 1000),
   mixed: await runtime.waitFor(handle, ["ready", "unknown"], 1000),
   gone: await runtime.waitFor(handle, ["gone"], 1000),
+  goneMixed: await runtime.waitFor(handle, ["ready", "gone"], 1000),
+  goneWithWorking: await runtime.waitFor(handle, ["gone", "working", "blocked"], 1000),
 };`,
     );
     expect(out).toMatchObject({
       unknown: { ok: false, error: { code: "unsupported" } },
       mixed: { ok: false, error: { code: "unsupported" } },
       gone: { ok: false, error: { code: "unsupported" } },
+      goneMixed: { ok: false, error: { code: "unsupported" } },
+      goneWithWorking: { ok: false, error: { code: "unsupported" } },
     });
     expect(log).toEqual([]);
   });
