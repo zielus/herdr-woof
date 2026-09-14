@@ -229,7 +229,9 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       if (lifecycle === "gone") {
         return {
           outcome: "not_delivered",
-          error: runtimeError("not_found", `agent ${handle.runtimeName} is gone`),
+          error: runtimeError("not_found", `agent ${handle.runtimeName} is gone`, {
+            runtimeCode: "agent_not_found",
+          }),
         };
       }
       if (lifecycle === "working") {
