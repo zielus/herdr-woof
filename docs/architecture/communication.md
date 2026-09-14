@@ -35,21 +35,51 @@ behavior, not design intent. The exhaustive detail lives in
   top-level or artifact keys are rejected; the envelope file is capped at
   64 KiB.
 - **Reason codes and decision order.** `woof submit` runs a fixed, closed set
-  of checks and returns the first one that fails: run directory, journal lock
-  (`journal_busy`), journal replay (`journal_corrupt`), the run being opened
-  (`run_dir_invalid` if not, unjournaled), envelope readability, envelope
-  schema, then run identity, attempt existence, owner, duplicate/conflict,
-  staleness, verdict, artifact scope, artifact existence, artifact content,
-  artifact size (`artifact_too_large` above 32 MiB), artifact hash, and finally
-  publish-and-record.
-  `src/contracts/reasons.ts` (`REJECTION_REASONS`) is the closed set, and the
-  doc comment on `submitResult` in `src/submission/submit.ts` is the
-  authoritative order.
+  of 18 checks, plus a lettered check 7b, and returns the first one that
+  fails: run directory, journal lock (`journal_busy`), journal replay
+  (`journal_corrupt`), the run being opened (`run_dir_invalid` if not,
+  unjournaled), envelope readability, envelope schema, then run identity,
+  **the run not yet terminated (check 7b, `run_closed`)**, attempt existence,
+  owner, duplicate/conflict, staleness, verdict, artifact scope, artifact
+  existence, artifact content, artifact size (`artifact_too_large` above
+  32 MiB), artifact hash, and finally publish-and-record. `run_closed`
+  outranks an identical duplicate: a late resubmission of an
+  already-accepted attempt after termination is rejected as `run_closed`,
+  not returned as the prior receipt (lead decision) — the receipt itself
+  stays readable in the run's snapshot. `src/contracts/reasons.ts`
+  (`REJECTION_REASONS`) is the closed set, and the doc comment on
+  `submitResult` in `src/submission/submit.ts` is the authoritative
+  18-plus-7b order.
 - **The journal is the sole authority.** `<runDir>/journal.jsonl` is
   append-only; attempt and acceptance state is derived by replaying it. Reads
   fail closed: a torn line, an impossible state transition, or a journal or
   lock path that turns out to be a symlink all report `journal_corrupt` or
   `journal_busy` rather than silently accepting or skipping the record.
+- **The journal now also carries run facts, not only submissions (p2).**
+  Beyond p1's `attempt.opened`/`submission.*`, the journal records
+  `agent.assigned`, `request.dispatched` and `run.terminated`, and
+  `run.opened` may carry an optional validated `plan`. See
+  [domain model](domain-model.md#implemented-now-p2) for the full record and
+  refusal table; every record type stays `schemaVersion: 1` under an
+  explicit compatibility contract, and a plan-less run (p1's shape) skips
+  every plan-referencing check.
+- **Two read paths, two failure behaviors.** `readJournal` (used by
+  `submit`, `attempt open` and the run-facts store) takes the journal lock
+  and fails closed on a torn final line — a p1 invariant, unchanged in p2.
+  `readJournalPrefix` (used by `readSnapshot`, `readEvents` and
+  subscriptions) is a tolerant, lock-free read: every complete
+  newline-terminated line gets the same validation, but a final segment
+  without a trailing newline is reported as `tailPending` and excluded
+  rather than treated as corruption, because a writer may still be
+  appending it.
+- **Documented limit: a p1 reader against a p2 journal is not tested.** The
+  compatibility contract states the expected outcome — a p1 build's
+  `readJournal` fails closed with `journal_corrupt` on a `run.opened.plan`
+  field or on a p2-only record type, because the p1 record parser rejects
+  unknown fields and types — but no test in this repository builds an old
+  revision and exercises it. There is no shipped p1 consumer, and standing
+  up an old checkout inside the suite was judged out of proportion (lead
+  decision, repair round 1).
 - **Accepted artifacts are immutable copies.** On acceptance, the worker's
   artifact is copied to `<runDir>/accepted/<stageId>/visit-<n>/attempt-<m>/`,
   re-hashed, and made read-only (mode `0444`). Downstream consumers read that
@@ -162,6 +192,18 @@ Herdr documents lifecycle waits separately from output collection. A stalled or
 timed-out prompt may already have been delivered, and `unknown` does not establish
 completion. Woof therefore correlates explicit results with attempts and avoids
 blind resends. [Herdr agent automation](https://herdr.dev/docs/agent-automation/).
+
+p2 records this certainty directly: `request.dispatched.delivery` is
+`started | not_delivered | ambiguous`, each with its own closed `reason` set
+(`DISPATCH_REASONS` in `src/domain/types.ts`), so a timeout can never be
+recorded as provably not delivered. At most one dispatch is recorded per
+attempt (`dispatch_exists`); there is no resend, so trying again is only
+expressible as a new, explicitly opened attempt. An `ambiguous` dispatch
+whose attempt is still open surfaces in
+`snapshot.attention.ambiguousDeliveries` until the attempt is accepted or
+superseded. Turning an `ambiguous` dispatch into a resolved one — a
+`delivery.reconciled` record — is deferred to phase 3; nothing in p2 writes
+or infers reconciliation.
 
 ## Transport choice
 

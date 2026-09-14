@@ -2,10 +2,12 @@
 
 Woof is the future orchestration SDK for coding agents running through Herdr.
 This repository provides a package boundary, build and packaging checks, a
-diagnostic CLI, truthful Herdr/Claude plugin placeholders, and a first working
-slice of result handoff: a worker-callable `woof submit` CLI/SDK bridge backed
-by an append-only run journal (see below). It does not run workflows, delegate
-agents, or publish a stable `HerdrAgentsSDK` API yet.
+diagnostic CLI, truthful Herdr/Claude plugin placeholders, a first working
+slice of result handoff (a worker-callable `woof submit` CLI/SDK bridge
+backed by an append-only run journal), and a p2 run-facts and snapshot layer
+(run plans, journaled agent assignment/dispatch/termination, derived
+snapshots and events, and a Herdr runtime adapter — see below). It does not
+run workflows, delegate agents, or publish a stable `HerdrAgentsSDK` API yet.
 
 ## Requirements
 
@@ -34,6 +36,7 @@ bin/woof doctor
 bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 bin/woof submit --envelope <path|-> [--run-dir <dir>]
+bin/woof run show <run-dir> [--verify-artifacts]
 ```
 
 `doctor` reports whether Herdr and Claude Code can be invoked; neither is
@@ -83,10 +86,43 @@ machine-readable reason (including `artifact_too_large` for artifacts over 32 Mi
 error. The SDK exposes the same operations as `submitResult`, `openAttempt`
 and `readJournal` (marked as an unstable p1 prototype in `src/index.ts`).
 
+## Run snapshot (p2)
+
+`woof run show` prints a read-only snapshot of a run journal — status,
+agents, per-stage attempts and outcomes, counters, and any ambiguous
+deliveries still open — without touching Herdr or taking the journal lock:
+
+```sh
+bin/woof run show "$RUN_DIR"
+# {"outcome":"snapshot","snapshot":{...}}
+bin/woof run show "$RUN_DIR" --verify-artifacts
+# re-hashes every accepted copy; snapshot.integrity.artifacts reports {checked, altered}
+```
+
+Exit `0` with the snapshot; exit `3` when the run directory or journal is
+invalid. It works on a terminated run and on a p1 journal. The SDK also
+exposes a run plan (`RunPlan`/`Limits`/`AgentSpec`/`StageSpec`,
+`validateRunPlan`), the run-facts store (`openRun`, `assignAgent`,
+`recordDispatch`, `terminateRun`), snapshots and events
+(`readSnapshot`/`deriveSnapshot`, `readEvents`/`subscribeEvents`/
+`foldEvents`), and a runtime adapter contract
+(`RuntimeAdapter`/`createHerdrCliRuntime`/`herdrRuntimeName`,
+`ObservationTracker`/`watchAgent`, `overlayRuntime`) — see
+[domain model](docs/architecture/domain-model.md#implemented-now-p2) and
+[observability](docs/architecture/observability.md#implemented-now-p2), all
+marked as an unstable p2 contract in `src/index.ts`. A deterministic
+in-memory double for the same runtime contract, `createScriptedRuntime`,
+ships from the `herdr-woof/testing` subpath for workflow-author tests; it is
+never exported from the main entry.
+
 What still does not exist: a scheduler or workflow engine, workflow
 definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or
-run hosting (there is no daemon or live run owner — `submit` opens the journal
-itself, in process).
+run hosting (there is no daemon or live run owner — every store call and
+`submit` open the journal themselves, in process). Declared limits are
+validated and counted but never enforced; gate, block and
+delivery-reconciliation records — and the run status `blocked` they would
+produce — exist as domain types only, with no p2 writer or reader for them.
+Crash resume is not claimed.
 
 ## Integrations and scope
 

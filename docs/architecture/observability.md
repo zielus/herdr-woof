@@ -77,3 +77,110 @@ rendering library, WebSocket server, or specific database is required now.
 Verify this with an external consumer that follows an active run, disconnects,
 reconnects, and reaches the same visible state as a fresh snapshot. Include a
 blocked run and a terminated runtime, not just successful completion.
+
+## Implemented now (p2)
+
+Real shipped behavior for run snapshots, events and runtime observation — not
+design intent. Source: `src/state/snapshot.ts`,
+`src/observe/{cursor,events,subscribe}.ts`,
+`src/runtime/{adapter,tracker,overlay}.ts`, and `woof run show`
+(`src/cli.ts`).
+
+- **Snapshot shape.** `readSnapshot(runDir)` / `woof run show <run-dir>`
+  return a `RunSnapshot` (`schemaVersion: 1`, `kind: "woof.run.snapshot"`):
+  `runId`, `revision` (seq of the last complete journal record), `cursor`,
+  `journal {records, tailPending}`, `workflow` (`null` for plan-less runs),
+  `status`, `openedAt`/`updatedAt`, `outcome` (`null` until termination),
+  `limits` (`null` for plan-less runs), `counters`, `agents[]` (identity,
+  latest assignment, active open attempt, `runtime: null` unless overlaid),
+  `stages[]` (per stage, per visit, per attempt: status, delivery,
+  rejection counts by reason, and the accepted artifact reference if any),
+  `attention.ambiguousDeliveries`, `outputs.latestAcceptedByStage`,
+  `liveness`, and `integrity.artifacts` (`"unchecked"` by default). It never
+  embeds artifact bodies or review/research prose, only references.
+  `readSnapshot` takes no journal lock and works after a run has ended; a
+  journal with no records is `run_dir_invalid`.
+
+- **An event is its journal record, one-to-one.** A `RunEvent`
+  (`schemaVersion: 1`, `kind: "woof.run.event"`) carries the same `type`
+  name as its journal record, a `subject` (agent/stage/visit/attempt, where
+  applicable — a `submission.duplicate`'s subject is resolved from the
+  acceptance record it names), and `data` (the record's own fields, minus
+  the envelope ones). There are no synthetic events: `readEvents` and
+  `subscribeEvents` project the journal directly, so an event and its
+  record can never drift apart.
+
+- **Cursor `v1.<seq>.<anchor>`.** `anchor` is the first 12 hex characters of
+  sha256 over journal line 1 (the `run.opened` bytes). A cursor whose
+  anchor does not match the journal at that path belongs to another run
+  (`cursor_foreign`); a seq past the current head means the journal was
+  truncated or replaced (`cursor_ahead`); a cursor that does not parse is
+  `cursor_malformed`. `cursor_expired` is reserved for when the journal can
+  be compacted — p2 never compacts, so it is never produced.
+
+- **Every resync reason means "take a fresh snapshot."** Each
+  `CursorProblem` (`cursor_ahead | cursor_foreign | cursor_malformed |
+cursor_expired`) and every `subscribeEvents` `resync_required` item
+  carries one of them. There is no partial-recovery path — only resnapshot
+  and resubscribe.
+
+- **At-least-once delivery across reconnects.** Within one `subscribeEvents`
+  call, each seq is yielded exactly once, in order. Across a dropped and
+  resumed subscription (a fresh call from a stored cursor) delivery is
+  at-least-once, not exactly-once: a consumer that stores the cursor of the
+  last event it handled and dedupes by `seq` cannot miss or double-apply a
+  transition. `foldEvents(base, events)` (`RunProjection = {snapshot,
+records}`) is the proof of this by construction: it re-derives the
+  snapshot from the kept record list with the same reducer (there is no
+  second reducer), skips events at or below the base revision, and requires
+  `resync_required` on a gap, a foreign run or run id, or an event that
+  does not parse as a valid record.
+
+- **Tail-pending semantics.** A snapshot or event read never takes the
+  journal lock; a final journal line without its trailing newline (a write
+  in flight) is excluded and reported as `journal.tailPending: true` /
+  `readEvents`' `tailPending: true`, using the previous complete revision.
+  A live subscription that sees the same torn tail persist for
+  `tornTailGraceMs` (default 2000 ms) performs exactly one **locked**
+  `readJournal`: under the lock no append is in flight, so a line still
+  torn there is persisted corruption (`error/journal_corrupt`), not a slow
+  writer. A subscription also detects the journal being replaced at its
+  path — by in-place rewrite or by rename, even at identical length — via a
+  device/inode and line-1-bytes check on every incremental read, ending
+  with `resync_required/cursor_foreign` instead of silently mixing two
+  runs' records.
+
+- **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
+  process to be reachable, so every snapshot says so explicitly rather than
+  claiming `"active"`. `liveness.runtime` stays `"not_observed"` in every
+  derived snapshot; only an explicit, non-journaled overlay step can report
+  `"observed"`, and only when at least one agent had a tracked observation.
+
+- **`--verify-artifacts`** (`woof run show --verify-artifacts`,
+  `readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
+  copy against its journal record and reports `integrity.artifacts =
+{checked, altered: [{receiptId, acceptedPath, problem}]}`. This detects
+  tampering or loss after acceptance; it does not prevent it (same-user
+  write access to `accepted/` is unchanged), and a downstream consumer that
+  must trust an artifact before use still has to verify it itself (phase
+  3).
+
+- **Runtime observation is pull-based and lossy.** A runtime adapter's
+  `observe`/`waitFor` return point-in-time samples; transitions between two
+  reads are never seen. An observation tracker classifies each new sample
+  against the last one for that runtime name as `new`, `duplicate`
+  (identical terminal, sequence, lifecycle and raw status), `stale` (a
+  lower sequence number, or an equal one with a lower revision, within the
+  same terminal), or `replaced` (the pane's terminal id changed — the
+  occupant changed and is surfaced, never merged into the old occupant's
+  history). A bounded watch helper yields only `new`/`replaced` items and
+  exposes dropped-stale/dropped-duplicate counts. None of this is
+  journaled, and none of it affects a derived snapshot.
+
+- **Not covered yet (documented, not silently missing):** gate evaluation,
+  blocking/unblocking and delivery reconciliation (their record types exist
+  as domain types; no p2 writer or event covers them), agent runtime
+  lifecycle changes (overlay only, never an event), format repair and work
+  retry (no loop exists yet), a cancellation request distinct from plain
+  termination, and observation loss/recovery (needs a run owner, which does
+  not exist in p2).
