@@ -246,6 +246,7 @@ async function scenario(options) {
 
   const controller = new AbortController();
   context.abort = () => controller.abort();
+  const startedAt = Date.now();
   const out = await runWorkflow({
     runDir,
     definition,
@@ -256,6 +257,7 @@ async function scenario(options) {
     pollMs: options.pollMs ?? 2,
     onAction: (action) => options.onAction?.(action, context),
   });
+  const elapsedMs = Date.now() - startedAt;
   await options.after?.(context);
 
   const journal = journalOf(runDir);
@@ -290,6 +292,7 @@ async function scenario(options) {
     submissions,
     snapshot: snapshot.ok ? snapshot.snapshot : null,
     finalRevision: await revisionOf(repo),
+    elapsedMs,
     marks: context.marks,
     names,
     runDir,
@@ -595,6 +598,14 @@ if (out.outcome !== "recorded") process.exit(1);`;
           writeFileSync(join(context.repo, "stray.txt"), "changed before the gate\n");
         }
       },
+    }),
+
+  "run-timeout-check": () =>
+    scenario({
+      // A check that would run for ten minutes inside a run allowed 1.5 s.
+      verify: { command: ["node", "-e", "setInterval(() => {}, 1000)"], timeoutMs: 600_000 },
+      limits: { runTimeoutMs: 1500 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
     }),
 
   "tamper-passing-review": () =>

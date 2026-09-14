@@ -630,6 +630,21 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-007. a check longer than the remaining run budget is stopped at the run deadline",
+    () => {
+      const report = runScenario("run-timeout-check");
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(
+        ofType(report, "submission.accepted").some((record) => record["stageId"] === "build"),
+      ).toBe(true);
+      expect(gatesOf(report).some((gate) => gate["kind"] === "check")).toBe(false);
+      // Bounded by the 1.5 s run budget plus the check's kill grace, not by its 600 s timeout.
+      expect((report as Report & { elapsedMs: number }).elapsedMs).toBeLessThan(10_000);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-006. a passing review altered after acceptance fails the run before its gate",
     () => {
       const report = runScenario("tamper-passing-review");

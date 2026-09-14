@@ -231,6 +231,21 @@ export async function runWorkflow<Input>(
       }),
     );
 
+  /** Milliseconds left of runTimeoutMs; no blocking runtime or check call waits longer. */
+  const remainingMs = (snapshot: RunSnapshot): number =>
+    snapshot.limits === null
+      ? Number.POSITIVE_INFINITY
+      : Date.parse(snapshot.openedAt) + snapshot.limits.runTimeoutMs - clock();
+  const capped = (snapshot: RunSnapshot, ms: number): number =>
+    Math.max(1, Math.floor(Math.min(ms, remainingMs(snapshot))));
+  /** A capped effect that reached the run deadline ends the run as run-timeout exhaustion. */
+  const runTimedOut = (snapshot: RunSnapshot): Promise<Written<unknown>> =>
+    end(
+      "exhausted",
+      `the run exceeded runTimeoutMs (${String(snapshot.limits?.runTimeoutMs)} ms)`,
+      "runTimeoutMs",
+    );
+
   /** A gate subject's canonical accepted copy must still match its acceptance before any gate uses it. */
   const subjectAltered = (
     snapshot: RunSnapshot,
@@ -325,6 +340,19 @@ export async function runWorkflow<Input>(
           cwd: repository,
           env: { WOOF_RUN_DIR: runDir },
         });
+        const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
+        if (remainingMs(snapshot) <= 0) {
+          if (pane.ok) {
+            viewOf(action.agentId).handle = handleFor(
+              runtime,
+              runtimeName,
+              planAgent.kind,
+              pane.value.paneId,
+            );
+          }
+          written = await runTimedOut(snapshot);
+          break;
+        }
         if (!pane.ok) {
           written = await end(
             "failed",
@@ -332,16 +360,22 @@ export async function runWorkflow<Input>(
           );
           break;
         }
-        const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
         const started = await runtime.startAgent({
           runtimeName,
           kind: planAgent.kind,
           paneId: pane.value.paneId,
           args: [...planAgent.args],
-          timeoutMs: Math.min(limits.readinessWaitMs, HERDR_START_CAP_MS),
+          timeoutMs: capped(snapshot, Math.min(limits.readinessWaitMs, HERDR_START_CAP_MS)),
         });
         const view = viewOf(action.agentId);
         view.startedAt = clock();
+        if (remainingMs(snapshot) <= 0) {
+          view.handle = started.ok
+            ? started.value
+            : handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+          written = await runTimedOut(snapshot);
+          break;
+        }
         if (!started.ok && started.error.code !== "agent_not_ready") {
           view.handle = handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
           written = await end(
@@ -507,7 +541,7 @@ export async function runWorkflow<Input>(
         const limits = snapshot.limits as Limits;
         // Exactly one delivery per attempt; a retry is a new attempt.
         const delivery = await runtime.deliver(handle, rendered.text, {
-          timeoutMs: limits.deliveryTimeoutMs,
+          timeoutMs: capped(snapshot, limits.deliveryTimeoutMs),
         });
         const seen = delivery.outcome === "started" ? delivery.observation : view.last;
         if (delivery.outcome === "started") accept(view, delivery.observation);
@@ -551,6 +585,8 @@ export async function runWorkflow<Input>(
           break;
         }
         written = dispatched;
+        // The dispatch fact is recorded first; a delivery that used up the run budget then ends the run.
+        if (dispatched.ok && remainingMs(snapshot) <= 0) written = await runTimedOut(snapshot);
         observeNext = action.agentId;
         break;
       }
@@ -583,10 +619,15 @@ export async function runWorkflow<Input>(
         const run = await runCheck({
           argv: action.argv,
           cwd: repository,
-          timeoutMs: action.timeoutMs,
+          timeoutMs: capped(snapshot, action.timeoutMs),
           ...(options.signal !== undefined ? { signal: options.signal } : {}),
         });
         if (run.aborted) return undefined;
+        if (remainingMs(snapshot) <= 0) {
+          // The check was stopped by the run deadline, not by its own timeout.
+          written = await runTimedOut(snapshot);
+          break;
+        }
         const subject = action.subject;
         const path = `checks/${action.gate}/${subject.stageId}-v${subject.visit}-a${subject.attempt}/output.log`;
         const file = engineFile(path, run.output);
