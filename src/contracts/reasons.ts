@@ -40,6 +40,7 @@ export type InfraReason = (typeof INFRA_REASONS)[number];
 /** Reasons `openAttempt` can refuse to declare an attempt with. */
 export type AttemptOpenReason =
   | "attempt_open_conflict"
+  | "attempt_dir_out_of_scope"
   | "run_mismatch"
   | "journal_busy"
   | "journal_corrupt"

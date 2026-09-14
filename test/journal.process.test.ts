@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -104,23 +103,7 @@ describe("run journal failure boundaries", () => {
     expect(readFileSync(journalPath).equals(before)).toBe(true);
   });
 
-  it("breaks a lock left by a dead process on this host", () => {
-    const { runDir, envelope } = readyAttempt();
-    const dead = spawnSync("node", ["-e", "0"]);
-    expect(dead.status).toBe(0);
-    writeFileSync(
-      join(runDir, "journal.lock"),
-      JSON.stringify({ pid: dead.pid, host: hostname(), ts: new Date().toISOString() }),
-    );
-
-    const result = submit(runDir, envelope);
-
-    expect(result.status, result.stdout).toBe(0);
-    expect(result.json?.outcome).toBe("accepted");
-    expect(existsSync(join(runDir, "journal.lock"))).toBe(false);
-  });
-
-  it("reports journal_busy when a live process holds the lock", () => {
+  it("reports journal_busy naming the lock and its holder when the lock is held", () => {
     const { runDir, envelope } = readyAttempt();
     const lockPath = join(runDir, "journal.lock");
     writeFileSync(
@@ -135,6 +118,8 @@ describe("run journal failure boundaries", () => {
 
     expect(result.status).toBe(3);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "journal_busy" });
+    expect(result.json?.message).toContain(lockPath);
+    expect(result.json?.message).toContain(`pid ${process.pid}`);
     expect(elapsed).toBeLessThan(7000);
     expect(existsSync(lockPath)).toBe(true);
     expect(readFileSync(join(runDir, "journal.jsonl")).equals(journalBefore)).toBe(true);

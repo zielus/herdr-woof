@@ -1,8 +1,24 @@
-import { closeSync, openSync, readFileSync, rmSync, unlinkSync, writeSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { writeAll } from "./write-all.js";
+
+/**
+ * Journal lock: `<runDir>/journal.lock`, created with O_EXCL and holding
+ * `{pid, host, ts, token}`.
+ *
+ * There is no automatic stale-lock recovery. A lock left behind by a crashed
+ * process makes every writer report `journal_busy` after the timeout, naming the
+ * lock path and its recorded holder, until a person removes the file. Breaking
+ * locks by pid liveness cannot be made atomic with O_EXCL files alone: two
+ * breakers racing on one dead lock can remove each other's fresh lock.
+ *
+ * A writer releases only the lock it created: the file is unlinked only while it
+ * still holds that writer's random token.
+ */
 export const LOCK_FILE = "journal.lock";
 
 export interface LockOptions {
@@ -13,11 +29,16 @@ export interface LockOptions {
 export type LockResult<T> =
   { ok: true; value: T } | { ok: false; reason: "journal_busy"; message: string };
 
+interface Holder {
+  pid: number;
+  host: string;
+  ts?: string;
+  token?: string;
+}
+
 /**
- * Runs `fn` while holding `<runDir>/journal.lock`, created with O_EXCL and
- * holding `{pid, host, ts}`. A lock left by a dead process on this host is
- * broken once per acquisition; otherwise acquisition polls until the timeout
- * and reports `journal_busy`. The lock is always released after `fn`.
+ * Runs `fn` while holding the journal lock. Acquisition polls until the
+ * timeout and then reports `journal_busy`.
  */
 export async function withJournalLock<T>(
   runDir: string,
@@ -30,42 +51,50 @@ export async function withJournalLock<T>(
   try {
     return { ok: true, value: await fn() };
   } finally {
-    rmSync(lockPath, { force: true });
+    release(lockPath, acquired.value);
   }
 }
 
 async function acquire(
   lockPath: string,
   { timeoutMs = 5000, pollMs = 25 }: LockOptions,
-): Promise<LockResult<undefined>> {
+): Promise<LockResult<string>> {
   const deadline = Date.now() + timeoutMs;
-  let brokeStale = false;
+  const token = randomUUID();
+  const metadata = JSON.stringify({
+    pid: process.pid,
+    host: hostname(),
+    ts: new Date().toISOString(),
+    token,
+  });
 
   for (;;) {
+    let fd: number | undefined;
     try {
-      const fd = openSync(lockPath, "wx");
-      try {
-        writeSync(
-          fd,
-          JSON.stringify({ pid: process.pid, host: hostname(), ts: new Date().toISOString() }),
-        );
-      } finally {
-        closeSync(fd);
-      }
-      return { ok: true, value: undefined };
+      fd = openSync(lockPath, "wx");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-
-    if (!brokeStale && breakStaleLock(lockPath)) {
-      brokeStale = true;
-      continue;
+    if (fd !== undefined) {
+      try {
+        writeAll(fd, metadata);
+      } catch (error) {
+        closeSync(fd);
+        // Created exclusively by this call, so the file is ours to remove.
+        rmSync(lockPath, { force: true });
+        throw error;
+      }
+      closeSync(fd);
+      return { ok: true, value: token };
     }
+
     if (Date.now() >= deadline) {
       return {
         ok: false,
         reason: "journal_busy",
-        message: `journal lock ${lockPath} is held (${describeHolder(lockPath)}); gave up after ${timeoutMs} ms`,
+        message:
+          `journal lock ${lockPath} is held by ${describeHolder(lockPath)}; gave up after ${timeoutMs} ms. ` +
+          `Woof does not remove stale locks: if that process is gone, delete ${lockPath} by hand.`,
       };
     }
     // Polling is sequential by design: each wait precedes the next attempt.
@@ -74,24 +103,13 @@ async function acquire(
   }
 }
 
-/**
- * Removes the lock when it names a process on this host that no longer exists.
- * A lock that is unreadable or still being written is treated as held.
- */
-function breakStaleLock(lockPath: string): boolean {
-  const content = readLock(lockPath);
-  const holder = parseHolder(content);
-  if (holder === undefined || holder.host !== hostname() || isAlive(holder.pid)) {
-    return false;
-  }
-  // Narrow the window in which another process replaced the stale lock.
-  if (readLock(lockPath) !== content) return false;
+function release(lockPath: string, token: string): void {
+  if (parseHolder(readLock(lockPath))?.token !== token) return;
   try {
     unlinkSync(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return true;
 }
 
 function readLock(lockPath: string): string | undefined {
@@ -102,29 +120,27 @@ function readLock(lockPath: string): string | undefined {
   }
 }
 
-function parseHolder(content: string | undefined): { pid: number; host: string } | undefined {
+function parseHolder(content: string | undefined): Holder | undefined {
   if (content === undefined) return undefined;
   try {
-    const value = JSON.parse(content) as { pid?: unknown; host?: unknown };
-    if (Number.isInteger(value.pid) && typeof value.host === "string") {
-      return { pid: value.pid as number, host: value.host };
+    const value = JSON.parse(content) as Record<string, unknown>;
+    const { pid, host, ts, token } = value;
+    if (typeof pid === "number" && Number.isInteger(pid) && typeof host === "string") {
+      return {
+        pid,
+        host,
+        ...(typeof ts === "string" ? { ts } : {}),
+        ...(typeof token === "string" ? { token } : {}),
+      };
     }
   } catch {
-    // Partially written or foreign content: not provably stale.
+    // Partially written or foreign content.
   }
   return undefined;
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
 function describeHolder(lockPath: string): string {
   const holder = parseHolder(readLock(lockPath));
-  return holder === undefined ? "holder unknown" : `pid ${holder.pid} on ${holder.host}`;
+  if (holder === undefined) return "an unknown holder (lock content unreadable)";
+  return `pid ${holder.pid} on ${holder.host}${holder.ts !== undefined ? ` since ${holder.ts}` : ""}`;
 }

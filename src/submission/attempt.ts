@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 
 import {
   isId,
@@ -16,7 +16,7 @@ import {
   replay,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
-import type { JournalRecord } from "../journal/records.js";
+import { attemptArtifactDir, type JournalRecord } from "../journal/records.js";
 
 export interface OpenAttemptInput extends AttemptIdentity {
   runDir: string;
@@ -43,19 +43,16 @@ export type OpenAttemptOutcome =
  * Declares an open attempt and its owner in the run journal, creating the run
  * directory, journal and `artifacts/<stage>/visit-<n>/attempt-<m>/` as needed.
  * The (visit, attempt) pair must be newer than every attempt already opened for
- * the stage; still-open older attempts become stale. This is dispatcher
- * tooling, not a scheduler. Invalid identity input throws a TypeError.
+ * the stage; still-open older attempts become stale. The attempt directory and
+ * its ancestors under the run directory must be real directories, never
+ * symlinks (`attempt_dir_out_of_scope`). This is dispatcher tooling, not a
+ * scheduler. Invalid identity input throws a TypeError.
  */
 export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptOutcome> {
   validateInput(input);
   const runDir = resolve(input.runDir);
   const verdicts = [...(input.verdicts ?? [])];
-  const artifactDir = join(
-    "artifacts",
-    input.stageId,
-    `visit-${input.visit}`,
-    `attempt-${input.attempt}`,
-  );
+  const artifactDir = attemptArtifactDir(input.stageId, input.visit, input.attempt);
 
   try {
     mkdirSync(runDir, { recursive: true });
@@ -83,7 +80,11 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
           records = read.records;
         }
 
-        const state = replay(records);
+        const replayed = replay(records);
+        if (!replayed.ok) {
+          return reject("journal_corrupt", `line ${replayed.line}: ${replayed.message}`);
+        }
+        const state = replayed.state;
         if (state.runId !== undefined && state.runId !== input.runId) {
           return reject("run_mismatch", `run directory belongs to run ${state.runId}`, [
             { field: "runId", message: `expected ${state.runId}` },
@@ -99,7 +100,14 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
         }
 
         try {
-          mkdirSync(join(runDir, artifactDir), { recursive: true });
+          const runReal = realpathSync(runDir);
+          const before = attemptDirProblem(runReal, artifactDir);
+          if (before !== undefined) return outOfScope(before);
+          mkdirSync(join(runReal, artifactDir), { recursive: true });
+          // Re-check in case a component was replaced while it was created.
+          const after = attemptDirProblem(runReal, artifactDir);
+          if (after !== undefined) return outOfScope(after);
+
           if (records.length === 0) {
             records.push(appendRecord(runDir, records, { type: "run.opened", runId: input.runId }));
           }
@@ -140,6 +148,30 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
   return locked.ok ? locked.value : reject(locked.reason, locked.message);
 }
 
+/**
+ * Walks `artifactDir` below the run directory's real path. Any existing
+ * component that is a symlink could resolve outside the run (or into another
+ * attempt), so it is refused. Components that do not exist yet are created by
+ * the caller as real directories.
+ */
+function attemptDirProblem(runReal: string, artifactDir: string): string | undefined {
+  let current = runReal;
+  for (const segment of artifactDir.split("/")) {
+    current = join(current, segment);
+    let isSymlink: boolean;
+    try {
+      isSymlink = lstatSync(current).isSymbolicLink();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      return `cannot inspect ${relative(runReal, current)}: ${(error as Error).message}`;
+    }
+    if (isSymlink) {
+      return `${relative(runReal, current)} is a symlink; the attempt directory and its ancestors must be real directories inside the run directory`;
+    }
+  }
+  return undefined;
+}
+
 function validateInput(input: OpenAttemptInput): void {
   const problems: string[] = [];
   for (const field of ["runId", "agentId", "stageId"] as const) {
@@ -158,6 +190,10 @@ function validateInput(input: OpenAttemptInput): void {
     problems.push("paneId must be a non-empty string");
   }
   if (problems.length > 0) throw new TypeError(problems.join("; "));
+}
+
+function outOfScope(message: string): OpenAttemptOutcome {
+  return reject("attempt_dir_out_of_scope", message, [{ field: "artifactDir", message }]);
 }
 
 function reject(

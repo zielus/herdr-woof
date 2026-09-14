@@ -1,4 +1,4 @@
-import { closeSync, fsyncSync, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, fsyncSync, ftruncateSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -8,6 +8,7 @@ import {
   type NewJournalRecord,
   type SubmissionAcceptedRecord,
 } from "./records.js";
+import { writeAll } from "./write-all.js";
 
 export const JOURNAL_FILE = "journal.jsonl";
 
@@ -16,9 +17,10 @@ export type ReadJournalResult =
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
 
 /**
- * Reads `<runDir>/journal.jsonl`. The journal fails closed: any line that is
- * not a valid record, a final line without a trailing newline, a `seq` gap, or
- * a first record other than `run.opened` makes it `journal_corrupt`.
+ * Reads `<runDir>/journal.jsonl`. The journal fails closed with
+ * `journal_corrupt` and a line number when a line is not a valid record, the
+ * final line has no trailing newline, `seq` has a gap, the first record is not
+ * `run.opened`, or `replay` finds an impossible transition.
  */
 export function readJournal(runDir: string): ReadJournalResult {
   const journalPath = join(runDir, JOURNAL_FILE);
@@ -61,13 +63,17 @@ export function readJournal(runDir: string): ReadJournalResult {
     }
     records.push(record);
   }
+
+  const replayed = replay(records);
+  if (!replayed.ok) return corrupt(journalPath, replayed.line, replayed.message);
   return { ok: true, records };
 }
 
 /**
- * Appends one record with the next `seq` and fsyncs it. Callers must hold the
- * journal lock and pass the records they just read under it. Throws on I/O
- * failure.
+ * Appends one record with the next `seq`, writing the whole line and fsyncing
+ * it before returning. On failure the journal is truncated back to its previous
+ * length when possible and the error is rethrown. Callers must hold the journal
+ * lock and pass the records they just read under it.
  */
 export function appendRecord(
   runDir: string,
@@ -80,14 +86,31 @@ export function appendRecord(
     ts: new Date().toISOString(),
     ...record,
   } as JournalRecord;
+  const line = Buffer.from(`${JSON.stringify(full)}\n`, "utf8");
   const fd = openSync(join(runDir, JOURNAL_FILE), "a");
   try {
-    writeSync(fd, `${JSON.stringify(full)}\n`);
-    fsyncSync(fd);
+    const sizeBefore = fstatSync(fd).size;
+    try {
+      writeAll(fd, line);
+      fsyncSync(fd);
+    } catch (error) {
+      truncateQuietly(fd, sizeBefore);
+      throw error;
+    }
   } finally {
     closeSync(fd);
   }
   return full;
+}
+
+function truncateQuietly(fd: number, size: number): void {
+  try {
+    ftruncateSync(fd, size);
+    fsyncSync(fd);
+  } catch {
+    // The caller reports journal_write_failed; a torn line that survives makes
+    // the next read fail closed.
+  }
 }
 
 export type AttemptStatus = "open" | "superseded" | "accepted";
@@ -105,6 +128,9 @@ export interface RunState {
   latestByStage: Map<string, { visit: number; attempt: number }>;
 }
 
+export type ReplayResult =
+  { ok: true; state: RunState } | { ok: false; line: number; message: string };
+
 export function attemptKey(stageId: string, visit: number, attempt: number): string {
   return `${stageId}/${visit}/${attempt}`;
 }
@@ -117,44 +143,99 @@ export function compareAttempts(
   return a.visit === b.visit ? a.attempt - b.attempt : a.visit - b.visit;
 }
 
+/** An empty verdict list requires null; otherwise the verdict must be listed. */
+export function verdictAllowed(allowed: readonly string[], verdict: string | null): boolean {
+  return allowed.length === 0 ? verdict === null : verdict !== null && allowed.includes(verdict);
+}
+
 /**
- * Derives attempt state from the journal. Opening a newer attempt supersedes
- * the stage's still-open attempts; accepted attempts stay accepted.
+ * Derives attempt state from the journal and rejects impossible transitions:
+ * attempts for another run or not newer than the stage's latest, acceptance of
+ * an attempt that was never opened, is not open, disagrees with the opened
+ * identity or pane, or carries a disallowed verdict, and duplicates that do not
+ * match the accepted record they name. Opening a newer attempt supersedes the
+ * stage's still-open attempts; accepted attempts stay accepted.
  */
-export function replay(records: readonly JournalRecord[]): RunState {
+export function replay(records: readonly JournalRecord[]): ReplayResult {
   const state: RunState = { runId: undefined, attempts: new Map(), latestByStage: new Map() };
+  const acceptedBySeq = new Map<number, SubmissionAcceptedRecord>();
   for (const record of records) {
-    switch (record.type) {
-      case "run.opened":
-        state.runId = record.runId;
-        break;
-      case "attempt.opened":
-        for (const existing of state.attempts.values()) {
-          if (existing.opened.stageId === record.stageId && existing.status === "open") {
-            existing.status = "superseded";
-          }
-        }
-        state.attempts.set(attemptKey(record.stageId, record.visit, record.attempt), {
-          opened: record,
-          status: "open",
-        });
-        state.latestByStage.set(record.stageId, { visit: record.visit, attempt: record.attempt });
-        break;
-      case "submission.accepted": {
-        const attempt = state.attempts.get(
-          attemptKey(record.stageId, record.visit, record.attempt),
-        );
-        if (attempt !== undefined) {
-          attempt.status = "accepted";
-          attempt.accepted = record;
-        }
-        break;
-      }
-      default:
-        break;
-    }
+    const problem = applyRecord(state, acceptedBySeq, record);
+    if (problem !== undefined) return { ok: false, line: record.seq, message: problem };
   }
-  return state;
+  return { ok: true, state };
+}
+
+function applyRecord(
+  state: RunState,
+  acceptedBySeq: Map<number, SubmissionAcceptedRecord>,
+  record: JournalRecord,
+): string | undefined {
+  switch (record.type) {
+    case "run.opened":
+      state.runId = record.runId;
+      return undefined;
+    case "attempt.opened": {
+      if (record.runId !== state.runId) {
+        return `attempt.opened belongs to run ${record.runId}, not ${String(state.runId)}`;
+      }
+      const latest = state.latestByStage.get(record.stageId);
+      if (latest !== undefined && compareAttempts(record, latest) <= 0) {
+        return `attempt.opened visit ${record.visit} attempt ${record.attempt} is not newer than visit ${latest.visit} attempt ${latest.attempt}`;
+      }
+      for (const existing of state.attempts.values()) {
+        if (existing.opened.stageId === record.stageId && existing.status === "open") {
+          existing.status = "superseded";
+        }
+      }
+      state.attempts.set(attemptKey(record.stageId, record.visit, record.attempt), {
+        opened: record,
+        status: "open",
+      });
+      state.latestByStage.set(record.stageId, { visit: record.visit, attempt: record.attempt });
+      return undefined;
+    }
+    case "submission.accepted": {
+      const attempt = state.attempts.get(attemptKey(record.stageId, record.visit, record.attempt));
+      if (attempt === undefined) {
+        return "submission.accepted for an attempt that was never opened";
+      }
+      const opened = attempt.opened;
+      if (record.runId !== opened.runId || record.agentId !== opened.agentId) {
+        return "submission.accepted identity disagrees with the opened attempt";
+      }
+      if (
+        opened.paneId !== undefined &&
+        record.paneId !== undefined &&
+        record.paneId !== opened.paneId
+      ) {
+        return "submission.accepted pane disagrees with the opened attempt";
+      }
+      if (attempt.status !== "open") {
+        return `submission.accepted for an attempt that is already ${attempt.status}`;
+      }
+      if (!verdictAllowed(opened.verdicts, record.verdict)) {
+        return "submission.accepted verdict is not allowed by the opened attempt";
+      }
+      attempt.status = "accepted";
+      attempt.accepted = record;
+      acceptedBySeq.set(record.seq, record);
+      return undefined;
+    }
+    case "submission.duplicate": {
+      const accepted = acceptedBySeq.get(record.acceptedSeq);
+      if (
+        accepted === undefined ||
+        accepted.receiptId !== record.receiptId ||
+        accepted.envelopeDigest !== record.envelopeDigest
+      ) {
+        return "submission.duplicate does not match the accepted record it names";
+      }
+      return undefined;
+    }
+    case "submission.rejected":
+      return undefined;
+  }
 }
 
 function corrupt(journalPath: string, line: number, detail: string): ReadJournalResult {

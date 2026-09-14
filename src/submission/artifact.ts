@@ -7,12 +7,13 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
-  writeSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
+import { writeAll } from "../journal/write-all.js";
 
 export type ResolveArtifactResult =
   | { ok: true; realPath: string; bytes: Buffer }
@@ -23,10 +24,11 @@ export type ResolveArtifactResult =
     };
 
 /**
- * Resolves an envelope artifact path and reads it once. The path, after
- * following symlinks, must lie strictly inside the attempt's output directory;
- * it must be a regular file with non-whitespace content. Returning the bytes
- * that were checked lets the caller hash and publish exactly those bytes.
+ * Resolves an envelope artifact path and reads it once. The attempt directory
+ * must be a real directory strictly inside the run directory, and the path,
+ * after following symlinks, must lie strictly inside that attempt directory;
+ * the artifact must be a regular file with non-whitespace content. Returning the
+ * bytes that were checked lets the caller hash and publish exactly those bytes.
  */
 export function resolveArtifact(
   runDir: string,
@@ -45,6 +47,13 @@ export function resolveArtifact(
     scopeReal = realpathSync(scope);
   } catch {
     return missing(`attempt directory ${artifactDir} does not exist`);
+  }
+  // A symlinked attempt directory or ancestor would let files outside the run
+  // (or another attempt's files) satisfy the target check below.
+  if (scopeReal !== scope || !isInside(scopeReal, runReal)) {
+    return outOfScope(
+      `attempt directory ${artifactDir} resolves to ${scopeReal}, not a real directory inside the run directory`,
+    );
   }
 
   // Resolve the deepest existing ancestor so a symlinked parent cannot escape
@@ -93,24 +102,66 @@ export function hashFile(path: string): string {
 }
 
 /**
- * Publishes accepted bytes immutably at `<runDir>/<acceptedPath>`: write a
+ * Publishes accepted bytes at `<runDir>/<acceptedPath>`: write every byte to a
  * temporary file, fsync, mark read-only, rename into place, then re-hash the
- * published file. Returns the published sha256; throws on I/O failure.
+ * published file. The temporary file is removed on every failure. Returns the
+ * published sha256; throws on I/O failure.
+ *
+ * Publication is provisional: a copy is accepted only once a
+ * `submission.accepted` record references it.
  */
 export function publishAccepted(runDir: string, acceptedPath: string, bytes: Uint8Array): string {
   const dest = join(runDir, acceptedPath);
   mkdirSync(dirname(dest), { recursive: true });
   const tmp = `${dest}.tmp-${process.pid}`;
-  const fd = openSync(tmp, "w", 0o600);
   try {
-    writeSync(fd, bytes);
-    fsyncSync(fd);
+    const fd = openSync(tmp, "w", 0o600);
+    try {
+      writeAll(fd, bytes);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    chmodSync(tmp, 0o444);
+    renameSync(tmp, dest);
   } finally {
-    closeSync(fd);
+    // After a successful rename the temporary name no longer exists.
+    rmSync(tmp, { force: true });
   }
-  chmodSync(tmp, 0o444);
-  renameSync(tmp, dest);
   return hashFile(dest);
+}
+
+/**
+ * Removes a provisionally published copy that was never journaled, but only
+ * while its content still hashes to what this submission published.
+ */
+export function removePublished(runDir: string, acceptedPath: string, publishedSha: string): void {
+  const dest = join(runDir, acceptedPath);
+  try {
+    if (hashFile(dest) === publishedSha) rmSync(dest, { force: true });
+  } catch {
+    // Already gone or unreadable: nothing this submission can safely remove.
+  }
+}
+
+/**
+ * Checks that an accepted copy still matches its journal record. Returns a
+ * description of the mismatch, or undefined when the copy is intact.
+ */
+export function acceptedCopyProblem(
+  runDir: string,
+  artifact: { acceptedPath: string; sha256: string; bytes: number },
+): string | undefined {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(join(runDir, artifact.acceptedPath));
+  } catch (error) {
+    return `accepted copy ${artifact.acceptedPath} is unreadable: ${(error as Error).message}`;
+  }
+  if (bytes.byteLength !== artifact.bytes || sha256Hex(bytes) !== artifact.sha256) {
+    return `accepted copy ${artifact.acceptedPath} no longer matches its journal record`;
+  }
+  return undefined;
 }
 
 function isInside(child: string, parent: string): boolean {

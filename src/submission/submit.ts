@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
 import {
@@ -11,10 +11,27 @@ import {
   type SubmitOutcome,
 } from "../contracts/envelope.js";
 import type { RejectionReason } from "../contracts/reasons.js";
-import { JOURNAL_FILE, appendRecord, attemptKey, readJournal, replay } from "../journal/journal.js";
+import {
+  JOURNAL_FILE,
+  appendRecord,
+  attemptKey,
+  readJournal,
+  replay,
+  verdictAllowed,
+} from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
-import { receiptFromAccepted, type JournalRecord } from "../journal/records.js";
-import { publishAccepted, resolveArtifact } from "./artifact.js";
+import {
+  acceptedPathFor,
+  receiptFromAccepted,
+  receiptIdFor,
+  type JournalRecord,
+} from "../journal/records.js";
+import {
+  acceptedCopyProblem,
+  publishAccepted,
+  removePublished,
+  resolveArtifact,
+} from "./artifact.js";
 
 export type SubmitInput = {
   /** Run directory holding `journal.jsonl`. */
@@ -37,8 +54,9 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  *  5. runId equals the journal's run                   → run_mismatch
  *  6. the attempt was opened                           → attempt_unknown
  *  7. agentId (and paneId, when both sides have one)   → owner_mismatch
- *  8. attempt already accepted: same digest            → duplicate (prior receipt)
- *                               different digest       → attempt_closed_conflict
+ *  8. attempt already accepted: different digest       → attempt_closed_conflict
+ *     same digest, accepted copy intact                → duplicate (prior receipt)
+ *     same digest, accepted copy missing or altered    → journal_corrupt
  *  9. attempt superseded by a newer opened attempt     → attempt_stale
  * 10. verdict allowed by the attempt                   → verdict_not_allowed
  * 11. artifact path resolves inside the attempt dir    → artifact_out_of_scope
@@ -49,6 +67,11 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
  *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
+ *
+ * Only a copy referenced by a `submission.accepted` record is accepted. When the
+ * acceptance cannot be journaled, the copy this call published is removed while
+ * its content is unchanged; a crash between publication and the append can
+ * still leave an unreferenced file under `accepted/`, which is not accepted.
  */
 export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
   // 1. Run directory.
@@ -135,7 +158,12 @@ function decide(
   const reject = (reason: RejectionReason, message: string, details: RejectionDetail[] = []) =>
     journalRejection(runDir, records, rejection(reason, message, details), context);
 
-  const state = replay(records);
+  // readJournal already replayed these records; this keeps the state typed.
+  const replayed = replay(records);
+  if (!replayed.ok) {
+    return rejection("journal_corrupt", `line ${replayed.line}: ${replayed.message}`);
+  }
+  const state = replayed.state;
 
   // 5. Run.
   if (envelope.runId !== state.runId) {
@@ -181,7 +209,8 @@ function decide(
     );
   }
 
-  // 8. Closed attempt: identical retry gets the prior receipt.
+  // 8. Closed attempt: identical retry gets the prior receipt, but only while
+  // the accepted copy still matches the journal.
   if (attempt.accepted !== undefined) {
     const receipt = receiptFromAccepted(attempt.accepted);
     if (attempt.accepted.envelopeDigest !== digest) {
@@ -190,6 +219,10 @@ function decide(
         `attempt was already accepted (${receipt.receiptId}) with a different envelope`,
         [{ field: "envelope", message: `accepted digest ${attempt.accepted.envelopeDigest}` }],
       );
+    }
+    const copyProblem = acceptedCopyProblem(runDir, attempt.accepted.artifact);
+    if (copyProblem !== undefined) {
+      return rejection("journal_corrupt", `${receipt.receiptId}: ${copyProblem}`);
     }
     try {
       appendRecord(runDir, records, {
@@ -212,9 +245,7 @@ function decide(
 
   // 10. Verdict.
   const allowed = attempt.opened.verdicts;
-  if (
-    allowed.length === 0 ? envelope.verdict !== null : !allowed.includes(envelope.verdict ?? "")
-  ) {
+  if (!verdictAllowed(allowed, envelope.verdict)) {
     return reject(
       "verdict_not_allowed",
       `verdict ${JSON.stringify(envelope.verdict)} is not allowed`,
@@ -244,12 +275,11 @@ function decide(
   }
 
   // 15. Publish the immutable accepted copy, then persist acceptance.
-  const acceptedPath = join(
-    "accepted",
+  const acceptedPath = acceptedPathFor(
     envelope.stageId,
-    `visit-${envelope.visit}`,
-    `attempt-${envelope.attempt}`,
-    basename(envelope.artifact.path),
+    envelope.visit,
+    envelope.attempt,
+    envelope.artifact.path,
   );
   let published: string;
   try {
@@ -261,6 +291,7 @@ function decide(
     );
   }
   if (published !== actual) {
+    removePublished(runDir, acceptedPath, published);
     return reject("artifact_hash_mismatch", "accepted copy changed while it was published", [
       { field: "artifact.sha256", message: `accepted copy hashes to ${published}` },
     ]);
@@ -281,12 +312,16 @@ function decide(
         acceptedPath,
       },
       ...(paneId !== undefined ? { paneId } : {}),
-      receiptId: `rcpt-${seq}-${digest.slice(0, 12)}`,
+      receiptId: receiptIdFor(seq, digest),
     });
     if (record.type !== "submission.accepted") throw new Error("unexpected record type");
     return { outcome: "accepted", receipt: receiptFromAccepted(record) };
   } catch (error) {
-    return rejection("journal_write_failed", (error as Error).message);
+    removePublished(runDir, acceptedPath, actual);
+    return rejection(
+      "journal_write_failed",
+      `cannot journal the acceptance, so the unreferenced accepted copy was removed: ${(error as Error).message}`,
+    );
   }
 }
 

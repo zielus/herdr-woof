@@ -160,7 +160,7 @@ function validateEnvelope(value: Record<string, unknown>): RejectionDetail[] {
   return details;
 }
 
-function relativePathProblem(path: unknown): string | undefined {
+export function relativePathProblem(path: unknown): string | undefined {
   if (typeof path !== "string" || path === "") return "must be a non-empty string";
   if (path.startsWith("/")) return "must be relative to the run directory";
   if (path.includes("\\") || path.includes("\0")) return "must be a POSIX path";
