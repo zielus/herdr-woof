@@ -212,8 +212,8 @@ function submissionAcceptedProblem(
   return (
     hashProblem(artifact, "sha256", "artifact.") ??
     check(
-      typeof bytes === "number" && Number.isInteger(bytes) && bytes >= 0,
-      "artifact.bytes is not a non-negative integer",
+      typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0,
+      "artifact.bytes is not a non-negative safe integer",
     ) ??
     check(
       artifact["acceptedPath"] === acceptedPathFor(stageId, visit, attempt, path),

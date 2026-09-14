@@ -179,6 +179,32 @@ describe("journal integrity", () => {
     });
   }
 
+  it("fails closed on an acceptance whose bytes is not a safe integer", () => {
+    const { runDir, envelope, accepted } = acceptedRun();
+    openAttemptOk(runDir, { stage: "review" });
+    const moved = onStage(accepted, "review");
+    const record: RawRecord = {
+      ...moved,
+      artifact: { ...(moved["artifact"] as RawRecord), bytes: 2 ** 53 },
+    };
+    const journalPath = join(runDir, "journal.jsonl");
+    const seq = rawRecords(runDir).length + 1;
+    const digest = String(record["envelopeDigest"]);
+    // Written as raw JSON: 9007199254740993 cannot be represented exactly in JS.
+    const line = JSON.stringify({
+      ...record,
+      seq,
+      ts: new Date().toISOString(),
+      receiptId: `rcpt-${seq}-${digest.slice(0, 12)}`,
+    }).replace('"bytes":9007199254740992', '"bytes":9007199254740993');
+    expect(line).toContain('"bytes":9007199254740993');
+    appendFileSync(journalPath, `${line}\n`);
+    const before = readFileSync(journalPath);
+
+    expectCorrupt(submit(runDir, envelope), `line ${seq}: submission.accepted: artifact.bytes`);
+    expect(readFileSync(journalPath).equals(before)).toBe(true);
+  });
+
   it("returns journal_corrupt instead of duplicate when the accepted copy is missing", () => {
     const { runDir, envelope, receipt } = acceptedRun();
     rmSync(join(runDir, receipt.artifact.acceptedPath));
