@@ -16,6 +16,7 @@ export const REJECTION_REASONS = [
   "journal_busy",
   "journal_corrupt",
   "run_mismatch",
+  "run_closed",
   "attempt_unknown",
   "owner_mismatch",
   "attempt_closed_conflict",
@@ -49,9 +50,34 @@ export type AttemptOpenReason =
   | "attempt_open_conflict"
   | "attempt_dir_out_of_scope"
   | "run_mismatch"
+  | "run_closed"
+  | "stage_unknown"
+  | "owner_mismatch"
+  | "verdicts_mismatch"
   | "journal_busy"
   | "journal_corrupt"
   | "journal_write_failed";
+
+/**
+ * Reasons the state store refuses to record a run fact. Store refusals are
+ * invariants (the record would make the journal impossible), not policy, and
+ * are not journaled.
+ */
+export type StoreReason =
+  | InfraReason
+  | "plan_invalid"
+  | "run_exists"
+  | "run_mismatch"
+  | "run_closed"
+  | "agent_unknown"
+  | "agent_unassigned"
+  | "agent_busy"
+  | "assignment_unchanged"
+  | "stage_unknown"
+  | "attempt_unknown"
+  | "owner_mismatch"
+  | "verdicts_mismatch"
+  | "dispatch_exists";
 
 export function isInfraReason(reason: string): reason is InfraReason {
   return (INFRA_REASONS as readonly string[]).includes(reason);

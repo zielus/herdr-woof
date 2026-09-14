@@ -7,17 +7,14 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  readSync,
   type Stats,
 } from "node:fs";
 import { join } from "node:path";
 
-import {
-  parseRecordLine,
-  type AttemptOpenedRecord,
-  type JournalRecord,
-  type NewJournalRecord,
-  type SubmissionAcceptedRecord,
-} from "./records.js";
+import { sha256Hex } from "../contracts/canonical-json.js";
+import { replay } from "../state/reducer.js";
+import { parseRecordLine, type JournalRecord, type NewJournalRecord } from "./records.js";
 import { writeAll } from "./write-all.js";
 
 export const JOURNAL_FILE = "journal.jsonl";
@@ -150,15 +147,279 @@ export function createJournal(runDir: string): void {
  * `journal_corrupt` (with a line number where one applies) when the path is a
  * symlink or not a regular file, a line is not a valid record, the final line
  * has no trailing newline, `seq` has a gap, the first record is not
- * `run.opened`, or `replay` finds an impossible transition.
+ * `run.opened`, or `replay` finds an impossible transition. Callers that write
+ * hold the journal lock, so a torn final line is persisted corruption.
  */
 export function readJournal(runDir: string): ReadJournalResult {
+  const read = readJournalBytes(runDir, 0);
+  if (!read.ok) return read;
+  const parsed = parseLines(read.journalPath, read.content, 1, false);
+  if (!parsed.ok) return parsed;
+  const replayed = replay(parsed.records);
+  if (!replayed.ok) return corrupt(read.journalPath, replayed.line, replayed.message);
+  return { ok: true, records: parsed.records };
+}
+
+export type ReadJournalPrefixResult =
+  | {
+      ok: true;
+      records: JournalRecord[];
+      /** A final segment without a trailing newline was excluded. */
+      tailPending: boolean;
+      /** Byte offset just past the last complete line read. */
+      endOffset: number;
+      /** journalAnchor of line 1, when this read started at offset 0 and line 1 is complete. */
+      anchor: string | null;
+      /** The file read and its line 1, under the same condition as `anchor`. */
+      file: JournalFile | null;
+    }
+  | {
+      ok: false;
+      reason: "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
+      message: string;
+      line?: number;
+    };
+
+/**
+ * Tolerant, lock-free read for observers. Every newline-terminated line gets
+ * the same validation as `readJournal`; a final segment without a trailing
+ * newline is reported as `tailPending` and excluded, because a writer may be
+ * appending it. A read from offset 0 replays the records; a read from a later
+ * `fromOffset` checks only record fields and `seq` continuity from `expectSeq`,
+ * and the caller replays the records it accumulated. It never takes the lock.
+ * A read from offset 0 re-reads line 1 on the same descriptor after reading:
+ * if it no longer matches the bytes read, the journal was rewritten during the
+ * read and the result is `journal_replaced`.
+ */
+export function readJournalPrefix(
+  runDir: string,
+  { fromOffset = 0, expectSeq = 1 }: { fromOffset?: number; expectSeq?: number } = {},
+): ReadJournalPrefixResult {
+  let read: BytesResult;
+  try {
+    read = readJournalBytes(runDir, fromOffset, fromOffset === 0 ? verifyPrefixRead : undefined);
+  } catch (error) {
+    if (error instanceof JournalReplacedError) {
+      return { ok: false, reason: "journal_replaced", message: error.message };
+    }
+    throw error;
+  }
+  if (!read.ok) return read;
+  const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
+  if (!parsed.ok) return parsed;
+  if (fromOffset === 0) {
+    const replayed = replay(parsed.records);
+    if (!replayed.ok) return corrupt(read.journalPath, replayed.line, replayed.message);
+  }
+  const file =
+    fromOffset === 0 && parsed.firstLine !== undefined
+      ? {
+          dev: read.dev,
+          ino: read.ino,
+          anchor: journalAnchor(parsed.firstLine),
+          firstLineBytes: parsed.firstLine.byteLength + 1,
+        }
+      : null;
+  return {
+    ok: true,
+    records: parsed.records,
+    tailPending: parsed.tailPending,
+    endOffset: fromOffset + parsed.consumed,
+    anchor: file?.anchor ?? null,
+    file,
+  };
+}
+
+/**
+ * `readJournalPrefix` from offset 0, read again while the journal is replaced
+ * during the read, at most `reads` times in all. When every read saw line 1
+ * change, the result is `journal_replaced` naming how many reads were made.
+ */
+export function readJournalPrefixSettled(runDir: string, reads = 3): ReadJournalPrefixResult {
+  let read = readJournalPrefix(runDir);
+  for (let count = 1; count < reads && !read.ok && read.reason === "journal_replaced"; count += 1) {
+    read = readJournalPrefix(runDir);
+  }
+  if (!read.ok && read.reason === "journal_replaced") {
+    return {
+      ok: false,
+      reason: "journal_replaced",
+      message: `${join(runDir, JOURNAL_FILE)}: the journal's line 1 changed during each of ${reads} consecutive reads`,
+    };
+  }
+  return read;
+}
+
+/**
+ * Post-read check for an offset-0 read: line 1 read again on the same
+ * descriptor must equal line 1 of the bytes read. The descriptor's device and
+ * inode cannot change while it is open, so an in-place rewrite shows up here.
+ */
+function verifyPrefixRead(fd: number, phase: "before" | "after", content?: Buffer): void {
+  if (phase !== "after" || content === undefined) return;
+  journalReadHooks.afterPrefixRead(fd);
+  const end = content.indexOf(0x0a);
+  if (end === -1) return; // no complete line 1: no anchor is taken from this read
+  const expected = content.subarray(0, end + 1);
+  const now = Buffer.alloc(expected.length);
+  let length = 0;
+  while (length < now.length) {
+    const got = readSync(fd, now, length, now.length - length, length);
+    if (got === 0) break;
+    length += got;
+  }
+  if (length !== expected.length || !now.equals(expected)) {
+    throw new JournalReplacedError(
+      "journal line 1 changed while it was read; the journal was replaced",
+    );
+  }
+}
+
+/** The journal file a subscription started on: its identity and its line 1. */
+export interface JournalFile {
+  dev: number;
+  ino: number;
+  anchor: string;
+  /** Byte length of line 1 including its newline. */
+  firstLineBytes: number;
+}
+
+export type ReadJournalContinuationResult =
+  | { ok: true; records: JournalRecord[]; tailPending: boolean; endOffset: number }
+  | {
+      ok: false;
+      reason: "run_dir_invalid" | "journal_corrupt" | "journal_replaced";
+      message: string;
+      line?: number;
+    };
+
+class JournalReplacedError extends Error {}
+
+/**
+ * Test seams for the observer read path, not exposed through the SDK entry
+ * point or the CLI; the defaults do nothing. `afterLineOneCheck` runs in
+ * `readJournalContinuation` once line 1 has been checked on the opened
+ * descriptor and before the continuation bytes are read. `afterContinuationRead`
+ * runs after the continuation descriptor is closed, with the result about to be
+ * returned.
+ */
+export const journalReadHooks: {
+  afterLineOneCheck: (fd: number) => void;
+  afterContinuationRead: (result: ReadJournalContinuationResult) => void;
+  /** Runs after an offset-0 `readJournalPrefix` read its bytes, before line 1 is checked again. */
+  afterPrefixRead: (fd: number) => void;
+} = {
+  afterLineOneCheck: () => undefined,
+  afterContinuationRead: () => undefined,
+  afterPrefixRead: () => undefined,
+};
+
+/**
+ * `readJournalPrefix` from `fromOffset`, checking on the same opened
+ * descriptor, both before and after the continuation bytes are read, that the
+ * file is still the one in `file`: same device and inode, and the same line 1
+ * bytes. A journal replaced at the path, by rename or by rewriting it in place,
+ * is `journal_replaced` even when its length matches, including a rewrite that
+ * lands between the first check and the read.
+ */
+export function readJournalContinuation(
+  runDir: string,
+  { fromOffset, expectSeq, file }: { fromOffset: number; expectSeq: number; file: JournalFile },
+): ReadJournalContinuationResult {
+  let read: BytesResult;
+  try {
+    read = readJournalBytes(runDir, fromOffset, (fd, phase) => {
+      const stats = fstatSync(fd);
+      if (stats.dev !== file.dev || stats.ino !== file.ino) {
+        throw new JournalReplacedError("the journal at this path is a different file");
+      }
+      const first = Buffer.alloc(file.firstLineBytes);
+      let length = 0;
+      while (length < first.length) {
+        const got = readSync(fd, first, length, first.length - length, length);
+        if (got === 0) break;
+        length += got;
+      }
+      if (
+        length !== file.firstLineBytes ||
+        first[length - 1] !== 0x0a ||
+        journalAnchor(first.subarray(0, length - 1)) !== file.anchor
+      ) {
+        throw new JournalReplacedError("journal line 1 changed; the journal was replaced");
+      }
+      if (phase === "before") journalReadHooks.afterLineOneCheck(fd);
+    });
+  } catch (error) {
+    if (error instanceof JournalReplacedError) {
+      return finish({ ok: false, reason: "journal_replaced", message: error.message });
+    }
+    throw error;
+  }
+  if (!read.ok) return finish(read);
+  const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
+  if (!parsed.ok) return finish(parsed);
+  return finish({
+    ok: true,
+    records: parsed.records,
+    tailPending: parsed.tailPending,
+    endOffset: fromOffset + parsed.consumed,
+  });
+}
+
+function finish(result: ReadJournalContinuationResult): ReadJournalContinuationResult {
+  journalReadHooks.afterContinuationRead(result);
+  return result;
+}
+
+/** Run anchor: the first 12 hex characters of sha256 over journal line 1, without its newline. */
+export function journalAnchor(firstLine: Uint8Array): string {
+  return sha256Hex(firstLine).slice(0, 12);
+}
+
+type BytesResult =
+  | { ok: true; journalPath: string; content: Buffer; dev: number; ino: number }
+  | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string };
+
+/**
+ * `verify` runs on the opened descriptor before any read and again after the
+ * content was read, before the descriptor closes; it may throw
+ * JournalReplacedError.
+ */
+function readJournalBytes(
+  runDir: string,
+  fromOffset: number,
+  verify?: (fd: number, phase: "before" | "after", content?: Buffer) => void,
+): BytesResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: Buffer;
+  let dev: number;
+  let ino: number;
   try {
     const fd = openJournalFile(journalPath, O_RDONLY);
     try {
-      content = readFileSync(fd);
+      verify?.(fd, "before");
+      ({ dev, ino } = fstatSync(fd));
+      if (fromOffset === 0) {
+        content = readFileSync(fd);
+      } else {
+        const size = fstatSync(fd).size;
+        if (size < fromOffset) {
+          return {
+            ok: false,
+            reason: "journal_corrupt",
+            message: `${journalPath} is ${size} bytes, shorter than the ${fromOffset} bytes already read`,
+          };
+        }
+        content = Buffer.alloc(size - fromOffset);
+        let length = 0;
+        while (length < content.length) {
+          const got = readSync(fd, content, length, content.length - length, fromOffset + length);
+          if (got === 0) break;
+          length += got;
+        }
+        content = content.subarray(0, length);
+      }
+      verify?.(fd, "after", content);
     } finally {
       closeSync(fd);
     }
@@ -166,6 +427,7 @@ export function readJournal(runDir: string): ReadJournalResult {
     if (error instanceof JournalFileError) {
       return { ok: false, reason: "journal_corrupt", message: error.message };
     }
+    if (error instanceof JournalReplacedError) throw error;
     const code = (error as NodeJS.ErrnoException).code;
     return {
       ok: false,
@@ -176,18 +438,51 @@ export function readJournal(runDir: string): ReadJournalResult {
           : `cannot read ${journalPath}: ${(error as Error).message}`,
     };
   }
-  if (content.byteLength === 0) return { ok: true, records: [] };
+  return { ok: true, journalPath, content, dev, ino };
+}
+
+type ParsedLines =
+  | {
+      ok: true;
+      records: JournalRecord[];
+      tailPending: boolean;
+      consumed: number;
+      firstLine: Buffer | undefined;
+    }
+  | { ok: false; reason: "journal_corrupt"; message: string; line: number };
+
+/**
+ * Parses newline-terminated lines. Valid lines carry `seq` equal to their line
+ * number, so the first line here is line `expectSeq`. With `tolerateTail`, a
+ * final segment without a newline is excluded instead of failing closed.
+ */
+function parseLines(
+  journalPath: string,
+  content: Buffer,
+  expectSeq: number,
+  tolerateTail: boolean,
+): ParsedLines {
+  const records: JournalRecord[] = [];
+  let consumed = 0;
+  let firstLine: Buffer | undefined;
+  let tailPending = false;
+  if (content.byteLength === 0) {
+    return { ok: true, records, tailPending, consumed, firstLine };
+  }
 
   // Lines are split on raw newline bytes (never part of a multi-byte UTF-8
   // sequence) and decoded strictly, so invalid bytes fail closed with their line
   // number instead of being replaced with U+FFFD.
   const lines = splitLines(content);
-  const records: JournalRecord[] = [];
   for (const [index, rawLine] of lines.entries()) {
-    const lineNumber = index + 1;
+    const lineNumber = expectSeq + index;
     const isLast = index === lines.length - 1;
     if (isLast && rawLine.byteLength === 0) break;
     if (isLast) {
+      if (tolerateTail) {
+        tailPending = true;
+        break;
+      }
       return corrupt(journalPath, lineNumber, "final line has no trailing newline (torn write)");
     }
     let line: string;
@@ -198,22 +493,21 @@ export function readJournal(runDir: string): ReadJournalResult {
     }
     const record = parseRecordLine(line);
     if (typeof record === "string") return corrupt(journalPath, lineNumber, record);
-    if (record.seq !== records.length + 1) {
+    if (record.seq !== lineNumber) {
       return corrupt(
         journalPath,
         lineNumber,
-        `seq ${record.seq} does not follow ${records.length}`,
+        `seq ${record.seq} does not follow ${lineNumber - 1}`,
       );
     }
-    if ((index === 0) !== (record.type === "run.opened")) {
+    if ((lineNumber === 1) !== (record.type === "run.opened")) {
       return corrupt(journalPath, lineNumber, "run.opened must be the first and only run record");
     }
+    if (lineNumber === 1) firstLine = rawLine;
     records.push(record);
+    consumed += rawLine.byteLength + 1;
   }
-
-  const replayed = replay(records);
-  if (!replayed.ok) return corrupt(journalPath, replayed.line, replayed.message);
-  return { ok: true, records };
+  return { ok: true, records, tailPending, consumed, firstLine };
 }
 
 /**
@@ -261,132 +555,11 @@ function truncateQuietly(fd: number, size: number): void {
   }
 }
 
-export type AttemptStatus = "open" | "superseded" | "accepted";
-
-export interface AttemptState {
-  opened: AttemptOpenedRecord;
-  status: AttemptStatus;
-  accepted?: SubmissionAcceptedRecord;
-}
-
-export interface RunState {
-  runId: string | undefined;
-  attempts: Map<string, AttemptState>;
-  /** Highest opened (visit, attempt) per stage. */
-  latestByStage: Map<string, { visit: number; attempt: number }>;
-}
-
-export type ReplayResult =
-  { ok: true; state: RunState } | { ok: false; line: number; message: string };
-
-export function attemptKey(stageId: string, visit: number, attempt: number): string {
-  return `${stageId}/${visit}/${attempt}`;
-}
-
-/** Orders (visit, attempt) pairs lexicographically. */
-export function compareAttempts(
-  a: { visit: number; attempt: number },
-  b: { visit: number; attempt: number },
-): number {
-  return a.visit === b.visit ? a.attempt - b.attempt : a.visit - b.visit;
-}
-
-/** An empty verdict list requires null; otherwise the verdict must be listed. */
-export function verdictAllowed(allowed: readonly string[], verdict: string | null): boolean {
-  return allowed.length === 0 ? verdict === null : verdict !== null && allowed.includes(verdict);
-}
-
-/**
- * Derives attempt state from the journal and rejects impossible transitions:
- * attempts for another run or not newer than the stage's latest, acceptance of
- * an attempt that was never opened, is not open, disagrees with the opened
- * identity or pane, or carries a disallowed verdict, and duplicates that do not
- * match the accepted record they name. Opening a newer attempt supersedes the
- * stage's still-open attempts; accepted attempts stay accepted.
- */
-export function replay(records: readonly JournalRecord[]): ReplayResult {
-  const state: RunState = { runId: undefined, attempts: new Map(), latestByStage: new Map() };
-  const acceptedBySeq = new Map<number, SubmissionAcceptedRecord>();
-  for (const record of records) {
-    const problem = applyRecord(state, acceptedBySeq, record);
-    if (problem !== undefined) return { ok: false, line: record.seq, message: problem };
-  }
-  return { ok: true, state };
-}
-
-function applyRecord(
-  state: RunState,
-  acceptedBySeq: Map<number, SubmissionAcceptedRecord>,
-  record: JournalRecord,
-): string | undefined {
-  switch (record.type) {
-    case "run.opened":
-      state.runId = record.runId;
-      return undefined;
-    case "attempt.opened": {
-      if (record.runId !== state.runId) {
-        return `attempt.opened belongs to run ${record.runId}, not ${String(state.runId)}`;
-      }
-      const latest = state.latestByStage.get(record.stageId);
-      if (latest !== undefined && compareAttempts(record, latest) <= 0) {
-        return `attempt.opened visit ${record.visit} attempt ${record.attempt} is not newer than visit ${latest.visit} attempt ${latest.attempt}`;
-      }
-      for (const existing of state.attempts.values()) {
-        if (existing.opened.stageId === record.stageId && existing.status === "open") {
-          existing.status = "superseded";
-        }
-      }
-      state.attempts.set(attemptKey(record.stageId, record.visit, record.attempt), {
-        opened: record,
-        status: "open",
-      });
-      state.latestByStage.set(record.stageId, { visit: record.visit, attempt: record.attempt });
-      return undefined;
-    }
-    case "submission.accepted": {
-      const attempt = state.attempts.get(attemptKey(record.stageId, record.visit, record.attempt));
-      if (attempt === undefined) {
-        return "submission.accepted for an attempt that was never opened";
-      }
-      const opened = attempt.opened;
-      if (record.runId !== opened.runId || record.agentId !== opened.agentId) {
-        return "submission.accepted identity disagrees with the opened attempt";
-      }
-      if (
-        opened.paneId !== undefined &&
-        record.paneId !== undefined &&
-        record.paneId !== opened.paneId
-      ) {
-        return "submission.accepted pane disagrees with the opened attempt";
-      }
-      if (attempt.status !== "open") {
-        return `submission.accepted for an attempt that is already ${attempt.status}`;
-      }
-      if (!verdictAllowed(opened.verdicts, record.verdict)) {
-        return "submission.accepted verdict is not allowed by the opened attempt";
-      }
-      attempt.status = "accepted";
-      attempt.accepted = record;
-      acceptedBySeq.set(record.seq, record);
-      return undefined;
-    }
-    case "submission.duplicate": {
-      const accepted = acceptedBySeq.get(record.acceptedSeq);
-      if (
-        accepted === undefined ||
-        accepted.receiptId !== record.receiptId ||
-        accepted.envelopeDigest !== record.envelopeDigest
-      ) {
-        return "submission.duplicate does not match the accepted record it names";
-      }
-      return undefined;
-    }
-    case "submission.rejected":
-      return undefined;
-  }
-}
-
-function corrupt(journalPath: string, line: number, detail: string): ReadJournalResult {
+function corrupt(
+  journalPath: string,
+  line: number,
+  detail: string,
+): { ok: false; reason: "journal_corrupt"; message: string; line: number } {
   return {
     ok: false,
     reason: "journal_corrupt",

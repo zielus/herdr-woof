@@ -50,6 +50,16 @@ interface Holder {
 }
 
 /**
+ * Test seam, not exposed through the SDK entry point or the CLI: `afterAcquire`
+ * runs after the lock file is created and before the guarded function; the
+ * default does nothing. The lock-race process test uses it to hold a writer
+ * inside the critical section.
+ */
+export const lockTestHooks: { afterAcquire: (lockPath: string) => void | Promise<void> } = {
+  afterAcquire: () => undefined,
+};
+
+/**
  * Runs `fn` while holding the journal lock. Acquisition polls until the
  * timeout and then reports `journal_busy`.
  */
@@ -62,6 +72,7 @@ export async function withJournalLock<T>(
   const acquired = await acquire(lockPath, options);
   if (!acquired.ok) return acquired;
   try {
+    await lockTestHooks.afterAcquire(lockPath);
     return { ok: true, value: await fn() };
   } finally {
     release(lockPath, acquired.value);

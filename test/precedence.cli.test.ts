@@ -14,6 +14,7 @@ import {
   readyAttempt,
   sha256,
   submit,
+  terminateRunOk,
   writeArtifact,
 } from "./helpers/process.js";
 
@@ -87,6 +88,40 @@ const cases: PrecedenceCase[] = [
     expected: "run_mismatch",
     exit: 2,
     journal: { type: "submission.rejected", reason: "run_mismatch" },
+  },
+  {
+    name: "a run mismatch outranks a terminated run",
+    arrange: () => {
+      const { runDir, envelope } = readyAttempt();
+      terminateRunOk(runDir);
+      return { runDir, envelope: { ...envelope, runId: "run-2" } };
+    },
+    expected: "run_mismatch",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "run_mismatch" },
+  },
+  {
+    name: "a terminated run outranks an unknown attempt",
+    arrange: () => {
+      const { runDir, envelope } = readyAttempt();
+      terminateRunOk(runDir);
+      return { runDir, envelope: { ...envelope, attempt: 9 } };
+    },
+    expected: "run_closed",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "run_closed" },
+  },
+  {
+    name: "a terminated run outranks an identical duplicate of an accepted submission",
+    arrange: () => {
+      const { runDir, envelope } = readyAttempt();
+      acceptFirst(runDir, envelope);
+      terminateRunOk(runDir);
+      return { runDir, envelope };
+    },
+    expected: "run_closed",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "run_closed" },
   },
   {
     name: "an unknown attempt outranks a wrong owner",

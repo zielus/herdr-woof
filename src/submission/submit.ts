@@ -15,12 +15,9 @@ import {
   JOURNAL_FILE,
   JournalFileError,
   appendRecord,
-  attemptKey,
   describeEntryKind,
   inspectJournalPath,
   readJournal,
-  replay,
-  verdictAllowed,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
 import {
@@ -29,6 +26,7 @@ import {
   receiptIdFor,
   type JournalRecord,
 } from "../journal/records.js";
+import { attemptKey, replay, verdictAllowed } from "../state/reducer.js";
 import {
   acceptedCopyProblem,
   publishAccepted,
@@ -61,6 +59,7 @@ const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
  *  5. envelope regular file, ≤ 64 KiB, a JSON object   → envelope_malformed
  *  6. envelope matches schema v1                       → envelope_invalid
  *  7. runId equals the journal's run                   → run_mismatch
+ * 7b. the run has no run.terminated record              → run_closed
  *  8. the attempt was opened                           → attempt_unknown
  *  9. agentId (and paneId, when both sides have one)   → owner_mismatch
  * 10. attempt already accepted: different digest       → attempt_closed_conflict
@@ -220,6 +219,14 @@ function decide(
     return reject("run_mismatch", `envelope runId ${envelope.runId} is not this run`, [
       { field: "runId", message: `expected ${String(state.runId)}` },
     ]);
+  }
+
+  // 7b. Terminated run: late results are rejected, even identical duplicates.
+  if (state.termination !== undefined) {
+    return reject(
+      "run_closed",
+      `run ${String(state.runId)} terminated as ${state.termination.outcome}; no further submissions are accepted`,
+    );
   }
 
   // 8. Attempt declared.

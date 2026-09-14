@@ -6,9 +6,14 @@ and inspected project material. They describe what to build; they do not claim
 that the features exist or that proposed implementation details are approved.
 
 A first working slice now exists: result handoff (envelope v1, `woof submit`,
-`woof attempt open`, and the run journal). See
-[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype)
-for what is real today versus still proposed.
+`woof attempt open`, and the run journal), plus a p2 run-facts contract: run
+plans, journaled agent assignment/dispatch/termination, derived run
+snapshots and events, a runtime adapter over the Herdr CLI, and `woof run
+show`. See
+[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype),
+[Domain model](architecture/domain-model.md#implemented-now-p2) and
+[Observability](architecture/observability.md#implemented-now-p2) for what is
+real today versus still proposed.
 
 Read in this order:
 

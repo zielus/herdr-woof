@@ -68,3 +68,109 @@ output as fresh success.
 
 See [communication](communication.md) for submission validation and
 [observability](observability.md) for the externally visible state.
+
+## Implemented now (p2)
+
+Real shipped behavior for run plans, run facts and derived state — not design
+intent. Names are proposed API surface; shapes and refusal semantics are the
+contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
+`src/journal/run-records.ts`, `src/state/reducer.ts`, `src/state/store.ts`.
+
+- **Plan types.** A `RunPlan` names a `workflow { name, version }`, a
+  non-empty unique-id `agents: AgentSpec[]` (`agentId, role, kind, model`), a
+  non-empty unique-id `stages: StageSpec[]` (`stageId, agentId, verdicts`,
+  each `agentId` naming a planned agent), and `limits: Limits`
+  (`maxAttemptsPerVisit, maxVisitsPerStage, maxRounds`, each a safe integer
+  1–1000; `runTimeoutMs, readinessWaitMs, blockedWaitMs, deliveryTimeoutMs`,
+  each a safe integer 1–604 800 000 ms, i.e. seven days — a lead decision:
+  every wait must be bounded, so an unbounded duration is not a limit). A run
+  may also be plan-less (p1's shape); every plan-referencing check below is
+  then skipped. `validateRunPlan` rejects unknown keys, duplicate ids, and an
+  unresolved stage `agentId`, one detail per offending field path. It reads
+  only the input's own enumerable properties (arrays by own index), never a
+  prototype's: a required field supplied only by inheritance (for example an
+  object built with `Object.create`) is reported missing, exactly as if it
+  were absent. A plan built entirely from null-prototype objects is accepted
+  and validated the same as an ordinary object.
+
+- **Run status is derived, never recorded.** There is no `run.status`
+  record. `created` (only `run.opened`), `starting` (at least one
+  `agent.assigned`, no dispatch yet), `running` (at least one
+  `request.dispatched`, not terminated), and the terminal statuses (from
+  `run.terminated.outcome`) are computed by the reducer from whichever
+  records are present so far. `blocked` is never derived in p2: it needs a
+  `run.blocked` record, which does not exist until phase 3.
+
+- **Run-fact record types (p2).**
+
+  | Record type          | Fields                                                                                 | Refused as (reducer reason)                                                                                                                                                                                   |
+  | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `run.opened`         | `runId`, optional `plan`                                                               | a second one: `run_exists`; anything else before it: `invalid_transition`                                                                                                                                     |
+  | `agent.assigned`     | `agentId`, `runtime {adapter, runtimeName, paneId}`, optional `terminalId`/`sessionId` | unplanned agent: `agent_unknown`; reassigned to the same pane: `assignment_unchanged`; agent owns an open dispatched attempt: `agent_busy`; after termination: `run_closed`                                   |
+  | `request.dispatched` | `agentId, stageId, visit, attempt, delivery, reason`, optional `paneId`                | attempt never opened or no longer open: `attempt_unknown`; wrong owner: `owner_mismatch`; already dispatched: `dispatch_exists`; agent has no assignment: `agent_unassigned`; after termination: `run_closed` |
+  | `run.terminated`     | `outcome, reason`, `limit` required iff `outcome: "exhausted"`                         | a second one: `run_closed`                                                                                                                                                                                    |
+
+  A later `agent.assigned` for the same agent on a different pane is a
+  **replacement** (counted in `counters.replacementsByAgent`), not a
+  refusal. With a plan present, `attempt.opened` also gains `stage_unknown`
+  and `owner_mismatch`/`verdicts_mismatch` against the stage's declared
+  agent and verdict set (order-insensitive comparison). All fourteen
+  `ReducerReason` values are exercised in `test/unit/reducer.test.ts` and by
+  the seeded fold generator in `test/unit/events.test.ts`.
+
+- **Refusal vs. policy.** The reducer and the store record facts and refuse
+  impossible states; neither decides what happens next. Reaching
+  `maxAttemptsPerVisit` is not itself refused — only a scheduler's decision
+  to stop (`run.terminated {outcome: "exhausted", limit}`) is a fact the
+  journal can hold. There is no reducer rule for rounds, gates, blocks,
+  format repairs or work retries, because those records and loops do not
+  exist yet (an unfinished operation must not fake success).
+
+- **Limits are declared, validated and counted — not enforced.** Every
+  `Limits` field is required and bounds-checked on every plan; the
+  snapshot's `counters` (see [observability](observability.md#implemented-now-p2))
+  track `attemptsOpened`, `visitsByStage`, `attemptsByVisit`, dispatch
+  outcomes and replacements next to the declared limits, but nothing refuses
+  an attempt, visit or round for exceeding one. Enforcement, and the
+  response to reaching a limit, is scheduler policy (phase 3).
+
+- **Gate, block and reconciliation are types only.** `GateResult`,
+  `GateDecision`, `BlockInfo` and `DeliveryResolution` exist in
+  `src/domain/types.ts` so consumers can handle them now. Their journal
+  record types (`gate.recorded`, `run.blocked`, `run.unblocked`,
+  `delivery.reconciled`) arrive with the scheduler in phase 3; no p2 code
+  path writes or reads one.
+
+- **`abandoned` is a snapshot-only derived status.** The reducer's own
+  `AttemptStatus` stays `open | superseded | accepted`; a snapshot reports
+  an attempt still `open` when the run terminated as `abandoned`, so a
+  consumer never has to infer it from status plus run termination.
+
+- **One dispatch per attempt; retrying is a new attempt.**
+  `request.dispatched` records the delivery certainty of the one dispatch
+  attempt made for the attempt (`started | not_delivered | ambiguous`, each
+  with its own closed `reason` set — `not_delivered/not_found` and its
+  siblings are precondition failures where nothing was sent, not proof a
+  prompt went out); a second dispatch for the same attempt is
+  refused (`dispatch_exists`). There is no resend: sending the work again is
+  only expressible by opening a new, explicitly numbered attempt, which is
+  journaled and visible, and p1's staleness rule keeps a late result from
+  the old attempt from being accepted. An `ambiguous` dispatch whose attempt
+  is still open surfaces in `snapshot.attention.ambiguousDeliveries` until
+  the attempt is accepted or superseded.
+
+- **Runtime lifecycle is an overlay, never a record.** A runtime adapter's
+  lifecycle observations (`ready | working | blocked | unknown | gone`) live
+  only in an in-memory tracker; overlaying them onto a snapshot
+  (`overlayRuntime`) fills `agents[].runtime` for display and reports
+  whether any agent was observed. It applies an agent's last tracked
+  observation only when the assignment's `terminalId` is null or equals the
+  observation's terminal — otherwise that agent's `runtime` stays `null` and
+  the agent is listed in the result's `skipped` list instead of being
+  overlaid with the wrong occupant's lifecycle. A derived snapshot on its
+  own (`deriveSnapshot`/`readSnapshot`/`woof run show`) always reports
+  `agents[].runtime: null`: no lifecycle value completes, accepts or fails
+  an attempt, and runtime observation is lossy by construction —
+  transitions between two reads are not seen. See
+  [observability](observability.md#implemented-now-p2) for the runtime
+  adapter contract itself.

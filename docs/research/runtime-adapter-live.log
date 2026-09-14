@@ -1,0 +1,38 @@
+== environment                {"mode":"full","commit":"82b5be5cb1660aab3b42791897dfe4ef1dac0c32","herdr":"herdr 0.9.0","claude":"2.1.270 (Claude Code)","node":"v26.7.0","runId":"live-adapter-20260914-140930","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-140930","runtimeName":"w-pinger-e42fb6","verifierPane":"w8Q:p2"}
+== openRun                    {"outcome":"recorded","record":{"schemaVersion":1,"seq":1,"ts":"2026-09-14T14:09:30.726Z","type":"run.opened","runId":"live-adapter-20260914-140930","plan":{"workflow":{"name":"live-adapter-check","version":"1"},"agents":[{"agentId":"pinger","role":"probe","kind":"claude","model":null}],"stages":[{"stageId":"ping","agentId":"pinger","verdicts":[]}],"limits":{"maxAttemptsPerVisit":1,"maxVisitsPerStage":1,"maxRounds":1,"runTimeoutMs":600000,"readinessWaitMs":600000,"blockedWaitMs":600000,"deliveryTimeoutMs":600000}}},"revision":1}
+== openPane                   {"ok":true,"value":{"paneId":"w8Q:pK"}}
+== startAgent                 {"ok":true,"value":{"adapter":"herdr","runtimeName":"w-pinger-e42fb6","kind":"claude","paneId":"w8Q:pK","paneOwned":true,"terminalId":"term_65b71fb9811e94f","sessionId":"63554db2-f53d-4ae1-a03b-3c9490c77ab3"}}
+PASS gate 1: startAgent ok with terminalId and sessionId
+== assignAgent                {"outcome":"recorded","record":{"schemaVersion":1,"seq":2,"ts":"2026-09-14T14:09:35.641Z","type":"agent.assigned","agentId":"pinger","runtime":{"adapter":"herdr","runtimeName":"w-pinger-e42fb6","paneId":"w8Q:pK"},"terminalId":"term_65b71fb9811e94f","sessionId":"63554db2-f53d-4ae1-a03b-3c9490c77ab3"},"revision":2}
+== observe (before)           {"ok":true,"value":{"runtimeName":"w-pinger-e42fb6","paneId":"w8Q:pK","lifecycle":"ready","runtimeStatus":"idle","sessionId":"63554db2-f53d-4ae1-a03b-3c9490c77ab3","order":{"terminalId":"term_65b71fb9811e94f","stateChangeSeq":729,"revision":3},"observedAt":"2026-09-14T14:09:35.661Z"}}
+== track (before)             {"kind":"new","lifecycle":"ready","runtimeStatus":"idle","stateChangeSeq":729,"terminalId":"term_65b71fb9811e94f"}
+PASS gate 2: first observe is ready (idle)
+== openAttempt                {"outcome":"opened","attempt":{"runId":"live-adapter-20260914-140930","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"seq":3,"verdicts":[],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-140930/artifacts/ping/visit-1/attempt-1","paneId":"w8Q:pK"}}
+== negative deliver           {"outcome":"not_delivered","error":{"code":"not_found","runtimeCode":"agent_not_found","message":"agent w-missing-000000 is gone","command":[],"exitCode":null}}
+== agent list names           ["lead","builder","verifier","w-pinger-e42fb6","reviewer","docs"]
+PASS gate 3: negative deliver is not_delivered/not_found and no such agent exists
+== deliver                    {"outcome":"started","observation":{"runtimeName":"w-pinger-e42fb6","paneId":"w8Q:pK","lifecycle":"working","runtimeStatus":"working","sessionId":"63554db2-f53d-4ae1-a03b-3c9490c77ab3","order":{"terminalId":"term_65b71fb9811e94f","stateChangeSeq":730,"revision":3},"observedAt":"2026-09-14T14:09:36.320Z"}}
+== recordDispatch             {"outcome":"recorded","record":{"schemaVersion":1,"seq":4,"ts":"2026-09-14T14:09:36.321Z","type":"request.dispatched","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"delivery":"started","reason":"observed_working","paneId":"w8Q:pK"},"revision":4}
+PASS gate 4: deliver outcome is started (started)
+== track (deliver)            {"kind":"new","lifecycle":"working","runtimeStatus":"working","stateChangeSeq":730,"terminalId":"term_65b71fb9811e94f"}
+== watch                      {"kind":"new","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":731,"terminalId":"term_65b71fb9811e94f"}
+== watch dropped              {"stale":0,"duplicate":6,"error":null}
+== waitFor ready              {"ok":true,"value":{"runtimeName":"w-pinger-e42fb6","paneId":"w8Q:pK","lifecycle":"ready","runtimeStatus":"done","sessionId":"63554db2-f53d-4ae1-a03b-3c9490c77ab3","order":{"terminalId":"term_65b71fb9811e94f","stateChangeSeq":731,"revision":4},"observedAt":"2026-09-14T14:09:39.425Z"}}
+== track (waitFor)            {"kind":"duplicate","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":731,"terminalId":"term_65b71fb9811e94f"}
+== sequence                   {"S0":729,"S1":730,"S2":731,"dropped":{"stale":0,"duplicate":7}}
+PASS gate 5: working then a later ready from the same terminal with a greater stateChangeSeq (stale 0)
+== snapshot (worker ready)    {"status":"running","attempt":{"status":"open","delivery":"started"},"runtime":{"lifecycle":"ready","runtimeStatus":"done","observedAt":"2026-09-14T14:09:39.410Z","order":{"terminalId":"term_65b71fb9811e94f","stateChangeSeq":731,"revision":4}}}
+PASS gate 6: attempt still open after ready; no submission record
+== stop                       {"ok":true,"value":{"paneClosed":true}}
+== observe (after)            {"ok":true,"value":{"runtimeName":"w-pinger-e42fb6","paneId":"w8Q:pK","lifecycle":"gone","runtimeStatus":null,"sessionId":null,"order":{"terminalId":null,"stateChangeSeq":null,"revision":null},"observedAt":"2026-09-14T14:09:40.018Z"}}
+== pane get (after)           {"code":"not_found","runtimeCode":"pane_not_found","message":"pane w8Q:pK not found","command":["pane","get","w8Q:pK"],"exitCode":1}
+PASS gate 7: stop ok, then gone and pane_not_found
+== terminateRun               {"outcome":"recorded","record":{"schemaVersion":1,"seq":5,"ts":"2026-09-14T14:09:40.024Z","type":"run.terminated","outcome":"cancelled","reason":"live adapter check finished"},"revision":5}
+PASS gate 8: journal replays with exactly the expected records (run.opened,agent.assigned,attempt.opened,request.dispatched,run.terminated)
+== woof run show              {"outcome":"snapshot","status":"cancelled","paneId":"w8Q:pK","attempt":{"status":"abandoned","delivery":"started"},"runtime":null}
+PASS gate 9: run show: cancelled, pane recorded, attempt abandoned, delivery started, runtime null
+PASS gate 10: git status unchanged (the agent edited nothing)
+== forbidden command grep     {"searched":["agent read","pane read","send-keys"],"hits":[]}
+PASS gate 11: the script never names terminal-read or key-sending commands
+HUMAN INSPECTION: confirm stateChangeSeq values above are monotonic within the terminal, and record whether state_change_seq looks server-global or per-agent (open question R2).
+ALL GATES PASS

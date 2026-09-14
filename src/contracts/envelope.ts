@@ -138,7 +138,7 @@ function validateEnvelope(value: Record<string, unknown>): RejectionDetail[] {
   if (value["status"] !== "completed" && value["status"] !== "failed") {
     fail("status", 'must be "completed" or "failed"');
   }
-  if (!("verdict" in value)) {
+  if (!Object.hasOwn(value, "verdict")) {
     fail("verdict", "is required (use null when the stage has no verdict)");
   } else if (value["verdict"] !== null && typeof value["verdict"] !== "string") {
     fail("verdict", "must be a string or null");

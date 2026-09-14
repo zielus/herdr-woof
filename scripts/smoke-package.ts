@@ -69,6 +69,14 @@ try {
     "if (!Array.isArray(entry.REJECTION_REASONS)) process.exit(3);",
   ].join("\n");
   run("node", ["--input-type=module", "--eval", importCheck], consumer);
+  const testingCheck = [
+    'const testing = await import("herdr-woof/testing");',
+    'const entry = await import("herdr-woof");',
+    'if (typeof testing.createScriptedRuntime !== "function") process.exit(1);',
+    'if ("createScriptedRuntime" in entry) process.exit(2);',
+  ].join("\n");
+  run("node", ["--input-type=module", "--eval", testingCheck], consumer);
+  scriptedStoreRoundTrip(consumer);
   run(installedBin, ["--help"], consumer);
   const version = run(installedBin, ["--version"], consumer).trim();
   if (version !== pkg.version) {
@@ -76,12 +84,16 @@ try {
   }
   run(installedBin, ["doctor"], consumer);
   submitRoundTrip(installedBin, consumer);
+  runShow(installedBin, consumer);
 
   console.log("installed package entry point ok");
   console.log("installed woof --help ok");
   console.log("installed woof --version ok");
   console.log("installed woof doctor ok");
+  console.log("installed herdr-woof/testing entry point ok");
+  console.log("installed scripted runtime + store round trip ok");
   console.log("installed woof attempt open + submit (accepted, duplicate) ok");
+  console.log("installed woof run show ok");
 } finally {
   rmSync(workDir, { force: true, recursive: true });
 }
@@ -148,6 +160,57 @@ function submitRoundTrip(installedBin: string, consumer: string): void {
     first.receipt.receiptId !== second.receipt?.receiptId
   ) {
     throw new Error("installed woof submit returned different receipts for identical submissions");
+  }
+}
+
+/** Drives the installed scripted runtime and state store through one attempt. */
+function scriptedStoreRoundTrip(consumer: string): void {
+  const runDir = join(consumer, "scripted-run");
+  const script = `
+import { assignAgent, openAttempt, openRun, readSnapshot, recordDispatch, terminateRun } from "herdr-woof";
+import { createScriptedRuntime } from "herdr-woof/testing";
+const runDir = process.argv[1];
+const fail = (code, value) => { console.error(JSON.stringify(value)); process.exit(code); };
+const plan = {
+  workflow: { name: "smoke", version: "1" },
+  agents: [{ agentId: "smoke-worker", role: "worker", kind: "claude", model: null }],
+  stages: [{ stageId: "report", agentId: "smoke-worker", verdicts: [] }],
+  limits: { maxAttemptsPerVisit: 1, maxVisitsPerStage: 1, maxRounds: 1, runTimeoutMs: 60000, readinessWaitMs: 60000, blockedWaitMs: 60000, deliveryTimeoutMs: 60000 },
+};
+const opened = await openRun({ runDir, runId: "smoke-scripted", plan });
+if (opened.outcome !== "recorded") fail(1, opened);
+const runtime = createScriptedRuntime({ agents: { "w-smoke": { timeline: [{ status: "idle" }] } } });
+const pane = await runtime.openPane({ near: "current", cwd: runDir });
+const handle = await runtime.startAgent({ runtimeName: "w-smoke", kind: "claude", paneId: pane.value.paneId, paneOwned: true, timeoutMs: 1000 });
+const assigned = await assignAgent({ runDir, agentId: "smoke-worker", runtime: { adapter: "scripted", runtimeName: "w-smoke", paneId: handle.value.paneId } });
+if (assigned.outcome !== "recorded") fail(2, assigned);
+const attempt = await openAttempt({ runDir, runId: "smoke-scripted", agentId: "smoke-worker", stageId: "report", visit: 1, attempt: 1 });
+if (attempt.outcome !== "opened") fail(3, attempt);
+const delivery = await runtime.deliver(handle.value, "write the report", { timeoutMs: 1000 });
+const dispatched = await recordDispatch({ runDir, agentId: "smoke-worker", stageId: "report", visit: 1, attempt: 1, delivery: delivery.outcome, reason: "observed_" + delivery.observation.lifecycle });
+if (dispatched.outcome !== "recorded") fail(4, dispatched);
+await terminateRun({ runDir, outcome: "cancelled", reason: "smoke" });
+const snapshot = readSnapshot(runDir);
+if (!snapshot.ok || snapshot.snapshot.status !== "cancelled" || snapshot.snapshot.stages[0].visits[0].attempts[0].status !== "abandoned") fail(5, snapshot);
+`;
+  run("node", ["--input-type=module", "--eval", script, runDir], consumer);
+}
+
+/** Runs the installed `woof run show` on the run the submit round trip created. */
+function runShow(installedBin: string, consumer: string): void {
+  const shown = JSON.parse(run(installedBin, ["run", "show", join(consumer, "run")], consumer)) as {
+    outcome: string;
+    snapshot?: {
+      runId: string;
+      stages: Array<{ visits: Array<{ attempts: Array<{ status: string }> }> }>;
+    };
+  };
+  if (
+    shown.outcome !== "snapshot" ||
+    shown.snapshot?.runId !== "smoke-run" ||
+    shown.snapshot.stages[0]?.visits[0]?.attempts[0]?.status !== "accepted"
+  ) {
+    throw new Error(`installed woof run show printed ${JSON.stringify(shown)}`);
   }
 }
 

@@ -1,13 +1,16 @@
 # Woof integration surfaces
 
-Status: foundation, plus a p1 result-handoff prototype. The workflow runtime,
-agent delegation, run inspection, and observability contracts are not
-implemented. Result submission now exists as a CLI/SDK prototype (see below);
-the Herdr and Claude Code plugins still expose none of it.
+Status: foundation, plus a p1 result-handoff prototype and a p2 run-facts/
+snapshot prototype. Result submission (p1) and run inspection/observability
+(p2: run plans, journaled facts, snapshots, events and a Herdr runtime
+adapter, `woof run show`) now exist as CLI/SDK contracts (see below). The
+workflow runtime, agent delegation and run hosting are not implemented, and
+the Herdr and Claude Code plugins still expose none of any of it — every
+capability below is a CLI/SDK surface only, never a plugin action.
 
 ## CLI
 
-The built `woof` executable has five supported commands:
+The built `woof` executable has six supported commands:
 
 - `woof --help`
 - `woof --version`
@@ -17,20 +20,29 @@ The built `woof` executable has five supported commands:
 - `woof submit` — validates a result envelope and its artifact against that
   journal and records the outcome: accepted, duplicate, or one of a closed
   set of machine-readable rejection reasons.
+- `woof run show <run-dir> [--verify-artifacts]` — prints a read-only JSON
+  snapshot of a run journal: status, agents, per-stage attempts, counters,
+  and any ambiguous deliveries still open. It takes no journal lock, never
+  contacts Herdr, and works on a terminated run and on a p1 journal.
 
 `doctor` reports the local availability of `herdr status` and `claude --version`.
 It is diagnostic only and succeeds even when either executable is absent.
 `attempt open` and `submit` are a p1 prototype — see
 [communication.md](../architecture/communication.md#implemented-now-p1-prototype)
 for the envelope, decision order, journal, and its correlation-not-authentication
-limit. Every other workflow-oriented command fails explicitly as not
-implemented; the CLI does not invent run state or host a runtime pane.
+limit. `run show` is a p2 prototype — see
+[domain model](../architecture/domain-model.md#implemented-now-p2) and
+[observability](../architecture/observability.md#implemented-now-p2) for the
+snapshot shape and what it does not yet cover. Every other workflow-oriented
+command fails explicitly as not implemented; the CLI does not invent run
+state or host a runtime pane.
 
 ## Herdr plugin
 
 `herdr-plugin.toml` registers a build step and a single `doctor` action. It
 does not register run actions, panes, lifecycle events, or a workflow host;
-`attempt open` and `submit` exist only as CLI/SDK surfaces, not plugin actions.
+`attempt open`, `submit` and `run show` exist only as CLI/SDK surfaces, not
+plugin actions.
 
 The manifest builds from a repository checkout, so it is not part of the npm
 package. For local wiring checks after a build:
