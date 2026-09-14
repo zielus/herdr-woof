@@ -65,39 +65,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run test
 
-  e2e:
-    name: e2e (${{ matrix.group }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [cli, loader, effects, server, extension, sessions, install]
-    env:
-      E2E_GROUP: ${{ matrix.group }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - run: bun install --frozen-lockfile
-      - run: bun run test:e2e
-
-  coverage:
-    name: coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - run: bun install --frozen-lockfile
-      - run: bun run test:coverage
+  # e2e and coverage jobs return once there is real e2e/coverage-worthy
+  # behavior — vitest.e2e.config.ts has no suites yet (E2E_GROUPS is empty)
+  # and coverage has no thresholds, so both would just be noise here.
 
   package:
     name: package
