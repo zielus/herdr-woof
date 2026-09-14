@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import {
   isNotDeliveredCode,
   runtimeError,
@@ -43,6 +45,8 @@ export interface HerdrCliRuntime extends RuntimeAdapter {
 }
 
 const FORBIDDEN_SUBCOMMANDS = new Set(["read", "send-keys", "run", "explain"]);
+const START_RETRY_INTERVAL_MS = 1000;
+const START_RETRY_WINDOW_MS = 15_000;
 
 /**
  * Runtime adapter over the Herdr CLI (`herdr agent` / `herdr pane` JSON
@@ -113,6 +117,33 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     };
   }
 
+  /**
+   * A pane this instance just split may not be an available shell yet: Herdr
+   * answers `agent start` with `agent_pane_busy`. Only for such a pane, start is
+   * retried every second for up to 15 s (never beyond the start timeout). Any
+   * other pane or error is returned at once.
+   */
+  async function startWhenShellAvailable(
+    args: string[],
+    input: StartAgentInput,
+  ): Promise<HerdrOutcome> {
+    const deadline = Date.now() + Math.min(START_RETRY_WINDOW_MS, input.timeoutMs);
+    const attempt = async (): Promise<HerdrOutcome> => {
+      const started = await run(args, input.timeoutMs);
+      if (
+        started.ok ||
+        started.error.runtimeCode !== "agent_pane_busy" ||
+        !ownedPanes.has(input.paneId) ||
+        Date.now() + START_RETRY_INTERVAL_MS > deadline
+      ) {
+        return started;
+      }
+      await delay(START_RETRY_INTERVAL_MS);
+      return attempt();
+    };
+    return attempt();
+  }
+
   return {
     adapter: "herdr",
 
@@ -162,7 +193,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         String(input.timeoutMs),
         ...(input.args !== undefined && input.args.length > 0 ? ["--", ...input.args] : []),
       ];
-      const started = await run(args, input.timeoutMs);
+      const started = await startWhenShellAvailable(args, input);
       if (!started.ok) return started;
       const info = parseAgentInfo(started.result["agent"]);
       if (info === undefined) return protocol(args, "agent start returned no agent");

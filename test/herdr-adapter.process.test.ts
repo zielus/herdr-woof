@@ -507,6 +507,31 @@ out = { first, second };`,
     expect(log).toEqual([]);
   });
 
+  it("retries agent start on agent_pane_busy only for a pane it just split", () => {
+    const busyThenStarted: Entry[] = [
+      splitReturning(PANE),
+      { match: ["agent", "start"], call: 1, ...error("agent_pane_busy") },
+      { match: ["agent", "start"], call: 2, ...error("agent_pane_busy") },
+      { match: ["agent", "start"], call: 3, stdout: agentJson("idle", 10, "agent_started") },
+    ];
+    const owned = runAdapter(
+      busyThenStarted,
+      `await runtime.openPane({ near: "current", cwd: "/tmp/run" });
+out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: 30000 });`,
+    );
+    expect(owned.out).toMatchObject({ ok: true, value: { paneId: PANE, paneOwned: true } });
+    expect(owned.log.filter((args) => args[1] === "start")).toHaveLength(3);
+    expect(owned.elapsed).toBeGreaterThanOrEqual(1900);
+
+    // A pane this instance did not split is not retried.
+    const foreign = runAdapter(
+      busyThenStarted.slice(1),
+      `out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: 30000 });`,
+    );
+    expect(foreign.out).toMatchObject({ ok: false, error: { runtimeCode: "agent_pane_busy" } });
+    expect(foreign.log.filter((args) => args[1] === "start")).toHaveLength(1);
+  }, 30_000);
+
   it("never invoked read, send-keys, run or explain across every scenario", () => {
     expect(allLogs.length).toBeGreaterThan(20);
     expect(
