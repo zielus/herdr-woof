@@ -331,6 +331,18 @@ describe("woof run build-review: usage and admission", () => {
     expect(existsSync(ws.log)).toBe(false);
   });
 
+  it("rejects a runtime module whose adapter discriminator is not herdr or scripted", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(ws.repo));
+    const otherModule = join(repoRoot, "test", "fixtures", "other-adapter-runtime-module.mjs");
+    const result = runBuildReview(ws, ["--runtime-module", otherModule], scriptedEnv(ws.log));
+    expect(result.status, result.stdout).toBe(3);
+    expect(result.json).toMatchObject({ outcome: "rejected", reason: "runtime_unavailable" });
+    expect(result.json?.message).toContain('adapter ("herdr" | "scripted")');
+    expect(result.json?.message).not.toContain("openPane");
+    expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
+  });
+
   it("rejects a runtime module whose factory does not return a RuntimeAdapter, before opening a run", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));

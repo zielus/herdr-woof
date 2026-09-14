@@ -1,5 +1,5 @@
 // A workflow definition whose callbacks misbehave on demand, for admission tests.
-// WOOF_TEST_CALLBACK: validate-throws | validate-bad | details-bad | repository-throws |
+// WOOF_TEST_CALLBACK: validate-throws | validate-bad | details-bad | normalize | repository-throws |
 // repository-bad | agents-throws | agents-bad | limits-throws | limits-bad | none.
 // WOOF_TEST_REPO: the repository path `repository()` returns.
 const mode = process.env.WOOF_TEST_CALLBACK ?? "none";
@@ -19,7 +19,12 @@ export default {
         ? 42
         : mode === "details-bad"
           ? { ok: false, details: [{ field: "topic", message: "bad" }, { field: 1 }, null] }
-          : { ok: true, input: value },
+          : mode === "normalize"
+            ? {
+                ok: true,
+                input: { topic: String(value.topic).trim().toUpperCase(), normalized: true },
+              }
+            : { ok: true, input: value },
   repository: () =>
     mode === "repository-throws"
       ? fail("repository")

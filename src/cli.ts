@@ -10,13 +10,13 @@ import { MAX_ENVELOPE_BYTES, isId, type RejectionDetail } from "./contracts/enve
 import { isInfraReason } from "./contracts/reasons.js";
 import type { RuntimeAdapter } from "./runtime/adapter.js";
 import { createHerdrCliRuntime } from "./runtime/herdr/adapter.js";
-import { admitWorkflow } from "./scheduler/admission.js";
+import { admitWorkflow, openAdmittedRun } from "./scheduler/admission.js";
 import type { Action } from "./scheduler/core.js";
 import { validateWorkflowDefinition } from "./scheduler/definition.js";
 import { runWorkflow } from "./scheduler/driver.js";
 import { loadModuleDefault } from "./scheduler/loader.js";
 import { readSnapshot } from "./state/snapshot.js";
-import { openRun, terminateRun } from "./state/store.js";
+import { terminateRun } from "./state/store.js";
 import { openAttempt } from "./submission/attempt.js";
 import { submitResult } from "./submission/submit.js";
 import { VERSION } from "./version.js";
@@ -235,7 +235,9 @@ async function runBuildReviewCommand(args: string[]): Promise<number> {
       candidate === null || typeof candidate !== "object"
         ? ["adapter", ...RUNTIME_METHODS]
         : [
-            ...(typeof candidate["adapter"] === "string" ? [] : ["adapter"]),
+            ...(candidate["adapter"] === "herdr" || candidate["adapter"] === "scripted"
+              ? []
+              : ['adapter ("herdr" | "scripted")']),
             ...RUNTIME_METHODS.filter((name) => typeof candidate[name] !== "function"),
           ];
     if (missing.length > 0) {
@@ -259,7 +261,8 @@ async function runBuildReviewCommand(args: string[]): Promise<number> {
     runtime = createHerdrCliRuntime({ bin: "herdr" });
   }
 
-  const opened = await openRun({ runDir, runId, plan: admitted.plan, input: raw });
+  // The validated input the scheduler runs with is what input.json records.
+  const opened = await openAdmittedRun(admitted, { runDir, runId });
   if (opened.outcome === "rejected") {
     return rejected(
       opened.reason,

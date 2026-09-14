@@ -4,6 +4,8 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import type { RejectionDetail } from "../contracts/envelope.js";
 import { validateRunPlan } from "../domain/plan.js";
 import type { AgentSpec, Revision, RunPlan } from "../domain/types.js";
+import type { LockOptions } from "../journal/lock.js";
+import { openRun } from "../state/store.js";
 import type { WorkflowDefinition } from "./definition.js";
 import { launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
@@ -243,6 +245,24 @@ function isAgentChoice(
 function invalidDefinition<Input>(callback: string, message: string): AdmissionResult<Input> {
   const text = `workflow definition ${callback}: ${message}`.slice(0, 2000);
   return reject("definition_invalid", text, [{ field: callback, message: text }]);
+}
+
+/**
+ * Opens the run for an admitted workflow. The plan and the validated input the
+ * scheduler runs with (`admitted.input`, never the caller's raw value) are what
+ * the journal and `input.json` record.
+ */
+export function openAdmittedRun<Input>(
+  admitted: Extract<AdmissionResult<Input>, { ok: true }>,
+  options: { runDir: string; runId: string; lock?: LockOptions },
+): ReturnType<typeof openRun> {
+  return openRun({
+    runDir: options.runDir,
+    runId: options.runId,
+    plan: admitted.plan,
+    input: admitted.input,
+    ...(options.lock !== undefined ? { lock: options.lock } : {}),
+  });
 }
 
 function reject<Input>(

@@ -153,6 +153,31 @@ console.log(JSON.stringify(admitted));`,
     }
   });
 
+  it("opens an admitted run with the validated input, not the raw input", () => {
+    const dir = mkdtempSync(join(tmpdir(), "woof-admit-open-"));
+    dirs.push(dir);
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
+    const runDir = join(dir, "run");
+    const result = runNode(
+      `const { loadWorkflowDefinition } = await import(${JSON.stringify(distUrl("scheduler/loader.js"))});
+const { admitWorkflow, openAdmittedRun } = await import(${JSON.stringify(distUrl("scheduler/admission.js"))});
+const loaded = await loadWorkflowDefinition(process.argv[1]);
+const admitted = await admitWorkflow({ definition: loaded.definition, input: { topic: "  draft  " }, runDir: process.argv[2] });
+const opened = admitted.ok ? await openAdmittedRun(admitted, { runDir: process.argv[2], runId: "run-1" }) : admitted;
+console.log(JSON.stringify({ outcome: opened.outcome ?? opened.reason }));`,
+      [join(fixtures, "callbacks.mjs"), runDir],
+      { env: { WOOF_TEST_CALLBACK: "normalize", WOOF_TEST_REPO: repo } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({ outcome: "recorded" });
+    expect(JSON.parse(readFileSync(join(runDir, "input.json"), "utf8"))).toEqual({
+      topic: "DRAFT",
+      normalized: true,
+    });
+  });
+
   it("admits the well-behaved definition", () => {
     expect(admit("none")).toEqual({ ok: true });
   });
