@@ -157,7 +157,11 @@ export type FoldEventsResult =
  * reducer; there is no second reducer. An event at or below the projection's
  * revision is skipped only when it is the same record already folded
  * (at-least-once delivery). A gap or another run's anchor or run id requires a
- * resync. An event that is not a valid record, whose cursor is not positioned
+ * resync. An envelope that is not `schemaVersion: 1` / `kind: "woof.run.event"`
+ * is `journal_corrupt` before its cursor is read. Without a base, the first
+ * `run.opened` event's `data.runId` is the run: another envelope `runId`, or a
+ * `data.runId` naming another run (with or without a base), is
+ * `journal_corrupt`. An event that is not a valid record, whose cursor is not positioned
  * after its own seq, whose `data` carries an envelope field (`schemaVersion`,
  * `seq`, `ts`, `type`), or that conflicts with an already folded record is
  * `journal_corrupt`.
@@ -169,7 +173,31 @@ export function foldEvents(
   const records = base === null ? [] : [...base.records];
   let anchor = base === null ? undefined : parseCursor(base.snapshot.cursor)?.anchor;
   const runId = base?.snapshot.runId;
+  // With no base, the stream's own run.opened event names the run every event must belong to.
+  const expectedRunId = runId ?? openedRunId(events);
   for (const event of events) {
+    if (event.schemaVersion !== 1 || event.kind !== "woof.run.event") {
+      return {
+        ok: false,
+        reason: "journal_corrupt",
+        message: `event ${String(event.seq)} is not a schemaVersion 1 woof.run.event envelope`,
+      };
+    }
+    if (base === null && expectedRunId !== undefined && event.runId !== expectedRunId) {
+      return {
+        ok: false,
+        reason: "journal_corrupt",
+        message: `event ${event.seq} names run ${String(event.runId)}, not ${expectedRunId}`,
+      };
+    }
+    const dataRunId = isObject(event.data) ? event.data["runId"] : undefined;
+    if (expectedRunId !== undefined && dataRunId !== undefined && dataRunId !== expectedRunId) {
+      return {
+        ok: false,
+        reason: "journal_corrupt",
+        message: `event ${event.seq} data names run ${String(dataRunId)}, not ${expectedRunId}`,
+      };
+    }
     const cursor = parseCursor(event.cursor);
     anchor ??= cursor?.anchor;
     if (
@@ -224,6 +252,20 @@ export function foldEvents(
 }
 
 const ENVELOPE_FIELDS = ["schemaVersion", "seq", "ts", "type"] as const;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The run id carried by the first run.opened event, if any. */
+function openedRunId(events: readonly RunEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.type !== "run.opened" || !isObject(event.data)) continue;
+    const runId = event.data["runId"];
+    return typeof runId === "string" ? runId : undefined;
+  }
+  return undefined;
+}
 
 /** The journal record an event stands for; the event's envelope fields are authoritative. */
 function recordOf(event: RunEvent): JournalRecord | string {

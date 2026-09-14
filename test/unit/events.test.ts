@@ -335,6 +335,59 @@ describe("snapshot and events consistency", () => {
     expect(foldEvents(base, [invalid])).toMatchObject({ ok: false, reason: "journal_corrupt" });
   });
 
+  it("fails closed on an envelope that is not a v1 woof.run.event, before reading its cursor", () => {
+    const records = journalOf(parse, opened(), assigned("builder"));
+    const events = projectEvents(records, anchorOf(records));
+    const event = events[1] as Event;
+    const base = {
+      snapshot: deriveSnapshot(records.slice(0, 1)).snapshot,
+      records: records.slice(0, 1),
+    };
+    for (const forged of [
+      { ...event, schemaVersion: 2 },
+      { ...event, kind: "woof.run.snapshot" },
+      { ...event, kind: "woof.run.snapshot", cursor: "not-a-cursor" },
+      { ...event, schemaVersion: 0, cursor: "v1.9.ba9876543210" },
+    ]) {
+      expect(foldEvents(base, [forged]), JSON.stringify(forged)).toMatchObject({
+        ok: false,
+        reason: "journal_corrupt",
+      });
+      expect(foldEvents(null, [events[0] as Event, forged])).toMatchObject({
+        ok: false,
+        reason: "journal_corrupt",
+      });
+    }
+  });
+
+  it("without a base, requires every event to name the run of the first run.opened event", () => {
+    const records = journalOf(parse, opened(), assigned("builder"), attempt("build", "builder"));
+    const events = projectEvents(records, anchorOf(records));
+    expect(foldEvents(null, events)).toMatchObject({ ok: true });
+
+    const envelope = events.map((event, index) =>
+      index === 1 ? { ...event, runId: "run-2" } : event,
+    );
+    expect(foldEvents(null, envelope)).toMatchObject({ ok: false, reason: "journal_corrupt" });
+
+    const attemptEvent = events[2] as Event;
+    const data = [
+      events[0] as Event,
+      events[1] as Event,
+      { ...attemptEvent, data: { ...attemptEvent.data, runId: "run-2" } },
+    ];
+    expect(foldEvents(null, data)).toMatchObject({ ok: false, reason: "journal_corrupt" });
+
+    const openedEvent = events[0] as Event;
+    const everyEnvelopeWrong: Event[] = [];
+    for (const event of events) everyEnvelopeWrong.push({ ...event, runId: "run-2" });
+    expect(openedEvent.data["runId"]).toBe("run-1");
+    expect(foldEvents(null, everyEnvelopeWrong)).toMatchObject({
+      ok: false,
+      reason: "journal_corrupt",
+    });
+  });
+
   it("fails closed on an event whose cursor is not positioned after its own seq", () => {
     const records = journalOf(parse, opened(), assigned("builder"));
     const anchor = anchorOf(records);
