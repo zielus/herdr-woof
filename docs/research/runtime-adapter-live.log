@@ -1,35 +1,35 @@
-== environment                {"mode":"full","commit":"c4f020cd4c94917568c5923359ffab4a40261770","herdr":"herdr 0.9.0","claude":"2.1.270 (Claude Code)","node":"v26.7.0","runId":"live-adapter-20260914-100608","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-100608","runtimeName":"w-pinger-4fc13a","verifierPane":"w8Q:p2"}
-== openRun                    {"outcome":"recorded","record":{"schemaVersion":1,"seq":1,"ts":"2026-09-14T10:06:08.749Z","type":"run.opened","runId":"live-adapter-20260914-100608","plan":{"workflow":{"name":"live-adapter-check","version":"1"},"agents":[{"agentId":"pinger","role":"probe","kind":"claude","model":null}],"stages":[{"stageId":"ping","agentId":"pinger","verdicts":[]}],"limits":{"maxAttemptsPerVisit":1,"maxVisitsPerStage":1,"maxRounds":1,"runTimeoutMs":600000,"readinessWaitMs":600000,"blockedWaitMs":600000,"deliveryTimeoutMs":600000}}},"revision":1}
-== openPane                   {"ok":true,"value":{"paneId":"w8Q:pD"}}
-== startAgent                 {"ok":true,"value":{"adapter":"herdr","runtimeName":"w-pinger-4fc13a","kind":"claude","paneId":"w8Q:pD","paneOwned":true,"terminalId":"term_65b6e953f980849","sessionId":"744d2205-f90b-4b45-bcac-31f3b2393c2c"}}
+== environment                {"mode":"full","commit":"956bccd1c574c1cc01459e39f3f5aa05b3a34033","herdr":"herdr 0.9.0","claude":"2.1.270 (Claude Code)","node":"v26.7.0","runId":"live-adapter-20260914-120347","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-120347","runtimeName":"w-pinger-cc4a8c","verifierPane":"w8Q:p2"}
+== openRun                    {"outcome":"recorded","record":{"schemaVersion":1,"seq":1,"ts":"2026-09-14T12:03:47.710Z","type":"run.opened","runId":"live-adapter-20260914-120347","plan":{"workflow":{"name":"live-adapter-check","version":"1"},"agents":[{"agentId":"pinger","role":"probe","kind":"claude","model":null}],"stages":[{"stageId":"ping","agentId":"pinger","verdicts":[]}],"limits":{"maxAttemptsPerVisit":1,"maxVisitsPerStage":1,"maxRounds":1,"runTimeoutMs":600000,"readinessWaitMs":600000,"blockedWaitMs":600000,"deliveryTimeoutMs":600000}}},"revision":1}
+== openPane                   {"ok":true,"value":{"paneId":"w8Q:pG"}}
+== startAgent                 {"ok":true,"value":{"adapter":"herdr","runtimeName":"w-pinger-cc4a8c","kind":"claude","paneId":"w8Q:pG","paneOwned":true,"terminalId":"term_65b7039ff02d14c","sessionId":"464f25ef-ac09-4060-b611-f882533161ca"}}
 PASS gate 1: startAgent ok with terminalId and sessionId
-== assignAgent                {"outcome":"recorded","record":{"schemaVersion":1,"seq":2,"ts":"2026-09-14T10:06:13.760Z","type":"agent.assigned","agentId":"pinger","runtime":{"adapter":"herdr","runtimeName":"w-pinger-4fc13a","paneId":"w8Q:pD"},"terminalId":"term_65b6e953f980849","sessionId":"744d2205-f90b-4b45-bcac-31f3b2393c2c"},"revision":2}
-== observe (before)           {"ok":true,"value":{"runtimeName":"w-pinger-4fc13a","paneId":"w8Q:pD","lifecycle":"ready","runtimeStatus":"idle","sessionId":"744d2205-f90b-4b45-bcac-31f3b2393c2c","order":{"terminalId":"term_65b6e953f980849","stateChangeSeq":678,"revision":3},"observedAt":"2026-09-14T10:06:13.785Z"}}
-== track (before)             {"kind":"new","lifecycle":"ready","runtimeStatus":"idle","stateChangeSeq":678,"terminalId":"term_65b6e953f980849"}
+== assignAgent                {"outcome":"recorded","record":{"schemaVersion":1,"seq":2,"ts":"2026-09-14T12:03:52.652Z","type":"agent.assigned","agentId":"pinger","runtime":{"adapter":"herdr","runtimeName":"w-pinger-cc4a8c","paneId":"w8Q:pG"},"terminalId":"term_65b7039ff02d14c","sessionId":"464f25ef-ac09-4060-b611-f882533161ca"},"revision":2}
+== observe (before)           {"ok":true,"value":{"runtimeName":"w-pinger-cc4a8c","paneId":"w8Q:pG","lifecycle":"ready","runtimeStatus":"idle","sessionId":"464f25ef-ac09-4060-b611-f882533161ca","order":{"terminalId":"term_65b7039ff02d14c","stateChangeSeq":709,"revision":3},"observedAt":"2026-09-14T12:03:52.667Z"}}
+== track (before)             {"kind":"new","lifecycle":"ready","runtimeStatus":"idle","stateChangeSeq":709,"terminalId":"term_65b7039ff02d14c"}
 PASS gate 2: first observe is ready (idle)
-== openAttempt                {"outcome":"opened","attempt":{"runId":"live-adapter-20260914-100608","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"seq":3,"verdicts":[],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-100608/artifacts/ping/visit-1/attempt-1","paneId":"w8Q:pD"}}
+== openAttempt                {"outcome":"opened","attempt":{"runId":"live-adapter-20260914-120347","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"seq":3,"verdicts":[],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p2-sdk-contracts/live/live-adapter-20260914-120347/artifacts/ping/visit-1/attempt-1","paneId":"w8Q:pG"}}
 == negative deliver           {"outcome":"not_delivered","error":{"code":"not_found","runtimeCode":"agent_not_found","message":"agent w-missing-000000 is gone","command":[],"exitCode":null}}
-== agent list names           ["lead","builder","verifier","w-pinger-4fc13a","reviewer","docs"]
+== agent list names           ["lead","builder","verifier","w-pinger-cc4a8c","reviewer","docs"]
 PASS gate 3: negative deliver is not_delivered/not_found and no such agent exists
-== deliver                    {"outcome":"started","observation":{"runtimeName":"w-pinger-4fc13a","paneId":"w8Q:pD","lifecycle":"working","runtimeStatus":"working","sessionId":"744d2205-f90b-4b45-bcac-31f3b2393c2c","order":{"terminalId":"term_65b6e953f980849","stateChangeSeq":679,"revision":3},"observedAt":"2026-09-14T10:06:14.341Z"}}
-== recordDispatch             {"outcome":"recorded","record":{"schemaVersion":1,"seq":4,"ts":"2026-09-14T10:06:14.342Z","type":"request.dispatched","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"delivery":"started","reason":"observed_working","paneId":"w8Q:pD"},"revision":4}
+== deliver                    {"outcome":"started","observation":{"runtimeName":"w-pinger-cc4a8c","paneId":"w8Q:pG","lifecycle":"working","runtimeStatus":"working","sessionId":"464f25ef-ac09-4060-b611-f882533161ca","order":{"terminalId":"term_65b7039ff02d14c","stateChangeSeq":710,"revision":3},"observedAt":"2026-09-14T12:03:53.327Z"}}
+== recordDispatch             {"outcome":"recorded","record":{"schemaVersion":1,"seq":4,"ts":"2026-09-14T12:03:53.328Z","type":"request.dispatched","agentId":"pinger","stageId":"ping","visit":1,"attempt":1,"delivery":"started","reason":"observed_working","paneId":"w8Q:pG"},"revision":4}
 PASS gate 4: deliver outcome is started (started)
-== track (deliver)            {"kind":"new","lifecycle":"working","runtimeStatus":"working","stateChangeSeq":679,"terminalId":"term_65b6e953f980849"}
-== watch                      {"kind":"new","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":680,"terminalId":"term_65b6e953f980849"}
-== watch dropped              {"stale":0,"duplicate":6,"error":null}
-== waitFor ready              {"ok":true,"value":{"runtimeName":"w-pinger-4fc13a","paneId":"w8Q:pD","lifecycle":"ready","runtimeStatus":"done","sessionId":"744d2205-f90b-4b45-bcac-31f3b2393c2c","order":{"terminalId":"term_65b6e953f980849","stateChangeSeq":680,"revision":4},"observedAt":"2026-09-14T10:06:17.443Z"}}
-== track (waitFor)            {"kind":"duplicate","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":680,"terminalId":"term_65b6e953f980849"}
-== sequence                   {"S0":678,"S1":679,"S2":680,"dropped":{"stale":0,"duplicate":7}}
+== track (deliver)            {"kind":"new","lifecycle":"working","runtimeStatus":"working","stateChangeSeq":710,"terminalId":"term_65b7039ff02d14c"}
+== watch                      {"kind":"new","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":711,"terminalId":"term_65b7039ff02d14c"}
+== watch dropped              {"stale":0,"duplicate":11,"error":null}
+== waitFor ready              {"ok":true,"value":{"runtimeName":"w-pinger-cc4a8c","paneId":"w8Q:pG","lifecycle":"ready","runtimeStatus":"done","sessionId":"464f25ef-ac09-4060-b611-f882533161ca","order":{"terminalId":"term_65b7039ff02d14c","stateChangeSeq":711,"revision":4},"observedAt":"2026-09-14T12:03:59.009Z"}}
+== track (waitFor)            {"kind":"duplicate","lifecycle":"ready","runtimeStatus":"done","stateChangeSeq":711,"terminalId":"term_65b7039ff02d14c"}
+== sequence                   {"S0":709,"S1":710,"S2":711,"dropped":{"stale":0,"duplicate":12}}
 PASS gate 5: working then a later ready from the same terminal with a greater stateChangeSeq (stale 0)
-== snapshot (worker ready)    {"status":"running","attempt":{"status":"open","delivery":"started"},"runtime":{"lifecycle":"ready","herdrStatus":"done","observedAt":"2026-09-14T10:06:17.429Z","order":{"terminalId":"term_65b6e953f980849","stateChangeSeq":680,"revision":4}}}
+== snapshot (worker ready)    {"status":"running","attempt":{"status":"open","delivery":"started"},"runtime":{"lifecycle":"ready","herdrStatus":"done","observedAt":"2026-09-14T12:03:58.994Z","order":{"terminalId":"term_65b7039ff02d14c","stateChangeSeq":711,"revision":4}}}
 PASS gate 6: attempt still open after ready; no submission record
 == stop                       {"ok":true,"value":{"paneClosed":true}}
-== observe (after)            {"ok":true,"value":{"runtimeName":"w-pinger-4fc13a","paneId":"w8Q:pD","lifecycle":"gone","runtimeStatus":null,"sessionId":null,"order":{"terminalId":null,"stateChangeSeq":null,"revision":null},"observedAt":"2026-09-14T10:06:18.025Z"}}
-== pane get (after)           {"code":"not_found","runtimeCode":"pane_not_found","message":"pane w8Q:pD not found","command":["pane","get","w8Q:pD"],"exitCode":1}
+== observe (after)            {"ok":true,"value":{"runtimeName":"w-pinger-cc4a8c","paneId":"w8Q:pG","lifecycle":"gone","runtimeStatus":null,"sessionId":null,"order":{"terminalId":null,"stateChangeSeq":null,"revision":null},"observedAt":"2026-09-14T12:03:59.603Z"}}
+== pane get (after)           {"code":"not_found","runtimeCode":"pane_not_found","message":"pane w8Q:pG not found","command":["pane","get","w8Q:pG"],"exitCode":1}
 PASS gate 7: stop ok, then gone and pane_not_found
-== terminateRun               {"outcome":"recorded","record":{"schemaVersion":1,"seq":5,"ts":"2026-09-14T10:06:18.033Z","type":"run.terminated","outcome":"cancelled","reason":"live adapter check finished"},"revision":5}
+== terminateRun               {"outcome":"recorded","record":{"schemaVersion":1,"seq":5,"ts":"2026-09-14T12:03:59.610Z","type":"run.terminated","outcome":"cancelled","reason":"live adapter check finished"},"revision":5}
 PASS gate 8: journal replays with exactly the expected records (run.opened,agent.assigned,attempt.opened,request.dispatched,run.terminated)
-== woof run show              {"outcome":"snapshot","status":"cancelled","paneId":"w8Q:pD","attempt":{"status":"abandoned","delivery":"started"},"runtime":null}
+== woof run show              {"outcome":"snapshot","status":"cancelled","paneId":"w8Q:pG","attempt":{"status":"abandoned","delivery":"started"},"runtime":null}
 PASS gate 9: run show: cancelled, pane recorded, attempt abandoned, delivery started, runtime null
 PASS gate 10: git status unchanged (the agent edited nothing)
 == forbidden command grep     {"searched":["agent read","pane read","send-keys"],"hits":[]}
