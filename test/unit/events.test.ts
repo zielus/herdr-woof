@@ -34,7 +34,7 @@ type Fold =
   | { ok: false; reason: string; message: string };
 
 let parse: (line: string) => Json | string;
-let replay: (records: Json[]) => { ok: boolean };
+let replay: (records: Json[]) => { ok: true } | { ok: false; reason: string };
 let deriveSnapshot: (records: Json[]) => { ok: true; snapshot: Snapshot };
 let projectEvents: (records: Json[], anchor: string) => Event[];
 let foldEvents: (base: { snapshot: Snapshot; records: Json[] } | null, events: Event[]) => Fold;
@@ -165,8 +165,12 @@ function random(seed: number): () => number {
   };
 }
 
-/** A valid journal built by proposing random records and keeping those the reducer accepts. */
-function generateJournal(seed: number): Json[] {
+/**
+ * A valid journal built by proposing random records and keeping those the
+ * reducer accepts. Some proposals are invalid by construction; the reason of
+ * every refused proposal is added to `refusals`.
+ */
+function generateJournal(seed: number, refusals: Set<string>): Json[] {
   const next = random(seed);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
   const records = journalOf(parse, opened(next() < 0.5 ? PLAN : null));
@@ -203,7 +207,7 @@ function generateJournal(seed: number): Json[] {
       const acceptances = records.filter((record) => record["type"] === "submission.accepted");
       if (acceptances.length === 0) continue;
       body = duplicate(pick(acceptances)["seq"] as number);
-    } else if (roll < 0.96) {
+    } else if (roll < 0.9) {
       body = rejected(pick(["artifact_missing", "attempt_stale", "run_closed"]), {
         runId: "run-1",
         agentId: agent,
@@ -211,6 +215,17 @@ function generateJournal(seed: number): Json[] {
         visit,
         attempt: attemptNo,
       });
+    } else if (roll < 0.96) {
+      // Invalid by construction (some only under a plan).
+      body = pick([
+        opened(PLAN, "run-2"),
+        attempt(stage, agent, visit, attemptNo, undefined, "run-2"),
+        attempt("deploy", agent, visit, attemptNo),
+        attempt(stage, agent === "builder" ? "reviewer" : "builder", visit, attemptNo),
+        attempt("review", "reviewer", visit, attemptNo, ["approve"]),
+        assigned("stranger"),
+        duplicate(1),
+      ]);
     } else {
       body = terminated(pick(["completed", "failed", "cancelled"]));
     }
@@ -223,7 +238,11 @@ function generateJournal(seed: number): Json[] {
       }),
     );
     if (typeof record === "string") continue;
-    if (!replay([...records, record]).ok) continue;
+    const replayed = replay([...records, record]);
+    if (!replayed.ok) {
+      refusals.add(replayed.reason);
+      continue;
+    }
     records.push(record);
   }
   return records;
@@ -233,8 +252,9 @@ describe("snapshot and events consistency", () => {
   it("fold(snapshot@N, events after N) equals a fresh snapshot for 200 seeded journals at every split", () => {
     let checks = 0;
     const types = new Set<string>();
+    const refusals = new Set<string>();
     for (let seed = 1; seed <= 200; seed += 1) {
-      const records = generateJournal(seed);
+      const records = generateJournal(seed, refusals);
       for (const record of records) types.add(record["type"] as string);
       const fresh = deriveSnapshot(records).snapshot;
       const events = projectEvents(records, anchorOf(records));
@@ -263,6 +283,23 @@ describe("snapshot and events consistency", () => {
       "submission.accepted",
       "submission.duplicate",
       "submission.rejected",
+    ]);
+    // The refused proposals reach every reducer refusal reason (the closed ReducerReason set).
+    expect([...refusals].toSorted()).toEqual([
+      "agent_busy",
+      "agent_unassigned",
+      "agent_unknown",
+      "assignment_unchanged",
+      "attempt_open_conflict",
+      "attempt_unknown",
+      "dispatch_exists",
+      "invalid_transition",
+      "owner_mismatch",
+      "run_closed",
+      "run_exists",
+      "run_mismatch",
+      "stage_unknown",
+      "verdicts_mismatch",
     ]);
   });
 
