@@ -656,6 +656,18 @@ if (out.outcome !== "recorded") process.exit(1);`;
       },
     }),
 
+  "expired-before-dispatch": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 300 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // The run budget runs out between the dispatch decision and its effect.
+      onAction: (action, context) => {
+        if (action.type !== "dispatch" || !once(context, "delay")) return;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 450);
+      },
+    }),
+
   "fast-worker": () =>
     scenario({
       verify: false,

@@ -705,6 +705,21 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-103. a run budget that expires between decision and delivery opens, writes and sends nothing",
+    () => {
+      const report = runScenario("expired-before-dispatch");
+      expect(report.marks["delay"]).toBe(true);
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(report.types).not.toContain("attempt.opened");
+      expect(report.types).not.toContain("request.dispatched");
+      expect(report.requests).toEqual([]);
+      expect(report.calls.filter((call) => call.method === "deliver")).toEqual([]);
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

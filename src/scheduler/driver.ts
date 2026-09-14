@@ -246,8 +246,10 @@ export async function runWorkflow<Input>(
     snapshot.limits === null
       ? Number.POSITIVE_INFINITY
       : Date.parse(snapshot.openedAt) + snapshot.limits.runTimeoutMs - clock();
+  /** Callers check `expired` first: an expired budget is never turned into a positive timeout. */
   const capped = (snapshot: RunSnapshot, ms: number): number =>
-    Math.max(1, Math.floor(Math.min(ms, remainingMs(snapshot))));
+    Math.floor(Math.min(ms, remainingMs(snapshot)));
+  const expired = (snapshot: RunSnapshot): boolean => remainingMs(snapshot) <= 0;
   /** A capped effect that reached the run deadline ends the run as run-timeout exhaustion. */
   const runTimedOut = (snapshot: RunSnapshot): Promise<Written<unknown>> =>
     end(
@@ -345,6 +347,10 @@ export async function runWorkflow<Input>(
         const spec = snapshot.agents.find((agent) => agent.agentId === action.agentId);
         const planAgent = { kind: spec?.kind ?? "", args: spec?.args ?? [] };
         const limits = snapshot.limits as Limits;
+        if (expired(snapshot)) {
+          written = await runTimedOut(snapshot);
+          break;
+        }
         const pane = await runtime.openPane({
           near: options.paneNear ?? "current",
           cwd: repository,
@@ -435,6 +441,11 @@ export async function runWorkflow<Input>(
             message: `cannot dispatch ${action.stageId} to ${action.agentId}`,
           });
         }
+        // The deadline is checked before any dispatch write and again after each slow step.
+        if (expired(snapshot)) {
+          written = await runTimedOut(snapshot);
+          break;
+        }
         const inputs: ResolvedInput[] = [];
         let altered: string | undefined;
         for (const ref of action.request?.inputs ?? []) {
@@ -521,6 +532,10 @@ export async function runWorkflow<Input>(
           );
           break;
         }
+        if (expired(snapshot)) {
+          written = await runTimedOut(snapshot);
+          break;
+        }
         const opened = await write(() =>
           openAttempt({
             runDir,
@@ -543,6 +558,11 @@ export async function runWorkflow<Input>(
         if (!file.ok) {
           // Nothing was sent: the attempt stays undelivered and the run fails.
           written = await end("failed", file.reason);
+          break;
+        }
+        if (expired(snapshot)) {
+          // Opened and persisted but never sent: nothing is delivered after the deadline.
+          written = await runTimedOut(snapshot);
           break;
         }
         view.readyStreak = 0;
@@ -624,6 +644,10 @@ export async function runWorkflow<Input>(
         const altered = subjectAltered(snapshot, action.subject);
         if (altered !== undefined) {
           written = await end("failed", `input_artifact_altered: ${altered}`);
+          break;
+        }
+        if (expired(snapshot)) {
+          written = await runTimedOut(snapshot);
           break;
         }
         const run = await runCheck({
