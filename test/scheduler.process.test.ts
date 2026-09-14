@@ -788,6 +788,38 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "PR-E. an unresolved declared input fails the run before anything is opened or sent",
+    () => {
+      const report = runScenario("input-unresolved");
+      expect(report.result).toMatchObject({ outcome: "failed", limit: null });
+      expect(report.result.reason).toMatch(
+        /^input_unresolved: prior review: stage review has no accepted artifact/,
+      );
+      expect(report.types).not.toContain("attempt.opened");
+      expect(report.requests).toEqual([]);
+      expect(report.calls.filter((call) => call.method === "deliver")).toEqual([]);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR-E. an observe runtime error fails the run with its code; timeouts only after three in a row",
+    () => {
+      const error = runScenario("observe-error");
+      expect(error.result).toMatchObject({ outcome: "failed", limit: null });
+      expect(error.result.reason).toMatch(/^runtime_error: runtime_unavailable: agent builder/);
+
+      const timeouts = runScenario("observe-timeouts");
+      expect(timeouts.result).toMatchObject({ outcome: "failed", limit: null });
+      expect(timeouts.result.reason).toMatch(/^runtime_error: timeout: agent builder/);
+
+      const recovered = runScenario("observe-two-timeouts");
+      expect(recovered.result).toMatchObject({ outcome: "completed", limit: null });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

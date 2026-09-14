@@ -246,6 +246,29 @@ describe("transitionProblem", () => {
     });
   });
 
+  it("reports requires round in a definition without a roundStage as a contract violation", () => {
+    const noRounds = { ...(def as Json), roundStage: null };
+    expect(
+      transitionProblem(noRounds, "critique", {
+        decision: "reject",
+        reason: "again",
+        to: "draft",
+        requires: "round",
+      }),
+    ).toMatchObject({
+      reason: "definition_contract_violated",
+      message: expect.stringContaining("roundStage"),
+    });
+    // Without requires the same transition is fine.
+    expect(
+      transitionProblem(noRounds, "critique", {
+        decision: "reject",
+        reason: "again",
+        to: "draft",
+      }),
+    ).toBeUndefined();
+  });
+
   it("reports contract violations", () => {
     for (const bad of [
       undefined,

@@ -361,6 +361,8 @@ export function transitionProblem(
   if (typeof to !== "string") return contract("to must be a stage or check id");
   if (requires !== undefined && requires !== "round")
     return contract('requires must be "round" when given');
+  if (requires === "round" && definition.roundStage === null)
+    return contract('requires "round" needs a roundStage, and this definition declares none');
   if (!allowed.includes(to) || OUTCOME_TARGETS.has(to)) {
     return { reason: "transition_undeclared", message: `${from} → ${to} is not in edges` };
   }

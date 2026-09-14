@@ -109,6 +109,7 @@ async function scenario(options) {
   });
 
   const counts = Object.fromEntries(agentIds.map((agentId) => [agentId, 0]));
+  const observeCounts = {};
   const submissions = [];
   const pending = new Map();
   const context = {
@@ -194,6 +195,15 @@ async function scenario(options) {
     },
     async observe(handle, observeOptions) {
       const agentId = agentOf[handle.runtimeName];
+      observeCounts[agentId] = (observeCounts[agentId] ?? 0) + 1;
+      const injected = options.observeError?.(agentId, observeCounts[agentId]);
+      if (injected !== undefined) {
+        const message = `injected ${injected}`;
+        return {
+          ok: false,
+          error: { code: injected, runtimeCode: null, message, command: [], exitCode: null },
+        };
+      }
       const job = pending.get(handle.runtimeName);
       if (job !== undefined && job.skip > 0) {
         job.skip -= 1;
@@ -758,6 +768,50 @@ await withJournalLock(runDir, async () => {
       adapterName: "herdr",
       limits: { runTimeoutMs: 2500 },
       workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "input-unresolved": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      // The build request names the review, which has no accepted artifact yet.
+      wrapDefinition: (definition) => ({
+        ...definition,
+        stages: definition.stages.map((stage) =>
+          stage.kind === "agent" && stage.stageId === "build"
+            ? {
+                ...stage,
+                request: (ctx) => ({
+                  ...stage.request(ctx),
+                  inputs: [{ label: "prior review", from: { stageId: "review" } }],
+                }),
+              }
+            : stage,
+        ),
+      }),
+    }),
+
+  "observe-error": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      observeError: (agentId, count) =>
+        agentId === "builder" && count === 2 ? "runtime_unavailable" : undefined,
+    }),
+
+  "observe-timeouts": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      observeError: (agentId) => (agentId === "builder" ? "timeout" : undefined),
+    }),
+
+  "observe-two-timeouts": () =>
+    scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      observeError: (agentId, count) =>
+        agentId === "builder" && (count === 2 || count === 3) ? "timeout" : undefined,
     }),
 
   "fast-worker": () =>

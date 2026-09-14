@@ -68,6 +68,15 @@ exits 0 when recorded, 2 when the run is already terminated, 3 on journal failur
 const MAX_INPUT_BYTES = 1024 * 1024;
 
 const OUTCOME_EXIT_CODES = { completed: 0, failed: 4, exhausted: 5, cancelled: 6 } as const;
+/** Every RuntimeAdapter method a `--runtime-module` factory result must provide. */
+const RUNTIME_METHODS = [
+  "openPane",
+  "startAgent",
+  "observe",
+  "waitFor",
+  "deliver",
+  "stop",
+] as const;
 
 class UsageError extends Error {}
 
@@ -215,6 +224,23 @@ async function runBuildReviewCommand(args: string[]): Promise<number> {
       return rejected(
         "runtime_unavailable",
         `createRuntime failed: ${(error as Error).message}`,
+        [],
+        3,
+      );
+    }
+    // The factory result must be a RuntimeAdapter before any run is opened.
+    const candidate = runtime as unknown as Record<string, unknown> | null;
+    const missing =
+      candidate === null || typeof candidate !== "object"
+        ? ["adapter", ...RUNTIME_METHODS]
+        : [
+            ...(typeof candidate["adapter"] === "string" ? [] : ["adapter"]),
+            ...RUNTIME_METHODS.filter((name) => typeof candidate[name] !== "function"),
+          ];
+    if (missing.length > 0) {
+      return rejected(
+        "runtime_unavailable",
+        `${loaded.path} createRuntime returned no RuntimeAdapter (missing or invalid: ${missing.join(", ")})`,
         [],
         3,
       );

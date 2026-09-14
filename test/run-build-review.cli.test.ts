@@ -296,6 +296,19 @@ describe("woof run build-review: usage and admission", () => {
     expect(existsSync(join(ws.repo, ".woof-run"))).toBe(false);
   });
 
+  it("rejects a runtime module whose factory does not return a RuntimeAdapter, before opening a run", () => {
+    const ws = workspace();
+    writeInput(ws.inputPath, input(ws.repo));
+    const badModule = join(repoRoot, "test", "fixtures", "bad-runtime-module.mjs");
+    const result = runBuildReview(ws, ["--runtime-module", badModule], scriptedEnv(ws.log));
+    expect(result.status, result.stdout).toBe(3);
+    expect(result.json).toMatchObject({ outcome: "rejected", reason: "runtime_unavailable" });
+    expect(result.json?.message).toContain("openPane");
+    expect(result.json?.message).toContain("stop");
+    expect(result.json?.message).not.toContain("observe");
+    expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
+  });
+
   it("refuses to run outside Herdr without a runtime module, without spawning herdr or writing", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));

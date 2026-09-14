@@ -98,6 +98,8 @@ const HERDR_START_CAP_MS = 300_000;
 const HERDR_MIN_START_TIMEOUT_MS = 3001;
 /** Upper bound for one observe or pane split, matching the Herdr adapter's default command timeout. */
 const ADAPTER_COMMAND_CAP_MS = 10_000;
+/** Consecutive observe timeouts that fail the run as a runtime error. */
+const OBSERVE_TIMEOUT_LIMIT = 3;
 
 type Written<T> =
   | { ok: true; value: T }
@@ -124,6 +126,8 @@ export async function runWorkflow<Input>(
   const agents: Record<string, AgentRuntimeView> = Object.create(null);
   const stats = { ticks: 0, maxSnapshotMs: 0, dropped: tracker.dropped };
   let evidence: GateEvidence | null = null;
+  /** Consecutive observe timeouts per agent; any successful observation resets it. */
+  const observeTimeouts: Record<string, number> = Object.create(null);
   /** openedAt + runTimeoutMs, known after the first snapshot read. */
   let deadlineAt: number | null = null;
   let observeNext: string | null = null;
@@ -335,17 +339,34 @@ export async function runWorkflow<Input>(
   const tick = async (): Promise<RunWorkflowResult | undefined> => {
     stats.ticks += 1;
     if (observeNext !== null) {
-      const view = agents[observeNext];
+      const agentId = observeNext;
+      const view = agents[agentId];
+      observeNext = null;
       const left = deadlineAt === null ? Number.POSITIVE_INFINITY : deadlineAt - clock();
       // With the run budget gone the observation is skipped; this tick's decision records the timeout.
       if (view?.handle != null && left > 0) {
         const observed = await runtime.observe(view.handle, {
           timeoutMs: Math.floor(Math.min(ADAPTER_COMMAND_CAP_MS, left)),
         });
-        if (observed.ok) accept(view, observed.value);
-        else view.readyStreak = 0;
+        if (observed.ok) {
+          observeTimeouts[agentId] = 0;
+          accept(view, observed.value);
+        } else {
+          view.readyStreak = 0;
+          const error = observed.error;
+          const timeouts = error.code === "timeout" ? (observeTimeouts[agentId] ?? 0) + 1 : 0;
+          observeTimeouts[agentId] = timeouts;
+          // A runtime error is a structured failure; a timeout only after consecutive repeats.
+          if (error.code !== "timeout" || timeouts >= OBSERVE_TIMEOUT_LIMIT) {
+            const ended = await end(
+              "failed",
+              `runtime_error: ${error.code}: agent ${agentId}: ${error.message}`,
+            );
+            if (!ended.ok && !ended.closed) return fatal(ended);
+            return undefined;
+          }
+        }
       }
-      observeNext = null;
     }
     const snapshotRead = read();
     if (!snapshotRead.ok) {
@@ -514,16 +535,23 @@ export async function runWorkflow<Input>(
         }
         const inputs: ResolvedInput[] = [];
         let altered: string | undefined;
+        let unresolved: string | undefined;
         for (const ref of action.request?.inputs ?? []) {
           if ("stageId" in ref.from) {
             const latest = snapshot.outputs.latestAcceptedByStage[ref.from.stageId];
             const attempt = latest === undefined ? undefined : attemptOf(snapshot, latest);
             const accepted = attempt?.accepted;
-            if (latest === undefined || accepted == null) continue;
+            if (latest === undefined || accepted == null) {
+              unresolved = `${ref.label}: stage ${ref.from.stageId} has no accepted artifact`;
+              break;
+            }
             altered = acceptedCopyProblem(runDir, accepted.artifact);
             if (altered !== undefined) break;
             const acceptedRef = acceptedRefOf(snapshot, runDir, latest);
-            if (acceptedRef === null) continue;
+            if (acceptedRef === null) {
+              unresolved = `${ref.label}: stage ${ref.from.stageId} has no accepted artifact`;
+              break;
+            }
             inputs.push({
               label: ref.label,
               path: acceptedRef.acceptedPath,
@@ -537,7 +565,10 @@ export async function runWorkflow<Input>(
             });
           } else {
             const found = latestCheckEvidence(snapshot, runDir, ref.from.checkId);
-            if (found === null) continue;
+            if (found === null) {
+              unresolved = `${ref.label}: check ${ref.from.checkId} has no recorded evidence`;
+              break;
+            }
             let current: string | undefined;
             try {
               current = hashFile(found.path);
@@ -558,6 +589,11 @@ export async function runWorkflow<Input>(
         }
         if (altered !== undefined) {
           written = await end("failed", `input_artifact_altered: ${altered}`);
+          break;
+        }
+        if (unresolved !== undefined) {
+          // A declared input is never silently dropped: nothing is opened or sent.
+          written = await end("failed", `input_unresolved: ${unresolved}`);
           break;
         }
         const revision = await fingerprint(snapshot);
