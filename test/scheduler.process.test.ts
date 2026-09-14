@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -815,6 +815,34 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
 
       const recovered = runScenario("observe-two-timeouts");
       expect(recovered.result).toMatchObject({ outcome: "completed", limit: null });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR2-2. a failed pane stop keeps the recorded outcome and returns an infrastructure error",
+    () => {
+      const report = runScenario("stop-fails");
+      expect(report.result).toMatchObject({ outcome: "completed" });
+      expect(report.error).toMatchObject({ reason: "runtime_cleanup_failed" });
+      expect(String(report.error?.["message"])).toContain(report.names.builder);
+      expect(String(report.error?.["message"])).toContain(report.names.reviewer);
+      expect(ofType(report, "run.terminated")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR2-8. a relative run directory becomes one absolute canonical path in the result and requests",
+    () => {
+      const report = runScenario("relative-run-dir");
+      const canonical = realpathSync(report.runDir);
+      expect(report.result).toMatchObject({ outcome: "completed", runDir: canonical });
+      expect(report.requests.length).toBeGreaterThan(0);
+      for (const request of report.requests) {
+        expect(request.text).toContain(`--run-dir ${canonical} `);
+        expect(request.text).toContain(`Write your artifact to exactly: ${canonical}/artifacts/`);
+      }
     },
     SCENARIO_TIMEOUT,
   );

@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -354,7 +355,8 @@ describe("woof run build-review: runs", () => {
       `const { deriveRunResult } = await import(${JSON.stringify(distUrl("state/result.js"))});
 const shown = JSON.parse(process.argv[1]);
 console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.argv[2], repository: process.argv[3] })));`,
-      [shown.stdout.trim(), ws.runDir, ws.repo],
+      // The scheduler reports the canonical run directory.
+      [shown.stdout.trim(), realpathSync(ws.runDir), ws.repo],
     );
     expect(derived.status, derived.stderr).toBe(0);
     expect(JSON.parse(derived.stdout.trim())).toEqual(printed.result);

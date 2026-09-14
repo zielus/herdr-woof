@@ -12,6 +12,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -178,7 +179,19 @@ async function scenario(options) {
     openPane: (input) => runtime.openPane(input),
     startAgent: (input) => runtime.startAgent(input),
     waitFor: (handle, states, timeoutMs) => runtime.waitFor(handle, states, timeoutMs),
-    stop: (handle, input) => runtime.stop(handle, input),
+    stop: (handle, input) =>
+      options.stopFails === true
+        ? Promise.resolve({
+            ok: false,
+            error: {
+              code: "runtime_error",
+              runtimeCode: null,
+              message: "injected stop failure",
+              command: [],
+              exitCode: null,
+            },
+          })
+        : runtime.stop(handle, input),
     async deliver(handle, text, input) {
       // A fast worker submits while the prompt is still being delivered.
       if (options.submitInDeliver?.(agentOf[handle.runtimeName]) === true) {
@@ -259,7 +272,8 @@ async function scenario(options) {
   context.abort = () => controller.abort();
   const startedAt = Date.now();
   const out = await runWorkflow({
-    runDir,
+    // relativeRunDir: the SDK boundary resolves a relative run directory itself.
+    runDir: options.relativeRunDir === true ? relative(process.cwd(), runDir) : runDir,
     definition,
     input: admitted.input,
     repository: admitted.repository,
@@ -307,7 +321,8 @@ async function scenario(options) {
     elapsedMs,
     marks: context.marks,
     names,
-    runDir,
+    // The scheduler reports and renders the canonical run directory.
+    runDir: realpathSync(runDir),
     repo,
   };
 }
@@ -812,6 +827,20 @@ await withJournalLock(runDir, async () => {
       workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
       observeError: (agentId, count) =>
         agentId === "builder" && (count === 2 || count === 3) ? "timeout" : undefined,
+    }),
+
+  "stop-fails": () =>
+    scenario({
+      verify: false,
+      stopFails: true,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "relative-run-dir": () =>
+    scenario({
+      verify: false,
+      relativeRunDir: true,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
     }),
 
   "fast-worker": () =>

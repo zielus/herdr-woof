@@ -1,4 +1,5 @@
-import { posix } from "node:path";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { Limits } from "../domain/types.js";
@@ -83,7 +84,9 @@ export interface RunWorkflowResult {
   /** The terminal outcome; null only when the journal could not be read or written. */
   result: RunResult | null;
   error: {
-    reason: "journal_unavailable" | "journal_corrupt" | "engine_invariant";
+    /** `runtime_cleanup_failed`: the run ended, but an owned pane could not be stopped. */
+    reason:
+      "journal_unavailable" | "journal_corrupt" | "engine_invariant" | "runtime_cleanup_failed";
     message: string;
   } | null;
   stats: { ticks: number; maxSnapshotMs: number; dropped: { stale: number; duplicate: number } };
@@ -109,7 +112,9 @@ type Written<T> =
 export async function runWorkflow<Input>(
   options: RunWorkflowOptions<Input>,
 ): Promise<RunWorkflowResult> {
-  const { runDir, definition, runtime } = options;
+  const { definition, runtime } = options;
+  // One absolute canonical run directory for every path the run produces (results, requests, env).
+  const runDir = canonicalDirectory(options.runDir);
   const clock = options.clock ?? Date.now;
   const pollMs = options.pollMs ?? 1000;
   const sleep =
@@ -197,11 +202,18 @@ export async function runWorkflow<Input>(
   };
 
   const settle = async (): Promise<RunWorkflowResult> => {
+    const cleanup: string[] = [];
     if (options.keepPanes !== true) {
       for (const view of Object.values(agents)) {
-        if (view.handle === null) continue;
+        // An agent last observed gone has no pane left to close.
+        if (view.handle === null || view.last?.lifecycle === "gone") continue;
         // oxlint-disable-next-line no-await-in-loop
-        await runtime.stop(view.handle, { timeoutMs: STOP_TIMEOUT_MS });
+        const stopped = await runtime.stop(view.handle, { timeoutMs: STOP_TIMEOUT_MS });
+        if (!stopped.ok) {
+          cleanup.push(
+            `${view.handle.runtimeName} (pane ${view.handle.paneId}): ${stopped.error.code}: ${stopped.error.message}`,
+          );
+        }
       }
     }
     const final = read();
@@ -216,8 +228,15 @@ export async function runWorkflow<Input>(
       };
     }
     return {
-      result: deriveRunResult(final.snapshot, { runDir: posix.normalize(runDir), repository }),
-      error: null,
+      result: deriveRunResult(final.snapshot, { runDir, repository }),
+      // The recorded outcome stands; a pane that could not be closed is an infrastructure error.
+      error:
+        cleanup.length === 0
+          ? null
+          : {
+              reason: "runtime_cleanup_failed",
+              message: `could not stop ${cleanup.join("; ")}`.slice(0, 2000),
+            },
       stats,
     };
   };
@@ -950,6 +969,16 @@ export async function runWorkflow<Input>(
       });
     }
     if (done !== undefined) return done;
+  }
+}
+
+/** The absolute path with symlinks resolved; the absolute path when it cannot be resolved. */
+function canonicalDirectory(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return absolute;
   }
 }
 
