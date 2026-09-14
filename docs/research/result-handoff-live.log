@@ -1,28 +1,28 @@
 
 == environment
 mode: run
-date: 2026-09-14T04:14:01Z
-commit: d1c3ee4621e81612a671769a14288bad5a0ffccd
+date: 2026-09-14T06:19:12Z
+commit: 66f256494f9d6c3b7a6f091177209c65ebf30889
 herdr: herdr 0.9.0
 claude: 2.1.270 (Claude Code)
 node: v26.7.0
 bun: 1.3.2
-run id: live-handoff-20260914-061401
-run dir: /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401
-agent: handoff-worker-20260914-061401
+run id: live-handoff-20260914-081912
+run dir: /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
+agent: handoff-worker-20260914-081912
 verifier pane: w8P:p4
 $ rm -rf dist && tsc --project tsconfig.build.json
 build: ok
 
 == worker pane
-worker pane: w8P:pD
+worker pane: w8P:pJ
 
 == attempt
-{"outcome":"opened","attempt":{"runId":"live-handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","visit":1,"attempt":1,"seq":2,"verdicts":["pass","fail"],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401/artifacts/report/visit-1/attempt-1","paneId":"w8P:pD"}}
+{"outcome":"opened","attempt":{"runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"seq":2,"verdicts":["pass","fail"],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1","paneId":"w8P:pJ"}}
 
 == worker agent
-{"id":"cli:agent:start","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"212953ca-5478-442f-b687-fc908450063c"},"agent_status":"idle","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-061401","pane_id":"w8P:pD","revision":3,"state_change_seq":562,"tab_id":"w8P:t1","terminal_id":"term_65b69a9f4699b37","terminal_title":"✳ Claude Code","terminal_title_stripped":"Claude Code","workspace_id":"w8P"},"argv":["claude","--permission-mode","auto","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401"],"type":"agent_started"}}
-{"id":"cli:agent:prompt","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"212953ca-5478-442f-b687-fc908450063c"},"agent_status":"done","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-061401","pane_id":"w8P:pD","revision":4,"state_change_seq":564,"tab_id":"w8P:t1","terminal_id":"term_65b69a9f4699b37","terminal_title":"✳ Rejection-order review report","terminal_title_stripped":"Rejection-order review report","workspace_id":"w8P"},"type":"agent_prompted"}}
+{"id":"cli:agent:start","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"idle","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":3,"state_change_seq":613,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Claude Code","terminal_title_stripped":"Claude Code","workspace_id":"w8P"},"argv":["claude","--permission-mode","auto","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912"],"type":"agent_started"}}
+{"id":"cli:agent:prompt","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"done","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":4,"state_change_seq":616,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Rejection-order review report","terminal_title_stripped":"Rejection-order review report","workspace_id":"w8P"},"type":"agent_prompted"}}
 
 == waiting for acceptance (the journal is the only proof)
 
@@ -30,224 +30,216 @@ worker pane: w8P:pD
 
 == hard gates
 PASS: exactly one submission.accepted
-{"schemaVersion":1,"seq":3,"ts":"2026-09-14T04:14:51.990Z","type":"submission.accepted","runId":"live-handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","visit":1,"attempt":1,"status":"completed","verdict":"pass","envelopeDigest":"6b5349317e877ae29451945d018c92923d5220fb09b021f310342af5a4142747","artifact":{"path":"artifacts/report/visit-1/attempt-1/report.md","sha256":"ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc192d1532908675b27fd","bytes":5110,"acceptedPath":"accepted/report/visit-1/attempt-1/report.md"},"paneId":"w8P:pD","receiptId":"rcpt-3-6b5349317e87"}
+{"schemaVersion":1,"seq":3,"ts":"2026-09-14T06:20:00.267Z","type":"submission.accepted","runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"status":"completed","verdict":"pass","envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","artifact":{"path":"artifacts/report/visit-1/attempt-1/report.md","sha256":"3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3f37dff5a1da54870d","bytes":5150,"acceptedPath":"accepted/report/visit-1/attempt-1/report.md"},"paneId":"w8P:pJ","receiptId":"rcpt-3-27f4e6b49931"}
 PASS: accepted identity and pane match the attempt
 PASS: worker artifact sha256 equals the accepted record
 PASS: accepted copy sha256 equals the accepted record
 PASS: artifact title present
 PASS: artifact verdict section present
-PASS: artifact has at least 250 words (598)
-PASS: artifact has at least 5 sections (17)
+PASS: artifact has at least 250 words (601)
+PASS: artifact has at least 5 sections (18)
 PASS: artifact has at least 5 submit.ts:line references (17)
 PASS: repository tree unchanged by the worker
 
 == negative probe from the verifier pane
-{"outcome":"rejected","reason":"owner_mismatch","message":"submission does not come from the attempt owner","details":[{"field":"paneId","message":"attempt is bound to pane w8P:pD, submitted from w8P:p4"}]}
+{"outcome":"rejected","reason":"owner_mismatch","message":"submission does not come from the attempt owner","details":[{"field":"paneId","message":"attempt is bound to pane w8P:pJ, submitted from w8P:p4"}]}
 exit=2
 PASS: negative probe exits 2
 PASS: negative probe is owner_mismatch naming paneId
 PASS: still exactly one submission.accepted
 
 == warnings (logged, not gates)
-submission.duplicate records: 1
 submission.rejected records: 1
 
-== journal
-{"schemaVersion":1,"seq":1,"ts":"2026-09-14T04:14:01.389Z","type":"run.opened","runId":"live-handoff-20260914-061401"}
-{"schemaVersion":1,"seq":2,"ts":"2026-09-14T04:14:01.394Z","type":"attempt.opened","runId":"live-handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","visit":1,"attempt":1,"verdicts":["pass","fail"],"artifactDir":"artifacts/report/visit-1/attempt-1","paneId":"w8P:pD"}
-{"schemaVersion":1,"seq":3,"ts":"2026-09-14T04:14:51.990Z","type":"submission.accepted","runId":"live-handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","visit":1,"attempt":1,"status":"completed","verdict":"pass","envelopeDigest":"6b5349317e877ae29451945d018c92923d5220fb09b021f310342af5a4142747","artifact":{"path":"artifacts/report/visit-1/attempt-1/report.md","sha256":"ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc192d1532908675b27fd","bytes":5110,"acceptedPath":"accepted/report/visit-1/attempt-1/report.md"},"paneId":"w8P:pD","receiptId":"rcpt-3-6b5349317e87"}
-{"schemaVersion":1,"seq":4,"ts":"2026-09-14T04:14:56.963Z","type":"submission.duplicate","receiptId":"rcpt-3-6b5349317e87","acceptedSeq":3,"envelopeDigest":"6b5349317e877ae29451945d018c92923d5220fb09b021f310342af5a4142747","paneId":"w8P:pD"}
-{"schemaVersion":1,"seq":5,"ts":"2026-09-14T04:15:12.403Z","type":"submission.rejected","reason":"owner_mismatch","message":"submission does not come from the attempt owner","details":[{"field":"paneId","message":"attempt is bound to pane w8P:pD, submitted from w8P:p4"}],"envelopeDigest":"6b5349317e877ae29451945d018c92923d5220fb09b021f310342af5a4142747","identity":{"runId":"live-handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","visit":1,"attempt":1},"paneId":"w8P:p4"}
+== resubmission gate
+submission.duplicate records: 1
+PASS: worker's identical resubmission returned a duplicate receipt (1)
 
-== accepted artifact (/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401/accepted/report/visit-1/attempt-1/report.md)
+== journal
+{"schemaVersion":1,"seq":1,"ts":"2026-09-14T06:19:13.016Z","type":"run.opened","runId":"live-handoff-20260914-081912"}
+{"schemaVersion":1,"seq":2,"ts":"2026-09-14T06:19:13.024Z","type":"attempt.opened","runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"verdicts":["pass","fail"],"artifactDir":"artifacts/report/visit-1/attempt-1","paneId":"w8P:pJ"}
+{"schemaVersion":1,"seq":3,"ts":"2026-09-14T06:20:00.267Z","type":"submission.accepted","runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"status":"completed","verdict":"pass","envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","artifact":{"path":"artifacts/report/visit-1/attempt-1/report.md","sha256":"3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3f37dff5a1da54870d","bytes":5150,"acceptedPath":"accepted/report/visit-1/attempt-1/report.md"},"paneId":"w8P:pJ","receiptId":"rcpt-3-27f4e6b49931"}
+{"schemaVersion":1,"seq":4,"ts":"2026-09-14T06:20:04.424Z","type":"submission.duplicate","receiptId":"rcpt-3-27f4e6b49931","acceptedSeq":3,"envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","paneId":"w8P:pJ"}
+{"schemaVersion":1,"seq":5,"ts":"2026-09-14T06:20:16.164Z","type":"submission.rejected","reason":"owner_mismatch","message":"submission does not come from the attempt owner","details":[{"field":"paneId","message":"attempt is bound to pane w8P:pJ, submitted from w8P:p4"}],"envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","identity":{"runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1},"paneId":"w8P:p4"}
+
+== accepted artifact (/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/accepted/report/visit-1/attempt-1/report.md)
 # Rejection-order review
 
-Source: `src/contracts/reasons.ts` (REJECTION_REASONS) and `src/submission/submit.ts` (`submitResult` and `decide`). Line numbers refer to `src/submission/submit.ts`.
+Source: `src/contracts/reasons.ts` (REJECTION_REASONS, 17 codes) checked against `src/submission/submit.ts` (`submitResult` and `decide`).
 
 ## run_dir_invalid
 
-Triggered when no run directory is given (`runDir` undefined or empty), or when the resolved run directory does not contain `journal.jsonl` (checked via `journalPresent`, which accepts a regular file or a symlink). Checked at src/submission/submit.ts:86 and src/submission/submit.ts:90.
+Triggered when no run directory is given (src/submission/submit.ts:104), when the journal entry cannot be lstat-inspected (src/submission/submit.ts:113), when the run directory holds no `journal.jsonl` (src/submission/submit.ts:119), or, under the lock, when the journal has no `run.opened` record (src/submission/submit.ts:153).
 
 ## envelope_malformed
 
-Triggered when the envelope file cannot be opened or read (`readEnvelopeFile` returns an error object). Decided before the lock at src/submission/submit.ts:100-101, then journaled under the lock at src/submission/submit.ts:123-127 (which also uses this code as a fallback when nothing was parsed). Oversized (> 64 KiB) or non-object JSON is surfaced through `parseEnvelope`'s returned reason at src/submission/submit.ts:104-108.
+Triggered when the envelope file cannot be read, exceeds 64 KiB, or is not a JSON object. Parsed before the lock at src/submission/submit.ts:131, reported and journaled under the lock at src/submission/submit.ts:160.
 
 ## envelope_invalid
 
-Triggered when the raw bytes parse but do not match envelope schema v1; the reason comes back from `parseEnvelope` and is turned into a pre-lock rejection at src/submission/submit.ts:104-108, journaled at src/submission/submit.ts:123-133.
+Triggered when the envelope parses as JSON but fails schema v1. Produced by `parseEnvelope` at src/submission/submit.ts:139 (reason passed through), reported under the lock at src/submission/submit.ts:160.
 
 ## journal_busy
 
-Triggered when the journal lock cannot be acquired within the lock options; `withJournalLock` returns a not-ok result whose reason is passed through at src/submission/submit.ts:116 and src/submission/submit.ts:144.
+Triggered when the journal lock cannot be acquired. Surfaces from `withJournalLock` at src/submission/submit.ts:181 (`locked.reason`), and from `readJournal` at src/submission/submit.ts:151.
 
 ## journal_corrupt
 
-Triggered when the journal does not replay cleanly or is no longer a regular in-run file. Checked at src/submission/submit.ts:119-120 (`readJournal` under the lock), src/submission/submit.ts:171-173 (typed replay inside `decide`), src/submission/submit.ts:232-234 (duplicate retry whose accepted copy is missing or altered), and src/submission/submit.ts:358-360 (`writeFailure` mapping a `JournalFileError` to this code).
+Triggered when the journal entry is a symlink or non-regular file (src/submission/submit.ts:121), when the journal does not replay cleanly (src/submission/submit.ts:151 via `readJournal`, src/submission/submit.ts:210 via `replay`), when a duplicate submission's accepted copy is missing or altered (src/submission/submit.ts:271), or when a journal write fails with `JournalFileError` (src/submission/submit.ts:397).
 
 ## run_mismatch
 
-Triggered when `envelope.runId` differs from the journal's `state.runId`. Checked at src/submission/submit.ts:178.
+Triggered when the envelope's `runId` differs from the journal's run. Checked at src/submission/submit.ts:215.
 
 ## attempt_unknown
 
-Triggered when no attempt was opened for the envelope's stage, visit and attempt (`state.attempts.get(...)` is undefined). Checked at src/submission/submit.ts:185-188.
+Triggered when no `attempt.opened` record exists for the envelope's stage, visit and attempt. Checked at src/submission/submit.ts:225.
 
 ## owner_mismatch
 
-Triggered when `envelope.agentId` is not the opening agent, or when both the opened attempt and the submitter carry a paneId and they differ. Checked at src/submission/submit.ts:197-213, rejected at src/submission/submit.ts:214.
+Triggered when the envelope's `agentId` differs from the attempt owner (src/submission/submit.ts:234) or, when both sides carry a pane id, the submitting pane differs from the bound pane (src/submission/submit.ts:240). Rejected at src/submission/submit.ts:250.
 
 ## attempt_closed_conflict
 
-Triggered when the attempt is already accepted and the new envelope digest differs from the accepted digest. Checked at src/submission/submit.ts:223-225. (Same digest with an intact accepted copy yields a `duplicate` outcome at src/submission/submit.ts:247, not a rejection.)
+Triggered when the attempt is already accepted and the new envelope's digest differs from the accepted one. Checked at src/submission/submit.ts:262. (Same digest with an intact copy yields `duplicate` at src/submission/submit.ts:284; same digest with a broken copy yields `journal_corrupt` at src/submission/submit.ts:271.)
 
 ## attempt_stale
 
-Triggered when the attempt's status is `superseded` by a newer opened attempt. Checked at src/submission/submit.ts:251.
+Triggered when the attempt's status is `superseded` by a newer opened attempt. Checked at src/submission/submit.ts:288.
 
 ## verdict_not_allowed
 
-Triggered when `verdictAllowed(attempt.opened.verdicts, envelope.verdict)` is false. Checked at src/submission/submit.ts:257.
+Triggered when the envelope verdict is not in the attempt's allowed verdicts (or is non-null when none are allowed). Checked at src/submission/submit.ts:294.
 
 ## artifact_out_of_scope
 
-Triggered when `envelope.artifact.path` does not resolve inside the attempt's artifact directory; `resolveArtifact` returns this reason and it is rejected at src/submission/submit.ts:271-273.
+Triggered when the artifact path does not resolve inside the attempt's artifact directory. Delegated to `resolveArtifact` at src/submission/submit.ts:308, rejected with the returned reason at src/submission/submit.ts:310.
 
 ## artifact_missing
 
-Triggered when the resolved artifact does not exist or is not a regular file; returned by `resolveArtifact` and rejected at src/submission/submit.ts:271-273.
+Triggered when the artifact does not exist or is not a regular file. Delegated to `resolveArtifact` at src/submission/submit.ts:308, rejected at src/submission/submit.ts:310.
 
 ## artifact_empty
 
-Triggered when the artifact has no non-whitespace content; returned by `resolveArtifact` and rejected at src/submission/submit.ts:271-273.
+Triggered when the artifact has no non-whitespace content. Delegated to `resolveArtifact` at src/submission/submit.ts:308, rejected at src/submission/submit.ts:310.
+
+## artifact_too_large
+
+Triggered when the artifact exceeds MAX_ARTIFACT_BYTES (32 MiB), decided from file size before the content read. Delegated to `resolveArtifact` at src/submission/submit.ts:308, rejected at src/submission/submit.ts:310.
 
 ## artifact_hash_mismatch
 
-Triggered when the sha256 of the artifact bytes differs from `envelope.artifact.sha256`. Checked at src/submission/submit.ts:279-280. Also raised at src/submission/submit.ts:302-304 when the published accepted copy hashes differently from the bytes that were checked.
+Triggered when the sha256 of the artifact bytes differs from `artifact.sha256` (src/submission/submit.ts:317), or when the published accepted copy hashes differently from the bytes read (src/submission/submit.ts:339).
 
 ## journal_write_failed
 
-Triggered when the journal lock throws (src/submission/submit.ts:138-141), when the accepted copy cannot be published (src/submission/submit.ts:294-299), when the acceptance record cannot be appended (src/submission/submit.ts:328-333, after removing the unreferenced copy), when a duplicate record cannot be appended (src/submission/submit.ts:244-245), or when a rejection cannot be journaled (src/submission/submit.ts:351-352). All go through `writeFailure` at src/submission/submit.ts:358-362, except the lock and publish paths which build the rejection directly.
+Triggered when the lock call itself throws (src/submission/submit.ts:176), when the duplicate record cannot be appended (src/submission/submit.ts:282), when the accepted copy cannot be published (src/submission/submit.ts:334), when the acceptance record cannot be appended (src/submission/submit.ts:367), or when a rejection record cannot be appended (src/submission/submit.ts:389). Mapped by `writeFailure` at src/submission/submit.ts:397.
 
 ## Verdict
 
 pass
 
-The `decide` function and the pre-lock section of `submitResult` check reasons in the same order as the numbered list in the `submitResult` doc comment (steps 1 to 15), and that order is identical to the order of `REJECTION_REASONS` in `src/contracts/reasons.ts`. Steps 11 to 13 (scope, existence, content) are delegated to `resolveArtifact` in a single call at src/submission/submit.ts:271; their relative order inside that helper was not verified from `submit.ts` itself, but the position of the group between `verdict_not_allowed` and `artifact_hash_mismatch` matches the doc comment.
+The implementation follows the doc-comment order of `submitResult` (steps 1–18): run directory and journal entry (1), lock (2), replay (3), opened run (4), envelope malformed/invalid reported under the lock (5–6), run (7), attempt (8), owner (9), closed attempt (10), stale (11), verdict (12), artifact checks (13–16), hash (17), publish and append (18). The envelope is parsed before the lock but its rejection is reported only after checks 2–4, exactly as the doc comment states. The internal order of checks 13–16 is delegated to `resolveArtifact` in `src/submission/artifact.ts` and is not visible from `submit.ts` alone; this review did not open that file.
 
 == worker pane (recent)
-claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401
-➜  feat-result-handoff git:(feat/result-handoff) ✗ claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401
+claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
+➜  feat-result-handoff git:(feat/result-handoff) ✗ claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
  ▐▛███▛█   Claude Code v2.1.270
 ▝▜██████▀  Fable 5.1 with high effort · Claude Max
   ▝▝ ▝▝    ~/.herdr/worktrees/herdr-woof/feat-result-handoff
 
 
-❯ You are worker handoff-worker-20260914-061401 for Woof run live-handoff-20260914-061401,
+❯ You are worker handoff-worker-20260914-081912 for Woof run live-handoff-20260914-081912,
   stage "report", visit 1, attempt 1. The run directory is /Users/zielu/.herdr-dev/runs/h
-  erdr-woof/p1-result-handoff/live/live-handoff-20260914-061401. Do this and nothing else:
+  erdr-woof/p1-result-handoff/live/live-handoff-20260914-081912. Do this and nothing else:
 
   1. Read src/contracts/reasons.ts and src/submission/submit.ts in this repository.
   2. Write a Markdown artifact to /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handof
-  f/live/live-handoff-20260914-061401/artifacts/report/visit-1/attempt-1/report.md. Title
+  f/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1/report.md. Title
   it "# Rejection-order review" and give it one "## <reason_code>" section for every code
   in REJECTION_REASONS. Each section states the condition that triggers the code and the
   src/submission/submit.ts:<line> where it is checked. End with a "## Verdict" section
   stating pass if the implementation order matches the order in the doc comment of
   submitResult, otherwise fail with the discrepancy.
   3. Compute its hash: shasum -a 256 /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-han
-  doff/live/live-handoff-20260914-061401/artifacts/report/visit-1/attempt-1/report.md
+  doff/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1/report.md
   4. Write /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-202
-  60914-061401/outbox/envelope.json containing one JSON object with schemaVersion 1, runId
-  "live-handoff-20260914-061401", agentId "handoff-worker-20260914-061401", stageId
+  60914-081912/outbox/envelope.json containing one JSON object with schemaVersion 1, runId
+  "live-handoff-20260914-081912", agentId "handoff-worker-20260914-081912", stageId
   "report", visit 1, attempt 1, status "completed", verdict set to your verdict ("pass" or
   "fail"), and artifact {"path": "artifacts/report/visit-1/attempt-1/report.md",
   "sha256": "<the hash>"}.
   5. Run bin/woof submit --envelope /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-hand
-  off/live/live-handoff-20260914-061401/outbox/envelope.json and show its JSON output. If
+  off/live/live-handoff-20260914-081912/outbox/envelope.json and show its JSON output. If
   it is rejected, fix only what the reason names and submit again, at most 3 times.
   6. Run the exact same submit command once more and show its output.
 
   Do not modify any repository file.
 
-⏺ I'll read the two source files, write the report, hash it, build the envelope, then
-  submit twice.
+⏺ I'll read the two source files, write the report, hash it, write the envelope, and submit
+  twice.
 
-  Reading 1 file… (ctrl+o to expand)
-  Read 2 files (ctrl+o to expand)
-
-⏺ Bash(RUN=/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-2026
-✶ Gall0914-06140135s · ↓ 2.1k tokens)
-      mkdir -p "$RUN/artifacts/report/visit-1/attempt-1" "$RUN/outbox"…)
-  ⎿  ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc192d1532908675b27fd──/Users/zielu/.h─────
-     erdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-061401/arti
-     facts/report/visit-1/attempt-1/report.md──────────────────────────────────────────────
-  ⎿  Allowed by auto mode classifier
+  Read 1 file (ctrl+o to expand)
 
 ⏺ Bash(RUN=/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-2026
-      0914-061401
-      cat > "$RUN/outbox/envelope.json" <<'EOF'…)
-  ⎿  --- submit 1 ---
+      0914-081912
+      REPORT=$RUN/artifacts/report/visit-1/attempt-1/report.md…)
+  ⎿  sha256: 3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3f37dff5a1da54870d
      {
-       "outcome": "accepted",
-     … +21 lines (ctrl+o to expand)
+       "schemaVersion": 1,
+     … +34 lines (ctrl+o to expand)
   ⎿  Allowed by auto mode classifier
 
-⏺ Bash(echo "--- submit 2 ---" && bin/woof submit --envelope /Users/zielu/.herdr-dev/runs/h
-      erdr-woof/p1-result-handoff/live/live-handoff-20260914-061401/outbox/envelop…)
-  ⎿  --- submit 2 ---
-     {
+⏺ Bash(bin/woof submit --envelope /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff
+      /live/live-handoff-20260914-081912/outbox/envelope.json; echo "exit: $?")
+  ⎿  {
        "outcome": "duplicate",
-     … +22 lines (ctrl+o to expand)
+       "receipt": {
+     … +20 lines (ctrl+o to expand)
   ⎿  Allowed by auto mode classifier
 
-⏺ 🧭 Atlas · Woof worker handoff-worker-20260914-061401 · stage report · done
+⏺ 🧭 Atlas — stage report, visit 1, attempt 1: done. Verdict pass, first submit accepted,
+  second returned the same receipt as a duplicate. No repository files were modified.
 
-  Report written, hashed, enveloped, submitted twice. No repository file was modified.
-  Verdict: pass.
+  Report: artifacts/report/visit-1/attempt-1/report.md covers all 17 codes in
+  REJECTION_REASONS, each with its trigger condition and src/submission/submit.ts:<line>.
+  The implementation order matches the submitResult doc comment (steps 1–18), including
+  envelope parse-before-lock with rejection reported after checks 2–4. One caveat is stated
+  in the verdict: the internal order of checks 13–16 lives in resolveArtifact
+  (artifact.ts), which was outside the two files I was told to read.
 
-  What the report says: one section per code in REJECTION_REASONS (16 codes), each with its
-  trigger and the checking line in src/submission/submit.ts. The order in decide plus the
-  pre-lock section matches the numbered doc comment on submitResult steps 1 through 15, and
-  that order equals the array order in src/contracts/reasons.ts. One caveat is stated
-  inline: steps 11 to 13 (scope, missing, empty) are delegated to a single resolveArtifact
-  call, so their relative order inside that helper was not verified from submit.ts itself.
+  Artifact sha256: 3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3f37dff5a1da54870d
 
-  Artifact hash
-  ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc192d1532908675b27fd
-  artifacts/report/visit-1/attempt-1/report.md
-
-  Submit 1 (accepted, first try, no fixes needed):
-  {"outcome":"accepted","receipt":{"receiptId":"rcpt-3-6b5349317e87","seq":3,"runId":"live-
-  handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","v
-  isit":1,"attempt":1,"acceptedAt":"2026-09-14T04:14:51.990Z","envelopeDigest":"6b5349317e8
-  77ae29451945d018c92923d5220fb09b021f310342af5a4142747","artifact":{"path":"artifacts/repo
-  rt/visit-1/attempt-1/report.md","sha256":"ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc19
-  2d1532908675b27fd","bytes":5110,"acceptedPath":"accepted/report/visit-1/attempt-1/report.
+  Submit 1 (accepted):
+  {"outcome":"accepted","receipt":{"receiptId":"rcpt-3-27f4e6b49931","seq":3,"runId":"live-
+  handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","v
+  isit":1,"attempt":1,"acceptedAt":"2026-09-14T06:20:00.267Z","envelopeDigest":"27f4e6b4993
+  18d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","artifact":{"path":"artifacts/repo
+  rt/visit-1/attempt-1/report.md","sha256":"3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3
+  f37dff5a1da54870d","bytes":5150,"acceptedPath":"accepted/report/visit-1/attempt-1/report.
   md"}}}
 
-  Submit 2 (identical command, returns the prior receipt as a duplicate):
-
-  -handoff-20260914-061401","agentId":"handoff-worker-20260914-061401","stageId":"report","
-  visit":1,"attempt":1,"acceptedAt":"2026-09-14T04:14:51.990Z","envelopeDigest":"6b5349317e
-  877ae29451945d018c92923d5220fb09b021f310342af5a4142747","artifact":{"path":"artifacts/rep
-  ort/visit-1/attempt-1/report.md","sha256":"ed9282bd9eafc19f9739a6ae46b83c4081f074fcb57cc1
-  92d1532908675b27fd","bytes":5110,"acceptedPath":"accepted/report/visit-1/attempt-1/report
+  Submit 2 (duplicate, same receipt):
+  {"outcome":"duplicate","receipt":{"receiptId":"rcpt-3-27f4e6b49931","seq":3,"runId":"live
+  -handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","
+  visit":1,"attempt":1,"acceptedAt":"2026-09-14T06:20:00.267Z","envelopeDigest":"27f4e6b499
+  318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","artifact":{"path":"artifacts/rep
+  ort/visit-1/attempt-1/report.md","sha256":"3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd
+  3f37dff5a1da54870d","bytes":5150,"acceptedPath":"accepted/report/visit-1/attempt-1/report
   .md"}}}
 
-  Both exited 0. git status shows one untracked file,
-  docs/research/result-handoff-live.log, which I did not create or touch.
+  Both exited 0. Envelope is at outbox/envelope.json in the run directory.
 
-  🗣️ Report stage submitted and accepted, verdict pass, resubmit returned the same receipt
-  as a duplicate.
+  🗣️ Report accepted, verdict pass, duplicate resubmit returned the same receipt.
 
-✻ Sautéed for 1m 5s · done 6:15 AM
+✻ Worked for 57s · done 8:20 AM
 
 ───────────────────────────────────────────────────────────────────────────────────────────
 ❯ 
 ───────────────────────────────────────────────────────────────────────────────────────────
   🤖 Fable 5.1 ⚡high 💡 │ 🎨 default │ 📂 ~/.herdr/worktrees/herdr-woof/feat-result-han…
-  🧠 Context █░░░░░░░░░ 9% │ 5H █░░░░░░░░░ 6% (2h54m) │ 7D ███░░░░░░░ 34% (Wed)
-  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+  🧠 Context █░░░░░░░░░ 9% │ 5H █░░░░░░░░░ 12% (0h49m) │ 7D ████░░░░░░ 35% (Wed)
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #3 · ← for agents
                                                                                       /rc
 == human inspection
 REQUIRED: the verifier reads the accepted artifact above, confirms that its
