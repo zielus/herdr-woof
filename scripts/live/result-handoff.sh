@@ -35,7 +35,7 @@ if [ "${HERDR_ENV:-}" != 1 ]; then
   echo "FAIL: run this inside Herdr (HERDR_ENV=1)" >&2
   exit 1
 fi
-for tool in herdr claude node bun jq shasum rg git; do
+for tool in herdr claude node bun jq shasum grep git; do
   command -v "$tool" >/dev/null || {
     echo "FAIL: $tool is not on PATH" >&2
     exit 1
@@ -73,8 +73,15 @@ gate() {
   if "$@"; then pass "$description"; else fail "$description"; fi
 }
 
+# On a failed exit, print the worker pane before closing it so the evidence
+# survives in the log.
 close_pane() {
+  local status=$?
   if [ -n "$PANE" ] && [ "${WOOF_LIVE_KEEP_PANE:-0}" != 1 ]; then
+    if [ "$status" -ne 0 ]; then
+      printf '\n== worker pane before close (exit %s)\n' "$status"
+      herdr pane read "$PANE" --source recent-unwrapped --lines 80 2>&1 || true
+    fi
     herdr pane close "$PANE" >/dev/null 2>&1 || echo "WARN: could not close pane $PANE"
   fi
 }
@@ -145,8 +152,26 @@ bin/woof attempt open --run-dir "$RUN_DIR" --run "$RUN_ID" --agent "$AGENT" \
   --stage "$STAGE" --visit 1 --attempt 1 --verdicts "$VERDICTS" --pane "$PANE"
 
 section "worker agent"
-herdr agent start "$AGENT" --kind claude --pane "$PANE" --timeout 60000 -- \
-  --permission-mode auto --add-dir "$RUN_DIR"
+# Startup can stop at an approval or question and still leave the named agent
+# in the pane, so a failed start is classified rather than exiting blindly.
+set +e
+start_output="$(herdr agent start "$AGENT" --kind claude --pane "$PANE" --timeout 60000 -- \
+  --permission-mode auto --add-dir "$RUN_DIR" 2>&1)"
+start_exit=$?
+set -e
+echo "$start_output"
+if [ "$start_exit" -ne 0 ]; then
+  if [ "$(agent_status)" = blocked ]; then
+    section "worker blocked during startup"
+    read_worker 80
+    echo "BLOCKED: the worker is waiting for approval. Stopping; nothing is auto-approved."
+    exit 4
+  fi
+  section "worker failed to start"
+  read_worker 80
+  echo "FAIL: herdr agent start exited $start_exit: $start_output"
+  exit 1
+fi
 
 if [ "$mode" = probe ]; then
   PROBE_FILE="$RUN_DIR/artifacts/probe/visit-1/attempt-1/probe.md"
@@ -179,7 +204,7 @@ EOF
     exit 1
   fi
 
-  gate "worker wrote into the run directory" rg -q '^probe ok' "$PROBE_FILE"
+  gate "worker wrote into the run directory" grep -q '^probe ok' "$PROBE_FILE"
   REJ="$(jq -c -s 'map(select(.type == "submission.rejected"))[0]' "$J")"
   echo "$REJ"
   probe_submit_ran() {
@@ -261,10 +286,13 @@ gate "worker artifact sha256 equals the accepted record" [ "$(sha_of "$ORIGINAL"
 gate "accepted copy sha256 equals the accepted record" [ "$(sha_of "$A")" = "$H" ]
 
 words="$(wc -w <"$A" | tr -d ' ')"
-sections="$(rg -c '^## ' "$A" || echo 0)"
-refs="$(rg -c 'src/submission/submit\.ts:[0-9]+' "$A" || echo 0)"
-gate "artifact title present" rg -q '^# Rejection-order review' "$A"
-gate "artifact verdict section present" rg -q '^## Verdict' "$A"
+# grep -c prints 0 and exits 1 when nothing matches.
+sections="$(grep -c '^## ' "$A" || true)"
+sections="${sections:-0}"
+refs="$(grep -cE 'src/submission/submit\.ts:[0-9]+' "$A" || true)"
+refs="${refs:-0}"
+gate "artifact title present" grep -q '^# Rejection-order review' "$A"
+gate "artifact verdict section present" grep -q '^## Verdict' "$A"
 gate "artifact has at least 250 words ($words)" [ "$words" -ge 250 ]
 gate "artifact has at least 5 sections ($sections)" [ "$sections" -ge 5 ]
 gate "artifact has at least 5 submit.ts:line references ($refs)" [ "$refs" -ge 5 ]
@@ -300,7 +328,7 @@ fi
 section "warnings (logged, not gates)"
 codes="$(node --input-type=module -e "import('$WT/dist/index.js').then((m) => console.log(m.REJECTION_REASONS.join(' ')))")"
 for code in $codes; do
-  rg -q "^## \`?$code\b" "$A" || warn "no section for $code"
+  grep -qE "^## \`?${code}([^A-Za-z0-9_]|\$)" "$A" || warn "no section for $code"
 done
 duplicates="$(count submission.duplicate)"
 [ "$duplicates" -ge 1 ] || warn "no submission.duplicate from the worker's repeated submit"
