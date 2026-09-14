@@ -1,4 +1,12 @@
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -97,6 +105,24 @@ describe("runCheck", () => {
     const cwd = tempDir("woof-check-");
     const out = check(["woof-no-such-command-xyz"], cwd);
     expect(out).toMatchObject({ exitCode: null, signal: null, timedOut: false });
+    expect(out.output).toContain("# failed to start:");
+  });
+
+  it("reports a synchronous spawn failure (a file as a PATH component) as a failed start", () => {
+    const cwd = tempDir("woof-check-");
+    const file = join(tempDir("woof-path-"), "not-a-dir");
+    writeFileSync(file, "");
+    const result = runNode(
+      `const { runCheck } = await import(${JSON.stringify(distUrl("scheduler/check.js"))});
+const run = await runCheck({ argv: ["woof-no-such-command-xyz"], cwd: process.argv[1], timeoutMs: 5000 });
+console.log(JSON.stringify({ ...run, output: run.output.toString("utf8") }));`,
+      [cwd],
+      { env: { PATH: `${file}:${process.env["PATH"] ?? ""}` }, timeoutMs: 30_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as CheckOut;
+    expect(out).toMatchObject({ exitCode: null, signal: null, timedOut: false, aborted: false });
+    expect(out.output).toContain("$ woof-no-such-command-xyz");
     expect(out.output).toContain("# failed to start:");
   });
 });

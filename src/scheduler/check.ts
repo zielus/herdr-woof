@@ -48,15 +48,38 @@ export async function runCheck(options: {
     }
   };
 
+  const header = (lines: string[]) =>
+    [
+      `$ ${options.argv.join(" ")}`,
+      `# cwd ${options.cwd}`,
+      ...lines,
+      ...(truncated ? [`# output truncated to the last ${MAX_CHECK_OUTPUT_BYTES} bytes`] : []),
+      "",
+    ].join("\n");
+
   return new Promise((resolve) => {
     let timedOut = false;
     let aborted = false;
     let settled = false;
-    const child = spawn(command ?? "", args, {
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command ?? "", args, {
+        cwd: options.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+    } catch (error) {
+      // Executable lookup can throw synchronously (for example ENOTDIR from a PATH
+      // component that is a file); it is the same failed start as an `error` event.
+      resolve({
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        aborted: false,
+        output: Buffer.from(header([`# failed to start: ${(error as Error).message}`]), "utf8"),
+      });
+      return;
+    }
     const killGroup = (signal: NodeJS.Signals) => {
       try {
         if (child.pid !== undefined) process.kill(-child.pid, signal);
@@ -77,28 +100,24 @@ export async function runCheck(options: {
       stop();
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.on("data", keep);
-    child.stderr.on("data", keep);
+    child.stdout?.on("data", keep);
+    child.stderr?.on("data", keep);
     const finish = (exitCode: number | null, signal: string | null, error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      const header = [
-        `$ ${options.argv.join(" ")}`,
-        `# cwd ${options.cwd}`,
+      const text = header([
         error !== undefined
           ? `# failed to start: ${error.message}`
           : `# exit ${exitCode ?? "none"} signal ${signal ?? "none"}${timedOut ? ` timed out after ${options.timeoutMs} ms` : ""}`,
-        ...(truncated ? [`# output truncated to the last ${MAX_CHECK_OUTPUT_BYTES} bytes`] : []),
-        "",
-      ].join("\n");
+      ]);
       resolve({
         exitCode,
         signal,
         timedOut,
         aborted,
-        output: Buffer.concat([Buffer.from(header, "utf8"), ...chunks]),
+        output: Buffer.concat([Buffer.from(text, "utf8"), ...chunks]),
       });
     };
     child.on("error", (error) => finish(null, null, error));
