@@ -500,8 +500,15 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     mkdirSync(planted, { recursive: true });
     expect(spawnSync("mkfifo", [join(planted, "request.md")]).status).toBe(0);
     const began = Date.now();
-    const result = woof(
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, ...scriptedEnv(ws.log) };
+    Reflect.deleteProperty(childEnv, "HERDR_PANE_ID");
+    Reflect.deleteProperty(childEnv, "WOOF_RUN_DIR");
+    // SIGKILL: a CLI blocked in a synchronous FIFO open ignores SIGTERM (its handler never runs),
+    // so a regression must fail this test in bounded time instead of hanging the suite.
+    const result = spawnSync(
+      "node",
       [
+        cliPath,
         "run",
         "build-review",
         "--input",
@@ -515,7 +522,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
         "--runtime-module",
         runtimeModule,
       ],
-      { env: scriptedEnv(ws.log), timeoutMs: 20_000 },
+      { env: childEnv, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
     );
     expect(Date.now() - began).toBeLessThan(15_000);
     expect(result.status, result.stderr).toBe(4);
