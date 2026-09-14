@@ -282,7 +282,18 @@ export function createScriptedRuntime(options: {
       }
       state.cursor += 1;
       const entry = state.timeline[state.cursor] as TimelineEntry;
-      return { outcome: "started", observation: observation(state, handle, entry) };
+      const seen = observation(state, handle, entry);
+      // As in the Herdr adapter: a started delivery must be observed working or blocked.
+      if (seen.lifecycle !== "working" && seen.lifecycle !== "blocked") {
+        return {
+          outcome: "ambiguous",
+          error: runtimeError(
+            "protocol_error",
+            `scripted agent ${handle.runtimeName} reported ${entry.status} after delivery, not working or blocked`,
+          ),
+        };
+      }
+      return { outcome: "started", observation: seen };
     },
 
     async stop(handle: AgentHandle, stopping: { timeoutMs: number }) {

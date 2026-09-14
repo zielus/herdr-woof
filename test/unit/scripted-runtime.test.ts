@@ -221,6 +221,29 @@ describe("scripted runtime adapter behaviour", () => {
     ]);
   });
 
+  it("reports a started delivery not observed working or blocked as ambiguous protocol_error", async () => {
+    for (const status of ["idle", "done", "unknown"]) {
+      const { runtime, handle } = await started({
+        timeline: [{ status: "idle", stateChangeSeq: 1, terminalId: "t1" }],
+        afterDeliver: [{ status, stateChangeSeq: 2, terminalId: "t1" }],
+      });
+      const delivery = await runtime.deliver(handle, "hello", { timeoutMs: 10 });
+      expect(delivery, status).toMatchObject({
+        outcome: "ambiguous",
+        error: { code: "protocol_error" },
+      });
+      expect(runtime.calls().find((call) => call.method === "deliver")?.args["sent"]).toBe(true);
+    }
+    const { runtime, handle } = await started({
+      timeline: [{ status: "idle" }],
+      afterDeliver: [{ status: "blocked" }],
+    });
+    expect(await runtime.deliver(handle, "hello", { timeoutMs: 10 })).toMatchObject({
+      outcome: "started",
+      observation: { lifecycle: "blocked" },
+    });
+  });
+
   it("refuses a non-integer or negative advance without moving the cursor", async () => {
     const { runtime, handle } = await started({
       timeline: [
