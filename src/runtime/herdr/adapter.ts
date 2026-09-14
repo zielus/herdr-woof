@@ -7,6 +7,7 @@ import {
   type DeliveryResult,
   type Lifecycle,
   type LifecycleObservation,
+  type ObserveOptions,
   type OpenPaneInput,
   type RuntimeAdapter,
   type RuntimeError,
@@ -95,10 +96,16 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     return parseHerdrOutput(args, exec);
   }
 
-  async function observe(handle: AgentHandle): Promise<RuntimeResult<LifecycleObservation>> {
+  async function observe(
+    handle: AgentHandle,
+    observeOptions: ObserveOptions = {},
+  ): Promise<RuntimeResult<LifecycleObservation>> {
     const bad = invalidName(handle.runtimeName);
     if (bad !== undefined) return { ok: false, error: bad };
-    const got = await run(["agent", "get", handle.runtimeName], commandTimeoutMs);
+    // Both reads share one bound: the supplied timeout, or the command timeout.
+    const deadline = Date.now() + (observeOptions.timeoutMs ?? commandTimeoutMs);
+    const left = () => Math.max(1, deadline - Date.now());
+    const got = await run(["agent", "get", handle.runtimeName], left());
     if (got.ok) {
       const info = parseAgentInfo(got.result["agent"]);
       if (info === undefined)
@@ -109,7 +116,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       };
     }
     if (got.error.runtimeCode !== "agent_not_found") return got;
-    const pane = await run(["pane", "get", handle.paneId], commandTimeoutMs);
+    const pane = await run(["pane", "get", handle.paneId], left());
     if (!pane.ok && pane.error.runtimeCode !== "pane_not_found") return pane;
     return {
       ok: true,
@@ -183,7 +190,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         "--no-focus",
         ...Object.entries(input.env ?? {}).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
       ];
-      const split = await run(args, commandTimeoutMs);
+      const split = await run(args, input.timeoutMs ?? commandTimeoutMs);
       if (!split.ok) return split;
       const pane = split.result["pane"];
       const paneId =

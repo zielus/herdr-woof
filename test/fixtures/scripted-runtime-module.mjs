@@ -90,13 +90,13 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       if (runtime.calls().at(-1)?.args.sent === true) pending.add(handle.runtimeName);
       return result;
     },
-    async observe(handle) {
+    async observe(handle, options) {
       if (pending.has(handle.runtimeName)) {
         pending.delete(handle.runtimeName);
         await work(agentOf[handle.runtimeName]);
         if (!hang) runtime.advance(handle.runtimeName);
       }
-      return runtime.observe(handle);
+      return runtime.observe(handle, options);
     },
   };
 }

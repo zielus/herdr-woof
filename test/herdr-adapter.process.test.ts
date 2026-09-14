@@ -532,6 +532,28 @@ out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude"
     expect(foreign.log.filter((args) => args[1] === "start")).toHaveLength(1);
   }, 30_000);
 
+  it("bounds observe and pane split by a supplied timeout", () => {
+    const { out } = runAdapter(
+      [
+        { match: ["agent", "get"], hangMs: 10_000, stdout: "" },
+        { match: ["pane", "split"], hangMs: 10_000, stdout: "" },
+      ],
+      `let began = Date.now();
+const observed = await runtime.observe(handle, { timeoutMs: 300 });
+const observeMs = Date.now() - began;
+began = Date.now();
+const pane = await runtime.openPane({ near: "current", cwd: "/tmp/run", timeoutMs: 300 });
+out = { observed, observeMs, pane, paneMs: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(out).toMatchObject({
+      observed: { ok: false, error: { code: "timeout" } },
+      pane: { ok: false, error: { code: "timeout" } },
+    });
+    expect(out["observeMs"]).toBeLessThan(1000);
+    expect(out["paneMs"]).toBeLessThan(1000);
+  }, 30_000);
+
   it("keeps start retries within the supplied timeout and returns the busy result, not a timeout", () => {
     const startBody = (timeoutMs: number) =>
       `await runtime.openPane({ near: "current", cwd: "/tmp/run" });

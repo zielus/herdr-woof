@@ -754,6 +754,40 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "PR-A. a slow observe is bounded by the remaining run budget",
+    () => {
+      const report = runScenario("slow-observe");
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect((report as Report & { elapsedMs: number }).elapsedMs).toBeLessThan(2500);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR-A. a slow repository fingerprint is bounded by the remaining run budget",
+    () => {
+      const report = runScenario("slow-fingerprint");
+      expect(report.marks["slow"]).toBe(true);
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(gatesOf(report)).toEqual([]);
+      expect((report as Report & { elapsedMs: number }).elapsedMs).toBeLessThan(4000);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR-A. a Herdr start budget under 3001 ms is run-timeout exhaustion before startAgent",
+    () => {
+      const report = runScenario("herdr-start-budget");
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "runTimeoutMs" });
+      expect(report.calls.filter((call) => call.method === "startAgent")).toEqual([]);
+      expect(report.types).not.toContain("agent.assigned");
+      expect((report as Report & { elapsedMs: number }).elapsedMs).toBeLessThan(1500);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

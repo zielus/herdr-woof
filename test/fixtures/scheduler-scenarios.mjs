@@ -173,7 +173,7 @@ async function scenario(options) {
   }
 
   const wrapped = {
-    adapter: "scripted",
+    adapter: options.adapterName ?? "scripted",
     openPane: (input) => runtime.openPane(input),
     startAgent: (input) => runtime.startAgent(input),
     waitFor: (handle, states, timeoutMs) => runtime.waitFor(handle, states, timeoutMs),
@@ -192,7 +192,7 @@ async function scenario(options) {
       }
       return result;
     },
-    async observe(handle) {
+    async observe(handle, observeOptions) {
       const agentId = agentOf[handle.runtimeName];
       const job = pending.get(handle.runtimeName);
       if (job !== undefined && job.skip > 0) {
@@ -204,7 +204,7 @@ async function scenario(options) {
         if (options.idleAfterWork?.(agentId) !== false) runtime.advance(handle.runtimeName);
       }
       await options.onObserve?.(handle, { ...context, agentId });
-      return runtime.observe(handle);
+      return runtime.observe(handle, observeOptions);
     },
   };
 
@@ -720,6 +720,45 @@ await withJournalLock(runDir, async () => {
       },
     });
   },
+
+  "slow-observe": () =>
+    scenario({
+      verify: false,
+      limits: { runTimeoutMs: 800 },
+      runtime: { builder: { observeDelayMs: 5000 } },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  "slow-fingerprint": () => {
+    // A git wrapper first on PATH makes write-tree hang once the marker exists.
+    const bin = join(tmp, "slow-git-bin");
+    const marker = join(tmp, "slow-git-on");
+    const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\ncase " $* " in *" write-tree "*) if [ -f '${marker}' ]; then sleep 10 </dev/null >/dev/null 2>&1; fi;; esac\nexec '${realGit}' "$@"\n`,
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+    return scenario({
+      verify: false,
+      limits: { runTimeoutMs: 1500 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      onAction: (action, context) => {
+        if (action.type === "compute_revision" && once(context, "slow")) writeFileSync(marker, "");
+      },
+      after: () => rmSync(marker, { force: true }),
+    });
+  },
+
+  "herdr-start-budget": () =>
+    scenario({
+      verify: false,
+      adapterName: "herdr",
+      limits: { runTimeoutMs: 2500 },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
 
   "fast-worker": () =>
     scenario({

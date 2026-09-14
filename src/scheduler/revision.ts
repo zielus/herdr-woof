@@ -21,14 +21,43 @@ export type RevisionResult =
       /** `git rev-parse --show-toplevel`: the work tree the fingerprint covers. */
       root: string;
     }
-  | { ok: false; reason: "repo_invalid"; message: string };
+  | { ok: false; reason: "repo_invalid" | "timeout" | "aborted"; message: string };
 
 const GIT_TIMEOUT_MS = 120_000;
 
 export async function revisionOf(
   repo: string,
-  options: { git?: string; signal?: AbortSignal } = {},
+  options: {
+    git?: string;
+    signal?: AbortSignal;
+    /** Total bound for all git steps; past it the result is `timeout`. */
+    timeoutMs?: number;
+  } = {},
 ): Promise<RevisionResult> {
+  const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  const run = async (
+    command: string,
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    signal: AbortSignal | undefined,
+  ): Promise<GitRun> => {
+    if (signal?.aborted === true) return { ok: false, stop: "aborted", message: "aborted" };
+    const left = deadline === undefined ? GIT_TIMEOUT_MS : deadline - Date.now();
+    if (left <= 0) return { ok: false, stop: "timeout", message: "no time left" };
+    const result = await runGit(command, args, env, signal, Math.min(GIT_TIMEOUT_MS, left));
+    // A step stopped by the overall deadline is a timeout, not a repository problem.
+    if (!result.ok && deadline !== undefined && result.stop === undefined && Date.now() >= deadline)
+      return { ...result, stop: "timeout" };
+    return result;
+  };
+  const stopped = (result: GitRun): RevisionResult | undefined =>
+    !result.ok && result.stop !== undefined
+      ? {
+          ok: false,
+          reason: result.stop,
+          message: `revision of ${repo} ${result.stop === "timeout" ? `did not finish within ${String(options.timeoutMs)} ms` : "was aborted"}`,
+        }
+      : undefined;
   const git = options.git ?? "git";
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
   for (const key of ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
@@ -40,6 +69,8 @@ export async function revisionOf(
     env,
     options.signal,
   );
+  const insideStopped = stopped(inside);
+  if (insideStopped !== undefined) return insideStopped;
   if (!inside.ok || inside.stdout.trim() !== "true") {
     return invalid(
       `${repo} is not a git work tree: ${inside.ok ? inside.stdout.trim() : inside.message}`,
@@ -47,6 +78,8 @@ export async function revisionOf(
   }
   // The fingerprint covers the whole work tree: every step runs from its top level.
   const top = await run(git, ["-C", repo, "rev-parse", "--show-toplevel"], env, options.signal);
+  const topStopped = stopped(top);
+  if (topStopped !== undefined) return topStopped;
   const root = top.ok ? top.stdout.trim() : "";
   if (!top.ok || root === "") {
     return invalid(`cannot resolve the top level of ${repo}: ${top.ok ? "empty" : top.message}`);
@@ -57,6 +90,8 @@ export async function revisionOf(
     env,
     options.signal,
   );
+  const headStopped = stopped(headRead);
+  if (headStopped !== undefined) return headStopped;
   const head = headRead.ok ? headRead.stdout.trim() : null;
 
   const scratch = mkdtempSync(join(tmpdir(), "woof-revision-"));
@@ -72,7 +107,8 @@ export async function revisionOf(
       // Each git step needs the previous one's index.
       // oxlint-disable-next-line no-await-in-loop
       const result = await run(git, ["-C", root, ...step], indexEnv, options.signal);
-      if (!result.ok) return invalid(`git ${step[0]} failed in ${root}: ${result.message}`);
+      if (!result.ok)
+        return stopped(result) ?? invalid(`git ${step[0]} failed in ${root}: ${result.message}`);
       tree = result.stdout.trim();
     }
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tree)) {
@@ -91,26 +127,36 @@ function invalid(message: string): RevisionResult {
   return { ok: false, reason: "repo_invalid", message };
 }
 
-function run(
+type GitRun =
+  { ok: true; stdout: string } | { ok: false; message: string; stop?: "timeout" | "aborted" };
+
+function runGit(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   signal: AbortSignal | undefined,
-): Promise<{ ok: true; stdout: string } | { ok: false; message: string }> {
+  timeoutMs: number,
+): Promise<GitRun> {
   return new Promise((resolve) => {
     execFile(
       command,
       args,
       {
         env,
-        timeout: GIT_TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: 16 * 1024 * 1024,
         encoding: "utf8",
         ...(signal !== undefined ? { signal } : {}),
       },
       (error, stdout, stderr) => {
-        if (error === null) resolve({ ok: true, stdout });
-        else resolve({ ok: false, message: (stderr.trim() || error.message).split("\n")[0] ?? "" });
+        if (error === null) {
+          resolve({ ok: true, stdout });
+          return;
+        }
+        const message = (stderr.trim() || error.message).split("\n")[0] ?? "";
+        if (signal?.aborted === true) resolve({ ok: false, message, stop: "aborted" });
+        else if (error.killed === true) resolve({ ok: false, message, stop: "timeout" });
+        else resolve({ ok: false, message });
       },
     );
   });

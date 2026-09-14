@@ -35,7 +35,7 @@ import {
 import { agentStageOf, type WorkflowDefinition } from "./definition.js";
 import { writeEngineFile } from "./files.js";
 import { renderRequest, type ResolvedInput } from "./request.js";
-import { revisionOf } from "./revision.js";
+import { revisionOf, type RevisionResult } from "./revision.js";
 
 /**
  * Effectful scheduler driver (D1): a foreground loop that reads the run
@@ -94,6 +94,10 @@ const JOURNAL_ATTEMPTS = 3;
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = 10_000;
 const HERDR_START_CAP_MS = 300_000;
+/** Herdr refuses an `agent start --timeout` of 3000 ms or less. */
+const HERDR_MIN_START_TIMEOUT_MS = 3001;
+/** Upper bound for one observe or pane split, matching the Herdr adapter's default command timeout. */
+const ADAPTER_COMMAND_CAP_MS = 10_000;
 
 type Written<T> =
   | { ok: true; value: T }
@@ -120,6 +124,8 @@ export async function runWorkflow<Input>(
   const agents: Record<string, AgentRuntimeView> = Object.create(null);
   const stats = { ticks: 0, maxSnapshotMs: 0, dropped: tracker.dropped };
   let evidence: GateEvidence | null = null;
+  /** openedAt + runTimeoutMs, known after the first snapshot read. */
+  let deadlineAt: number | null = null;
   let observeNext: string | null = null;
   // Admission's resolved repository; the definition's `repository(input)` is never called again.
   const repository = options.repository;
@@ -278,6 +284,27 @@ export async function runWorkflow<Input>(
       "runTimeoutMs",
     );
 
+  /** Repository fingerprint bounded by the remaining run budget and the cancel signal. */
+  const fingerprint = async (snapshot: RunSnapshot): Promise<RevisionResult> => {
+    if (expired(snapshot)) {
+      return { ok: false, reason: "timeout", message: "the run budget is spent" };
+    }
+    const left = remainingMs(snapshot);
+    return revisionOf(repository, {
+      ...(Number.isFinite(left) ? { timeoutMs: Math.floor(left) } : {}),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
+  };
+  /** A timed-out fingerprint is run-timeout exhaustion; an aborted one leaves cancellation to the next tick. */
+  const fingerprintFailed = async (
+    snapshot: RunSnapshot,
+    failure: Extract<RevisionResult, { ok: false }>,
+  ): Promise<Written<unknown> | undefined> => {
+    if (failure.reason === "aborted") return undefined;
+    if (failure.reason === "timeout") return runTimedOut(snapshot);
+    return end("failed", `repo_invalid: ${failure.message}`);
+  };
+
   /** A gate subject's canonical accepted copy must still match its acceptance before any gate uses it. */
   const subjectAltered = (
     snapshot: RunSnapshot,
@@ -309,8 +336,12 @@ export async function runWorkflow<Input>(
     stats.ticks += 1;
     if (observeNext !== null) {
       const view = agents[observeNext];
-      if (view?.handle != null) {
-        const observed = await runtime.observe(view.handle);
+      const left = deadlineAt === null ? Number.POSITIVE_INFINITY : deadlineAt - clock();
+      // With the run budget gone the observation is skipped; this tick's decision records the timeout.
+      if (view?.handle != null && left > 0) {
+        const observed = await runtime.observe(view.handle, {
+          timeoutMs: Math.floor(Math.min(ADAPTER_COMMAND_CAP_MS, left)),
+        });
         if (observed.ok) accept(view, observed.value);
         else view.readyStreak = 0;
       }
@@ -325,6 +356,9 @@ export async function runWorkflow<Input>(
       };
     }
     const snapshot = snapshotRead.snapshot;
+    if (deadlineAt === null && snapshot.limits !== null) {
+      deadlineAt = Date.parse(snapshot.openedAt) + snapshot.limits.runTimeoutMs;
+    }
     const action: Action = decide({
       snapshot,
       definition,
@@ -359,7 +393,7 @@ export async function runWorkflow<Input>(
         if (action.reason === "awaiting_ready" && action.observe !== null) {
           viewOf(action.observe).awaitingReadySince ??= clock();
         }
-        await sleep(pollMs, options.signal);
+        await sleep(Math.max(0, Math.min(pollMs, remainingMs(snapshot))), options.signal);
         return undefined;
       }
 
@@ -375,6 +409,7 @@ export async function runWorkflow<Input>(
           near: options.paneNear ?? "current",
           cwd: repository,
           env: { WOOF_RUN_DIR: runDir },
+          timeoutMs: capped(snapshot, ADAPTER_COMMAND_CAP_MS),
         });
         const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
         if (remainingMs(snapshot) <= 0) {
@@ -394,6 +429,17 @@ export async function runWorkflow<Input>(
             "failed",
             `agent_start_failed: ${action.agentId}: ${pane.error.code}: ${pane.error.message}`,
           );
+          break;
+        }
+        if (runtime.adapter === "herdr" && remainingMs(snapshot) < HERDR_MIN_START_TIMEOUT_MS) {
+          // Herdr refuses a start timeout of 3000 ms or less: too little budget is a run timeout.
+          viewOf(action.agentId).handle = handleFor(
+            runtime,
+            runtimeName,
+            planAgent.kind,
+            pane.value.paneId,
+          );
+          written = await runTimedOut(snapshot);
           break;
         }
         const started = await runtime.startAgent({
@@ -514,9 +560,11 @@ export async function runWorkflow<Input>(
           written = await end("failed", `input_artifact_altered: ${altered}`);
           break;
         }
-        const revision = await revisionOf(repository);
+        const revision = await fingerprint(snapshot);
         if (!revision.ok) {
-          written = await end("failed", `repo_invalid: ${revision.message}`);
+          const failed = await fingerprintFailed(snapshot, revision);
+          if (failed === undefined) return undefined;
+          written = failed;
           break;
         }
         const planAgent = snapshot.agents.find((item) => item.agentId === action.agentId);
@@ -652,9 +700,11 @@ export async function runWorkflow<Input>(
           written = await end("failed", `input_artifact_altered: ${altered}`);
           break;
         }
-        const revision = await revisionOf(repository);
+        const revision = await fingerprint(snapshot);
         if (!revision.ok) {
-          written = await end("failed", `repo_invalid: ${revision.message}`);
+          const failed = await fingerprintFailed(snapshot, revision);
+          if (failed === undefined) return undefined;
+          written = failed;
           break;
         }
         evidence = {
@@ -694,9 +744,11 @@ export async function runWorkflow<Input>(
           written = await end("failed", file.reason);
           break;
         }
-        const revision = await revisionOf(repository);
+        const revision = await fingerprint(snapshot);
         if (!revision.ok) {
-          written = await end("failed", `repo_invalid: ${revision.message}`);
+          const failed = await fingerprintFailed(snapshot, revision);
+          if (failed === undefined) return undefined;
+          written = failed;
           break;
         }
         evidence = {
@@ -724,9 +776,11 @@ export async function runWorkflow<Input>(
         let revision = gate.revision;
         if (gate.kind === "stage" && agentStageOf(definition, gate.gate)?.bindsRevision === true) {
           // Fingerprint again immediately before appending a revision-bound gate.
-          const fresh = await revisionOf(repository);
+          const fresh = await fingerprint(snapshot);
           if (!fresh.ok) {
-            written = await end("failed", `repo_invalid: ${fresh.message}`);
+            const failed = await fingerprintFailed(snapshot, fresh);
+            if (failed === undefined) return undefined;
+            written = failed;
             break;
           }
           const approvesCompletion =
@@ -745,6 +799,11 @@ export async function runWorkflow<Input>(
             return undefined;
           }
           revision = fresh.revision;
+        }
+        if (expired(snapshot)) {
+          // The subject re-hash or fingerprint used up the budget: no gate after the deadline.
+          written = await runTimedOut(snapshot);
+          break;
         }
         written = await write(() =>
           recordGate({
