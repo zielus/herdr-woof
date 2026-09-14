@@ -1,9 +1,12 @@
 # Woof integration surfaces
 
-Status: foundation, plus a p1 result-handoff prototype. The workflow runtime,
-agent delegation, run inspection, and observability contracts are not
-implemented. Result submission now exists as a CLI/SDK prototype (see below);
-the Herdr and Claude Code plugins still expose none of it.
+Status: foundation, plus a p1 result-handoff prototype and a p2 run-facts/
+snapshot prototype. Result submission (p1) and run inspection/observability
+(p2: run plans, journaled facts, snapshots, events and a Herdr runtime
+adapter, `woof run show`) now exist as CLI/SDK contracts (see below). The
+workflow runtime, agent delegation and run hosting are not implemented, and
+the Herdr and Claude Code plugins still expose none of any of it — every
+capability below is a CLI/SDK surface only, never a plugin action.
 
 ## CLI
 

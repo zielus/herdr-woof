@@ -106,7 +106,8 @@ design intent. Source: `src/state/snapshot.ts`,
   name as its journal record, a `subject` (agent/stage/visit/attempt, where
   applicable — a `submission.duplicate`'s subject is resolved from the
   acceptance record it names), and `data` (the record's own fields, minus
-  the envelope ones). There are no synthetic events: `readEvents` and
+  the four journal/event metadata fields `schemaVersion`, `seq`, `ts` and
+  `type`). There are no synthetic events: `readEvents` and
   `subscribeEvents` project the journal directly, so an event and its
   record can never drift apart.
 
@@ -132,9 +133,11 @@ cursor_expired`) and every `subscribeEvents` `resync_required` item
   transition. `foldEvents(base, events)` (`RunProjection = {snapshot,
 records}`) is the proof of this by construction: it re-derives the
   snapshot from the kept record list with the same reducer (there is no
-  second reducer), skips events at or below the base revision, and requires
-  `resync_required` on a gap, a foreign run or run id, or an event that
-  does not parse as a valid record.
+  second reducer), skips events at or below the base revision, and returns
+  `resync_required` for a gap, a foreign run or run id, or the no-base-and-
+  no-events case — but `journal_corrupt` for an event that does not parse
+  as a valid record or that the reducer refuses as an impossible
+  transition, matching `readJournal`'s own fail-closed behavior.
 
 - **Tail-pending semantics.** A snapshot or event read never takes the
   journal lock; a final journal line without its trailing newline (a write
@@ -145,10 +148,13 @@ records}`) is the proof of this by construction: it re-derives the
   `readJournal`: under the lock no append is in flight, so a line still
   torn there is persisted corruption (`error/journal_corrupt`), not a slow
   writer. A subscription also detects the journal being replaced at its
-  path — by in-place rewrite or by rename, even at identical length — via a
-  device/inode and line-1-bytes check on every incremental read, ending
-  with `resync_required/cursor_foreign` instead of silently mixing two
-  runs' records.
+  path — an inode change (rename into place) or a changed line 1 at the
+  same inode, including at identical length — via a device/inode and
+  line-1-bytes check on every incremental read, ending with
+  `resync_required/cursor_foreign` instead of silently mixing two runs'
+  records. It does not detect an in-place rewrite that keeps the same inode
+  and the same line 1 while replacing later bytes with a different valid
+  continuation.
 
 - **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
   process to be reachable, so every snapshot says so explicitly rather than
@@ -178,9 +184,13 @@ records}`) is the proof of this by construction: it re-derives the
   journaled, and none of it affects a derived snapshot.
 
 - **Not covered yet (documented, not silently missing):** gate evaluation,
-  blocking/unblocking and delivery reconciliation (their record types exist
-  as domain types; no p2 writer or event covers them), agent runtime
-  lifecycle changes (overlay only, never an event), format repair and work
-  retry (no loop exists yet), a cancellation request distinct from plain
-  termination, and observation loss/recovery (needs a run owner, which does
-  not exist in p2).
+  blocking/unblocking and delivery reconciliation. Related domain _result
+  shapes_ exist (`GateResult`, `GateDecision`, `BlockInfo`,
+  `DeliveryResolution`), but their journal record types, writers, readers,
+  events and behavior are not implemented — no p2 code path parses, writes,
+  reads or emits a `gate.recorded`, `run.blocked`, `run.unblocked` or
+  `delivery.reconciled` record. Also not covered: agent runtime lifecycle
+  changes (overlay only, never an event), format repair and work retry (no
+  loop exists yet), a cancellation request distinct from plain termination,
+  and observation loss/recovery (needs a run owner, which does not exist in
+  p2).

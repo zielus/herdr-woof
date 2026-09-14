@@ -63,9 +63,12 @@ behavior, not design intent. The exhaustive detail lives in
   refusal table; every record type stays `schemaVersion: 1` under an
   explicit compatibility contract, and a plan-less run (p1's shape) skips
   every plan-referencing check.
-- **Two read paths, two failure behaviors.** `readJournal` (used by
-  `submit`, `attempt open` and the run-facts store) takes the journal lock
-  and fails closed on a torn final line — a p1 invariant, unchanged in p2.
+- **Two read paths, two failure behaviors.** `readJournal` is the strict
+  reader and does not itself acquire the journal lock; it fails closed on a
+  torn final line — a p1 invariant, unchanged in p2. `submit`, `attempt
+open` and the run-facts store call it from inside their own locked
+  callback, so in practice it only ever reads while the lock is held; a
+  direct call to `readJournal` outside a lock does not acquire one itself.
   `readJournalPrefix` (used by `readSnapshot`, `readEvents` and
   subscriptions) is a tolerant, lock-free read: every complete
   newline-terminated line gets the same validation, but a final segment

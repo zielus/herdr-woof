@@ -142,9 +142,11 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   consumer never has to infer it from status plus run termination.
 
 - **One dispatch per attempt; retrying is a new attempt.**
-  `request.dispatched` records the delivery certainty of the one request
-  sent for an attempt (`started | not_delivered | ambiguous`, each with its
-  own closed `reason` set); a second dispatch for the same attempt is
+  `request.dispatched` records the delivery certainty of the one dispatch
+  attempt made for the attempt (`started | not_delivered | ambiguous`, each
+  with its own closed `reason` set — `not_delivered/not_found` and its
+  siblings are precondition failures where nothing was sent, not proof a
+  prompt went out); a second dispatch for the same attempt is
   refused (`dispatch_exists`). There is no resend: sending the work again is
   only expressible by opening a new, explicitly numbered attempt, which is
   journaled and visible, and p1's staleness rule keeps a late result from

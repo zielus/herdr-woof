@@ -120,9 +120,11 @@ definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or
 run hosting (there is no daemon or live run owner — every store call and
 `submit` open the journal themselves, in process). Declared limits are
 validated and counted but never enforced; gate, block and
-delivery-reconciliation records — and the run status `blocked` they would
-produce — exist as domain types only, with no p2 writer or reader for them.
-Crash resume is not claimed.
+delivery-reconciliation related domain result shapes exist
+(`GateResult`/`GateDecision`, `BlockInfo`, `DeliveryResolution`), but their
+journal record types, writers, readers, events and behaviour — and the run
+status `blocked` they would produce — are not implemented. Crash resume is
+not claimed.
 
 ## Integrations and scope
 
