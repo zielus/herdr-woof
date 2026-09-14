@@ -50,10 +50,14 @@ behavior, not design intent. The exhaustive detail lives in
   artifact is copied to `<runDir>/accepted/<stageId>/visit-<n>/attempt-<m>/`,
   re-hashed, and made read-only (mode `0444`). Downstream consumers read that
   copy; the worker's original can change afterward without affecting it.
-- **Engine-owned paths are symlink-contained.** `journal.jsonl`,
-  `journal.lock`, and the `artifacts/…` and `accepted/…` directory trees must
-  be real files and directories inside the run directory; any symlink
-  component is refused rather than followed.
+- **Engine-owned paths are symlink-contained.** The engine-owned directories
+  (`artifacts/<stage>/visit-<n>/attempt-<m>/` and
+  `accepted/<stage>/visit-<n>/attempt-<m>/`, including each ancestor) and the
+  `journal.jsonl` and `journal.lock` files must be real directories and files
+  inside the run directory; a symlink at any of those components is refused
+  rather than followed. A submitted artifact file may itself be a symlink, as
+  long as its target resolves inside the attempt directory (covered by
+  `test/submit.cli.test.ts`); the accepted copy is always a regular file.
 - **Correlation, not authentication.** Attempt ownership is checked against
   the envelope's `agentId` and, when the attempt recorded one, the
   submitter's `HERDR_PANE_ID`. Both are self-reported by the caller's
