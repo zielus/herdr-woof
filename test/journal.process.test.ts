@@ -16,6 +16,7 @@ import {
   openAttemptOk,
   readyAttempt,
   runNode,
+  sha256,
   submit,
   woofAsync,
   writeArtifact,
@@ -157,6 +158,97 @@ console.log(JSON.stringify({ outcome, elapsed: Date.now() - started }));
     expect(output.outcome).toMatchObject({ outcome: "rejected", reason: "journal_busy" });
     expect(output.elapsed).toBeLessThan(2000);
     expect(wall).toBeLessThan(2000);
+  });
+});
+
+describe("tolerant journal prefix read", () => {
+  const journalModuleUrl = distIndexUrl.replace(/index\.js$/, "journal/journal.js");
+  const readScript = `
+const journal = await import(${JSON.stringify(journalModuleUrl)});
+const options = process.argv[2] === undefined ? undefined : JSON.parse(process.argv[2]);
+const locked = journal.readJournal(process.argv[1]);
+const prefix = journal.readJournalPrefix(process.argv[1], options);
+console.log(JSON.stringify({
+  locked: { ok: locked.ok, reason: locked.reason, line: locked.line },
+  prefix: prefix.ok
+    ? { ok: true, seqs: prefix.records.map((r) => r.seq), tailPending: prefix.tailPending, endOffset: prefix.endOffset, anchor: prefix.anchor }
+    : { ok: false, reason: prefix.reason, line: prefix.line, message: prefix.message },
+}));
+`;
+  interface Output {
+    locked: { ok: boolean; reason?: string; line?: number };
+    prefix: {
+      ok: boolean;
+      seqs?: number[];
+      tailPending?: boolean;
+      endOffset?: number;
+      anchor?: string | null;
+      reason?: string;
+      line?: number;
+    };
+  }
+  const read = (runDir: string, options?: Record<string, number>): Output => {
+    const result = runNode(
+      readScript,
+      options === undefined ? [runDir] : [runDir, JSON.stringify(options)],
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout) as Output;
+  };
+
+  it("excludes a partial final line as tailPending while readJournal fails closed", () => {
+    const runDir = makeRunDir();
+    openAttemptOk(runDir);
+    const journalPath = join(runDir, "journal.jsonl");
+    const complete = readFileSync(journalPath);
+    appendFileSync(journalPath, '{"schemaVersion":1,"se');
+
+    const output = read(runDir);
+
+    expect(output.locked).toMatchObject({ ok: false, reason: "journal_corrupt", line: 3 });
+    expect(output.prefix).toEqual({
+      ok: true,
+      seqs: [1, 2],
+      tailPending: true,
+      endOffset: complete.byteLength,
+      anchor: sha256(complete.subarray(0, complete.indexOf(0x0a))).slice(0, 12),
+    });
+  });
+
+  it("fails closed on a newline-terminated invalid line, naming it", () => {
+    const runDir = makeRunDir();
+    openAttemptOk(runDir);
+    appendFileSync(join(runDir, "journal.jsonl"), '{"schemaVersion":1,"se\n');
+
+    const output = read(runDir);
+
+    expect(output.prefix).toMatchObject({ ok: false, reason: "journal_corrupt", line: 3 });
+  });
+
+  it("continues from a byte offset with seq continuity", () => {
+    const runDir = makeRunDir();
+    openAttemptOk(runDir);
+    const offset = readFileSync(join(runDir, "journal.jsonl")).byteLength;
+    openAttemptOk(runDir, { attempt: 2 });
+
+    const next = read(runDir, { fromOffset: offset, expectSeq: 3 });
+    expect(next.prefix).toMatchObject({ ok: true, seqs: [3], tailPending: false, anchor: null });
+
+    const gap = read(runDir, { fromOffset: offset, expectSeq: 4 });
+    expect(gap.prefix).toMatchObject({ ok: false, reason: "journal_corrupt", line: 4 });
+  });
+
+  it("reports a missing journal as run_dir_invalid and an empty one as no records", () => {
+    const runDir = makeRunDir();
+    expect(read(runDir).prefix).toMatchObject({ ok: false, reason: "run_dir_invalid" });
+    writeFileSync(join(runDir, "journal.jsonl"), "");
+    expect(read(runDir).prefix).toEqual({
+      ok: true,
+      seqs: [],
+      tailPending: false,
+      endOffset: 0,
+      anchor: null,
+    });
   });
 });
 

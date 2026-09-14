@@ -11,6 +11,19 @@ import {
   type SubmissionStatus,
 } from "../contracts/envelope.js";
 import { INFRA_REASONS, REJECTION_REASONS } from "../contracts/reasons.js";
+import { validateRunPlan } from "../domain/plan.js";
+import type { RunPlan } from "../domain/types.js";
+import { check, exactKeysProblem, keysProblem, paneProblem } from "./record-fields.js";
+import {
+  agentAssignedProblem,
+  requestDispatchedProblem,
+  runTerminatedProblem,
+  type AgentAssignedRecord,
+  type RequestDispatchedRecord,
+  type RunTerminatedRecord,
+} from "./run-records.js";
+
+export type { AgentAssignedRecord, RequestDispatchedRecord, RunTerminatedRecord };
 
 /** Fields every journal record carries. */
 export interface RecordBase {
@@ -22,6 +35,8 @@ export interface RecordBase {
 export interface RunOpenedRecord extends RecordBase {
   type: "run.opened";
   runId: string;
+  /** Resolved run plan; absent for plan-less runs (p1 shape, or opened by openAttempt). */
+  plan?: RunPlan;
 }
 
 export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
@@ -65,7 +80,10 @@ export type JournalRecord =
   | AttemptOpenedRecord
   | SubmissionAcceptedRecord
   | SubmissionDuplicateRecord
-  | SubmissionRejectedRecord;
+  | SubmissionRejectedRecord
+  | AgentAssignedRecord
+  | RequestDispatchedRecord
+  | RunTerminatedRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -75,7 +93,6 @@ export type NewJournalRecord = DistributiveOmit<JournalRecord, keyof RecordBase>
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const RECEIPT_ID_PATTERN = /^rcpt-[1-9][0-9]*-[0-9a-f]{12}$/;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const BASE_KEYS = ["schemaVersion", "seq", "ts", "type"];
 const IDENTITY_KEYS = ["runId", "agentId", "stageId", "visit", "attempt"];
 const JOURNALED_REASONS: ReadonlySet<string> = new Set(
   REJECTION_REASONS.filter((reason) => !(INFRA_REASONS as readonly string[]).includes(reason)),
@@ -128,7 +145,11 @@ export function parseRecordLine(line: string): JournalRecord | string {
 function recordProblem(value: Record<string, unknown>, seq: number): string | undefined {
   switch (value["type"]) {
     case "run.opened":
-      return keysProblem(value, ["runId"]) ?? check(isId(value["runId"]), "runId is invalid");
+      return (
+        keysProblem(value, ["runId"], ["plan"]) ??
+        check(isId(value["runId"]), "runId is invalid") ??
+        planProblem(value["plan"])
+      );
     case "attempt.opened":
       return attemptOpenedProblem(value);
     case "submission.accepted":
@@ -137,9 +158,22 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return submissionDuplicateProblem(value, seq);
     case "submission.rejected":
       return submissionRejectedProblem(value);
+    case "agent.assigned":
+      return agentAssignedProblem(value);
+    case "request.dispatched":
+      return requestDispatchedProblem(value);
+    case "run.terminated":
+      return runTerminatedProblem(value);
     default:
       return "unknown record type";
   }
+}
+
+function planProblem(plan: unknown): string | undefined {
+  if (plan === undefined) return undefined;
+  const result = validateRunPlan(plan);
+  if (result.ok) return undefined;
+  return `plan is invalid: ${result.details.map((d) => `${d.field} ${d.message}`).join("; ")}`;
 }
 
 function attemptOpenedProblem(value: Record<string, unknown>): string | undefined {
@@ -268,30 +302,6 @@ function submissionRejectedProblem(value: Record<string, unknown>): string | und
   );
 }
 
-function keysProblem(
-  value: Record<string, unknown>,
-  required: readonly string[],
-  optional: readonly string[] = [],
-): string | undefined {
-  return exactKeysProblem(value, [...BASE_KEYS, ...required], optional, "");
-}
-
-function exactKeysProblem(
-  value: Record<string, unknown>,
-  required: readonly string[],
-  optional: readonly string[],
-  prefix: string,
-): string | undefined {
-  const allowed = new Set([...required, ...optional]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) return `unexpected field ${prefix}${key}`;
-  }
-  for (const key of required) {
-    if (!(key in value)) return `missing field ${prefix}${key}`;
-  }
-  return undefined;
-}
-
 function identityProblem(value: Record<string, unknown>, prefix = ""): string | undefined {
   for (const field of ["runId", "agentId", "stageId"]) {
     if (!isId(value[field])) return `${prefix}${field} is invalid`;
@@ -338,14 +348,6 @@ function hashProblem(
   );
 }
 
-function paneProblem(value: Record<string, unknown>): string | undefined {
-  const paneId = value["paneId"];
-  return check(
-    paneId === undefined || (typeof paneId === "string" && paneId !== ""),
-    "paneId is not a non-empty string",
-  );
-}
-
 function isIsoTimestamp(value: unknown): boolean {
   return (
     typeof value === "string" &&
@@ -353,10 +355,6 @@ function isIsoTimestamp(value: unknown): boolean {
     !Number.isNaN(Date.parse(value)) &&
     new Date(value).toISOString() === value
   );
-}
-
-function check(condition: boolean, message: string): string | undefined {
-  return condition ? undefined : message;
 }
 
 /** Receipt for an accepted submission, derived only from its journal record. */

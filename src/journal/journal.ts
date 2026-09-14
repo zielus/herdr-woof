@@ -7,10 +7,12 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  readSync,
   type Stats,
 } from "node:fs";
 import { join } from "node:path";
 
+import { sha256Hex } from "../contracts/canonical-json.js";
 import { replay } from "../state/reducer.js";
 import { parseRecordLine, type JournalRecord, type NewJournalRecord } from "./records.js";
 import { writeAll } from "./write-all.js";
@@ -145,15 +147,97 @@ export function createJournal(runDir: string): void {
  * `journal_corrupt` (with a line number where one applies) when the path is a
  * symlink or not a regular file, a line is not a valid record, the final line
  * has no trailing newline, `seq` has a gap, the first record is not
- * `run.opened`, or `replay` finds an impossible transition.
+ * `run.opened`, or `replay` finds an impossible transition. Callers that write
+ * hold the journal lock, so a torn final line is persisted corruption.
  */
 export function readJournal(runDir: string): ReadJournalResult {
+  const read = readJournalBytes(runDir, 0);
+  if (!read.ok) return read;
+  const parsed = parseLines(read.journalPath, read.content, 1, false);
+  if (!parsed.ok) return parsed;
+  const replayed = replay(parsed.records);
+  if (!replayed.ok) return corrupt(read.journalPath, replayed.line, replayed.message);
+  return { ok: true, records: parsed.records };
+}
+
+export type ReadJournalPrefixResult =
+  | {
+      ok: true;
+      records: JournalRecord[];
+      /** A final segment without a trailing newline was excluded. */
+      tailPending: boolean;
+      /** Byte offset just past the last complete line read. */
+      endOffset: number;
+      /** journalAnchor of line 1, when this read started at offset 0 and line 1 is complete. */
+      anchor: string | null;
+    }
+  | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string; line?: number };
+
+/**
+ * Tolerant, lock-free read for observers. Every newline-terminated line gets
+ * the same validation as `readJournal`; a final segment without a trailing
+ * newline is reported as `tailPending` and excluded, because a writer may be
+ * appending it. A read from offset 0 replays the records; a read from a later
+ * `fromOffset` checks only record fields and `seq` continuity from `expectSeq`,
+ * and the caller replays the records it accumulated. It never takes the lock.
+ */
+export function readJournalPrefix(
+  runDir: string,
+  { fromOffset = 0, expectSeq = 1 }: { fromOffset?: number; expectSeq?: number } = {},
+): ReadJournalPrefixResult {
+  const read = readJournalBytes(runDir, fromOffset);
+  if (!read.ok) return read;
+  const parsed = parseLines(read.journalPath, read.content, expectSeq, true);
+  if (!parsed.ok) return parsed;
+  if (fromOffset === 0) {
+    const replayed = replay(parsed.records);
+    if (!replayed.ok) return corrupt(read.journalPath, replayed.line, replayed.message);
+  }
+  return {
+    ok: true,
+    records: parsed.records,
+    tailPending: parsed.tailPending,
+    endOffset: fromOffset + parsed.consumed,
+    anchor:
+      fromOffset === 0 && parsed.firstLine !== undefined ? journalAnchor(parsed.firstLine) : null,
+  };
+}
+
+/** Run anchor: the first 12 hex characters of sha256 over journal line 1, without its newline. */
+export function journalAnchor(firstLine: Uint8Array): string {
+  return sha256Hex(firstLine).slice(0, 12);
+}
+
+type BytesResult =
+  | { ok: true; journalPath: string; content: Buffer }
+  | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string };
+
+function readJournalBytes(runDir: string, fromOffset: number): BytesResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: Buffer;
   try {
     const fd = openJournalFile(journalPath, O_RDONLY);
     try {
-      content = readFileSync(fd);
+      if (fromOffset === 0) {
+        content = readFileSync(fd);
+      } else {
+        const size = fstatSync(fd).size;
+        if (size < fromOffset) {
+          return {
+            ok: false,
+            reason: "journal_corrupt",
+            message: `${journalPath} is ${size} bytes, shorter than the ${fromOffset} bytes already read`,
+          };
+        }
+        content = Buffer.alloc(size - fromOffset);
+        let length = 0;
+        while (length < content.length) {
+          const got = readSync(fd, content, length, content.length - length, fromOffset + length);
+          if (got === 0) break;
+          length += got;
+        }
+        content = content.subarray(0, length);
+      }
     } finally {
       closeSync(fd);
     }
@@ -171,18 +255,51 @@ export function readJournal(runDir: string): ReadJournalResult {
           : `cannot read ${journalPath}: ${(error as Error).message}`,
     };
   }
-  if (content.byteLength === 0) return { ok: true, records: [] };
+  return { ok: true, journalPath, content };
+}
+
+type ParsedLines =
+  | {
+      ok: true;
+      records: JournalRecord[];
+      tailPending: boolean;
+      consumed: number;
+      firstLine: Buffer | undefined;
+    }
+  | { ok: false; reason: "journal_corrupt"; message: string; line: number };
+
+/**
+ * Parses newline-terminated lines. Valid lines carry `seq` equal to their line
+ * number, so the first line here is line `expectSeq`. With `tolerateTail`, a
+ * final segment without a newline is excluded instead of failing closed.
+ */
+function parseLines(
+  journalPath: string,
+  content: Buffer,
+  expectSeq: number,
+  tolerateTail: boolean,
+): ParsedLines {
+  const records: JournalRecord[] = [];
+  let consumed = 0;
+  let firstLine: Buffer | undefined;
+  let tailPending = false;
+  if (content.byteLength === 0) {
+    return { ok: true, records, tailPending, consumed, firstLine };
+  }
 
   // Lines are split on raw newline bytes (never part of a multi-byte UTF-8
   // sequence) and decoded strictly, so invalid bytes fail closed with their line
   // number instead of being replaced with U+FFFD.
   const lines = splitLines(content);
-  const records: JournalRecord[] = [];
   for (const [index, rawLine] of lines.entries()) {
-    const lineNumber = index + 1;
+    const lineNumber = expectSeq + index;
     const isLast = index === lines.length - 1;
     if (isLast && rawLine.byteLength === 0) break;
     if (isLast) {
+      if (tolerateTail) {
+        tailPending = true;
+        break;
+      }
       return corrupt(journalPath, lineNumber, "final line has no trailing newline (torn write)");
     }
     let line: string;
@@ -193,22 +310,21 @@ export function readJournal(runDir: string): ReadJournalResult {
     }
     const record = parseRecordLine(line);
     if (typeof record === "string") return corrupt(journalPath, lineNumber, record);
-    if (record.seq !== records.length + 1) {
+    if (record.seq !== lineNumber) {
       return corrupt(
         journalPath,
         lineNumber,
-        `seq ${record.seq} does not follow ${records.length}`,
+        `seq ${record.seq} does not follow ${lineNumber - 1}`,
       );
     }
-    if ((index === 0) !== (record.type === "run.opened")) {
+    if ((lineNumber === 1) !== (record.type === "run.opened")) {
       return corrupt(journalPath, lineNumber, "run.opened must be the first and only run record");
     }
+    if (lineNumber === 1) firstLine = rawLine;
     records.push(record);
+    consumed += rawLine.byteLength + 1;
   }
-
-  const replayed = replay(records);
-  if (!replayed.ok) return corrupt(journalPath, replayed.line, replayed.message);
-  return { ok: true, records };
+  return { ok: true, records, tailPending, consumed, firstLine };
 }
 
 /**
@@ -256,7 +372,11 @@ function truncateQuietly(fd: number, size: number): void {
   }
 }
 
-function corrupt(journalPath: string, line: number, detail: string): ReadJournalResult {
+function corrupt(
+  journalPath: string,
+  line: number,
+  detail: string,
+): { ok: false; reason: "journal_corrupt"; message: string; line: number } {
   return {
     ok: false,
     reason: "journal_corrupt",

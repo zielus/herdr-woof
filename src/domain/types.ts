@@ -105,6 +105,23 @@ export const DISPATCH_DELIVERIES: readonly DispatchDelivery[] = [
   "ambiguous",
 ];
 
+/**
+ * Closed reason set per recorded delivery. `started` names the runtime state
+ * observed after submission; the others are runtime error codes: provably
+ * nothing sent (`not_delivered`) or possibly sent (`ambiguous`).
+ */
+export const DISPATCH_REASONS = {
+  started: ["observed_working", "observed_blocked"],
+  not_delivered: [
+    "not_found",
+    "agent_blocked",
+    "agent_busy",
+    "invalid_request",
+    "runtime_unavailable",
+  ],
+  ambiguous: ["stalled", "timeout", "protocol_error", "runtime_error"],
+} as const satisfies Record<DispatchDelivery, readonly string[]>;
+
 // Types only in p2; records arrive with the scheduler.
 export type GateDecision = "pass" | "reject";
 
