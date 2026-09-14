@@ -81,6 +81,35 @@ describe("track", () => {
     }
   });
 
+  it("compares sequence numbers only within the same known terminal", () => {
+    const cases: Array<[string, Observation, Observation, string]> = [
+      ["lower seq, both terminals unknown", obs("working", 5, null), obs("idle", 4, null), "new"],
+      ["lower seq, previous terminal unknown", obs("working", 5, null), obs("idle", 4), "new"],
+      ["lower seq, next terminal unknown", obs("working", 5), obs("idle", 4, null), "new"],
+      [
+        "older revision, next terminal unknown",
+        obs("working", 5, "term_1", 9),
+        obs("idle", 5, null, 8),
+        "new",
+      ],
+      ["lower seq on another terminal", obs("working", 5), obs("idle", 4, "term_2"), "replaced"],
+      ["higher seq on another terminal", obs("working", 5), obs("idle", 6, "term_2"), "replaced"],
+      [
+        "repeat with both terminals unknown",
+        obs("working", 5, null),
+        obs("working", 5, null),
+        "duplicate",
+      ],
+    ];
+    for (const [name, prev, next, kind] of cases) {
+      expect(tracker.track(prev, next).kind, name).toBe(kind);
+    }
+    const instance = new tracker.ObservationTracker();
+    instance.accept(obs("working", 5, null));
+    expect(instance.accept(obs("idle", 1, null)).kind).toBe("new");
+    expect(instance.dropped).toEqual({ stale: 0, duplicate: 0 });
+  });
+
   it("keeps done and idle apart as raw statuses of the same ready lifecycle", () => {
     const result = tracker.track(obs("idle", 3), obs("done", 3));
     expect(result.kind).toBe("new");

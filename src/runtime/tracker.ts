@@ -15,13 +15,15 @@ export interface TrackResult {
  * - no previous observation → new
  * - both carry a terminal id and they differ → replaced (the pane occupant
  *   changed; surfaced, never merged into the old occupant's lifecycle)
- * - same terminal and both carry stateChangeSeq: a lower seq → stale; equal
- *   seq, lifecycle and raw status → duplicate; equal seq with a lower
- *   revision → stale; anything else → new
- * - otherwise (a seq is unknown, for example `gone`): ordered by receipt within
- *   the tracker; same terminal, lifecycle and raw status → duplicate, else new
+ * - the same non-null terminal id and both carry stateChangeSeq: a lower seq →
+ *   stale; equal seq, lifecycle and raw status → duplicate; equal seq with a
+ *   lower revision → stale; anything else → new
+ * - otherwise (a terminal id or a seq is unknown, for example `gone`): ordered
+ *   by receipt within the tracker; same terminal, lifecycle and raw status →
+ *   duplicate, else new. An observation is never stale unless both sides name
+ *   the same terminal.
  *
- * Herdr's state_change_seq is compared only within one terminal.
+ * Herdr's state_change_seq and revision are compared only within one known terminal.
  */
 export function track(
   prev: LifecycleObservation | undefined,
@@ -37,7 +39,8 @@ export function track(
     a.terminalId === b.terminalId &&
     prev.lifecycle === next.lifecycle &&
     prev.runtimeStatus === next.runtimeStatus;
-  if (a.stateChangeSeq !== null && b.stateChangeSeq !== null) {
+  const sameKnownTerminal = a.terminalId !== null && a.terminalId === b.terminalId;
+  if (sameKnownTerminal && a.stateChangeSeq !== null && b.stateChangeSeq !== null) {
     if (b.stateChangeSeq < a.stateChangeSeq) return { kind: "stale", observation: next };
     if (b.stateChangeSeq === a.stateChangeSeq) {
       if (a.revision !== null && b.revision !== null && b.revision < a.revision) {
