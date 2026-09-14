@@ -251,10 +251,12 @@ export const journalReadHooks: {
 };
 
 /**
- * `readJournalPrefix` from `fromOffset`, first checking on the same opened
- * descriptor that the file is still the one in `file`: same device and inode,
- * and the same line 1 bytes. A journal replaced at the path, by rename or by
- * rewriting it in place, is `journal_replaced` even when its length matches.
+ * `readJournalPrefix` from `fromOffset`, checking on the same opened
+ * descriptor, both before and after the continuation bytes are read, that the
+ * file is still the one in `file`: same device and inode, and the same line 1
+ * bytes. A journal replaced at the path, by rename or by rewriting it in place,
+ * is `journal_replaced` even when its length matches, including a rewrite that
+ * lands between the first check and the read.
  */
 export function readJournalContinuation(
   runDir: string,
@@ -262,7 +264,7 @@ export function readJournalContinuation(
 ): ReadJournalContinuationResult {
   let read: BytesResult;
   try {
-    read = readJournalBytes(runDir, fromOffset, (fd) => {
+    read = readJournalBytes(runDir, fromOffset, (fd, phase) => {
       const stats = fstatSync(fd);
       if (stats.dev !== file.dev || stats.ino !== file.ino) {
         throw new JournalReplacedError("the journal at this path is a different file");
@@ -281,7 +283,7 @@ export function readJournalContinuation(
       ) {
         throw new JournalReplacedError("journal line 1 changed; the journal was replaced");
       }
-      journalReadHooks.afterLineOneCheck(fd);
+      if (phase === "before") journalReadHooks.afterLineOneCheck(fd);
     });
   } catch (error) {
     if (error instanceof JournalReplacedError) {
@@ -314,11 +316,15 @@ type BytesResult =
   | { ok: true; journalPath: string; content: Buffer; dev: number; ino: number }
   | { ok: false; reason: "run_dir_invalid" | "journal_corrupt"; message: string };
 
-/** `verify` runs on the opened descriptor before any read and may throw JournalReplacedError. */
+/**
+ * `verify` runs on the opened descriptor before any read and again after the
+ * content was read, before the descriptor closes; it may throw
+ * JournalReplacedError.
+ */
 function readJournalBytes(
   runDir: string,
   fromOffset: number,
-  verify?: (fd: number) => void,
+  verify?: (fd: number, phase: "before" | "after") => void,
 ): BytesResult {
   const journalPath = join(runDir, JOURNAL_FILE);
   let content: Buffer;
@@ -327,7 +333,7 @@ function readJournalBytes(
   try {
     const fd = openJournalFile(journalPath, O_RDONLY);
     try {
-      verify?.(fd);
+      verify?.(fd, "before");
       ({ dev, ino } = fstatSync(fd));
       if (fromOffset === 0) {
         content = readFileSync(fd);
@@ -349,6 +355,7 @@ function readJournalBytes(
         }
         content = content.subarray(0, length);
       }
+      verify?.(fd, "after");
     } finally {
       closeSync(fd);
     }
