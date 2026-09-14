@@ -13,6 +13,7 @@ import type { GateNext, GateSubject } from "../journal/control-records.js";
 import {
   agentStageOf,
   checkStageOf,
+  stageRequestProblem,
   transitionProblem,
   type AgentStage,
   type RunHistory,
@@ -595,21 +596,30 @@ function dispatchWhenReady<Input>(
     }
     return { type: "wait", reason: "awaiting_ready", observe: agentId };
   }
-  const request =
-    cause === "format_repair"
-      ? null
-      : callDefinition(stage.stageId, () =>
-          stage.request({
-            input: view.input,
-            runId: view.snapshot.runId,
-            history,
-            stageId: stage.stageId,
-            visit,
-            attempt,
-            round,
-            enteredBy,
-          }),
-        );
+  // null is reserved for a format repair; any other request() value must be a StageRequest.
+  let request: StageRequest | null = null;
+  if (cause !== "format_repair") {
+    const returned: unknown = callDefinition(stage.stageId, () =>
+      stage.request({
+        input: view.input,
+        runId: view.snapshot.runId,
+        history,
+        stageId: stage.stageId,
+        visit,
+        attempt,
+        round,
+        enteredBy,
+      }),
+    );
+    const problem = stageRequestProblem(returned);
+    if (problem !== undefined) {
+      return terminate(
+        "failed",
+        `definition_contract_violated: ${stage.stageId}: request() ${problem}`,
+      );
+    }
+    request = returned as StageRequest;
+  }
   return {
     type: "dispatch",
     agentId,

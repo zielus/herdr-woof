@@ -369,6 +369,45 @@ export function transitionProblem(
   return undefined;
 }
 
+/**
+ * Checks a value an agent stage's `request()` returned against `StageRequest`:
+ * `{goal: string, instructions: string, inputs: InputRef[]}` plus the optional
+ * `task` and `roleInstructions`. Returns the first problem, or undefined.
+ */
+export function stageRequestProblem(value: unknown): string | undefined {
+  if (!isPlainObject(value)) return "returned no request object";
+  if (typeof value["goal"] !== "string") return "goal must be a string";
+  if (typeof value["instructions"] !== "string") return "instructions must be a string";
+  const inputs = value["inputs"];
+  if (!Array.isArray(inputs)) return "inputs must be an array";
+  for (const [index, ref] of inputs.entries()) {
+    if (!isPlainObject(ref) || typeof ref["label"] !== "string" || ref["label"] === "")
+      return `inputs[${index}] must be { label: non-empty string, from }`;
+    const from = ref["from"];
+    const keys = isPlainObject(from) ? Object.keys(from) : [];
+    const valid =
+      isPlainObject(from) &&
+      keys.length === 1 &&
+      ((keys[0] === "stageId" && typeof from["stageId"] === "string") ||
+        (keys[0] === "checkId" && typeof from["checkId"] === "string"));
+    if (!valid) return `inputs[${index}].from must be { stageId: string } or { checkId: string }`;
+  }
+  const task = value["task"];
+  if (
+    task !== undefined &&
+    (!isPlainObject(task) ||
+      typeof task["title"] !== "string" ||
+      typeof task["description"] !== "string" ||
+      !Array.isArray(task["acceptanceCriteria"]) ||
+      !task["acceptanceCriteria"].every((item) => typeof item === "string"))
+  ) {
+    return "task must be { title: string, description: string, acceptanceCriteria: string[], context? }";
+  }
+  if (value["roleInstructions"] !== undefined && typeof value["roleInstructions"] !== "string")
+    return "roleInstructions must be a string";
+  return undefined;
+}
+
 export function agentStageOf<Input>(
   definition: WorkflowDefinition<Input>,
   id: string,
