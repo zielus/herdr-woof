@@ -1,25 +1,36 @@
 # Woof integration surfaces
 
-Status: foundation only. The SDK, workflow runtime, agent delegation, run
-inspection, result submission, and observability contracts are not implemented.
+Status: foundation, plus a p1 result-handoff prototype. The workflow runtime,
+agent delegation, run inspection, and observability contracts are not
+implemented. Result submission now exists as a CLI/SDK prototype (see below);
+the Herdr and Claude Code plugins still expose none of it.
 
 ## CLI
 
-The built `woof` executable has three supported commands:
+The built `woof` executable has five supported commands:
 
 - `woof --help`
 - `woof --version`
 - `woof doctor`
+- `woof attempt open` — declares an open attempt and its owner in a run
+  journal (`<runDir>/journal.jsonl`) and creates its artifact directory.
+- `woof submit` — validates a result envelope and its artifact against that
+  journal and records the outcome: accepted, duplicate, or one of a closed
+  set of machine-readable rejection reasons.
 
 `doctor` reports the local availability of `herdr status` and `claude --version`.
-It is diagnostic only and succeeds even when either executable is absent. All
-workflow-oriented commands fail explicitly as not implemented; the CLI does not
-invent run state or host a runtime pane.
+It is diagnostic only and succeeds even when either executable is absent.
+`attempt open` and `submit` are a p1 prototype — see
+[communication.md](../architecture/communication.md#implemented-now-p1-prototype)
+for the envelope, decision order, journal, and its correlation-not-authentication
+limit. Every other workflow-oriented command fails explicitly as not
+implemented; the CLI does not invent run state or host a runtime pane.
 
 ## Herdr plugin
 
 `herdr-plugin.toml` registers a build step and a single `doctor` action. It
-does not register run actions, panes, lifecycle events, or a workflow host.
+does not register run actions, panes, lifecycle events, or a workflow host;
+`attempt open` and `submit` exist only as CLI/SDK surfaces, not plugin actions.
 
 The manifest builds from a repository checkout, so it is not part of the npm
 package. For local wiring checks after a build:

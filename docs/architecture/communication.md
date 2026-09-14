@@ -19,6 +19,70 @@ The SDK owns routing, validation, ownership and transitions. Herdr carries
 prompts and runs agents. Agents do not coordinate workflow progression by typing
 into one another's panes, and Woof does not scrape terminal prose for results.
 
+## Implemented now (p1 prototype)
+
+This is the first working slice of the contract above — real shipped
+behavior, not design intent. The exhaustive detail lives in
+`docs/decisions/architecture.md` and the source it cites.
+
+- **Envelope v1** (`schemaVersion: 1`): `runId`, `agentId`, `stageId` (each
+  matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`), `visit` and `attempt` as
+  safe integers `>= 1` (`Number.isSafeInteger`; not the `attemptId` string
+  shown in earlier drafts of this page), `status` (`"completed"` or
+  `"failed"`), a required `verdict` (a string, or `null` when the stage
+  declares no verdicts), and `artifact: { path, sha256 }` — a POSIX-relative
+  path with no `..` segments and a 64-character lowercase hex digest. Unknown
+  top-level or artifact keys are rejected; the envelope file is capped at
+  64 KiB.
+- **Reason codes and decision order.** `woof submit` runs a fixed, closed set
+  of checks and returns the first one that fails: run directory, journal lock
+  (`journal_busy`), journal replay (`journal_corrupt`), the run being opened
+  (`run_dir_invalid` if not, unjournaled), envelope readability, envelope
+  schema, then run identity, attempt existence, owner, duplicate/conflict,
+  staleness, verdict, artifact scope, artifact existence, artifact content,
+  artifact size (`artifact_too_large` above 32 MiB), artifact hash, and finally
+  publish-and-record.
+  `src/contracts/reasons.ts` (`REJECTION_REASONS`) is the closed set, and the
+  doc comment on `submitResult` in `src/submission/submit.ts` is the
+  authoritative order.
+- **The journal is the sole authority.** `<runDir>/journal.jsonl` is
+  append-only; attempt and acceptance state is derived by replaying it. Reads
+  fail closed: a torn line, an impossible state transition, or a journal or
+  lock path that turns out to be a symlink all report `journal_corrupt` or
+  `journal_busy` rather than silently accepting or skipping the record.
+- **Accepted artifacts are immutable copies.** On acceptance, the worker's
+  artifact is copied to `<runDir>/accepted/<stageId>/visit-<n>/attempt-<m>/`,
+  re-hashed, and made read-only (mode `0444`). Downstream consumers read that
+  copy; the worker's original can change afterward without affecting it.
+- **Engine-owned paths are symlink-contained.** The engine-owned directories
+  (`artifacts/<stage>/visit-<n>/attempt-<m>/` and
+  `accepted/<stage>/visit-<n>/attempt-<m>/`, including each ancestor) and the
+  `journal.jsonl` and `journal.lock` files must be real directories and files
+  inside the run directory; a symlink at any of those components is refused
+  rather than followed. A submitted artifact file may itself be a symlink, as
+  long as its target resolves inside the attempt directory (covered by
+  `test/submit.cli.test.ts`); the accepted copy is always a regular file.
+- **Correlation, not authentication.** Attempt ownership is checked against
+  the envelope's `agentId` and, when the attempt recorded one, the
+  submitter's `HERDR_PANE_ID`. Both are self-reported by the caller's
+  environment, so this is a guard against misdirected or stale submissions,
+  not an authentication mechanism. A run owner issuing per-attempt tokens is
+  future work.
+- **In-process transport only.** `woof submit` opens and locks the journal
+  itself, in the calling process. There is no daemon, socket, or live run
+  owner to submit to; a future run owner would call the same `submitResult`
+  function behind its own transport.
+- **No automatic stale-lock recovery.** A lock left behind by a crashed
+  writer makes every subsequent writer report `journal_busy` after the
+  timeout, naming the lock file and its recorded holder, until a person
+  deletes it by hand.
+
+**Not implemented in p1:** the engine does not parse artifact-embedded
+metadata or check it for agreement with the envelope's `verdict` (item 5 under
+"Acceptance of a result" below); there is no bounded format-repair loop —
+every rejection is journaled, but nothing retries or re-prompts the worker
+automatically.
+
 ## Work request
 
 A request identifies the run, agent, stage visit and attempt. It supplies the
@@ -38,10 +102,13 @@ Illustrative envelope; field names and paths are not a published API:
   "agentId": "reviewer",
   "stageId": "review",
   "visit": 1,
-  "attemptId": "attempt-4",
+  "attempt": 4,
   "status": "completed",
   "verdict": "fail",
-  "artifact": "artifacts/review/visit-1/attempt-4/review.md"
+  "artifact": {
+    "path": "artifacts/review/visit-1/attempt-4/review.md",
+    "sha256": "<64 lowercase hex characters>"
+  }
 }
 ```
 

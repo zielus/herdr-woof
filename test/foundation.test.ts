@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
@@ -15,11 +15,39 @@ function runCli(...args: string[]) {
 }
 
 describe("SDK foundation", () => {
-  it("provides a plugin-free SDK foundation marker without orchestration APIs", async () => {
-    const entry = await import("../src/index.js");
+  it("exports the foundation marker and the p1 result-handoff prototype from the built entry", () => {
+    const entryPath = join(repoRoot, "dist", "index.js");
+    const script = `const entry = await import(${JSON.stringify(pathToFileURL(entryPath).href)});
+console.log(JSON.stringify({
+  marker: entry.SDK_FOUNDATION,
+  types: Object.fromEntries(Object.entries(entry).map(([key, value]) => [key, typeof value])),
+}));`;
 
-    expect(entry.SDK_FOUNDATION).toBe(true);
-    expect(Object.keys(entry)).toEqual(["SDK_FOUNDATION"]);
+    const result = spawnSync("node", ["--input-type=module", "--eval", script], {
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const entry = JSON.parse(result.stdout) as { marker: unknown; types: Record<string, string> };
+    expect(entry.marker).toBe(true);
+    // Module namespace keys are ordered by name, not by declaration.
+    expect(Object.keys(entry.types)).toEqual([
+      "MAX_ARTIFACT_BYTES",
+      "REJECTION_REASONS",
+      "SDK_FOUNDATION",
+      "openAttempt",
+      "readJournal",
+      "submitResult",
+    ]);
+    expect(entry.types).toEqual({
+      MAX_ARTIFACT_BYTES: "number",
+      REJECTION_REASONS: "object",
+      SDK_FOUNDATION: "boolean",
+      openAttempt: "function",
+      readJournal: "function",
+      submitResult: "function",
+    });
+    expect(readFileSync(entryPath, "utf8")).not.toContain("cli.js");
   });
 });
 
@@ -33,6 +61,15 @@ describe("woof CLI", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(pkg.version);
+  });
+
+  it("lists the prototype result-handoff commands in help", () => {
+    const result = runCli("--help");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("attempt open");
+    expect(result.stdout).toContain("submit");
+    expect(result.stdout).toContain("Workflow orchestration is not implemented yet.");
   });
 
   it("rejects workflow commands that are not implemented", () => {
