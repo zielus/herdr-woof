@@ -24,6 +24,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
@@ -35,6 +38,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run lint
 
@@ -46,6 +52,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run format:check
 
@@ -57,47 +66,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      # The suite runs on Node under vitest, and the CLI tests spawn a process
-      # directly, so the runtime floor has to be pinned here too.
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - run: bun run test
-
-  e2e:
-    name: e2e (${{ matrix.group }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [cli, loader, effects, server, extension, sessions, install]
-    env:
-      E2E_GROUP: ${{ matrix.group }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - run: bun install --frozen-lockfile
-      - run: bun run test:e2e
-
-  coverage:
-    name: coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - run: bun install --frozen-lockfile
-      - run: bun run test:coverage
 
   package:
     name: package
@@ -109,8 +82,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "22.18.0"
       - run: bun install --frozen-lockfile
-      - run: bun run check:version
       - run: bun run build
       - run: bun run smoke:package

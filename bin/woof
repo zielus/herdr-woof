@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source="${BASH_SOURCE[0]}"
+while [ -h "$source" ]; do
+  bin_dir="$(cd -P "$(dirname "$source")" && pwd)"
+  source="$(readlink "$source")"
+  [[ $source != /* ]] && source="$bin_dir/$source"
+done
+bin_dir="$(cd -P "$(dirname "$source")" && pwd)"
+package_root="$(cd -P "$bin_dir/.." && pwd)"
+
+exec node "$package_root/dist/cli.js" "$@"

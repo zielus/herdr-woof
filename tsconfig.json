@@ -11,13 +11,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
-    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node", "bun"],
-    "paths": {
-      "herdr-woof": ["./src/index.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["src", "scripts", "test"]
 }

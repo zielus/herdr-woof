@@ -13,7 +13,7 @@ Read in this order:
 4. [Communication and artifacts](architecture/communication.md): requests, canonical work products, validation, and handoff.
 5. [Configuration](architecture/configuration.md): project settings and user defaults.
 6. [Observability](architecture/observability.md): snapshots and updates for every interface.
-7. [Plugin surfaces](integrations/plugins.md): Herdr, Claude Code, CLI, and optional MCP.
+7. [Plugin surfaces](integrations/plugins.md): current Herdr, Claude Code, and CLI placeholders; MCP is deferred.
 8. [Workflow authoring](workflows/authoring.md) and [initial workflows](workflows/initial-workflows.md).
 9. [Decision record](decisions/architecture.md): settled direction, superseded ideas, and open choices.
 10. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.

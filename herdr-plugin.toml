@@ -1,0 +1,20 @@
+# Foundation integration only: this plugin can diagnose local prerequisites but
+# cannot launch or host a Woof workflow yet.
+id = "herdr-woof"
+name = "Woof"
+version = "0.0.0"
+min_herdr_version = "0.9.0"
+description = "Woof SDK foundation diagnostics. Workflow orchestration is not implemented."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["bun", "install", "--frozen-lockfile"]
+
+[[build]]
+command = ["bun", "run", "build"]
+
+[[actions]]
+id = "doctor"
+title = "Woof: doctor"
+description = "Check Herdr and Claude Code availability."
+command = ["bin/woof", "doctor"]
