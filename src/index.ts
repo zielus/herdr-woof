@@ -112,6 +112,6 @@ export { herdrRuntimeName } from "./runtime/names.js";
 export { ObservationTracker, watchAgent } from "./runtime/tracker.js";
 export type { AgentWatch, TrackKind, TrackResult, WatchOptions } from "./runtime/tracker.js";
 export { overlayRuntime } from "./runtime/overlay.js";
-export type { OverlaidSnapshot, RuntimeOverlay } from "./runtime/overlay.js";
+export type { OverlaidSnapshot, OverlaySkip, RuntimeOverlay } from "./runtime/overlay.js";
 export { createHerdrCliRuntime } from "./runtime/herdr/adapter.js";
 export type { HerdrCliRuntime, HerdrCliRuntimeOptions } from "./runtime/herdr/adapter.js";
