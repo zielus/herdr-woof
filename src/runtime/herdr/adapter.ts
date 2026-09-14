@@ -275,9 +275,11 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     ): Promise<DeliveryResult> {
       const bad = invalidName(handle.runtimeName);
       if (bad !== undefined) return { outcome: "not_delivered", error: bad };
+      // One deadline bounds the precondition read and the prompt together.
+      const deadline = Date.now() + delivery.timeoutMs;
       // Precondition read: nothing is sent yet, so every failure here is not_delivered.
       // The read and the prompt are not atomic; a human typing in between is not detected.
-      const before = await observe(handle);
+      const before = await observe(handle, { timeoutMs: delivery.timeoutMs });
       if (!before.ok) {
         const error = before.error;
         return {
@@ -318,6 +320,16 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
           ),
         };
       }
+      const left = deadline - Date.now();
+      if (left < 1) {
+        return {
+          outcome: "not_delivered",
+          error: runtimeError(
+            "runtime_unavailable",
+            `no time left within ${delivery.timeoutMs} ms to prompt ${handle.runtimeName}; nothing was sent`,
+          ),
+        };
+      }
       const args = [
         "agent",
         "prompt",
@@ -329,9 +341,9 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         "--until",
         "blocked",
         "--timeout",
-        String(delivery.timeoutMs),
+        String(left),
       ];
-      const prompted = await run(args, delivery.timeoutMs);
+      const prompted = await run(args, left);
       if (!prompted.ok) {
         const error = prompted.error;
         if (

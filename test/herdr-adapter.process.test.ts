@@ -178,7 +178,8 @@ out = { current, near, start, observed, waited, delivered, stopped };`,
         "--until",
         "blocked",
         "--timeout",
-        "7000",
+        // What is left of the 7000 ms delivery deadline after the precondition read.
+        expect.stringMatching(/^(6\d{3}|7000)$/),
       ],
       ["pane", "close", PANE],
       ["agent", "get", NAME],
@@ -530,6 +531,38 @@ out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude"
     );
     expect(foreign.out).toMatchObject({ ok: false, error: { runtimeCode: "agent_pane_busy" } });
     expect(foreign.log.filter((args) => args[1] === "start")).toHaveLength(1);
+  }, 30_000);
+
+  it("bounds deliver's precondition read and prompt by one deadline", () => {
+    const hungRead = runAdapter(
+      [{ match: ["agent", "get"], hangMs: 10_000, stdout: "" }],
+      `const began = Date.now();
+out = { delivered: await runtime.deliver(handle, "x", { timeoutMs: 300 }), took: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(hungRead.out["delivered"]).toMatchObject({
+      outcome: "not_delivered",
+      error: { code: "runtime_unavailable" },
+    });
+    expect(hungRead.out["took"]).toBeLessThan(1000);
+    expect(hungRead.log.filter((args) => args[1] === "prompt")).toEqual([]);
+
+    const hungPrompt = runAdapter(
+      [
+        { match: ["agent", "get"], stdout: agentJson("idle", 5) },
+        { match: ["agent", "prompt"], hangMs: 10_000, stdout: "" },
+      ],
+      `const began = Date.now();
+out = { delivered: await runtime.deliver(handle, "x", { timeoutMs: 800 }), took: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(hungPrompt.out["delivered"]).toMatchObject({
+      outcome: "ambiguous",
+      error: { code: "timeout" },
+    });
+    expect(hungPrompt.out["took"]).toBeLessThan(800 + 100 + 400);
+    const prompt = hungPrompt.log.find((args) => args[1] === "prompt") ?? [];
+    expect(Number(prompt[prompt.indexOf("--timeout") + 1])).toBeLessThanOrEqual(800);
   }, 30_000);
 
   it("bounds observe and pane split by a supplied timeout", () => {

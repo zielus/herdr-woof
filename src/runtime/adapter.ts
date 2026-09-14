@@ -150,6 +150,7 @@ export interface RuntimeAdapter {
     states: Lifecycle[],
     timeoutMs: number,
   ): Promise<RuntimeResult<LifecycleObservation>>;
+  /** `timeoutMs` is one deadline for the precondition read and the prompt together. */
   deliver(
     handle: AgentHandle,
     text: string,
