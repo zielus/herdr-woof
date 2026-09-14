@@ -24,6 +24,7 @@ import {
   runSdk,
   submit,
   terminateRunOk,
+  testPlan,
   woof,
 } from "./helpers/process.js";
 
@@ -220,6 +221,83 @@ describe("woof run show", () => {
     const help = woof(["run", "show", "--help"]);
     expect(help.status).toBe(0);
     expect(help.stdout).toContain("--verify-artifacts");
+  });
+
+  it("keeps prototype-named ids as ordinary keys and round-trips them through JSON", () => {
+    const runDir = makeRunDir();
+    const plan = testPlan({
+      agents: [
+        { agentId: "hasOwnProperty", role: "writer", kind: "claude", model: null },
+        { agentId: "valueOf", role: "reviewer", kind: "claude", model: null },
+      ],
+      stages: [
+        { stageId: "constructor", agentId: "hasOwnProperty", verdicts: [] },
+        { stageId: "toString", agentId: "valueOf", verdicts: [] },
+      ],
+    });
+    const steps = runSdk<string[]>(
+      runDir,
+      `import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+const content = "# Report\\n\\nPrototype-named ids stay ordinary keys.\\n";
+const sha = createHash("sha256").update(content).digest("hex");
+const steps = [];
+steps.push((await store.openRun({ runDir, runId: "run-1", plan: input })).outcome);
+for (const paneId of ["w1:a", "w1:b"]) {
+  steps.push((await store.assignAgent({ runDir, agentId: "hasOwnProperty", runtime: { adapter: "scripted", runtimeName: "w-a", paneId } })).outcome);
+}
+const submitFor = async (stageId, agentId, visit, write) => {
+  steps.push((await openAttempt({ runDir, runId: "run-1", agentId, stageId, visit, attempt: 1 })).outcome);
+  const dir = "artifacts/" + stageId + "/visit-" + visit + "/attempt-1";
+  if (write) {
+    mkdirSync(runDir + "/" + dir, { recursive: true });
+    writeFileSync(runDir + "/" + dir + "/report.md", content);
+  }
+  const envelope = { schemaVersion: 1, runId: "run-1", agentId, stageId, visit, attempt: 1, status: "completed", verdict: null, artifact: { path: dir + "/report.md", sha256: sha } };
+  steps.push((await submitResult({ runDir, envelopeRaw: JSON.stringify(envelope) })).outcome);
+};
+await submitFor("constructor", "hasOwnProperty", 1, true);
+await submitFor("toString", "valueOf", 1, false);
+await submitFor("constructor", "hasOwnProperty", 2, true);
+out = steps;`,
+      plan,
+    );
+    expect(steps).toEqual([
+      "recorded",
+      "recorded",
+      "recorded",
+      "opened",
+      "accepted",
+      "opened",
+      "rejected",
+      "opened",
+      "accepted",
+    ]);
+
+    const { status, json } = show([runDir]);
+
+    expect(status).toBe(0);
+    const snapshot = json.snapshot as NonNullable<Shown["snapshot"]> & {
+      outputs: { latestAcceptedByStage: Record<string, Json> };
+    };
+    expect(snapshot.counters).toMatchObject({
+      attemptsOpened: 3,
+      visitsByStage: { constructor: 2, toString: 1 },
+      attemptsByVisit: { "constructor/1": 1, "constructor/2": 1, "toString/1": 1 },
+      rejectionsByReason: { artifact_missing: 1 },
+      replacementsByAgent: { hasOwnProperty: 1 },
+      submissionsAccepted: 2,
+      submissionsRejected: 1,
+    });
+    expect(Object.keys(snapshot.outputs.latestAcceptedByStage)).toEqual(["constructor"]);
+    expect(snapshot.outputs.latestAcceptedByStage["constructor"]).toMatchObject({
+      stageId: "constructor",
+      visit: 2,
+      attempt: 1,
+    });
+    // The CLI's JSON equals the SDK snapshot serialized in another process.
+    const viaSdk = runSdk<Json>(runDir, `out = snapshots.readSnapshot(runDir).snapshot;`);
+    expect(snapshot).toEqual(viaSdk);
   });
 
   it("verifies accepted copies on request", () => {

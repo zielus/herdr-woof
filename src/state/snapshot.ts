@@ -10,7 +10,15 @@ import type {
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
 import { journalAnchor, readJournalPrefix } from "../journal/journal.js";
 import type { JournalRecord } from "../journal/records.js";
-import { attemptKey, compareAttempts, replay, type Counters, type RunState } from "./reducer.js";
+import {
+  attemptKey,
+  compareAttempts,
+  copyDict,
+  dict,
+  replay,
+  type Counters,
+  type RunState,
+} from "./reducer.js";
 
 /**
  * Run snapshot: an engine-owned document derived only from journal records (p2
@@ -219,7 +227,7 @@ export function deriveSnapshot(
               at: state.termination.ts,
             },
       limits: state.plan === null ? null : { ...state.plan.limits },
-      counters: structuredClone(state.counters),
+      counters: cloneCounters(state.counters),
       agents: deriveAgents(state, records),
       stages: deriveStages(state, records),
       attention: { ambiguousDeliveries: ambiguousDeliveries(state) },
@@ -305,7 +313,7 @@ function deriveStages(state: RunState, records: readonly JournalRecord[]): Snaps
         openedAt: opened.ts,
         paneId: opened.paneId ?? null,
         delivery: dispatch?.delivery ?? "undispatched",
-        rejections: { ...attempt.rejections },
+        rejections: copyDict(attempt.rejections),
         accepted:
           accepted === undefined
             ? null
@@ -352,8 +360,24 @@ function ambiguousDeliveries(state: RunState): RunSnapshot["attention"]["ambiguo
     }));
 }
 
+/** Counters with every id-keyed dictionary copied as a null-prototype object. */
+function cloneCounters(counters: Counters): Counters {
+  return {
+    attemptsOpened: counters.attemptsOpened,
+    visitsByStage: copyDict(counters.visitsByStage),
+    attemptsByVisit: copyDict(counters.attemptsByVisit),
+    submissionsAccepted: counters.submissionsAccepted,
+    submissionsDuplicate: counters.submissionsDuplicate,
+    submissionsRejected: counters.submissionsRejected,
+    rejectionsByReason: copyDict(counters.rejectionsByReason),
+    dispatches: { ...counters.dispatches },
+    replacementsByAgent: copyDict(counters.replacementsByAgent),
+  };
+}
+
 function latestAccepted(state: RunState): RunSnapshot["outputs"]["latestAcceptedByStage"] {
-  const latest: RunSnapshot["outputs"]["latestAcceptedByStage"] = {};
+  // Keyed by stage id: null prototype, so `constructor` is an ordinary stage id.
+  const latest = dict<RunSnapshot["outputs"]["latestAcceptedByStage"][string]>();
   for (const attempt of state.attempts.values()) {
     const accepted = attempt.accepted;
     if (accepted === undefined) continue;

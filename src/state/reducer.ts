@@ -128,14 +128,14 @@ export function emptyRunState(): RunState {
     status: "created",
     counters: {
       attemptsOpened: 0,
-      visitsByStage: {},
-      attemptsByVisit: {},
+      visitsByStage: dict(),
+      attemptsByVisit: dict(),
       submissionsAccepted: 0,
       submissionsDuplicate: 0,
       submissionsRejected: 0,
-      rejectionsByReason: {},
+      rejectionsByReason: dict(),
       dispatches: { started: 0, not_delivered: 0, ambiguous: 0 },
-      replacementsByAgent: {},
+      replacementsByAgent: dict(),
     },
   };
 }
@@ -326,7 +326,7 @@ function applyAttemptOpened(state: RunState, record: AttemptOpenedRecord): Refus
   state.attempts.set(attemptKey(record.stageId, record.visit, record.attempt), {
     opened: record,
     status: "open",
-    rejections: {},
+    rejections: dict(),
   });
   const counters = state.counters;
   counters.attemptsOpened += 1;
@@ -467,6 +467,22 @@ function sameVerdicts(actual: readonly string[], planned: readonly string[]): bo
     new Set(actual).size === actual.length &&
     actual.every((verdict) => planned.includes(verdict))
   );
+}
+
+/**
+ * An id-keyed dictionary with no prototype, so ids such as `constructor` or
+ * `hasOwnProperty` are ordinary keys. Every id-keyed record in reducer state
+ * and snapshots is built with this.
+ */
+export function dict<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+/** A null-prototype copy of an id-keyed dictionary. */
+export function copyDict<T>(source: Readonly<Record<string, T>>): Record<string, T> {
+  const copy = dict<T>();
+  for (const key of Object.keys(source)) copy[key] = source[key] as T;
+  return copy;
 }
 
 function increment(counts: Record<string, number>, key: string): void {

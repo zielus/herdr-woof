@@ -273,6 +273,71 @@ describe("deriveSnapshot documents", () => {
   });
 });
 
+describe("deriveSnapshot with prototype-named ids", () => {
+  // `__proto__` is not a valid id (ID_PATTERN needs a leading letter or digit);
+  // these ids are, and they collide with Object.prototype members.
+  const plan = {
+    ...PLAN,
+    agents: [
+      { agentId: "hasOwnProperty", role: "writer", kind: "claude", model: null },
+      { agentId: "valueOf", role: "reviewer", kind: "claude", model: null },
+    ],
+    stages: [
+      { stageId: "constructor", agentId: "hasOwnProperty", verdicts: [] },
+      { stageId: "toString", agentId: "valueOf", verdicts: [] },
+    ],
+  };
+
+  it("counts, groups and indexes them as ordinary keys in null-prototype dictionaries", () => {
+    const snapshot = snapshotOf(
+      opened(plan),
+      assigned("hasOwnProperty", "w1:a"),
+      assigned("hasOwnProperty", "w1:b"),
+      attempt("constructor", "hasOwnProperty"),
+      accepted(5, "constructor", "hasOwnProperty", null),
+      attempt("toString", "valueOf"),
+      rejected("artifact_missing", {
+        runId: "run-1",
+        agentId: "valueOf",
+        stageId: "toString",
+        visit: 1,
+        attempt: 1,
+      }),
+      attempt("constructor", "hasOwnProperty", 2, 1),
+      accepted(9, "constructor", "hasOwnProperty", null, 2, 1),
+    );
+    const counters = snapshot.counters as Record<string, Record<string, unknown>>;
+    const latest = snapshot.outputs.latestAcceptedByStage;
+
+    for (const value of [
+      counters["visitsByStage"],
+      counters["attemptsByVisit"],
+      counters["rejectionsByReason"],
+      counters["replacementsByAgent"],
+      latest,
+      attemptAt(snapshot, "toString", 1, 1)?.["rejections"],
+    ]) {
+      expect(Object.getPrototypeOf(value)).toBeNull();
+    }
+    const plain = JSON.parse(JSON.stringify(snapshot)) as Snapshot;
+    expect(plain.counters).toMatchObject({
+      attemptsOpened: 3,
+      visitsByStage: { constructor: 2, toString: 1 },
+      attemptsByVisit: { "constructor/1": 1, "constructor/2": 1, "toString/1": 1 },
+      rejectionsByReason: { artifact_missing: 1 },
+      replacementsByAgent: { hasOwnProperty: 1 },
+      submissionsAccepted: 2,
+    });
+    expect(Object.keys(plain.outputs.latestAcceptedByStage)).toEqual(["constructor"]);
+    expect(plain.outputs.latestAcceptedByStage["constructor"]).toMatchObject({
+      stageId: "constructor",
+      visit: 2,
+      attempt: 1,
+    });
+    expect(attemptAt(plain, "toString", 1, 1)?.["rejections"]).toEqual({ artifact_missing: 1 });
+  });
+});
+
 describe("deriveSnapshot attention and outputs", () => {
   it("lists an ambiguous delivery until its attempt is superseded", () => {
     const base = [
