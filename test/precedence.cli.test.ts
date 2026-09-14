@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   artifactRel,
   cleanupRunDirs,
   envelopeFor,
+  journal,
   makeRunDir,
   openAttemptOk,
   readyAttempt,
@@ -235,4 +236,23 @@ describe("submitResult check precedence", () => {
       }
     });
   }
+});
+
+describe("an unopened run", () => {
+  it("rejects any submission without journaling it, and can still be opened", () => {
+    const runDir = makeRunDir();
+    const journalPath = join(runDir, "journal.jsonl");
+    writeFileSync(journalPath, "");
+
+    for (const envelope of [JSON.stringify(envelopeFor()), "not json"]) {
+      const result = submit(runDir, envelope);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(3);
+      expect(result.json).toMatchObject({ outcome: "rejected", reason: "run_dir_invalid" });
+      expect(result.json?.message).toContain("has no run.opened record");
+      expect(readFileSync(journalPath, "utf8")).toBe("");
+    }
+
+    openAttemptOk(runDir);
+    expect(journal(runDir).map((line) => line.type)).toEqual(["run.opened", "attempt.opened"]);
+  });
 });

@@ -1,7 +1,13 @@
 /**
- * Closed set of reasons `submitResult` can reject a submission with, listed in
- * decision order (the first failing check wins). Adding a check means adding a
- * code here, a branch in `submitResult`, and a process test that reaches it.
+ * Closed set of reasons `submitResult` can reject a submission with, grouped by
+ * the stage that decides them. This list is not the precedence order: the
+ * envelope is parsed before the journal lock is taken, but its rejection is
+ * reported only once the lock is held and the journal is readable and opened,
+ * so `journal_busy`, `journal_corrupt` and an unopened run (`run_dir_invalid`)
+ * outrank `envelope_malformed` and `envelope_invalid`. The authoritative order
+ * is the doc comment on `submitResult`, pinned by test/precedence.cli.test.ts.
+ * Adding a check means adding a code here, a branch in `submitResult`, and a
+ * process test that reaches it.
  */
 export const REJECTION_REASONS = [
   "run_dir_invalid",

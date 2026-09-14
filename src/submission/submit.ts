@@ -46,25 +46,34 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
 
 /**
  * Validates a result envelope and its artifact, then records the outcome in the
- * run journal. Checks run in this order and the first failure wins:
+ * run journal. The first failing check wins, in this order (pinned by
+ * test/precedence.cli.test.ts):
  *
  *  1. run directory given and holds a journal         → run_dir_invalid
- *  2. envelope readable, ≤ 64 KiB, a JSON object       → envelope_malformed
- *  3. envelope matches schema v1                       → envelope_invalid
- *  4. journal lock acquired, journal replays cleanly   → journal_busy / journal_corrupt
- *  5. runId equals the journal's run                   → run_mismatch
- *  6. the attempt was opened                           → attempt_unknown
- *  7. agentId (and paneId, when both sides have one)   → owner_mismatch
- *  8. attempt already accepted: different digest       → attempt_closed_conflict
+ *  2. journal lock acquired                            → journal_busy
+ *  3. journal file is regular and replays cleanly      → journal_corrupt
+ *  4. journal holds run.opened (the run was opened)    → run_dir_invalid
+ *  5. envelope readable, ≤ 64 KiB, a JSON object       → envelope_malformed
+ *  6. envelope matches schema v1                       → envelope_invalid
+ *  7. runId equals the journal's run                   → run_mismatch
+ *  8. the attempt was opened                           → attempt_unknown
+ *  9. agentId (and paneId, when both sides have one)   → owner_mismatch
+ * 10. attempt already accepted: different digest       → attempt_closed_conflict
  *     same digest, accepted copy intact                → duplicate (prior receipt)
  *     same digest, accepted copy missing or altered    → journal_corrupt
- *  9. attempt superseded by a newer opened attempt     → attempt_stale
- * 10. verdict allowed by the attempt                   → verdict_not_allowed
- * 11. artifact path resolves inside the attempt dir    → artifact_out_of_scope
- * 12. artifact exists and is a regular file            → artifact_missing
- * 13. artifact has non-whitespace content              → artifact_empty
- * 14. artifact sha256 matches the envelope             → artifact_hash_mismatch
- * 15. publish the accepted copy, append the record     → accepted / journal_write_failed
+ * 11. attempt superseded by a newer opened attempt     → attempt_stale
+ * 12. verdict allowed by the attempt                   → verdict_not_allowed
+ * 13. artifact path resolves inside the attempt dir    → artifact_out_of_scope
+ * 14. artifact exists and is a regular file            → artifact_missing
+ * 15. artifact has non-whitespace content              → artifact_empty
+ * 16. artifact sha256 matches the envelope             → artifact_hash_mismatch
+ * 17. publish the accepted copy, append the record     → accepted / journal_write_failed
+ *
+ * The envelope is read and parsed before the lock is taken, but an envelope
+ * rejection is reported only once checks 2–4 pass, because every contract
+ * rejection is appended to the journal under the lock. A journal with no
+ * `run.opened` record is never appended to: a record there would precede
+ * `run.opened` and make the run permanently unreadable.
  *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
@@ -92,7 +101,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
   }
   const paneId = input.paneId === "" ? undefined : input.paneId;
 
-  // 2–3. Envelope. Decided before the lock, journaled under it.
+  // 5–6. Envelope: parsed now, reported and journaled under the lock.
   const raw = "envelopeRaw" in input ? input.envelopeRaw : readEnvelopeFile(input.envelopePath);
   let preLock: Rejection | undefined;
   let rawDigest: string | undefined;
@@ -109,8 +118,8 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
     }
   }
 
-  // 4. Lock and replay. readJournal re-validates the journal file under the
-  // lock, so a link swapped in after step 1 is caught here.
+  // 2–4. Lock, journal replay and opened run. readJournal re-validates the
+  // journal file under the lock, so a link swapped in after check 1 is caught.
   let locked;
   try {
     locked = await withJournalLock(
@@ -119,6 +128,12 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
         const read = readJournal(runDir);
         if (!read.ok) return rejection(read.reason, read.message);
         const records = read.records;
+        if (records.length === 0) {
+          return rejection(
+            "run_dir_invalid",
+            `${join(runDir, JOURNAL_FILE)} has no run.opened record; the run has not been opened (open an attempt first)`,
+          );
+        }
 
         if (preLock !== undefined || parsed === undefined) {
           return journalRejection(
@@ -144,7 +159,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
   return locked.ok ? locked.value : rejection(locked.reason, locked.message);
 }
 
-/** Checks 5–15, run while holding the journal lock. */
+/** Checks 7–17, run while holding the journal lock on an opened run. */
 function decide(
   runDir: string,
   records: JournalRecord[],
@@ -174,14 +189,14 @@ function decide(
   }
   const state = replayed.state;
 
-  // 5. Run.
+  // 7. Run.
   if (envelope.runId !== state.runId) {
     return reject("run_mismatch", `envelope runId ${envelope.runId} is not this run`, [
       { field: "runId", message: `expected ${String(state.runId)}` },
     ]);
   }
 
-  // 6. Attempt declared.
+  // 8. Attempt declared.
   const attempt = state.attempts.get(
     attemptKey(envelope.stageId, envelope.visit, envelope.attempt),
   );
@@ -192,7 +207,7 @@ function decide(
     );
   }
 
-  // 7. Owner.
+  // 9. Owner.
   const ownerDetails: RejectionDetail[] = [];
   if (envelope.agentId !== attempt.opened.agentId) {
     ownerDetails.push({
@@ -218,7 +233,7 @@ function decide(
     );
   }
 
-  // 8. Closed attempt: identical retry gets the prior receipt, but only while
+  // 10. Closed attempt: identical retry gets the prior receipt, but only while
   // the accepted copy is still a real in-run file matching the journal.
   if (attempt.accepted !== undefined) {
     const receipt = receiptFromAccepted(attempt.accepted);
@@ -247,12 +262,12 @@ function decide(
     return { outcome: "duplicate", receipt };
   }
 
-  // 9. Stale.
+  // 11. Stale.
   if (attempt.status === "superseded") {
     return reject("attempt_stale", "a newer attempt has been opened for this stage");
   }
 
-  // 10. Verdict.
+  // 12. Verdict.
   const allowed = attempt.opened.verdicts;
   if (!verdictAllowed(allowed, envelope.verdict)) {
     return reject(
@@ -267,7 +282,7 @@ function decide(
     );
   }
 
-  // 11–13. Artifact scope, existence, content.
+  // 13–15. Artifact scope, existence, content.
   const artifact = resolveArtifact(runDir, attempt.opened.artifactDir, envelope.artifact.path);
   if (!artifact.ok) {
     return reject(artifact.reason, artifact.message, [
@@ -275,7 +290,7 @@ function decide(
     ]);
   }
 
-  // 14. Hash of the exact bytes checked above.
+  // 16. Hash of the exact bytes checked above.
   const actual = sha256Hex(artifact.bytes);
   if (actual !== envelope.artifact.sha256) {
     return reject("artifact_hash_mismatch", "artifact content does not match artifact.sha256", [
@@ -283,7 +298,7 @@ function decide(
     ]);
   }
 
-  // 15. Publish the immutable accepted copy, then persist acceptance.
+  // 17. Publish the immutable accepted copy, then persist acceptance.
   const acceptedPath = acceptedPathFor(
     envelope.stageId,
     envelope.visit,
