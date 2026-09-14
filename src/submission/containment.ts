@@ -1,33 +1,9 @@
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
-/**
- * Walks `relDir` (POSIX, relative) below the run directory's real path and
- * describes the first existing component that is a symlink. A symlinked
- * engine directory could place attempt artifacts or accepted copies outside the
- * run, or alias another attempt. The walk stops at the first missing component;
- * the caller creates the rest as real directories.
- */
-export function symlinkComponentProblem(runReal: string, relDir: string): string | undefined {
-  let current = runReal;
-  let rel = "";
-  for (const segment of relDir.split("/")) {
-    current = join(current, segment);
-    rel = rel === "" ? segment : `${rel}/${segment}`;
-    let isSymlink: boolean;
-    try {
-      isSymlink = lstatSync(current).isSymbolicLink();
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR") return undefined;
-      return `cannot inspect ${rel}: ${(error as Error).message}`;
-    }
-    if (isSymlink) {
-      return `${rel} is a symlink; engine directories under the run directory must be real directories`;
-    }
-  }
-  return undefined;
-}
+import { symlinkComponentProblem } from "../journal/accepted-copy.js";
+
+export { symlinkComponentProblem } from "../journal/accepted-copy.js";
 
 /**
  * Ensures `<runReal>/<relDir>` exists as real directories inside the run: no

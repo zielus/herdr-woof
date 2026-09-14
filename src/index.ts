@@ -59,7 +59,7 @@ export type { ReadJournalResult } from "./journal/journal.js";
 export type { JournalRecord } from "./journal/records.js";
 export { openAttempt } from "./submission/attempt.js";
 export type { OpenAttemptInput, OpenAttemptOutcome, OpenedAttempt } from "./submission/attempt.js";
-export { MAX_ARTIFACT_BYTES } from "./submission/artifact.js";
+export { MAX_ARTIFACT_BYTES } from "./journal/accepted-copy.js";
 export { submitResult } from "./submission/submit.js";
 export type { SubmitInput } from "./submission/submit.js";
 

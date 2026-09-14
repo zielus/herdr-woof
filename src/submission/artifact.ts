@@ -3,40 +3,38 @@ import {
   chmodSync,
   closeSync,
   constants,
-  fstatSync,
   fsyncSync,
   linkSync,
-  lstatSync,
   openSync,
-  readSync,
   realpathSync,
   rmSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
-import { describeEntryKind } from "../journal/journal.js";
+import {
+  FileChangedError,
+  FileTooLargeError,
+  MAX_ARTIFACT_BYTES,
+  hashFile,
+  readRegularFile,
+  symlinkComponentProblem,
+} from "../journal/accepted-copy.js";
 import { writeAll } from "../journal/write-all.js";
-import { ensureRealDirectory, symlinkComponentProblem } from "./containment.js";
+import { ensureRealDirectory } from "./containment.js";
 
-const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constants;
+// The regular-file reader and accepted-copy check live in journal/accepted-copy
+// so snapshots can use them without importing the submission layer.
+export {
+  MAX_ARTIFACT_BYTES,
+  acceptedCopyProblem,
+  artifactReadHooks,
+  hashFile,
+  readRegularFile,
+  type BeforeRead,
+} from "../journal/accepted-copy.js";
 
-/**
- * Largest artifact `submitResult` accepts: 32 MiB. The size is checked from
- * lstat before the artifact is opened, and reads never go past this cap.
- */
-export const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
-
-export type BeforeRead = (fd: number, path: string) => void;
-
-/**
- * Test seam for the read path, not exposed through the SDK entry point or the
- * CLI. `beforeRead` runs after a file is opened and validated and before its
- * bytes are read; the default does nothing.
- */
-export const artifactReadHooks: { beforeRead: BeforeRead } = {
-  beforeRead: () => undefined,
-};
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = constants;
 
 export type ResolveArtifactResult =
   | { ok: true; realPath: string; bytes: Buffer }
@@ -50,17 +48,6 @@ export type ResolveArtifactResult =
         | "artifact_hash_mismatch";
       message: string;
     };
-
-class FileTooLargeError extends Error {
-  constructor(
-    readonly path: string,
-    readonly size: number,
-  ) {
-    super(`${path} is ${size} bytes; the limit is ${MAX_ARTIFACT_BYTES}`);
-  }
-}
-
-class FileChangedError extends Error {}
 
 /**
  * Resolves an envelope artifact path and reads it once. The attempt directory
@@ -153,57 +140,6 @@ export function resolveArtifact(
 }
 
 /**
- * Reads a regular file of at most MAX_ARTIFACT_BYTES. The entry is inspected
- * with lstat first, so a FIFO, socket, device, directory or symlink is refused
- * without being opened; the open uses O_NOFOLLOW | O_NONBLOCK and the descriptor
- * must still be the same regular file. After reading, the descriptor is
- * fstat-ed again: any size change (growth or shrinkage) throws, because the
- * bytes read are not a stable version of the file. Throws FileTooLargeError
- * above the cap.
- */
-export function readRegularFile(
-  path: string,
-  beforeRead: BeforeRead = artifactReadHooks.beforeRead,
-): Buffer {
-  const named = lstatSync(path);
-  if (!named.isFile()) {
-    throw new Error(`${path} is not a regular file (${describeEntryKind(named)})`);
-  }
-  if (named.size > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, named.size);
-
-  const fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-  try {
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.ino !== named.ino || opened.dev !== named.dev) {
-      throw new Error(`${path} changed while it was opened`);
-    }
-    beforeRead(fd, path);
-    // One byte past the expected size (capped) detects growth during the read.
-    const buffer = Buffer.alloc(Math.min(opened.size, MAX_ARTIFACT_BYTES) + 1);
-    let length = 0;
-    while (length < buffer.length) {
-      const read = readSync(fd, buffer, length, buffer.length - length, null);
-      if (read === 0) break;
-      length += read;
-    }
-    const final = fstatSync(fd);
-    if (final.size !== opened.size || length !== opened.size) {
-      throw new FileChangedError(
-        `${path} changed size while it was read (${opened.size} → ${final.size} bytes); the artifact is not stable`,
-      );
-    }
-    if (final.size > MAX_ARTIFACT_BYTES) throw new FileTooLargeError(path, final.size);
-    return buffer.subarray(0, length);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-export function hashFile(path: string): string {
-  return sha256Hex(readRegularFile(path));
-}
-
-/**
  * Publishes accepted bytes at `<runDir>/<acceptedPath>` without ever replacing
  * an existing destination. The destination directory
  * `accepted/<stage>/visit-<n>/attempt-<m>` must consist of real directories
@@ -276,33 +212,6 @@ export function removePublished(runDir: string, acceptedPath: string, publishedS
   } catch {
     // Already gone or unreadable: nothing this submission can safely remove.
   }
-}
-
-/**
- * Checks that an accepted copy is still a regular file at its place inside the
- * run and matches its journal record. A non-regular entry (FIFO, socket,
- * directory, symlink) is reported without being opened. Returns a description
- * of the problem, or undefined when the copy is intact.
- */
-export function acceptedCopyProblem(
-  runDir: string,
-  artifact: { acceptedPath: string; sha256: string; bytes: number },
-): string | undefined {
-  let bytes: Buffer;
-  try {
-    const runReal = realpathSync(runDir);
-    const component = symlinkComponentProblem(runReal, posix.dirname(artifact.acceptedPath));
-    if (component !== undefined) {
-      return `accepted copy ${artifact.acceptedPath} is not inside the run directory: ${component}`;
-    }
-    bytes = readRegularFile(join(runReal, artifact.acceptedPath));
-  } catch (error) {
-    return `accepted copy ${artifact.acceptedPath} is unreadable: ${(error as Error).message}`;
-  }
-  if (bytes.byteLength !== artifact.bytes || sha256Hex(bytes) !== artifact.sha256) {
-    return `accepted copy ${artifact.acceptedPath} no longer matches its journal record`;
-  }
-  return undefined;
 }
 
 function isInside(child: string, parent: string): boolean {

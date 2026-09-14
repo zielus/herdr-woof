@@ -56,11 +56,7 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
   domain: { areas: ["domain", "contracts"] },
   runtime: { areas: ["runtime", "domain", "contracts"] },
   journal: { areas: ["journal", "contracts", "domain"], modules: ["state/reducer.js"] },
-  // The snapshot re-hashes accepted copies with the submission path's own check (C2).
-  state: {
-    areas: ["state", "domain", "contracts", "journal"],
-    modules: ["submission/artifact.js"],
-  },
+  state: { areas: ["state", "domain", "contracts", "journal"] },
   observe: { areas: ["observe", "state", "journal", "contracts"] },
   submission: { areas: ["submission", "contracts", "journal", "state"] },
 };

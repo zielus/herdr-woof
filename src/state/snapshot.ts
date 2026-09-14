@@ -7,9 +7,9 @@ import type {
   Outcome,
   RunStatus,
 } from "../domain/types.js";
+import { acceptedCopyProblem } from "../journal/accepted-copy.js";
 import { journalAnchor, readJournalPrefix } from "../journal/journal.js";
 import type { JournalRecord } from "../journal/records.js";
-import { acceptedCopyProblem } from "../submission/artifact.js";
 import { attemptKey, compareAttempts, replay, type Counters, type RunState } from "./reducer.js";
 
 /**
