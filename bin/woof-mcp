@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Launcher for the `woof` MCP stdio server. Resolves the repo root relative to
+# this script's real location (following symlinks, so
+# plugin/claude/bin/woof-mcp works too) and runs the TypeScript source
+# directly via bun — no build step required for this path.
+set -euo pipefail
+
+source="${BASH_SOURCE[0]}"
+while [ -h "$source" ]; do
+  dir="$(cd -P "$(dirname "$source")" && pwd)"
+  source="$(readlink "$source")"
+  [[ $source != /* ]] && source="$dir/$source"
+done
+bin_dir="$(cd -P "$(dirname "$source")" && pwd)"
+repo_root="$(cd -P "$bin_dir/.." && pwd)"
+
+exec bun run "$repo_root/src/mcp/woof.ts" "$@"
