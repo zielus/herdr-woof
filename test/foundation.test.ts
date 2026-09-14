@@ -15,7 +15,7 @@ function runCli(...args: string[]) {
 }
 
 describe("SDK foundation", () => {
-  it("exports the foundation marker and the p1 result-handoff prototype from the built entry", () => {
+  it("exports the foundation marker and the p2 SDK contracts from the built entry", () => {
     const entryPath = join(repoRoot, "dist", "index.js");
     const script = `const entry = await import(${JSON.stringify(pathToFileURL(entryPath).href)});
 console.log(JSON.stringify({
@@ -30,24 +30,60 @@ console.log(JSON.stringify({
     expect(result.status, result.stderr).toBe(0);
     const entry = JSON.parse(result.stdout) as { marker: unknown; types: Record<string, string> };
     expect(entry.marker).toBe(true);
-    // Module namespace keys are ordered by name, not by declaration.
-    expect(Object.keys(entry.types)).toEqual([
-      "MAX_ARTIFACT_BYTES",
-      "REJECTION_REASONS",
-      "SDK_FOUNDATION",
-      "openAttempt",
-      "readJournal",
-      "submitResult",
-    ]);
-    expect(entry.types).toEqual({
+    // Module namespace keys are ordered by code unit, not by declaration.
+    const expected: Record<string, string> = {
+      DISPATCH_REASONS: "object",
       MAX_ARTIFACT_BYTES: "number",
+      ObservationTracker: "function",
       REJECTION_REASONS: "object",
       SDK_FOUNDATION: "boolean",
+      assignAgent: "function",
+      createHerdrCliRuntime: "function",
+      deriveSnapshot: "function",
+      foldEvents: "function",
+      herdrRuntimeName: "function",
       openAttempt: "function",
+      openRun: "function",
+      overlayRuntime: "function",
+      readEvents: "function",
       readJournal: "function",
+      readSnapshot: "function",
+      recordDispatch: "function",
       submitResult: "function",
-    });
+      subscribeEvents: "function",
+      terminateRun: "function",
+      validateRunPlan: "function",
+      watchAgent: "function",
+    };
+    expect(Object.keys(entry.types)).toEqual(Object.keys(expected).toSorted());
+    expect(entry.types).toEqual(expected);
     expect(readFileSync(entryPath, "utf8")).not.toContain("cli.js");
+  });
+});
+
+describe("herdr-woof/testing", () => {
+  it("exports only the scripted runtime, and the main entry does not", () => {
+    const script = `const testing = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "testing.js")).href)});
+const entry = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "index.js")).href)});
+console.log(JSON.stringify({ testing: Object.fromEntries(Object.entries(testing).map(([key, value]) => [key, typeof value])), inEntry: "createScriptedRuntime" in entry }));`;
+
+    const result = spawnSync("node", ["--input-type=module", "--eval", script], {
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      testing: { createScriptedRuntime: "function" },
+      inEntry: false,
+    });
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+      exports: Record<string, unknown>;
+    };
+    expect(pkg.exports).toEqual({
+      ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+      "./testing": { types: "./dist/testing.d.ts", import: "./dist/testing.js" },
+      "./package.json": "./package.json",
+    });
   });
 });
 
@@ -69,6 +105,7 @@ describe("woof CLI", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("attempt open");
     expect(result.stdout).toContain("submit");
+    expect(result.stdout).toContain("run show");
     expect(result.stdout).toContain("Workflow orchestration is not implemented yet.");
   });
 

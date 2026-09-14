@@ -24,6 +24,7 @@ import {
   runSdk,
   sdkScript,
   testPlan,
+  woof,
 } from "./helpers/process.js";
 
 // Observer transport runs in real child processes: a writer appends through the
@@ -173,10 +174,10 @@ describe("event subscription across a reconnect", () => {
     const ordered = [...bySeq.values()].toSorted((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
     const folded = foldEvents(null, ordered);
     expect(folded.ok).toBe(true);
-    const fresh = runSdk<{ ok: boolean; snapshot: Json }>(
-      runDir,
-      `out = snapshots.readSnapshot(runDir);`,
-    );
+    const shown = woof(["run", "show", runDir]);
+    expect(shown.status, shown.stderr).toBe(0);
+    const fresh = JSON.parse(shown.stdout) as { outcome: string; snapshot: Json };
+    expect(fresh.outcome).toBe("snapshot");
     expect(folded.projection.snapshot).toEqual(fresh.snapshot);
     expect(fresh.snapshot["status"]).toBe("cancelled");
   }, 60_000);
@@ -234,11 +235,9 @@ appendFileSync(path, line.slice(half));
     expect(seen[1]).toMatchObject({ reason: "journal_corrupt" });
     expect(Date.now() - started).toBeLessThan(5000);
 
-    const snapshot = runSdk<{ ok: boolean; snapshot: { journal: Json; revision: number } }>(
-      runDir,
-      `out = snapshots.readSnapshot(runDir);`,
-    );
-    expect(snapshot.ok).toBe(true);
+    const shown = woof(["run", "show", runDir]);
+    expect(shown.status, shown.stderr).toBe(0);
+    const snapshot = JSON.parse(shown.stdout) as { snapshot: { journal: Json } };
     expect(snapshot.snapshot.journal).toEqual({ records: 1, tailPending: true });
   });
 });

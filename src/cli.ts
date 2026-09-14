@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { MAX_ENVELOPE_BYTES } from "./contracts/envelope.js";
 import { isInfraReason } from "./contracts/reasons.js";
+import { readSnapshot } from "./state/snapshot.js";
 import { openAttempt } from "./submission/attempt.js";
 import { submitResult } from "./submission/submit.js";
 import { VERSION } from "./version.js";
@@ -21,6 +23,13 @@ const ATTEMPT_OPEN_USAGE = `Usage: woof attempt open --run-dir <dir> --run <id> 
 Declares an open attempt and its owner in the run journal and creates the
 attempt's artifact directory. --run-dir defaults to WOOF_RUN_DIR. Prints one JSON
 line; exits 0 when opened, 2 on conflict, 3 on journal failure.`;
+
+const RUN_SHOW_USAGE = `Usage: woof run show <run-dir> [--verify-artifacts]
+
+Prints one JSON line with a snapshot of the run journal in <run-dir>. It takes
+no journal lock, never contacts Herdr and works on terminated runs.
+--verify-artifacts re-hashes every accepted copy against its journal record.
+Exits 0 with the snapshot, 3 when the run directory or journal is invalid.`;
 
 class UsageError extends Error {}
 
@@ -55,6 +64,9 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
     case "attempt":
       if (args[0] === "open") return attemptOpenCommand(args.slice(1));
       throw new UsageError(`expected "attempt open"\n\n${ATTEMPT_OPEN_USAGE}`);
+    case "run":
+      if (args[0] === "show") return runShowCommand(args.slice(1));
+      throw new UsageError(`expected "run show"\n\n${RUN_SHOW_USAGE}`);
     default:
       console.error(`woof: ${commandName} is not implemented in the SDK foundation`);
       return 1;
@@ -70,6 +82,7 @@ function printHelp(): void {
   console.log("Prototype result handoff (unstable):");
   console.log("  attempt open  Declare an open attempt and its owner in a run journal");
   console.log("  submit        Validate a result envelope and record it in the run journal");
+  console.log("  run show      Print a JSON snapshot of a run journal (read-only)");
   console.log("");
   console.log("Workflow orchestration is not implemented yet.");
 }
@@ -161,6 +174,46 @@ async function attemptOpenCommand(args: string[]): Promise<number> {
   console.log(JSON.stringify(outcome));
   if (outcome.outcome === "opened") return 0;
   return isInfraReason(outcome.reason) ? 3 : 2;
+}
+
+function runShowCommand(args: string[]): number {
+  const { values, positionals } = parse(
+    () =>
+      parseArgs({
+        args,
+        strict: true,
+        allowPositionals: true,
+        options: {
+          "verify-artifacts": { type: "boolean" },
+          help: { type: "boolean", short: "h" },
+        },
+      }),
+    RUN_SHOW_USAGE,
+  );
+  if (values.help === true) {
+    console.log(RUN_SHOW_USAGE);
+    return 0;
+  }
+  const [runDir, ...extra] = positionals;
+  if (runDir === undefined || runDir === "" || extra.length > 0) {
+    throw new UsageError(`expected exactly one <run-dir>\n\n${RUN_SHOW_USAGE}`);
+  }
+  const result = readSnapshot(resolve(runDir), {
+    verifyArtifacts: values["verify-artifacts"] === true,
+  });
+  if (result.ok) {
+    console.log(JSON.stringify({ outcome: "snapshot", snapshot: result.snapshot }));
+    return 0;
+  }
+  console.log(
+    JSON.stringify({
+      outcome: "rejected",
+      reason: result.reason,
+      message: result.message,
+      ...(result.line !== undefined ? { line: result.line } : {}),
+    }),
+  );
+  return 3;
 }
 
 /**
