@@ -125,7 +125,15 @@ export async function* subscribeEvents(
           }
           return;
         }
-        if (full.anchor !== anchor) {
+        // The path may name another file by now: adopt nothing unless it is still
+        // the same inode with the same line 1 this subscription began on.
+        const started = file as JournalFile;
+        if (
+          full.file === null ||
+          full.file.dev !== started.dev ||
+          full.file.ino !== started.ino ||
+          full.file.anchor !== started.anchor
+        ) {
           yield {
             type: "resync_required",
             reason: "cursor_foreign",
