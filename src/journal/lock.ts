@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, openSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,7 +32,7 @@ import { writeAll } from "./write-all.js";
  */
 export const LOCK_FILE = "journal.lock";
 
-const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constants;
 
 export interface LockOptions {
   timeoutMs?: number;
@@ -117,10 +126,18 @@ function release(lockPath: string, token: string): void {
   }
 }
 
+/**
+ * Reads the lock holder. Anything other than a regular file (FIFO, socket,
+ * directory, symlink) is an unreadable holder: it is inspected with lstat and
+ * never opened, so it cannot block, and acquisition still ends in journal_busy
+ * at the timeout.
+ */
 function readLock(lockPath: string): string | undefined {
   try {
-    const fd = openSync(lockPath, O_RDONLY | O_NOFOLLOW);
+    if (!lstatSync(lockPath).isFile()) return undefined;
+    const fd = openSync(lockPath, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
+      if (!fstatSync(fd).isFile()) return undefined;
       return readFileSync(fd, "utf8");
     } finally {
       closeSync(fd);

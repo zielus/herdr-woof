@@ -7,6 +7,7 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  type Stats,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -21,7 +22,18 @@ import { writeAll } from "./write-all.js";
 
 export const JOURNAL_FILE = "journal.jsonl";
 
-const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_WRONLY } = constants;
+const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = constants;
+
+/** A short name for a filesystem entry type, for error messages. */
+export function describeEntryKind(stats: Stats): string {
+  if (stats.isFile()) return "regular file";
+  if (stats.isDirectory()) return "directory";
+  if (stats.isSymbolicLink()) return "symlink";
+  if (stats.isFIFO()) return "FIFO";
+  if (stats.isSocket()) return "socket";
+  if (stats.isBlockDevice() || stats.isCharacterDevice()) return "device";
+  return "special file";
+}
 
 /**
  * `journal.jsonl` is not a regular, non-symlink file directly inside the run
@@ -39,14 +51,24 @@ export type ReadJournalResult =
  * descriptor is a regular file that the path still names.
  */
 function openJournalFile(journalPath: string, flags: number, mode?: number): number {
+  // Inspect before opening: a FIFO, socket or device at the path would block an
+  // open or read, and is never a valid journal.
+  const entry = inspectJournalPath(journalPath);
+  if (entry instanceof JournalFileError) throw entry;
+
   let fd: number;
   try {
-    fd = openSync(journalPath, flags | O_NOFOLLOW, mode);
+    // O_NONBLOCK keeps an entry swapped in after the lstat from blocking the open.
+    fd = openSync(journalPath, flags | O_NOFOLLOW | O_NONBLOCK, mode);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") {
       throw new JournalFileError(
         `${journalPath} is a symlink; the journal must be a regular file inside the run directory`,
       );
+    }
+    if (code === "ENXIO") {
+      throw new JournalFileError(`${journalPath} is not a regular file inside the run directory`);
     }
     throw error;
   }
@@ -66,6 +88,30 @@ function openJournalFile(journalPath: string, flags: number, mode?: number): num
     throw error;
   }
   return fd;
+}
+
+/**
+ * Inspects the journal path with lstat only, never opening it. Returns
+ * "missing", "regular", or a JournalFileError describing any other entry
+ * (symlink, directory, FIFO, socket, device). Throws on other lstat failures.
+ */
+export function inspectJournalPath(journalPath: string): "missing" | "regular" | JournalFileError {
+  let stats: Stats;
+  try {
+    stats = lstatSync(journalPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+    throw error;
+  }
+  if (stats.isFile()) return "regular";
+  if (stats.isSymbolicLink()) {
+    return new JournalFileError(
+      `${journalPath} is a symlink; the journal must be a regular file inside the run directory`,
+    );
+  }
+  return new JournalFileError(
+    `${journalPath} is not a regular file (${describeEntryKind(stats)}); the journal must be a regular file inside the run directory`,
+  );
 }
 
 /** Whether anything (file, directory or symlink) exists at the journal path. */
