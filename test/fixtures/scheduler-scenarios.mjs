@@ -637,6 +637,25 @@ if (out.outcome !== "recorded") process.exit(1);`;
       },
     }),
 
+  "moving-reject-fails": () =>
+    scenario({
+      definitionPath: join(root, "test", "fixtures", "workflows", "reject-fails.mjs"),
+      makeInput: (repo) => ({ repo }),
+      workers: {
+        writer: ({ count }) => ({ edit: edit(`draft ${count}\n`) }),
+        critic: () => ({ verdict: "bad" }),
+      },
+      // The repository changes before every judge gate.
+      onAction: (action, context) => {
+        if (action.type !== "record_gate" || action.gate.gate !== "judge") return;
+        context.marks.moves = (context.marks.moves ?? 0) + 1;
+        writeFileSync(join(context.repo, "stray.txt"), `move ${context.marks.moves}\n`);
+      },
+      after: (context) => {
+        context.marks.nextCalls = globalThis.woofReviewNextCalls;
+      },
+    }),
+
   "fast-worker": () =>
     scenario({
       verify: false,

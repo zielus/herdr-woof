@@ -676,6 +676,35 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "BR-101. a moving repository records a revision-bound reject → failed gate once",
+    () => {
+      const report = runScenario("moving-reject-fails");
+      expect(report.marks["moves"]).toBeGreaterThanOrEqual(1);
+      expect(report.result).toMatchObject({ outcome: "failed", limit: null });
+      const judged = gatesOf(report).filter((gate) => gate["gate"] === "judge");
+      expect(judged).toHaveLength(1);
+      expect(judged[0]).toMatchObject({
+        decision: "reject",
+        reason: "unfixable",
+        next: { outcome: "failed" },
+      });
+      // The reviewed revision is the judge's dispatch revision; the gate revision is the fresh tree.
+      const dispatch = ofType(report, "request.dispatched").find(
+        (record) => record["stageId"] === "judge",
+      );
+      expect(judged[0]?.["reviewed"]).toEqual(dispatch?.["revision"]);
+      const finalTree = (report as Report & { finalRevision: { revision: { tree: string } } })
+        .finalRevision.revision.tree;
+      expect(judged[0]).toMatchObject({ revision: { tree: finalTree } });
+      const terminations = ofType(report, "run.terminated");
+      expect(terminations).toHaveLength(1);
+      expect(terminations[0]).toMatchObject({ outcome: "failed" });
+      expect(report.marks["nextCalls"]).toBeLessThanOrEqual(2);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "BR-003. a worker that submits before its delivery returns keeps the dispatch revision and completes",
     () => {
       const report = runScenario("fast-worker");

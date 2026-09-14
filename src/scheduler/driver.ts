@@ -680,11 +680,14 @@ export async function runWorkflow<Input>(
             written = await end("failed", `repo_invalid: ${fresh.message}`);
             break;
           }
-          if (fresh.revision.tree !== gate.revision.tree && "outcome" in gate.next) {
-            // The repository moved after the evidence was computed: a gate that would end the
-            // run is decided again on the fresh tree (the completion fence then rejects it).
-            // Any other gate is appended with the fresh revision, so a repository that keeps
-            // moving still makes journal progress.
+          const approvesCompletion =
+            gate.decision === "pass" && "outcome" in gate.next && gate.next.outcome === "completed";
+          if (fresh.revision.tree !== gate.revision.tree && approvesCompletion) {
+            // The repository moved after the evidence was computed: only an approval of
+            // completion is decided again on the fresh tree (the completion fence then rejects
+            // it). Every other gate keeps its decision and `reviewed` revision and is appended
+            // once with the fresh revision, so a repository that keeps moving still makes
+            // journal progress and `next` is not asked again for the same subject.
             evidence = {
               gate: gate.gate,
               acceptedSeq: gate.subject.acceptedSeq,
