@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -242,6 +243,65 @@ appendFileSync(path, line.slice(half));
     expect(shown.status, shown.stderr).toBe(0);
     const snapshot = JSON.parse(shown.stdout) as { snapshot: { journal: Json } };
     expect(snapshot.snapshot.journal).toEqual({ records: 1, tailPending: true });
+  });
+});
+
+describe("event subscription on a run directory that can never hold a journal", () => {
+  it("ends at once with run_dir_invalid when the run directory path is a regular file", async () => {
+    const runDir = join(makeRunDir(), "not-a-directory");
+    writeFileSync(runDir, "plain file\n");
+    const file = join(eventsDir, "regular-file.jsonl");
+    const started = Date.now();
+
+    const exit = await withTimeout(
+      startNode(OBSERVER, [runDir, file, ""]).done,
+      10_000,
+      "observer exit",
+    );
+
+    expect(exit.status, exit.stderr).toBe(5);
+    expect(items(file)).toEqual([
+      expect.objectContaining({ type: "error", reason: "run_dir_invalid" }),
+    ]);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "ends at once with run_dir_invalid when the run directory cannot be searched",
+    async () => {
+      const runDir = makeRunDir();
+      const file = join(eventsDir, "unreadable.jsonl");
+      chmodSync(runDir, 0o000);
+      try {
+        const exit = await withTimeout(
+          startNode(OBSERVER, [runDir, file, ""]).done,
+          10_000,
+          "observer exit",
+        );
+
+        expect(exit.status, exit.stderr).toBe(5);
+        expect(items(file)).toEqual([
+          expect.objectContaining({ type: "error", reason: "run_dir_invalid" }),
+        ]);
+      } finally {
+        chmodSync(runDir, 0o755);
+      }
+    },
+  );
+
+  it("keeps waiting in an existing directory until the journal is created", async () => {
+    const runDir = makeRunDir();
+    const file = join(eventsDir, "created-later.jsonl");
+    const observer = startNode(OBSERVER, [runDir, file, ""]);
+    await delay(200);
+    expect(items(file)).toEqual([]);
+
+    openPlannedRun(runDir);
+    await waitUntil(() => items(file).length >= 1, 10_000, "run.opened event");
+    observer.child.kill("SIGKILL");
+    await observer.done;
+
+    expect(items(file)).toEqual([expect.objectContaining({ type: "run.opened", seq: 1 })]);
   });
 });
 

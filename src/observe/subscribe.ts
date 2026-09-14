@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, statSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -18,7 +18,7 @@ import { projectEvents, type RunEvent } from "./events.js";
 export type SubscriptionItem =
   | RunEvent
   | { type: "resync_required"; reason: CursorProblem; message: string }
-  | { type: "error"; reason: "journal_corrupt"; message: string };
+  | { type: "error"; reason: "journal_corrupt" | "run_dir_invalid"; message: string };
 
 export interface SubscribeOptions {
   /** Resume after this cursor; omitted means from the beginning. */
@@ -33,11 +33,15 @@ export interface SubscribeOptions {
  * Polls the journal and yields each event once, in seq order, within one
  * subscription. It keeps a byte offset in memory and checks that the next line
  * there has the expected seq, falling back to a full read otherwise. A journal
- * that does not exist yet is waited for.
+ * that does not exist yet (no journal file in an existing directory, or no run
+ * directory yet) is waited for.
  *
  * It ends with `resync_required` when the stored cursor cannot resume (another
- * run at the path, a truncated or replaced journal, a malformed cursor), and
- * with `error` when the journal is corrupt. A partial final line is normally a
+ * run at the path, a truncated or replaced journal, a malformed cursor), with
+ * `error`/`journal_corrupt` when the journal is corrupt or not a regular file,
+ * and with `error`/`run_dir_invalid` when the run directory can never hold a
+ * readable journal (the path is not a directory, or it cannot be searched or
+ * inspected, for example EACCES, EPERM or ENOTDIR). A partial final line is normally a
  * write in flight; if the same partial line persists for `tornTailGraceMs`, one
  * `readJournal` under the journal lock decides: no append is in flight under
  * the lock, so a line still torn there is persisted corruption.
@@ -82,6 +86,11 @@ export async function* subscribeEvents(
         }
         if (read.reason === "journal_corrupt") {
           yield { type: "error", reason: "journal_corrupt", message: read.message };
+          return;
+        }
+        const permanent = permanentRunDirProblem(runDir);
+        if (permanent !== undefined) {
+          yield { type: "error", reason: "run_dir_invalid", message: permanent };
           return;
         }
         continue; // not created yet
@@ -200,6 +209,31 @@ export async function* subscribeEvents(
     }
     tail = undefined;
   }
+}
+
+/**
+ * Why a journal read that failed with `run_dir_invalid` can never succeed at
+ * this path, or undefined when the journal may still be created: the run
+ * directory does not exist yet, or it is a searchable directory in which the
+ * journal is missing or (just created) a regular file.
+ */
+function permanentRunDirProblem(runDir: string): string | undefined {
+  let stats: Stats;
+  try {
+    stats = statSync(runDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return `cannot inspect run directory ${runDir}: ${(error as Error).message}`;
+  }
+  if (!stats.isDirectory()) return `${runDir} is not a directory`;
+  const journalPath = join(runDir, JOURNAL_FILE);
+  try {
+    lstatSync(journalPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return `cannot inspect ${journalPath}: ${(error as Error).message}`;
+  }
+  return undefined;
 }
 
 function fileSize(runDir: string): number {
