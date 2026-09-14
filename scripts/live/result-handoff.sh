@@ -330,10 +330,18 @@ codes="$(node --input-type=module -e "import('$WT/dist/index.js').then((m) => co
 for code in $codes; do
   grep -qE "^## \`?${code}([^A-Za-z0-9_]|\$)" "$A" || warn "no section for $code"
 done
-duplicates="$(count submission.duplicate)"
-[ "$duplicates" -ge 1 ] || warn "no submission.duplicate from the worker's repeated submit"
-echo "submission.duplicate records: $duplicates"
 echo "submission.rejected records: $(count submission.rejected)"
+
+section "resubmission gate"
+# The worker's identical resubmit (prompt step 6) must be recorded as a duplicate
+# receipt; its absence means the idempotent-retry path was not exercised.
+duplicates="$(count submission.duplicate)"
+echo "submission.duplicate records: $duplicates"
+if [ "$duplicates" -ge 1 ]; then
+  pass "worker's identical resubmission returned a duplicate receipt ($duplicates)"
+else
+  fail "no submission.duplicate recorded: the worker's identical resubmission (step 6) did not produce a duplicate receipt"
+fi
 
 section "journal"
 cat "$J"
