@@ -1,0 +1,8 @@
+{
+  "name": "woof",
+  "description": "Coordinate other coding agents running as live Herdr sessions from inside a Claude Code session, via the woof MCP tools.",
+  "version": "0.0.0",
+  "author": { "name": "zielu" },
+  "repository": "https://github.com/zielus/herdr-woof",
+  "keywords": ["herdr", "orchestration", "agents"]
+}

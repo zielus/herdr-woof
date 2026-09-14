@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "woof": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/woof-mcp"
+    }
+  }
+}
