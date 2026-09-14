@@ -532,6 +532,53 @@ out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude"
     expect(foreign.log.filter((args) => args[1] === "start")).toHaveLength(1);
   }, 30_000);
 
+  it("keeps start retries within the supplied timeout and returns the busy result, not a timeout", () => {
+    const startBody = (timeoutMs: number) =>
+      `await runtime.openPane({ near: "current", cwd: "/tmp/run" });
+const began = Date.now();
+out = { result: await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: ${timeoutMs} }), took: Date.now() - began };`;
+    const startTimeouts = (log: string[][]) =>
+      log
+        .filter((args) => args[1] === "start")
+        .map((args) => Number(args[args.indexOf("--timeout") + 1]));
+
+    // A persistently busy owned pane.
+    const persistent = runAdapter(
+      [splitReturning(PANE), { match: ["agent", "start"], ...error("agent_pane_busy") }],
+      startBody(6000),
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(persistent.out["result"]).toMatchObject({
+      ok: false,
+      error: { runtimeCode: "agent_pane_busy" },
+    });
+    expect(persistent.out["took"]).toBeLessThan(6000);
+    const persistentTimeouts = startTimeouts(persistent.log);
+    expect(persistentTimeouts.length).toBeGreaterThanOrEqual(2);
+    expect(persistentTimeouts[0]).toBe(6000);
+    for (const value of persistentTimeouts.slice(1)) {
+      expect(value).toBeGreaterThan(3000);
+      expect(value).toBeLessThan(6000);
+    }
+
+    // Busy, then a second start that never answers: bounded by the supplied timeout.
+    const slow = runAdapter(
+      [
+        splitReturning(PANE),
+        { match: ["agent", "start"], call: 1, ...error("agent_pane_busy") },
+        { match: ["agent", "start"], call: 2, hangMs: 60_000, stdout: "" },
+      ],
+      startBody(5000),
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(slow.out["result"]).toMatchObject({
+      ok: false,
+      error: { runtimeCode: "agent_pane_busy" },
+    });
+    expect(slow.out["took"]).toBeLessThan(5000 + 400);
+    expect(startTimeouts(slow.log)).toHaveLength(2);
+  }, 30_000);
+
   it("never invoked read, send-keys, run or explain across every scenario", () => {
     expect(allLogs.length).toBeGreaterThan(20);
     expect(

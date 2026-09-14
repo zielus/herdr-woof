@@ -47,6 +47,14 @@ export interface HerdrCliRuntime extends RuntimeAdapter {
 const FORBIDDEN_SUBCOMMANDS = new Set(["read", "send-keys", "run", "explain"]);
 const START_RETRY_INTERVAL_MS = 1000;
 const START_RETRY_WINDOW_MS = 15_000;
+/** Herdr refuses an `agent start --timeout` of 3000 ms or less. */
+const MIN_START_TIMEOUT_MS = 3001;
+
+/** The same `agent start` argv with its `--timeout` value replaced. */
+function withStartTimeout(args: string[], timeoutMs: number): string[] {
+  const index = args.indexOf("--timeout");
+  return args.map((item, position) => (position === index + 1 ? String(timeoutMs) : item));
+}
 
 /**
  * Runtime adapter over the Herdr CLI (`herdr agent` / `herdr pane` JSON
@@ -127,21 +135,31 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     args: string[],
     input: StartAgentInput,
   ): Promise<HerdrOutcome> {
-    const deadline = Date.now() + Math.min(START_RETRY_WINDOW_MS, input.timeoutMs);
-    const attempt = async (): Promise<HerdrOutcome> => {
-      const started = await run(args, input.timeoutMs);
-      if (
-        started.ok ||
-        started.error.runtimeCode !== "agent_pane_busy" ||
-        !ownedPanes.has(input.paneId) ||
-        Date.now() + START_RETRY_INTERVAL_MS > deadline
-      ) {
-        return started;
-      }
+    const startDeadline = Date.now() + input.timeoutMs;
+    const retryDeadline = Date.now() + Math.min(START_RETRY_WINDOW_MS, input.timeoutMs);
+    // A retry must finish (including the kill grace) by the supplied start deadline.
+    const budgetAt = (at: number) => startDeadline - at - graceMs;
+    const retry = async (busy: HerdrOutcome): Promise<HerdrOutcome> => {
+      const at = Date.now() + START_RETRY_INTERVAL_MS;
+      if (at > retryDeadline || budgetAt(at) < MIN_START_TIMEOUT_MS) return busy;
       await delay(START_RETRY_INTERVAL_MS);
-      return attempt();
+      const budget = budgetAt(Date.now());
+      if (budget < MIN_START_TIMEOUT_MS) return busy;
+      const retried = await run(withStartTimeout(args, budget), budget);
+      if (retried.ok) return retried;
+      if (retried.error.runtimeCode === "agent_pane_busy") return retry(retried);
+      // A retry that ran out of time does not hide the busy pane that caused it.
+      return retried.error.code === "timeout" ? busy : retried;
     };
-    return attempt();
+    const started = await run(args, input.timeoutMs);
+    if (
+      started.ok ||
+      started.error.runtimeCode !== "agent_pane_busy" ||
+      !ownedPanes.has(input.paneId)
+    ) {
+      return started;
+    }
+    return retry(started);
   }
 
   return {
