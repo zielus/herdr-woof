@@ -199,6 +199,16 @@ describe("parseHerdrOutput", () => {
       [{ exitCode: null, signal: "SIGKILL", killed: true }, "timeout"],
       [{ exitCode: 0, stdout: "not json" }, "protocol_error"],
       [{ exitCode: 0, stdout: JSON.stringify({ id: "x" }) }, "protocol_error"],
+      [{ exitCode: 0, stdout: JSON.stringify({ result: { type: "ok" } }) }, "protocol_error"],
+      [
+        { exitCode: 0, stdout: JSON.stringify({ id: "", result: { type: "ok" } }) },
+        "protocol_error",
+      ],
+      [
+        { exitCode: 0, stdout: JSON.stringify({ id: 7, result: { type: "ok" } }) },
+        "protocol_error",
+      ],
+      [{ exitCode: 0, stdout: JSON.stringify({ id: null, result: {} }) }, "protocol_error"],
       [{ exitCode: 1, stderr: "panic: something" }, "protocol_error"],
       [{ exitCode: 137, signal: "SIGKILL" }, "protocol_error"],
     ];

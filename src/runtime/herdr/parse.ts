@@ -45,7 +45,13 @@ export function parseHerdrOutput(command: readonly string[], exec: ExecResult): 
   }
   if (exec.exitCode === 0) {
     const value = parseJson(exec.stdout);
-    if (isPlainObject(value) && isPlainObject(value["result"])) {
+    // A success response names its request id and carries a result object.
+    if (
+      isPlainObject(value) &&
+      typeof value["id"] === "string" &&
+      value["id"] !== "" &&
+      isPlainObject(value["result"])
+    ) {
       return { ok: true, result: value["result"] };
     }
     return fail(
