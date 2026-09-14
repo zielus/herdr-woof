@@ -95,9 +95,13 @@ export type { SubscribeOptions, SubscriptionItem } from "./observe/subscribe.js"
 
 export type {
   AgentHandle,
+  AmbiguousCode,
+  AmbiguousDeliveryError,
   DeliveryResult,
   Lifecycle,
   LifecycleObservation,
+  NotDeliveredCode,
+  NotDeliveredError,
   ObservationOrder,
   RuntimeAdapter,
   RuntimeError,

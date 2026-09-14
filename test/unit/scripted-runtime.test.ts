@@ -183,10 +183,14 @@ describe("scripted runtime adapter behaviour", () => {
     const { runtime, handle } = await started({
       timeline: [{ status: "idle", stateChangeSeq: 1, terminalId: "t1" }],
       onDeliver: ["started", "not_delivered:agent_blocked", "ambiguous:stalled"],
-      afterDeliver: [{ status: "working", stateChangeSeq: 2, terminalId: "t1" }],
+      afterDeliver: [
+        { status: "working", stateChangeSeq: 2, terminalId: "t1" },
+        { status: "idle", stateChangeSeq: 3, terminalId: "t1" },
+      ],
     });
 
     const first = await runtime.deliver(handle, "one", { timeoutMs: 100 });
+    runtime.advance(NAME);
     const second = await runtime.deliver(handle, "two", { timeoutMs: 100 });
     const third = await runtime.deliver(handle, "three", { timeoutMs: 100 });
 
@@ -202,12 +206,100 @@ describe("scripted runtime adapter behaviour", () => {
         .filter((call) => call.method === "deliver")
         .map((call) => call.args["text"]),
     ).toEqual(["one", "two", "three"]);
+    expect(
+      runtime
+        .calls()
+        .filter((call) => call.method === "deliver")
+        .map((call) => call.args["sent"]),
+    ).toEqual([true, false, true]);
     expect(runtime.calls().map((call) => call.method)).toEqual([
       "openPane",
       "startAgent",
       "deliver",
       "deliver",
       "deliver",
+    ]);
+  });
+
+  it("refuses a delivery script that crosses the delivery code sets", () => {
+    const bad = [
+      "not_delivered:timeout",
+      "not_delivered:stalled",
+      "not_delivered:protocol_error",
+      "not_delivered:runtime_error",
+      "ambiguous:not_found",
+      "ambiguous:agent_busy",
+      "ambiguous:runtime_unavailable",
+      "not_delivered:bogus",
+      "ambiguous:",
+      "started:timeout",
+      "delivered",
+    ];
+    for (const onDeliver of bad) {
+      expect(
+        () =>
+          createScriptedRuntime({
+            agents: { [NAME]: { timeline: [{ status: "idle" }], onDeliver } },
+          }),
+        onDeliver,
+      ).toThrow(TypeError);
+      expect(
+        () =>
+          createScriptedRuntime({
+            agents: {
+              [NAME]: { timeline: [{ status: "idle" }], onDeliver: ["started", onDeliver] },
+            },
+          }),
+        onDeliver,
+      ).toThrow(TypeError);
+    }
+    for (const onDeliver of [
+      "not_delivered:not_found",
+      "not_delivered:agent_blocked",
+      "not_delivered:agent_busy",
+      "not_delivered:invalid_request",
+      "not_delivered:runtime_unavailable",
+      "ambiguous:stalled",
+      "ambiguous:timeout",
+      "ambiguous:protocol_error",
+      "ambiguous:runtime_error",
+    ]) {
+      expect(() =>
+        createScriptedRuntime({
+          agents: { [NAME]: { timeline: [{ status: "idle" }], onDeliver } },
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it("never sends to a working or blocked agent and keeps the script for the next call", async () => {
+    const { runtime, handle } = await started({
+      timeline: [
+        { status: "working", stateChangeSeq: 1, terminalId: "t1" },
+        { status: "blocked", stateChangeSeq: 2, terminalId: "t1" },
+        { status: "idle", stateChangeSeq: 3, terminalId: "t1" },
+      ],
+      onDeliver: ["ambiguous:stalled", "started"],
+    });
+
+    const busy = await runtime.deliver(handle, "while working", { timeoutMs: 10 });
+    runtime.advance(NAME);
+    const blocked = await runtime.deliver(handle, "while blocked", { timeoutMs: 10 });
+    runtime.advance(NAME);
+    const first = await runtime.deliver(handle, "when ready", { timeoutMs: 10 });
+
+    expect(busy).toMatchObject({ outcome: "not_delivered", error: { code: "agent_busy" } });
+    expect(blocked).toMatchObject({ outcome: "not_delivered", error: { code: "agent_blocked" } });
+    expect(first).toMatchObject({ outcome: "ambiguous", error: { code: "stalled" } });
+    expect(
+      runtime
+        .calls()
+        .filter((call) => call.method === "deliver")
+        .map((call) => [call.args["text"], call.args["sent"]]),
+    ).toEqual([
+      ["while working", false],
+      ["while blocked", false],
+      ["when ready", true],
     ]);
   });
 

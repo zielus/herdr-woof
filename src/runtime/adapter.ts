@@ -1,3 +1,5 @@
+import { DISPATCH_REASONS } from "../domain/types.js";
+
 /**
  * Runtime adapter contract (p2, unstable until v1). A runtime starts agents in
  * panes, reports their observed lifecycle, delivers one prompt and stops panes
@@ -74,24 +76,37 @@ export interface RuntimeError {
 
 export type RuntimeResult<T> = { ok: true; value: T } | { ok: false; error: RuntimeError };
 
+/** Error codes that prove nothing was sent; the same closed set a dispatch records. */
+export type NotDeliveredCode = (typeof DISPATCH_REASONS.not_delivered)[number];
+
+/** Error codes for a prompt that may have been typed; the same closed set a dispatch records. */
+export type AmbiguousCode = (typeof DISPATCH_REASONS.ambiguous)[number];
+
+export type NotDeliveredError = RuntimeError & { code: NotDeliveredCode };
+export type AmbiguousDeliveryError = RuntimeError & { code: AmbiguousCode };
+
 /**
  * Delivery certainty. `not_delivered` means provably nothing was sent;
- * `ambiguous` means the prompt may have been typed. There is no resend: trying
- * again is a new, explicitly opened attempt.
+ * `ambiguous` means the prompt may have been typed. Each carries only its own
+ * code set, so a timeout can never be reported as not delivered. There is no
+ * resend: trying again is a new, explicitly opened attempt.
  */
 export type DeliveryResult =
   | { outcome: "started"; observation: LifecycleObservation }
-  | { outcome: "not_delivered"; error: RuntimeError }
-  | { outcome: "ambiguous"; error: RuntimeError };
+  | { outcome: "not_delivered"; error: NotDeliveredError }
+  | { outcome: "ambiguous"; error: AmbiguousDeliveryError };
 
-/** Error codes that prove nothing was sent. */
-export const NOT_DELIVERED_CODES: readonly RuntimeErrorCode[] = [
-  "not_found",
-  "agent_blocked",
-  "agent_busy",
-  "invalid_request",
-  "runtime_unavailable",
-];
+export const NOT_DELIVERED_CODES: readonly NotDeliveredCode[] = DISPATCH_REASONS.not_delivered;
+export const AMBIGUOUS_CODES: readonly AmbiguousCode[] = DISPATCH_REASONS.ambiguous;
+
+// The type predicates also check at compile time that both sets are runtime error codes.
+export function isNotDeliveredCode(code: RuntimeErrorCode): code is NotDeliveredCode {
+  return (NOT_DELIVERED_CODES as readonly string[]).includes(code);
+}
+
+export function isAmbiguousCode(code: RuntimeErrorCode): code is AmbiguousCode {
+  return (AMBIGUOUS_CODES as readonly string[]).includes(code);
+}
 
 export interface OpenPaneInput {
   /** A pane id to split, or "current" for the caller's pane. */
@@ -153,11 +168,11 @@ export function lifecycleFromStatus(status: string): Exclude<Lifecycle, "gone"> 
   }
 }
 
-export function runtimeError(
-  code: RuntimeErrorCode,
+export function runtimeError<C extends RuntimeErrorCode>(
+  code: C,
   message: string,
   details: { command?: string[]; runtimeCode?: string | null; exitCode?: number | null } = {},
-): RuntimeError {
+): RuntimeError & { code: C } {
   return {
     code,
     runtimeCode: details.runtimeCode ?? null,

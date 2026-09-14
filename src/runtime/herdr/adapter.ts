@@ -1,5 +1,5 @@
 import {
-  NOT_DELIVERED_CODES,
+  isNotDeliveredCode,
   runtimeError,
   type AgentHandle,
   type DeliveryResult,
@@ -220,8 +220,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         const error = before.error;
         return {
           outcome: "not_delivered",
-          error: NOT_DELIVERED_CODES.includes(error.code)
-            ? error
+          error: isNotDeliveredCode(error.code)
+            ? { ...error, code: error.code }
             : {
                 ...error,
                 code: "runtime_unavailable",
@@ -272,20 +272,19 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       const prompted = await run(args, delivery.timeoutMs);
       if (!prompted.ok) {
         const error = prompted.error;
-        const spawnFailed = error.code === "runtime_unavailable";
         if (
-          spawnFailed ||
+          error.code === "runtime_unavailable" ||
           error.code === "not_found" ||
           error.code === "agent_blocked" ||
           error.code === "invalid_request"
         ) {
-          return { outcome: "not_delivered", error };
+          return { outcome: "not_delivered", error: { ...error, code: error.code } };
         }
         return {
           outcome: "ambiguous",
           error:
             error.code === "stalled" || error.code === "timeout" || error.code === "protocol_error"
-              ? error
+              ? { ...error, code: error.code }
               : { ...error, code: "runtime_error" },
         };
       }
@@ -343,7 +342,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
   };
 }
 
-function invalidName(name: string): RuntimeError | undefined {
+function invalidName(name: string): (RuntimeError & { code: "invalid_request" }) | undefined {
   return isHerdrRuntimeName(name)
     ? undefined
     : runtimeError(

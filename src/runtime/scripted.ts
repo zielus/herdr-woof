@@ -1,13 +1,16 @@
 import {
+  AMBIGUOUS_CODES,
+  NOT_DELIVERED_CODES,
   lifecycleFromStatus,
   runtimeError,
   type AgentHandle,
+  type AmbiguousCode,
   type DeliveryResult,
   type Lifecycle,
   type LifecycleObservation,
+  type NotDeliveredCode,
   type OpenPaneInput,
   type RuntimeAdapter,
-  type RuntimeErrorCode,
   type RuntimeResult,
   type StartAgentInput,
 } from "./adapter.js";
@@ -27,9 +30,13 @@ export interface TimelineEntry {
   terminalId?: string;
 }
 
-/** "started", "not_delivered:<code>" or "ambiguous:<code>". */
+/**
+ * "started", "not_delivered:<code>" or "ambiguous:<code>", each code from its
+ * own delivery set. `createScriptedRuntime` throws a TypeError for any other
+ * value, so a double cannot report a timeout as not delivered.
+ */
 export type DeliverScript =
-  "started" | `not_delivered:${RuntimeErrorCode}` | `ambiguous:${RuntimeErrorCode}`;
+  "started" | `not_delivered:${NotDeliveredCode}` | `ambiguous:${AmbiguousCode}`;
 
 export interface ScriptedAgent {
   timeline: TimelineEntry[];
@@ -83,6 +90,14 @@ export function createScriptedRuntime(options: {
   for (const [name, script] of Object.entries(options.agents)) {
     if (script.timeline.length === 0)
       throw new TypeError(`scripted agent ${name} needs a timeline entry`);
+    const onDeliver = script.onDeliver ?? [];
+    for (const value of Array.isArray(onDeliver) ? onDeliver : [onDeliver]) {
+      if (!isDeliverScript(value)) {
+        throw new TypeError(
+          `scripted agent ${name} has onDeliver ${JSON.stringify(value)}; use "started", "not_delivered:<${NOT_DELIVERED_CODES.join("|")}>" or "ambiguous:<${AMBIGUOUS_CODES.join("|")}>"`,
+        );
+      }
+    }
     agents.set(name, {
       script,
       timeline: [...script.timeline],
@@ -203,19 +218,43 @@ export function createScriptedRuntime(options: {
       text: string,
       delivery: { timeoutMs: number },
     ): Promise<DeliveryResult> {
-      record("deliver", handle.runtimeName, { text, timeoutMs: delivery.timeoutMs });
+      // `sent` tells tests whether the prompt may have reached the agent.
+      const args: Record<string, unknown> = { text, timeoutMs: delivery.timeoutMs, sent: false };
+      record("deliver", handle.runtimeName, args);
       const state = agents.get(handle.runtimeName);
       if (state === undefined || state.stopped) {
         return { outcome: "not_delivered", error: notFound(handle.runtimeName) };
+      }
+      // Precondition, as in the Herdr adapter: a working or blocked agent gets
+      // nothing, and the per-call script is not consumed.
+      const current = lifecycleFromStatus((state.timeline[state.cursor] as TimelineEntry).status);
+      if (current === "working") {
+        return {
+          outcome: "not_delivered",
+          error: runtimeError(
+            "agent_busy",
+            `scripted agent ${handle.runtimeName} is working; the prompt was not sent`,
+          ),
+        };
+      }
+      if (current === "blocked") {
+        return {
+          outcome: "not_delivered",
+          error: runtimeError(
+            "agent_blocked",
+            `scripted agent ${handle.runtimeName} is blocked; the prompt was not sent`,
+          ),
+        };
       }
       const index = state.delivers;
       state.delivers += 1;
       const onDeliver = state.script.onDeliver ?? "started";
       const script = (Array.isArray(onDeliver) ? nth(onDeliver, index) : onDeliver) ?? "started";
       if (script.startsWith("not_delivered:")) {
-        const code = script.slice("not_delivered:".length) as RuntimeErrorCode;
+        const code = script.slice("not_delivered:".length) as NotDeliveredCode;
         return { outcome: "not_delivered", error: runtimeError(code, `scripted ${code}`) };
       }
+      args["sent"] = true;
       const afterDeliver = state.script.afterDeliver;
       const after: TimelineEntry[] = (afterDeliver === undefined
         ? undefined
@@ -224,7 +263,7 @@ export function createScriptedRuntime(options: {
           : afterDeliver) ?? [{ status: "working" }];
       state.timeline.splice(state.cursor + 1, 0, ...after);
       if (script.startsWith("ambiguous:")) {
-        const code = script.slice("ambiguous:".length) as RuntimeErrorCode;
+        const code = script.slice("ambiguous:".length) as AmbiguousCode;
         return { outcome: "ambiguous", error: runtimeError(code, `scripted ${code}`) };
       }
       state.cursor += 1;
@@ -285,6 +324,17 @@ function notFound(runtimeName: string) {
   return runtimeError("not_found", `scripted agent ${runtimeName} does not exist`, {
     runtimeCode: "agent_not_found",
   });
+}
+
+function isDeliverScript(value: unknown): value is DeliverScript {
+  if (value === "started") return true;
+  if (typeof value !== "string") return false;
+  const [category, code, ...rest] = value.split(":");
+  if (rest.length > 0 || code === undefined) return false;
+  if (category === "not_delivered")
+    return (NOT_DELIVERED_CODES as readonly string[]).includes(code);
+  if (category === "ambiguous") return (AMBIGUOUS_CODES as readonly string[]).includes(code);
+  return false;
 }
 
 /** The entry for call `index` of a per-call script; the last entry repeats. */
