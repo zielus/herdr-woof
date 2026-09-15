@@ -50,13 +50,65 @@ function importGraph(): Map<string, string[]> {
 
 const area = (path: string) => (path.includes("/") ? (path.split("/")[0] as string) : path);
 
+/** The most specific rule: an exact module, then a two-segment area, then the top-level area. */
+function ruleFor(path: string): { areas: string[]; modules?: string[] } | undefined {
+  const segments = path.split("/");
+  return (
+    RULES[path] ??
+    (segments.length > 2 ? RULES[segments.slice(0, 2).join("/")] : undefined) ??
+    RULES[area(path)]
+  );
+}
+
 // Allowed target areas per source area. Exceptions are listed by exact module.
 const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
+  // p4 (plan D13): configuration reads files and the built-in catalog; nothing in the engine imports it.
+  config: {
+    areas: ["config", "contracts", "domain"],
+    modules: [
+      "scheduler/definition.js",
+      "scheduler/loader.js",
+      "scheduler/launch.js",
+      "workflows/build-review.js",
+      "runtime/claude/trust.js",
+    ],
+  },
+  "runtime/claude": { areas: ["contracts"] },
+  // The run host claims runs, resolves configuration and drives the scheduler.
+  host: {
+    areas: ["host", "contracts", "domain", "state", "observe", "scheduler", "config"],
+    modules: ["runtime/herdr/exec.js"],
+  },
+  // A pure file probe the snapshot reader may import.
+  "host/probe.js": { areas: ["contracts"] },
+  inspect: {
+    areas: ["inspect", "state", "observe", "contracts", "domain"],
+    modules: ["host/probe.js"],
+  },
+  // Command handlers may import any area; only cli.ts imports them (checked below).
+  commands: {
+    areas: [
+      "commands",
+      "config",
+      "contracts",
+      "domain",
+      "host",
+      "inspect",
+      "journal",
+      "observe",
+      "runtime",
+      "scheduler",
+      "state",
+      "submission",
+      "workflows",
+    ],
+    modules: ["version.js"],
+  },
   contracts: { areas: ["contracts"] },
   domain: { areas: ["domain", "contracts"] },
   runtime: { areas: ["runtime", "domain", "contracts"] },
   journal: { areas: ["journal", "contracts", "domain"], modules: ["state/reducer.js"] },
-  state: { areas: ["state", "domain", "contracts", "journal"] },
+  state: { areas: ["state", "domain", "contracts", "journal"], modules: ["host/probe.js"] },
   observe: { areas: ["observe", "state", "journal", "contracts"] },
   submission: { areas: ["submission", "contracts", "journal", "state"] },
   // p3 (plan D15): the scheduler reads state and runtime, writes through the store and
@@ -95,7 +147,7 @@ describe("module boundaries in dist", () => {
           continue;
         }
         if (!graph.has(target)) violations.push(`${from} imports missing ${target}`);
-        const rule = RULES[area(from)];
+        const rule = ruleFor(from);
         if (rule === undefined) continue; // index.js, testing.js, cli.js, version.js
         if (!rule.areas.includes(area(target)) && !(rule.modules ?? []).includes(target)) {
           violations.push(`${from} imports ${target}`);
@@ -123,8 +175,16 @@ describe("module boundaries in dist", () => {
     expect([...graph].filter(([, imports]) => imports.includes("cli.js"))).toEqual([]);
   });
 
-  it("lets only the entry points, the scheduler and workflows import scheduler/ and workflows/", () => {
-    const allowed = new Set(["index.js", "cli.js", "scheduler", "workflows"]);
+  it("lets only the entry points, commands, the host, configuration, the scheduler and workflows import scheduler/ and workflows/", () => {
+    const allowed = new Set([
+      "index.js",
+      "cli.js",
+      "scheduler",
+      "workflows",
+      "config",
+      "host",
+      "commands",
+    ]);
     const violations = [...graph].flatMap(([from, imports]) =>
       imports
         .filter((target) => ["scheduler", "workflows"].includes(area(target)))
@@ -132,6 +192,26 @@ describe("module boundaries in dist", () => {
         .map((target) => `${from} imports ${target}`),
     );
     expect(violations).toEqual([]);
+  });
+
+  it("lets only cli.ts and other command handlers import commands/", () => {
+    const violations = [...graph].flatMap(([from, imports]) =>
+      imports
+        .filter((target) => area(target) === "commands")
+        .filter(() => from !== "cli.js" && area(from) !== "commands")
+        .map((target) => `${from} imports ${target}`),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it("never names the .woof configuration directory in the engine areas (nothing after openRun reads it)", () => {
+    const found: string[] = [];
+    for (const dir of ["scheduler", "state", "journal", "observe"]) {
+      for (const file of files(join(dist, dir), ".js")) {
+        if (readFileSync(file, "utf8").includes(".woof")) found.push(relative(dist, file));
+      }
+    }
+    expect(found).toEqual([]);
   });
 
   it("names no built-in stage and appends no journal record in dist/scheduler", () => {

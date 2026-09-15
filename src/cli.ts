@@ -1,12 +1,23 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { MAX_ENVELOPE_BYTES, isId, type RejectionDetail } from "./contracts/envelope.js";
+import {
+  MAX_INPUT_BYTES,
+  OUTCOME_EXIT_CODES,
+  UsageError,
+  milliseconds,
+  parse,
+  readInputFile,
+  readStdin,
+  rejected,
+  required,
+} from "./commands/common.js";
+import { configCommand } from "./commands/config.js";
+import { isId } from "./contracts/envelope.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import type { RuntimeAdapter } from "./runtime/adapter.js";
 import { createHerdrCliRuntime } from "./runtime/herdr/adapter.js";
@@ -64,10 +75,6 @@ Records that the run in <run-dir> is cancelled. A scheduler still running it
 stops at its next tick; late submissions are refused. Prints one JSON line;
 exits 0 when recorded, 2 when the run is already terminated, 3 on journal failure.`;
 
-/** Largest workflow input read from a file or stdin, in bytes. */
-const MAX_INPUT_BYTES = 1024 * 1024;
-
-const OUTCOME_EXIT_CODES = { completed: 0, failed: 4, exhausted: 5, cancelled: 6 } as const;
 /** Every RuntimeAdapter method a `--runtime-module` factory result must provide. */
 const RUNTIME_METHODS = [
   "openPane",
@@ -77,8 +84,6 @@ const RUNTIME_METHODS = [
   "deliver",
   "stop",
 ] as const;
-
-class UsageError extends Error {}
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -106,6 +111,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       console.log(probe("herdr", ["status"]));
       console.log(probe("claude", ["--version"]));
       return 0;
+    case "config":
+      return configCommand(args);
     case "submit":
       return submitCommand(args);
     case "attempt":
@@ -376,32 +383,9 @@ function describeAction(action: Action): string {
   }
 }
 
-function rejected(
-  reason: string,
-  message: string,
-  details: RejectionDetail[],
-  code: number,
-): number {
-  console.log(JSON.stringify({ outcome: "rejected", reason, message, details }));
-  return code;
-}
-
-function readInputFile(path: string): Uint8Array {
-  const size = statSync(path).size;
-  if (size > MAX_INPUT_BYTES) throw new Error(`${path} is larger than ${MAX_INPUT_BYTES} bytes`);
-  return readFileSync(path);
-}
-
 function defaultRunId(): string {
   const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace("T", "-").slice(0, 15);
   return `br-${stamp}-${randomBytes(3).toString("hex")}`;
-}
-
-function milliseconds(value: string, flag: string, min = 0): number {
-  if (!/^(0|[1-9][0-9]*)$/.test(value) || Number(value) < min || Number(value) > 3_600_000) {
-    throw new UsageError(`${flag} must be an integer between ${min} and 3600000`);
-  }
-  return Number(value);
 }
 
 async function submitCommand(args: string[]): Promise<number> {
@@ -531,41 +515,6 @@ function runShowCommand(args: string[]): number {
     }),
   );
   return 3;
-}
-
-/**
- * Reads file descriptor 0 through the stdin stream, stopping one chunk past
- * `limit` (MAX_ENVELOPE_BYTES for envelopes) so the caller can report the size. The
- * stdin device is never opened by path: on Linux that fails with ENXIO when
- * stdin is a socket, as it is for many process spawners.
- */
-async function readStdin(limit = MAX_ENVELOPE_BYTES): Promise<Uint8Array> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  try {
-    for await (const chunk of process.stdin) {
-      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer);
-      chunks.push(buffer);
-      size += buffer.byteLength;
-      if (size > limit) break;
-    }
-  } catch (error) {
-    throw new UsageError(`cannot read the envelope from stdin: ${(error as Error).message}`);
-  }
-  return Buffer.concat(chunks);
-}
-
-function parse<T>(run: () => T, usage: string): T {
-  try {
-    return run();
-  } catch (error) {
-    throw new UsageError(`${(error as Error).message}\n\n${usage}`);
-  }
-}
-
-function required(value: string | undefined, flag: string, usage: string): string {
-  if (value === undefined || value === "") throw new UsageError(`${flag} is required\n\n${usage}`);
-  return value;
 }
 
 function count(value: string, flag: string): number {
