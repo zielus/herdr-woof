@@ -369,6 +369,49 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(runDir)).toBe(false);
   });
 
+  it("PR #6 (launch.ts:184, :200): a failed herdr pane split or pane run abandons the run directory, and a later run host is refused", () => {
+    for (const failing of ["split", "run"] as const) {
+      const ws = workspace("w9:p2", false);
+      writeFileSync(
+        ws.scenario,
+        JSON.stringify([
+          failing === "split"
+            ? { match: ["pane", "split"], stderr: "split refused\n", exit: 1 }
+            : {
+                match: ["pane", "split"],
+                stdout: JSON.stringify({ result: { pane: { pane_id: "w9:p2" } } }),
+              },
+          { match: ["pane", "run"], stderr: "run refused\n", exit: 1 },
+        ]),
+      );
+      const runDir = join(ws.root, "run");
+      const result = woofIn(ws, startArgs(ws, runDir));
+      expect(result.status, failing + result.stdout + result.stderr).toBe(3);
+      expect(result.json, failing).toMatchObject({
+        outcome: "rejected",
+        reason: "host_pane_failed",
+        message: expect.stringContaining(
+          "the run directory is closed (abandoned) and no run will start there",
+        ),
+      });
+      expect(result.json?.["message"], failing).toContain(`${failing} refused`);
+      expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")), failing).toMatchObject({
+        state: "abandoned",
+        pid: null,
+      });
+      expect(
+        fakeCalls(ws).map((argv) => argv.slice(0, 2).join(" ")),
+        failing,
+      ).toEqual(failing === "split" ? ["pane split"] : ["pane split", "pane run"]);
+      // What the failed pane would have typed, run by hand later: refused, nothing opens.
+      const late = woofIn(ws, ["run", "host", runDir]);
+      expect(late.status, failing + late.stdout + late.stderr).toBe(2);
+      expect(late.json, failing).toMatchObject({ outcome: "rejected", reason: "run_host_claimed" });
+      expect(existsSync(join(runDir, "journal.jsonl")), failing).toBe(false);
+      expect(woofIn(ws, ["status", runDir]).status, failing).not.toBe(0);
+    }
+  });
+
   it("S3: a host that never starts is abandoned within hostStartTimeoutMs, and a late host is refused", () => {
     const ws = workspace("w9:p2", false);
     const runDir = join(ws.root, "run");

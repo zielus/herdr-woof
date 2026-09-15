@@ -176,11 +176,25 @@ export async function launchInPane(
     projectRoot,
     "--no-focus",
   ]);
-  const paneId = split.exitCode === 0 ? paneIdOf(split.stdout) : undefined;
-  if (paneId === undefined) {
+  // A launch this launcher reports as failed must never start later: close the unclaimed directory.
+  const paneFailed = (message: string) => {
+    let abandoned: ReturnType<typeof abandonHost>;
+    try {
+      abandoned = abandonHost(runDir, `woof run start (pid ${process.pid})`);
+    } catch (error) {
+      abandoned = { ok: false, host: null, message: (error as Error).message };
+    }
     return rejected(
       "host_pane_failed",
-      `herdr pane split failed: ${split.spawnErrorMessage ?? (split.stderr.trim().split("\n")[0] || `exit ${split.exitCode ?? split.signal ?? "unknown"}, stdout ${JSON.stringify(split.stdout.slice(0, 200))}`)}; ${LAUNCH_FILE} is left in ${runDir}`,
+      abandoned.ok
+        ? `${message}; the run directory is closed (abandoned) and no run will start there`
+        : `${message}; the run directory could not be closed (abandoned): ${abandoned.message}`,
+    );
+  };
+  const paneId = split.exitCode === 0 ? paneIdOf(split.stdout) : undefined;
+  if (paneId === undefined) {
+    return paneFailed(
+      `herdr pane split failed: ${split.spawnErrorMessage ?? (split.stderr.trim().split("\n")[0] || `exit ${split.exitCode ?? split.signal ?? "unknown"}, stdout ${JSON.stringify(split.stdout.slice(0, 200))}`)}`,
     );
   }
   const typed = await exec([
@@ -194,8 +208,7 @@ export async function launchInPane(
     shellQuote(runDir),
   ]);
   if (typed.exitCode !== 0) {
-    return rejected(
-      "host_pane_failed",
+    return paneFailed(
       `herdr pane run ${paneId} failed: ${typed.spawnErrorMessage ?? (typed.stderr.trim().split("\n")[0] || `exit ${typed.exitCode ?? typed.signal ?? "unknown"}`)}`,
     );
   }
