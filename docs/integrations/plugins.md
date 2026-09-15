@@ -39,7 +39,7 @@ build-review --host foreground`); `run host <run-dir>` (internal and
   into the Herdr pane it opens).
 - Herdr plugin actions (unstable; the project comes from
   `HERDR_PLUGIN_CONTEXT_JSON`, never the working directory): `herdr status`,
-  `herdr start`, `herdr cancel` — see "Herdr plugin" below.
+  `herdr start`, `herdr cancel`, `herdr doctor` — see "Herdr plugin" below.
 
 See [domain model](../architecture/domain-model.md#implemented-now-p4) for
 run hosting's claim/heartbeat/liveness contract and
@@ -50,24 +50,31 @@ configuration-driven role and workflow resolution.
 
 `herdr-plugin.toml` registers a build step (`bun install --frozen-lockfile`,
 `bun run build`) and four parameterless actions, each running `bin/woof
-herdr <action>` (or `bin/woof doctor` for `doctor`) from the plugin's own
-checkout:
+herdr <action>` from the plugin's own checkout:
 
-- **`doctor`** — Herdr and Claude Code availability.
+- **`doctor`** — `woof doctor --json` for the invocation context's project:
+  Herdr and Claude Code availability, the read-only Claude folder-trust
+  status, and whether the project's configuration resolves (a configuration
+  problem is reported, `config: {ok: false, reason, message}`, never
+  refused). Notifies with the project root and one line each for herdr,
+  claude, trust and config; prints `{"outcome":"doctor","project",…report}`.
 - **`status`** — notifies and prints the target project's non-terminal runs.
 - **`start`** — starts the project's default workflow with the input in
-  `<project>/.woof/start.json` (a missing file is a notification and exit 2),
-  hosted in a pane split from the invocation's focused pane (an action
-  process has no `HERDR_PANE_ID` of its own).
+  `<project>/.woof/start.json` (a missing file, or one that is not a regular
+  file — a FIFO, device or directory is `input_invalid` at once, without
+  blocking — is a notification and exit 2), hosted in a pane split from the
+  invocation's focused pane (an action process has no `HERDR_PANE_ID` of its
+  own).
 - **`cancel`** — cancels the project's one non-terminal run; two or more
   active runs refuse (exit 2) and name each `woof run cancel <run-dir>`.
 
-Each action resolves its target project from `HERDR_PLUGIN_CONTEXT_JSON`,
-never from the action process's own working directory (the plugin's
-checkout): the **focused pane's directory**, else the **workspace
-directory**, else the **workspace's worktree checkout**. No usable directory,
-or one outside a git work tree, is `project_context_missing`, notified as
-"Woof: no project context".
+Every action, including `doctor`, resolves its target project from
+`HERDR_PLUGIN_CONTEXT_JSON`, never from the action process's own working
+directory (the plugin's checkout): the **focused pane's directory**, else
+the **workspace directory**, else the **workspace's worktree checkout**. No
+usable directory, or one outside a git work tree, is
+`project_context_missing`, notified as "Woof: no project context", and every
+action exits 2 in that case.
 
 The run host projects state as pane metadata while it runs: its own pane
 gets `--token woof=<value>` (`starting`, `running <stage> v<visit> a<attempt>
@@ -117,8 +124,10 @@ herdr plugin action invoke status --plugin herdr-woof
    600000), acting on exit 7 (still running — reports the stage and round,
    then waits again), 9 (blocked — reports `attention.blocked.requiredAction`
    verbatim, waits again with `--allow-blocked` only once the user says it is
-   resolved), 8 (owner lost — suggests `run cancel`, never cancels unasked)
-   or a terminal code (0/4/5/6).
+   resolved), 8 (the owner is gone without a recorded outcome — `lost`, or
+   `exited` before the run recorded its own end; reports `hostOutcome`'s
+   `reason`/`message` when present, suggests `run cancel`, never cancels
+   unasked) or a terminal code (0/4/5/6).
 6. Reports `outcome`, `reason`, `limit`, `counters.rounds` and the artifact
    references from `result`. `artifacts.review` is non-null only when
    `outcome` is `completed` (never on `failed`/`exhausted`/`cancelled`), and

@@ -370,9 +370,18 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   `--timeout-ms`, default 540 000 — one Bash call stays under its own
   600 000 ms cap): a recorded terminal outcome always wins first (**0/4/5/6**
   completed/failed/exhausted/cancelled); otherwise an unresolved
-  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise an owner
-  confirmed `lost` on two probes at least `2 × heartbeatMs` apart is **8**;
-  otherwise the timeout elapsing is **7**. The last line printed is always
+  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise **8**
+  means the owner is gone with no recorded outcome — either `lost`,
+  confirmed on two probes at least `2 × heartbeatMs` apart, or `exited` with
+  no terminal journal record (a host interrupted, e.g. by a signal, before
+  the run recorded its own end; the CLI re-reads once more first, so a host
+  that exits just after its final journal write is not caught mid-write). In
+  the `exited` case `woof status`'s printed line also carries `hostOutcome`,
+  the host's own `outcome.json`, when that file exists (a foreground host
+  has none, so its exit 8 carries no `hostOutcome` — only the exit code
+  already visible in `liveness.host.exitCode`); `hostOutcome` is a CLI-only
+  addition to the printed JSON, not part of the `RunStatusView` type itself.
+  Otherwise the timeout elapsing is **7**. The last line printed is always
   the status at return time.
 - **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
   (`src/inspect/runs.ts`) lists run directories under a runs directory
@@ -387,7 +396,18 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
 - **`woof events <run-dir> … [--stats]`** streams the run's `RunEvent`s as
   NDJSON, ending with `{"kind":"woof.events.end","cursor","terminal",
 "reason"}` (`0` end/terminated, `7` timeout, `2` resync_required, `3`
-  error, `130` SIGINT). `--stats` prints
+  error, `130` SIGINT). `--follow` never takes the journal lock: it passes
+  `subscribeEvents`'s optional `lockFree: true` (default `false`, so the
+  SDK's own documented one-locked-read decision for a persistent torn tail
+  is unchanged unless a caller opts in), so a final journal line that stays
+  partial and unchanged for `tornTailGraceMs` (default 2000 ms) ends the
+  follow with `{"type":"error","reason":"journal_corrupt"}`, the `error` end
+  line, and exit 3, rather than the one locked read that decides it by
+  default. Resumed with `--after <cursor>` at a terminated run's last
+  cursor, `--follow` ends at once with `{"terminal":true,
+"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`; an
+  earlier cursor still delivers the `run.terminated` event through the
+  subscription first. `--stats` prints
   `{"kind":"woof.events.stats","polls","maxProjectionMs","pollMs","method":
 "iterator step wall time beyond the poll interval"}` to stderr — an
   estimate from the iterator's own step time, not a measurement taken inside

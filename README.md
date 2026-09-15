@@ -52,7 +52,7 @@ bin/woof events <run-dir> [--after <cursor>] [--follow] [--stats]
 bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
 bin/woof run cancel <run-dir> [--reason <text>]
-bin/woof herdr status|start|cancel
+bin/woof herdr status|start|cancel|doctor
 ```
 
 `doctor` reports whether Herdr and Claude Code can be invoked, and (with
@@ -254,7 +254,8 @@ claimed and opened the run:
 bin/woof run start --input input.json
 # {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…"},...}
 bin/woof status /abs --wait
-# polls until a terminal outcome (exit 0/4/5/6), a lost owner (exit 8),
+# polls until a terminal outcome (exit 0/4/5/6), the owner gone without a
+# recorded outcome -- lost, or exited without a terminal record (exit 8) --
 # a block needing the operator (exit 9), or --timeout-ms (exit 7)
 ```
 

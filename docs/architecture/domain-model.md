@@ -487,14 +487,30 @@ start`/`run build-review` refuse `run_exists` before anything is written.
   closed (abandoned)" and names why; that host may still run the request.
   Neither `launch.json` nor an unclosed run directory is left usable after a
   reported pane failure.
+- **An unwritable runs directory, or a non-regular input file, is refused
+  before anything else runs.** If the resolved runs directory cannot be
+  created (a file already sits at that path, or a permission error) `woof
+run start`/`run build-review` — foreground or pane-hosted — reject
+  `journal_write_failed` (exit 3), naming the directory and the underlying
+  error, rather than throwing or misreporting `run_exists`. `--input <path>`
+  and, for the Herdr `start` action, `<project>/.woof/start.json` must both
+  be regular files: a FIFO, device or directory is `input_invalid` ("… is
+  not a regular file") at once, before the file is opened for reading, so a
+  named pipe with nothing writing to it can never block the command.
 - **Signals finalize the host exactly once, from the moment a claim
-  exists.** Before the run starts opening (`openAdmittedRun` is about to be
-  called), a first SIGINT/SIGTERM ends the host at once — synchronously in
-  the signal handler, not through the abort signal a pending module load or
-  runtime factory might never observe — with `host_interrupted` (launcher
-  exit 3): it records `outcome.json` for a pane host and `host-exit.json`
-  once the host holds a claim (a foreground host claims only once its
-  runtime exists, so a signal before that leaves no run files at all). Once
+  exists.** `woof run host` installs a no-op SIGINT/SIGTERM listener before
+  `claimHost` and removes it only after handing off into the code that
+  installs `hostWorkflow`'s own handlers, so the claim, reading the launch
+  request and that handoff are one synchronous stretch: a signal arriving
+  anywhere in that window is finalized as `host_interrupted`, never lost to
+  the process's default termination. Before the run starts opening
+  (`openAdmittedRun` is about to be called), a first SIGINT/SIGTERM ends the
+  host at once — synchronously in the signal handler, not through the abort
+  signal a pending module load or runtime factory might never observe —
+  with `host_interrupted` (launcher exit 3): it records `outcome.json` for a
+  pane host and `host-exit.json` once the host holds a claim (a foreground
+  host claims only once its runtime exists, so a signal before that leaves
+  no run files at all). Once
   the run is opening, a first signal cancels it through the scheduler as
   before and a second finalizes synchronously (exit code 130) and exits at
   once, without waiting for the runtime to settle. The first result reached

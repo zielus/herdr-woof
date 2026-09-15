@@ -66,13 +66,23 @@ cancel` (`runWorkflow`, `admitWorkflow`, `buildReviewWorkflow`,
   hosting one scheduler process per run in a Herdr pane, claimed exclusively
   with a heartbeat and an engine-owned `host-exit.json` marker on a clean
   exit (`woof run host`, `--host foreground`); the read-only
-  inspection CLI `woof status [--wait]`, `woof runs` and `woof events
-[--follow] [--stats]`; a functional Herdr plugin (`doctor`, `status`,
-  `start`, `cancel` actions, pane metadata and notifications) and Claude Code
-  plugin (`/woof:run`, with a read-only Claude folder-trust pre-flight); and
-  `openAdmittedRun` exported from the SDK. Changed public types:
+  inspection CLI `woof status [--wait]` (exit 8 covers any owner gone
+  without a recorded outcome — `lost`, or `exited` with no terminal journal
+  record, reporting the host's own `outcome.json` as `hostOutcome` when
+  present), `woof runs` and `woof events [--follow] [--stats]` (`--follow`
+  is lock-free and ends a persistent torn tail with `journal_corrupt`
+  instead of blocking on the journal lock; resumed past a terminated run's
+  last cursor it ends at once); a functional Herdr plugin (`doctor`,
+  `status`, `start`, `cancel` actions — `doctor` now resolves the invocation
+  context's project like the others, rather than running unscoped — pane
+  metadata and notifications) and Claude Code plugin (`/woof:run`, with a
+  read-only Claude folder-trust pre-flight); and `openAdmittedRun` exported
+  from the SDK. Changed public types:
   `RunSnapshot.liveness.owner` widens to `"unhosted"|"alive"|"lost"|"exited"`
-  with a new `host`/`claimProblem`; `AdmissionReason` gains
+  with a new `host`/`claimProblem`; `SubscribeOptions` gains an optional
+  `lockFree` (default `false`, so the existing one-locked-read behavior for
+  a persistent torn tail is unchanged unless a caller opts in);
+  `AdmissionReason` gains
   `config_invalid`, `config_conflict`, `setting_scope_invalid`,
   `role_invalid`, `role_unresolved`, `project_mismatch`,
   `workflow_not_found`, and the loader's `definition_not_found|
