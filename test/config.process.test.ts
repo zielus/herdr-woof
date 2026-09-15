@@ -666,6 +666,47 @@ describe("woof config show: configuration matrix", () => {
     expect(unsafe.stderr.split("warning permission_bypass_configured")).toHaveLength(2);
   }, 60_000);
 
+  it("PR #6 (run.ts:414): a FIFO or directory given as --input is input_invalid at once, without blocking", () => {
+    const env = setup();
+    const fifo = join(env.root, "input.fifo");
+    expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+    const directory = join(env.root, "input-dir");
+    mkdirSync(directory);
+    for (const [path, host] of [
+      [fifo, "foreground"],
+      [fifo, "herdr-pane"],
+      [directory, "foreground"],
+    ] as const) {
+      const started = Date.now();
+      const out = runWoof(
+        env,
+        [
+          "run",
+          "start",
+          "--host",
+          host,
+          "--input",
+          path,
+          "--project",
+          env.repo,
+          "--run-dir",
+          join(env.root, "never"),
+        ],
+        { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", WOOF_HERDR_BIN: "/nonexistent/herdr" },
+        { timeoutMs: 15_000 },
+      );
+      expect(out.error, `${host} ${path}`).toBeUndefined();
+      expect(out.status, `${host} ${path}: ${out.stdout}${out.stderr}`).toBe(2);
+      expect(out.json, `${host} ${path}`).toMatchObject({
+        outcome: "rejected",
+        reason: "input_invalid",
+        message: expect.stringContaining("is not a regular file"),
+      });
+      expect(Date.now() - started).toBeLessThan(10_000);
+    }
+    expect(existsSync(join(env.root, "never"))).toBe(false);
+  });
+
   it("rejects a --project that is not a directory", () => {
     const env = setup();
     const out = show(env, ["--project", join(env.root, "missing")]);

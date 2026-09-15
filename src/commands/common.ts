@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, statSync } from "node:fs";
 
 import { MAX_ENVELOPE_BYTES } from "../contracts/envelope.js";
 
@@ -43,10 +43,23 @@ export function rejected(
   return code;
 }
 
+/**
+ * Reads a workflow input file. Only a regular file is input: a FIFO or device at the path would
+ * block the read, so it is refused before the path is opened (and again on the opened descriptor),
+ * as the configuration reader does.
+ */
 export function readInputFile(path: string): Uint8Array {
-  const size = statSync(path).size;
-  if (size > MAX_INPUT_BYTES) throw new Error(`${path} is larger than ${MAX_INPUT_BYTES} bytes`);
-  return readFileSync(path);
+  if (!statSync(path).isFile()) throw new Error(`${path} is not a regular file`);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) throw new Error(`${path} is not a regular file`);
+    if (opened.size > MAX_INPUT_BYTES)
+      throw new Error(`${path} is larger than ${MAX_INPUT_BYTES} bytes`);
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**

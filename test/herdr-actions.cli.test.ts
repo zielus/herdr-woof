@@ -369,6 +369,24 @@ describe("woof herdr actions", () => {
     expect(existsSync(s.guardLog)).toBe(false);
   }, 90_000);
 
+  it("PR #6 (run.ts:414): start refuses a FIFO at .woof/start.json as input_invalid without blocking or splitting", () => {
+    const s = setup();
+    const repo = s.repo("repo-a");
+    mkdirSync(join(repo, ".woof"), { recursive: true });
+    expect(spawnSync("mkfifo", [join(repo, ".woof", "start.json")]).status).toBe(0);
+    const started = Date.now();
+    const result = action(s, "start", { focused_pane_id: "w5:p3", focused_pane_cwd: repo });
+    expect(result.status, result.stdout + result.stderr).toBe(2);
+    expect(result.json).toMatchObject({
+      outcome: "rejected",
+      reason: "input_invalid",
+      message: expect.stringContaining("is not a regular file"),
+    });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(calls(s).filter((argv) => argv[0] === "pane")).toEqual([]);
+    expect(existsSync(s.guardLog)).toBe(false);
+  });
+
   it("A4: cancel ends the single active run and refuses when several are active", () => {
     const s = setup();
     const [a, b] = [s.repo("repo-a"), s.repo("repo-b")];
