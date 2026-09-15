@@ -12,7 +12,7 @@ import { readSnapshot, type ReadSnapshotResult, type RunSnapshot } from "../stat
  * the repository the run result names). Takes no lock and never contacts Herdr.
  */
 
-export interface RunStatus {
+export interface RunStatusView {
   schemaVersion: 1;
   kind: "woof.run.status";
   runId: string;
@@ -37,12 +37,12 @@ export interface RunStatus {
 }
 
 export type ReadRunStatusResult =
-  | { ok: true; status: RunStatus; result: RunResult | null; snapshot: RunSnapshot }
+  | { ok: true; status: RunStatusView; result: RunResult | null; snapshot: RunSnapshot }
   | Extract<ReadSnapshotResult, { ok: false }>;
 
 /** The status document of a snapshot (pure). */
-export function runStatusOf(snapshot: RunSnapshot, runDir: string): RunStatus {
-  const activeAttempts: RunStatus["activeAttempts"] = [];
+export function runStatusOf(snapshot: RunSnapshot, runDir: string): RunStatusView {
+  const activeAttempts: RunStatusView["activeAttempts"] = [];
   for (const agent of snapshot.agents) {
     const active = agent.activeAttempt;
     if (active === null) continue;

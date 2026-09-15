@@ -37,6 +37,15 @@ try {
   if (strays.length > 0) {
     throw new Error(`tarball ships checkout-only files: ${strays.join(", ")}`);
   }
+  const pluginFiles = [
+    "plugin/claude/.claude-plugin/plugin.json",
+    "plugin/claude/commands/run.md",
+    "plugin/claude/skills/woof/SKILL.md",
+  ];
+  const missingPlugin = pluginFiles.filter((path) => !shipped.includes(path));
+  if (missingPlugin.length > 0) {
+    throw new Error(`tarball is missing Claude Code plugin files: ${missingPlugin.join(", ")}`);
+  }
   const tarball = join(workDir, packInfo!.filename);
   const consumer = join(workDir, "consumer");
   mkdirSync(consumer);
@@ -63,7 +72,7 @@ try {
   const importCheck = [
     'const entry = await import("herdr-woof");',
     "if (entry.SDK_FOUNDATION !== true) process.exit(1);",
-    'for (const name of ["openAttempt", "submitResult", "readJournal"]) {',
+    'for (const name of ["openAttempt", "submitResult", "readJournal", "resolveConfiguration", "discoverRoots", "claimHost", "probeHost", "readRunStatus", "listRuns", "openAdmittedRun", "claudeTrustStatus"]) {',
     '  if (typeof entry[name] !== "function") process.exit(2);',
     "}",
     "if (!Array.isArray(entry.REJECTION_REASONS)) process.exit(3);",
@@ -87,6 +96,8 @@ try {
   runShow(installedBin, consumer);
   run(installedBin, ["run", "build-review", "--help"], consumer);
   loaderCheck(consumer);
+  inspection(installedBin, consumer, workDir);
+  run(installedBin, ["run", "start", "--help"], consumer);
 
   console.log("installed package entry point ok");
   console.log("installed woof --help ok");
@@ -98,6 +109,9 @@ try {
   console.log("installed woof run show ok");
   console.log("installed woof run build-review --help ok");
   console.log("installed loadWorkflowDefinition + buildReviewWorkflow ok");
+  console.log("installed woof config show, runs, status, events ok");
+  console.log("installed woof run start --help ok");
+  console.log("tarball ships the Claude Code plugin files ok");
 } finally {
   rmSync(workDir, { force: true, recursive: true });
 }
@@ -247,13 +261,52 @@ function runShow(installedBin: string, consumer: string): void {
   }
 }
 
+/** Runs the installed inspection commands with a temporary HOME, never the operator's. */
+function inspection(installedBin: string, consumer: string, scratch: string): void {
+  const home = join(scratch, "home");
+  mkdirSync(home);
+  const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null" };
+  const json = (args: readonly string[]) =>
+    JSON.parse(run(installedBin, args, consumer, env).trim().split("\n").at(-1) ?? "null") as {
+      outcome?: string;
+      kind?: string;
+      exists?: boolean;
+      runs?: Array<{ runId: string }>;
+      status?: { runId: string; liveness: { owner: string } };
+    };
+
+  const config = json(["config", "show", "--project", consumer]);
+  if (config.outcome !== "config")
+    throw new Error(`installed woof config show: ${JSON.stringify(config)}`);
+  const none = json(["runs", "--runs-dir", join(scratch, "no-runs")]);
+  if (none.outcome !== "runs" || none.exists !== false) {
+    throw new Error(`installed woof runs (missing dir): ${JSON.stringify(none)}`);
+  }
+  const listed = json(["runs", "--runs-dir", consumer, "--all"]);
+  if (!listed.runs?.some((entry) => entry.runId === "smoke-run")) {
+    throw new Error(`installed woof runs: ${JSON.stringify(listed)}`);
+  }
+  const status = json(["status", join(consumer, "run")]);
+  if (status.status?.runId !== "smoke-run" || status.status.liveness.owner !== "unhosted") {
+    throw new Error(`installed woof status: ${JSON.stringify(status)}`);
+  }
+  const end = json(["events", join(consumer, "run")]);
+  if (end.kind !== "woof.events.end")
+    throw new Error(`installed woof events: ${JSON.stringify(end)}`);
+}
+
 interface SubmitJson {
   outcome: string;
   receipt?: { receiptId: string };
 }
 
-function run(command: string, args: readonly string[], cwd: string): string {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+function run(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", env });
   if (result.status !== 0) {
     const detail = result.error?.message ?? `${result.stdout}\n${result.stderr}`;
     throw new Error(`${command} ${args.join(" ")} failed:\n${detail}`);

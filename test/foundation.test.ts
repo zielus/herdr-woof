@@ -41,21 +41,29 @@ console.log(JSON.stringify({
       assignAgent: "function",
       blockRun: "function",
       buildReviewWorkflow: "object",
+      claimHost: "function",
+      claudeTrustStatus: "function",
       createHerdrCliRuntime: "function",
       deriveRunResult: "function",
       deriveSnapshot: "function",
+      discoverRoots: "function",
       foldEvents: "function",
       herdrRuntimeName: "function",
+      listRuns: "function",
       loadWorkflowDefinition: "function",
+      openAdmittedRun: "function",
       openAttempt: "function",
       openRun: "function",
       overlayRuntime: "function",
+      probeHost: "function",
       readEvents: "function",
       readJournal: "function",
+      readRunStatus: "function",
       readSnapshot: "function",
       reconcileDelivery: "function",
       recordDispatch: "function",
       recordGate: "function",
+      resolveConfiguration: "function",
       runWorkflow: "function",
       submitResult: "function",
       subscribeEvents: "function",
@@ -68,6 +76,9 @@ console.log(JSON.stringify({
     expect(Object.keys(entry.types)).toEqual(Object.keys(expected).toSorted());
     expect(entry.types).toEqual(expected);
     expect(readFileSync(entryPath, "utf8")).not.toContain("cli.js");
+    for (const internal of ["abandonHost", "launchInPane", "createMetadataReporter"]) {
+      expect(entry.types).not.toHaveProperty(internal);
+    }
   });
 });
 
@@ -118,6 +129,9 @@ describe("woof CLI", () => {
     expect(result.stdout).toContain("run show");
     expect(result.stdout).toContain("run build-review");
     expect(result.stdout).toContain("run cancel");
+    for (const command of ["run start", "status", "runs", "events", "config show", "doctor"]) {
+      expect(result.stdout).toMatch(new RegExp(`^  ${command} `, "m"));
+    }
     expect(result.stdout).not.toContain("not implemented");
   });
 

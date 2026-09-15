@@ -14,6 +14,11 @@
  * decisions through the store. `woof attempt open`, `woof submit`,
  * `woof run show`, `woof run build-review` and `woof run cancel` call the same
  * functions.
+ *
+ * p4 adds configuration resolution (`resolveConfiguration`, `discoverRoots`),
+ * the read-only Claude Code trust check, run host claims and their probe, the
+ * inspection views behind `woof status` and `woof runs`, and `openAdmittedRun`.
+ * Launching a pane host and the Herdr metadata reporter stay CLI internals.
  */
 export const SDK_FOUNDATION = true;
 
@@ -158,10 +163,43 @@ export type {
 } from "./scheduler/definition.js";
 export { loadWorkflowDefinition } from "./scheduler/loader.js";
 export type { LoadDefinitionResult, LoadReason } from "./scheduler/loader.js";
-export { admitWorkflow } from "./scheduler/admission.js";
-export type { AdmissionReason, AdmissionResult } from "./scheduler/admission.js";
+export { admitWorkflow, openAdmittedRun } from "./scheduler/admission.js";
+export type {
+  AdmissionConfiguration,
+  AdmissionProvenance,
+  AdmissionReason,
+  AdmissionResult,
+} from "./scheduler/admission.js";
 export { runWorkflow } from "./scheduler/driver.js";
 export type { RunWorkflowOptions, RunWorkflowResult } from "./scheduler/driver.js";
 export type { Action, AgentRuntimeView } from "./scheduler/core.js";
 export { buildReviewWorkflow } from "./workflows/build-review.js";
 export type { BuildReviewInput } from "./workflows/build-review.js";
+
+export { discoverRoots } from "./config/discover.js";
+export type { ConfigRoots, ConfigWarning, DiscoverOptions } from "./config/discover.js";
+export { resolveConfiguration } from "./config/resolve.js";
+export type {
+  ConfigFlags,
+  Provenance,
+  ResolveConfigurationResult,
+  ResolvedConfiguration,
+} from "./config/resolve.js";
+export type {
+  ConfigDetail,
+  ConfigFailure,
+  ConfigReason,
+  ConfigScope,
+  ConfigSource,
+  RoleValue,
+} from "./config/schema.js";
+export { claudeTrustStatus } from "./runtime/claude/trust.js";
+export type { ClaudeTrust, ClaudeTrustStatus } from "./runtime/claude/trust.js";
+export { claimHost } from "./host/claim.js";
+export type { ClaimHostResult } from "./host/claim.js";
+export { probeHost } from "./host/probe.js";
+export type { HostInfo, HostOwner, HostState, ProbeOptions } from "./host/probe.js";
+export { readRunStatus } from "./inspect/status.js";
+export type { ReadRunStatusResult, RunStatusView } from "./inspect/status.js";
+export { listRuns } from "./inspect/runs.js";
+export type { ListRunsResult, RunListEntry } from "./inspect/runs.js";
