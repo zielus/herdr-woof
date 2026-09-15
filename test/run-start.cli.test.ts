@@ -22,6 +22,20 @@ import { cliPath, distUrl, repoRoot, runNode } from "./helpers/process.js";
 // spawns the typed host command detached, standing in for a fresh pane.
 const fakeHerdr = join(repoRoot, "test", "fixtures", "fake-herdr.mjs");
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
+const slowStopModule = join(repoRoot, "test", "fixtures", "slow-stop-runtime-module.mjs");
+
+function withRuntime(args: string[], module: string): string[] {
+  return args.map((arg) => (arg === runtimeModule ? module : arg));
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const dirs: string[] = [];
 const runDirs: string[] = [];
 afterEach(() => {
@@ -393,6 +407,62 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     });
     // A recorded outcome wins over a lost owner.
     expect(woofIn(ws, ["status", runDir, "--wait"]).status).toBe(6);
+  }, 60_000);
+
+  it("PI-001: a pane host signalled twice releases its claim with exit 130 and records outcome.json", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, withRuntime(startArgs(ws, runDir), slowStopModule), {
+      WOOF_TEST_SCRIPT: "hang",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    await waitFor(
+      () => records(runDir).some((record) => record["type"] === "request.dispatched"),
+      "a dispatch",
+    );
+    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
+      "pid"
+    ] as number;
+    process.kill(pid, "SIGINT");
+    await delay(300);
+    process.kill(pid, "SIGTERM");
+    await waitFor(() => !processAlive(pid), "the host to exit", 15_000);
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
+      exitCode: 130,
+    });
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
+      outcome: "rejected",
+      reason: "host_interrupted",
+    });
+    expect(woofIn(ws, ["status", runDir]).json?.["status"]["liveness"]).toMatchObject({
+      owner: "exited",
+      host: { state: "exited", exitCode: 130 },
+    });
+  }, 60_000);
+
+  it("PI-001: a foreground host signalled twice exits 130 and records its exit", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const child = spawn(
+      "node",
+      [cliPath, ...withRuntime(startArgs(ws, runDir), slowStopModule), "--host", "foreground"],
+      { cwd: ws.root, env: env(ws, { WOOF_TEST_SCRIPT: "hang" }), stdio: "ignore" },
+    );
+    const exited = new Promise<number | null>((resolve) =>
+      child.on("close", (code) => resolve(code)),
+    );
+    await waitFor(
+      () => records(runDir).some((record) => record["type"] === "request.dispatched"),
+      "a dispatch",
+    );
+    child.kill("SIGINT");
+    await delay(300);
+    child.kill("SIGTERM");
+    expect(await exited).toBe(130);
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
+      exitCode: 130,
+    });
+    expect(existsSync(join(runDir, "outcome.json"))).toBe(false);
   }, 60_000);
 
   it("a pane host that claimed the run and then fails to create its runtime reports the rejection and releases", () => {

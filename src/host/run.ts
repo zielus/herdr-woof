@@ -45,6 +45,7 @@ const HOST_INFRA_REASONS: ReadonlySet<string> = new Set([
   "journal_unavailable",
   "engine_invariant",
   "runtime_cleanup_failed",
+  "host_interrupted",
 ]);
 
 export function isHostInfraReason(reason: string): boolean {
@@ -96,10 +97,24 @@ export interface HostWorkflowResult {
   output: Record<string, unknown>;
 }
 
+/**
+ * Every exit path of a claimed host goes through one idempotent finalizer:
+ * `outcome.json` (pane host) is written once and the claim is released once,
+ * whether the host returns, throws or is signalled. Signal handlers are
+ * installed on entry, so a pane host (which claimed before calling this) is
+ * covered from its first await. A first SIGINT/SIGTERM cancels: before the run
+ * opens the host stops with `host_interrupted`; after, the scheduler records the
+ * cancellation. A second signal finalizes synchronously with exit code 130 and
+ * exits at once, without waiting for the runtime to settle.
+ */
 export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWorkflowResult> {
   const { runDir, runId, log } = options;
   let release = options.release;
+  let finished = false;
+  let reportTimer: NodeJS.Timeout | undefined;
   const finish = (code: number, output: Record<string, unknown>): HostWorkflowResult => {
+    if (finished) return { code, output };
+    finished = true;
     if (options.writeOutcome && release !== undefined) {
       try {
         writeExclusiveFile(
@@ -114,151 +129,191 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     release?.(code);
     return { code, output };
   };
-  const reject = (reason: string, message: string, details: unknown[] = []) =>
-    finish(isHostInfraReason(reason) ? 3 : 2, { outcome: "rejected", reason, message, details });
-
-  const resolved = await resolveConfiguration({
-    projectDir: options.projectDir,
-    flags: {
-      ...options.flags,
-      ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
-    },
-    ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-  });
-  if (!resolved.ok) return reject(resolved.reason, resolved.message, resolved.details);
-  const configuration = resolved.configuration;
-  const workflow = configuration.workflow;
-  if (workflow === null) return reject("workflow_not_found", "no workflow resolved");
-
-  // The definition is loaded once, here; a project module's body runs only in this process.
-  let definition: WorkflowDefinition<unknown>;
-  if (workflow.source === "builtin") {
-    const validated = validateWorkflowDefinition(builtinWorkflowDefinition(workflow.value.name));
-    if (!validated.ok)
-      return reject("definition_invalid", "the built-in definition is invalid", validated.details);
-    definition = validated.definition;
-  } else {
-    const path = workflow.path as string;
-    const loaded = await loadWorkflowDefinition(path);
-    if (!loaded.ok) return reject(loaded.reason, loaded.message, loaded.details);
-    if (loaded.definition.name !== workflow.value.name) {
-      const message = `${path} defines workflow ${loaded.definition.name}, but its file name makes it ${workflow.value.name}`;
-      return reject("config_invalid", message, [{ field: path, message }]);
-    }
-    definition = loaded.definition;
-  }
-
-  const admitted = await admitWorkflow({
-    definition,
-    input: options.input,
-    runDir,
-    configuration: admissionConfiguration(configuration),
-  });
-  if (!admitted.ok) return reject(admitted.reason, admitted.message, admitted.details);
-  const recorded = recordConfiguration(configuration, admitted, {
-    definitionVersion: definition.version,
-    ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-  });
-
-  const runtime = await options.createRuntime({
-    runDir,
-    runId,
-    plan: admitted.plan,
-    repo: admitted.repository,
-  });
-  if (!runtime.ok) return reject("runtime_unavailable", runtime.message);
-
-  if (options.claimBeforeOpen) {
-    const claim = claimHost(runDir, { paneId: options.paneId, workspaceId: options.workspaceId });
-    if (!claim.ok) {
-      return finish(claim.reason === "run_host_claimed" ? 2 : 3, {
-        outcome: "rejected",
-        reason: claim.reason,
-        message: claim.message,
-        details: [],
-      });
-    }
-    release = claim.release;
-  }
-
-  const opened = await openAdmittedRun(admitted, { runDir, runId, configuration: recorded });
-  if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
-  for (const warning of recorded.warnings)
-    log(
-      `warning ${warning.code}: ${warning.message}${warning.path !== undefined ? ` (${warning.path})` : ""}`,
-    );
-
-  const pollMs = recorded.settings.pollMs.value;
-  const reporter =
-    options.metadata === null
-      ? null
-      : createMetadataReporter({
-          ...options.metadata,
-          workflow: definition.name,
-          runId,
-          log,
-        });
-  let reporting: Promise<void> = Promise.resolve();
-  const report = () => {
-    if (reporter === null) return;
-    reporting = reporting.then(async () => {
-      const snapshot = readSnapshot(runDir);
-      if (snapshot.ok) await reporter.report(snapshot.snapshot);
-    });
-  };
-  report();
-  const reportTimer = reporter === null ? undefined : setInterval(report, Math.min(pollMs, 1000));
-  reportTimer?.unref();
+  const interrupted = (message: string) =>
+    finish(130, { outcome: "rejected", reason: "host_interrupted", message, details: [] });
 
   const controller = new AbortController();
   let signals = 0;
   const onSignal = () => {
     signals += 1;
-    // A second signal exits at once without writing anything.
-    if (signals > 1) process.exit(130);
-    log("cancelling the run (send the signal again to exit without recording)");
+    if (signals > 1) {
+      log("second signal: exiting without waiting for the run to settle");
+      interrupted(
+        "the run host received a second signal and exited without waiting for the run to settle",
+      );
+      process.exit(130);
+    }
+    log("cancelling the run (send the signal again to exit without waiting)");
     controller.abort();
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
-  log(`run ${runId} in ${runDir}`);
-  let lastWait = "";
-  const out = await runWorkflow({
-    runDir,
-    definition,
-    input: admitted.input,
-    repository: admitted.repository,
-    runtime: runtime.runtime,
-    submitCommand: options.submitCommand,
-    signal: controller.signal,
-    pollMs,
-    keepPanes: recorded.settings.keepPanes.value,
-    onAction: (action) => {
-      const line = describeAction(action);
-      if (action.type === "wait" && line === lastWait) return;
-      lastWait = action.type === "wait" ? line : "";
-      log(line);
-    },
-  });
-  process.off("SIGINT", onSignal);
-  process.off("SIGTERM", onSignal);
-  if (reportTimer !== undefined) clearInterval(reportTimer);
-  if (reporter !== null) {
-    await reporting;
-    const final = readSnapshot(runDir);
-    if (final.ok) await reporter.finish(final.snapshot);
-  }
-
-  if (out.error !== null || out.result === null) {
+  try {
+    return await host();
+  } catch (error) {
     return finish(3, {
       outcome: "rejected",
-      reason: out.error?.reason ?? "engine_invariant",
-      message: out.error?.message ?? "the run ended without a result",
+      reason: "engine_invariant",
+      message: `the run host failed: ${(error as Error).message}`,
       details: [],
-      result: out.result,
     });
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    if (reportTimer !== undefined) clearInterval(reportTimer);
+    if (!finished) release?.(3);
   }
-  return finish(OUTCOME_EXIT_CODES[out.result.outcome], { outcome: "run", result: out.result });
+
+  async function host(): Promise<HostWorkflowResult> {
+    const beforeOpen = () =>
+      controller.signal.aborted
+        ? interrupted(
+            `the run host received a signal before run ${runId} opened; no run was started`,
+          )
+        : undefined;
+    const reject = (reason: string, message: string, details: unknown[] = []) =>
+      finish(isHostInfraReason(reason) ? 3 : 2, { outcome: "rejected", reason, message, details });
+
+    const resolved = await resolveConfiguration({
+      projectDir: options.projectDir,
+      flags: {
+        ...options.flags,
+        ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
+      },
+      ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+    });
+    if (!resolved.ok) return reject(resolved.reason, resolved.message, resolved.details);
+    const afterResolve = beforeOpen();
+    if (afterResolve !== undefined) return afterResolve;
+    const configuration = resolved.configuration;
+    const workflow = configuration.workflow;
+    if (workflow === null) return reject("workflow_not_found", "no workflow resolved");
+
+    // The definition is loaded once, here; a project module's body runs only in this process.
+    let definition: WorkflowDefinition<unknown>;
+    if (workflow.source === "builtin") {
+      const validated = validateWorkflowDefinition(builtinWorkflowDefinition(workflow.value.name));
+      if (!validated.ok)
+        return reject(
+          "definition_invalid",
+          "the built-in definition is invalid",
+          validated.details,
+        );
+      definition = validated.definition;
+    } else {
+      const path = workflow.path as string;
+      const loaded = await loadWorkflowDefinition(path);
+      if (!loaded.ok) return reject(loaded.reason, loaded.message, loaded.details);
+      if (loaded.definition.name !== workflow.value.name) {
+        const message = `${path} defines workflow ${loaded.definition.name}, but its file name makes it ${workflow.value.name}`;
+        return reject("config_invalid", message, [{ field: path, message }]);
+      }
+      definition = loaded.definition;
+    }
+
+    const admitted = await admitWorkflow({
+      definition,
+      input: options.input,
+      runDir,
+      configuration: admissionConfiguration(configuration),
+    });
+    if (!admitted.ok) return reject(admitted.reason, admitted.message, admitted.details);
+    const afterAdmit = beforeOpen();
+    if (afterAdmit !== undefined) return afterAdmit;
+    const recorded = recordConfiguration(configuration, admitted, {
+      definitionVersion: definition.version,
+      ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+    });
+
+    const runtime = await options.createRuntime({
+      runDir,
+      runId,
+      plan: admitted.plan,
+      repo: admitted.repository,
+    });
+    if (!runtime.ok) return reject("runtime_unavailable", runtime.message);
+
+    if (options.claimBeforeOpen) {
+      const claim = claimHost(runDir, { paneId: options.paneId, workspaceId: options.workspaceId });
+      if (!claim.ok) {
+        return finish(claim.reason === "run_host_claimed" ? 2 : 3, {
+          outcome: "rejected",
+          reason: claim.reason,
+          message: claim.message,
+          details: [],
+        });
+      }
+      release = claim.release;
+    }
+    const afterRuntime = beforeOpen();
+    if (afterRuntime !== undefined) return afterRuntime;
+
+    const opened = await openAdmittedRun(admitted, { runDir, runId, configuration: recorded });
+    if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
+    for (const warning of recorded.warnings)
+      log(
+        `warning ${warning.code}: ${warning.message}${warning.path !== undefined ? ` (${warning.path})` : ""}`,
+      );
+
+    const pollMs = recorded.settings.pollMs.value;
+    const reporter =
+      options.metadata === null
+        ? null
+        : createMetadataReporter({
+            ...options.metadata,
+            workflow: definition.name,
+            runId,
+            log,
+          });
+    let reporting: Promise<void> = Promise.resolve();
+    const report = () => {
+      if (reporter === null) return;
+      reporting = reporting.then(async () => {
+        const snapshot = readSnapshot(runDir);
+        if (snapshot.ok) await reporter.report(snapshot.snapshot);
+      });
+    };
+    report();
+    reportTimer = reporter === null ? undefined : setInterval(report, Math.min(pollMs, 1000));
+    reportTimer?.unref();
+
+    log(`run ${runId} in ${runDir}`);
+    let lastWait = "";
+    const out = await runWorkflow({
+      runDir,
+      definition,
+      input: admitted.input,
+      repository: admitted.repository,
+      runtime: runtime.runtime,
+      submitCommand: options.submitCommand,
+      signal: controller.signal,
+      pollMs,
+      keepPanes: recorded.settings.keepPanes.value,
+      onAction: (action) => {
+        const line = describeAction(action);
+        if (action.type === "wait" && line === lastWait) return;
+        lastWait = action.type === "wait" ? line : "";
+        log(line);
+      },
+    });
+    if (reportTimer !== undefined) clearInterval(reportTimer);
+    if (reporter !== null) {
+      await reporting;
+      const final = readSnapshot(runDir);
+      if (final.ok) await reporter.finish(final.snapshot);
+    }
+
+    if (out.error !== null || out.result === null) {
+      return finish(3, {
+        outcome: "rejected",
+        reason: out.error?.reason ?? "engine_invariant",
+        message: out.error?.message ?? "the run ended without a result",
+        details: [],
+        result: out.result,
+      });
+    }
+    return finish(OUTCOME_EXIT_CODES[out.result.outcome], { outcome: "run", result: out.result });
+  }
 }
 
 /** Waits for `predicate` in 100 ms steps up to `timeoutMs`; returns whether it held. */
