@@ -89,10 +89,11 @@ export function builtinCatalog(): BuiltinCatalog {
         limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
       },
     },
-    roles: {
+    // Role names are user-controlled ids: the dictionary has no prototype to inherit `constructor` from.
+    roles: Object.assign(Object.create(null) as BuiltinCatalog["roles"], {
       builder: { kind: "claude", model: null, args: [] },
       reviewer: { kind: "claude", model: null, args: [] },
-    },
+    }),
   };
 }
 
@@ -159,7 +160,7 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
   const supported = input.supportedKinds ?? SUPPORTED_AGENT_KINDS;
   for (const name of [...roleNames].toSorted()) {
     const layers: Layer<RoleValue>[] = scopes.flatMap((scope) => {
-      const entry = scope.roles[name];
+      const entry = Object.hasOwn(scope.roles, name) ? scope.roles[name] : undefined;
       return entry === undefined
         ? []
         : [
@@ -171,7 +172,10 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
             },
           ];
     });
-    const builtin = input.builtin.roles[name];
+    // Only an own entry is a built-in role; an inherited key such as `constructor` is none.
+    const builtin = Object.hasOwn(input.builtin.roles, name)
+      ? input.builtin.roles[name]
+      : undefined;
     if (builtin !== undefined) layers.push(builtinLayer(roleValue(builtin)));
     const resolved = provenance(layers) as Provenance<RoleValue>;
     roles[name] = resolved;

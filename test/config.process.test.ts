@@ -391,6 +391,53 @@ describe("woof config show: configuration matrix", () => {
     ]);
   });
 
+  it("PR #6 (resolve.ts:174): role files named after Object.prototype keys resolve as their own roles; __proto__ and an undefined prototype-key role are refused cleanly", () => {
+    const env = setup();
+    const ctor = writeJson(
+      join(env.repo, ".woof", "roles", "constructor.json"),
+      role({ model: "sonnet" }),
+    );
+    const str = writeJson(join(env.repo, ".woof", "roles", "toString.json"), role({}));
+    const out = show(env, ["--project", env.repo]);
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const roles = out.json?.["configuration"]["roles"] as Json;
+    expect(Object.keys(roles).toSorted()).toEqual([
+      "builder",
+      "constructor",
+      "reviewer",
+      "toString",
+    ]);
+    expect(roles["constructor"]).toMatchObject({
+      source: "project",
+      path: ctor,
+      value: { kind: "claude", model: "sonnet", args: [] },
+      shadowed: [],
+    });
+    expect(roles["toString"]).toMatchObject({ source: "project", path: str, shadowed: [] });
+
+    writeJson(join(env.repo, ".woof", "roles", "__proto__.json"), role({}));
+    const proto = show(env, ["--project", env.repo]);
+    expect(proto.status, proto.stdout + proto.stderr).toBe(2);
+    expect(proto.json).toMatchObject({ outcome: "rejected" });
+    expect(proto.json?.["message"]).toContain("is not a valid id");
+    expect(proto.stderr).not.toMatch(/TypeError|at .*\.js:\d+/);
+    rmSync(join(env.repo, ".woof", "roles", "__proto__.json"));
+
+    // A workflow whose role is an inherited key nobody defines is role_unresolved, never a throw.
+    const module = readFileSync(
+      join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"),
+      "utf8",
+    )
+      .replace('name: "planner-role"', 'name: "proto-role"')
+      .replace('role: "planner"', 'role: "hasOwnProperty"');
+    writeJson(join(env.repo, ".woof", "workflows", "proto-role.mjs"), module);
+    const unresolved = startForeground(env, {}, ["--workflow", "proto-role"], {
+      WOOF_TEST_REPO: env.repo,
+    });
+    expect(unresolved.status, unresolved.stdout + unresolved.stderr).toBe(2);
+    expect(unresolved.json).toMatchObject({ reason: "role_unresolved" });
+  }, 60_000);
+
   it("resolves --workflow and refuses an unknown one as workflow_not_found", () => {
     const env = setup();
     const ok = show(env, ["--project", env.repo, "--workflow", "build-review"]);
