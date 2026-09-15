@@ -231,8 +231,16 @@ async function waitForOutcome(runDir: string, timeoutMs = 30_000): Promise<Json>
     timeoutMs,
   );
   await waitFor(
-    () =>
-      (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)["state"] === "exited",
+    () => {
+      try {
+        return (
+          (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)["state"] ===
+          "exited"
+        );
+      } catch {
+        return false; // Not written yet.
+      }
+    },
     "the host to release its claim",
     timeoutMs,
   );

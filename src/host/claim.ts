@@ -162,12 +162,17 @@ function createExclusive(
   }
 }
 
-/** Replaces the claim's content through its descriptor (never by path). */
+/**
+ * Replaces the claim's content through its descriptor (never by path). The new
+ * bytes are written over the old ones before the file is cut to their length,
+ * so a concurrent reader never sees an empty claim; a torn read fails to parse
+ * and `readHostInfo` reads again.
+ */
 function rewrite(fd: number, body: Record<string, unknown>): void {
   const bytes = Buffer.from(`${JSON.stringify(body)}\n`, "utf8");
-  ftruncateSync(fd, 0);
   let offset = 0;
   while (offset < bytes.byteLength)
     offset += writeSync(fd, bytes, offset, bytes.byteLength - offset, offset);
+  ftruncateSync(fd, bytes.byteLength);
   fsyncSync(fd);
 }

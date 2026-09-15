@@ -39,8 +39,24 @@ export interface ProbeOptions {
   terminal?: boolean;
 }
 
-/** Reads the host claim of a run directory; undefined when there is no valid one. */
+/** Reads of a claim that does not parse, in all, before it counts as invalid. */
+const HOST_READ_ATTEMPTS = 3;
+
+/**
+ * Reads the host claim of a run directory; undefined when there is no valid
+ * one. A claim that does not parse is read again (at most three reads in all),
+ * because its host may be rewriting it at that moment.
+ */
 export function readHostInfo(runDir: string): HostInfo | undefined {
+  for (let attempt = 1; attempt < HOST_READ_ATTEMPTS; attempt += 1) {
+    const read = readHostOnce(runDir);
+    if (read !== "unparsable") return read;
+  }
+  const read = readHostOnce(runDir);
+  return read === "unparsable" ? undefined : read;
+}
+
+function readHostOnce(runDir: string): HostInfo | undefined | "unparsable" {
   const path = join(runDir, HOST_FILE);
   let named;
   try {
@@ -66,7 +82,7 @@ export function readHostInfo(runDir: string): HostInfo | undefined {
       if (read === 0) break;
       length += read;
     }
-    return parseHostInfo(buffer.subarray(0, length).toString("utf8"), opened.mtime);
+    return parseHostInfo(buffer.subarray(0, length).toString("utf8"), opened.mtime) ?? "unparsable";
   } catch {
     return undefined;
   } finally {
