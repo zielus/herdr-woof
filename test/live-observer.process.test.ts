@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { repoRoot, runNode } from "./helpers/process.js";
+import { cliPath, distIndexUrl, repoRoot, runNode } from "./helpers/process.js";
 
 // Live gate 10 (p4 carry-over G10): the observer comparison, fed the committed
 // verify-4 evidence and synthetic disagreements, in a child process.
@@ -165,45 +167,158 @@ console.log(JSON.stringify({ ...out, reads: next, slept }));`,
     });
   });
 
-  it("re-reads a transient mismatch after the delay and names the read and fields that differed", () => {
+  it("re-reads a transient mismatch after the delay and records the journal, fields and values that differed", () => {
     const stale = { ...derived, revision: 11 };
+    const journal = { records: 11, lastSeq: 11 };
     expect(
       agreement([
-        { status: derived, outcome: stale, derived },
-        { status: derived, outcome: derived, derived },
+        { status: derived, outcome: stale, derived, journal },
+        { status: derived, outcome: derived, derived, journal: { records: 12, lastSeq: 12 } },
       ]),
     ).toEqual({
       pass: true,
       attempts: 2,
-      mismatches: [{ attempt: 1, differs: [{ read: "outcome.json", fields: ["revision"] }] }],
+      mismatches: [
+        {
+          attempt: 1,
+          journal,
+          differs: [
+            { read: "outcome.json", fields: [{ field: "revision", value: 11, expected: 12 }] },
+          ],
+        },
+      ],
       reads: 2,
-      slept: [2000],
+      slept: [5000],
     });
   });
 
-  it("fails after the bounded attempts when the mismatch persists", () => {
-    const out = agreement([{ status: null, outcome: derived, derived: null }], {
-      attempts: 3,
-      delayMs: 5,
+  it("fails after the bounded attempts (6 × 5 s by default) when the mismatch persists", () => {
+    const persistent = agreement([{ status: null, outcome: derived, derived: null }]);
+    expect(persistent).toMatchObject({
+      pass: false,
+      attempts: 6,
+      reads: 6,
+      slept: [5000, 5000, 5000, 5000, 5000],
     });
-    expect(out).toMatchObject({ pass: false, attempts: 3, reads: 3, slept: [5, 5] });
-    expect(out["mismatches"]).toEqual(
-      [1, 2, 3].map((attempt) => ({ attempt, differs: [{ read: "derived", fields: [] }] })),
+    expect(persistent["mismatches"]).toEqual(
+      [1, 2, 3, 4, 5, 6].map((attempt) => ({
+        attempt,
+        journal: null,
+        differs: [{ read: "derived", fields: [] }],
+      })),
     );
     const diverged = agreement(
       [{ status: null, outcome: { ...derived, outcome: "failed" }, derived }],
-      {
-        attempts: 1,
-      },
+      { attempts: 1 },
     );
     expect(diverged["mismatches"]).toEqual([
       {
         attempt: 1,
+        journal: null,
         differs: [
-          { read: "status", fields: ["(whole value)"] },
-          { read: "outcome.json", fields: ["outcome"] },
+          { read: "status", fields: [{ field: "(whole value)", value: null, expected: derived }] },
+          {
+            read: "outcome.json",
+            fields: [{ field: "outcome", value: "failed", expected: "completed" }],
+          },
         ],
       },
     ]);
   });
+
+  it("LV-006: a real run's in-memory deriveRunResult (null-prototype records) agrees with its printed result on the first read", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "woof-lv006-")));
+    try {
+      const home = join(root, "home");
+      const repo = join(root, "repo");
+      const runDir = join(root, "run");
+      mkdirSync(home);
+      mkdirSync(repo);
+      const git = (...args: string[]) =>
+        expect(
+          spawnSync(
+            "git",
+            [
+              "-c",
+              "user.name=Woof Test",
+              "-c",
+              "user.email=test@example.invalid",
+              "-c",
+              "commit.gpgsign=false",
+              ...args,
+            ],
+            {
+              cwd: repo,
+              env: { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null" },
+            },
+          ).status,
+        ).toBe(0);
+      git("init", "-q");
+      writeFileSync(join(repo, "README.md"), "fixture\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "init");
+      const input = join(root, "input.json");
+      writeFileSync(
+        input,
+        JSON.stringify({
+          schemaVersion: 1,
+          repo,
+          task: { title: "LV-006", description: "d", acceptanceCriteria: ["a"] },
+        }),
+      );
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: home,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        WOOF_TEST_SCRIPT: "happy",
+      };
+      for (const key of ["HERDR_ENV", "HERDR_PANE_ID", "WOOF_RUN_DIR"])
+        Reflect.deleteProperty(env, key);
+      const started = spawnSync(
+        "node",
+        [
+          cliPath,
+          "run",
+          "start",
+          "--host",
+          "foreground",
+          "--input",
+          input,
+          "--project",
+          repo,
+          "--run-dir",
+          runDir,
+          "--runtime-module",
+          join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs"),
+          "--poll-ms",
+          "2",
+        ],
+        { cwd: root, env, encoding: "utf8", timeout: 60_000, killSignal: "SIGKILL" },
+      );
+      expect(started.status, started.stdout + started.stderr).toBe(0);
+      writeFileSync(join(root, "start.out"), started.stdout);
+      const compared = runNode(
+        `const observer = await import(${JSON.stringify(observerUrl)});
+const { readJournal, readSnapshot, deriveRunResult } = await import(${JSON.stringify(distIndexUrl)});
+const { readFileSync } = await import("node:fs");
+const [runDir, startOut] = process.argv.slice(1);
+const printed = JSON.parse(readFileSync(startOut, "utf8").trim().split("\\n").at(-1)).result;
+const read = readSnapshot(runDir);
+const derived = deriveRunResult(read.snapshot, { runDir, repository: JSON.parse(readFileSync(runDir + "/config.json", "utf8")).repository });
+const journal = readJournal(runDir);
+const out = await observer.settledResultAgreement(async () => ({ status: printed, outcome: printed, derived, journal: { records: journal.records.length } }), { sleep: async () => {} });
+console.log(JSON.stringify({ ...out, nullPrototype: Object.getPrototypeOf(derived.counters.visitsByStage) === null }));`,
+        [runDir, join(root, "start.out")],
+        { timeoutMs: 20_000 },
+      );
+      expect(compared.status, compared.stderr).toBe(0);
+      expect(JSON.parse(compared.stdout.trim())).toMatchObject({
+        pass: true,
+        attempts: 1,
+        mismatches: [],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
 });

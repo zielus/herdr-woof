@@ -69,35 +69,50 @@ export function workingWhileActive(samples, agentId) {
 }
 
 /**
+ * The JSON form of a value, which is what a CLI line or a result file carries:
+ * null-prototype records become plain objects and undefined members vanish.
+ * `deriveRunResult` builds its per-key counters and `lastAcceptedByStage` as
+ * null-prototype records, so an in-memory result never deep-strict-equals a
+ * parsed one (LV-006); results are compared in this form.
+ */
+export function jsonForm(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+/**
  * Live gate L4: the `woof status` result and `outcome.json` both equal
- * `deriveRunResult` of the terminal snapshot. `read()` returns fresh
- * `{ status, outcome, derived }` reads; a disagreement is read again up to
- * `attempts` times, `delayMs` apart, before it counts. Each mismatch names the
- * reads that differed from `derived` and their differing top-level fields.
+ * `deriveRunResult` of the terminal snapshot, compared in JSON form. `read()`
+ * returns fresh `{ status, outcome, derived, journal? }` reads, where `journal`
+ * describes what that read saw (e.g. `{ records, lastSeq }`). A disagreement is
+ * read again up to `attempts` times, `delayMs` apart, before it counts. Each
+ * mismatch records the read's journal and, per differing read, the differing
+ * top-level fields with both values.
  */
 export async function settledResultAgreement(
   read,
-  { attempts = 3, delayMs = 2000, sleep = delay } = {},
+  { attempts = 6, delayMs = 5000, sleep = delay } = {},
 ) {
   const mismatches = [];
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     // Each read settles before the next one; sequential by design.
     // oxlint-disable-next-line no-await-in-loop
-    const { status, outcome, derived } = await read();
+    const { status, outcome, derived, journal = null } = await read();
+    const expected = jsonForm(derived);
     const differs = [];
-    if (derived === null || derived === undefined) {
+    if (expected === null || expected === undefined) {
       differs.push({ read: "derived", fields: [] });
     } else {
       for (const [name, value] of [
         ["status", status],
         ["outcome.json", outcome],
       ]) {
-        if (!isDeepStrictEqual(value, derived))
-          differs.push({ read: name, fields: differingFields(value, derived) });
+        const actual = jsonForm(value);
+        if (!isDeepStrictEqual(actual, expected))
+          differs.push({ read: name, fields: differingFields(actual, expected) });
       }
     }
     if (differs.length === 0) return { pass: true, attempts: attempt, mismatches };
-    mismatches.push({ attempt, differs });
+    mismatches.push({ attempt, journal, differs });
     // oxlint-disable-next-line no-await-in-loop
     if (attempt < attempts) await sleep(delayMs);
   }
@@ -105,7 +120,11 @@ export async function settledResultAgreement(
 }
 
 function differingFields(value, expected) {
-  if (value === null || typeof value !== "object") return ["(whole value)"];
+  if (value === null || value === undefined || typeof value !== "object")
+    return [{ field: "(whole value)", value: value ?? null, expected }];
   const keys = new Set([...Object.keys(value), ...Object.keys(expected)]);
-  return [...keys].filter((key) => !isDeepStrictEqual(value[key], expected[key])).toSorted();
+  return [...keys]
+    .filter((key) => !isDeepStrictEqual(value[key], expected[key]))
+    .toSorted()
+    .map((field) => ({ field, value: value[field] ?? null, expected: expected[field] ?? null }));
 }

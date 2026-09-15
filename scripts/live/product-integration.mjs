@@ -178,13 +178,23 @@ const derived =
   snapshot?.outcome === null || snapshot === null
     ? null
     : deriveRunResult(snapshot, { runDir, repository: config?.repository ?? null });
-// The first reads already happened above; L4 re-reads all three on a mismatch (LV-005).
+/** What a read of the journal saw: record count and last seq. */
+function journalSeen(journalRead) {
+  return journalRead.ok
+    ? { records: journalRead.records.length, lastSeq: journalRead.records.at(-1)?.seq ?? null }
+    : { error: journalRead.reason ?? "unreadable" };
+}
+// The first reads already happened above; L4 re-reads all three on a mismatch (LV-005, LV-006).
+// Results are compared in JSON form: the derived result holds null-prototype records.
 let firstRead = true;
+let lastJournal = null;
 const agreement = await settledResultAgreement(() => {
   if (firstRead) {
     firstRead = false;
-    return { status: final?.result, outcome: outcomeFile?.result, derived };
+    lastJournal = journalSeen(journal);
+    return { status: final?.result, outcome: outcomeFile?.result, derived, journal: lastJournal };
   }
+  lastJournal = journalSeen(readJournal(runDir));
   const again = readSnapshot(runDir);
   return {
     status: woofStatus()?.result,
@@ -193,15 +203,18 @@ const agreement = await settledResultAgreement(() => {
       again.ok && again.snapshot.outcome !== null
         ? deriveRunResult(again.snapshot, { runDir, repository: config?.repository ?? null })
         : null,
+    journal: lastJournal,
   };
 });
 for (const mismatch of agreement.mismatches)
-  console.log(`[L4] read ${mismatch.attempt} differed: ${JSON.stringify(mismatch.differs)}`);
+  console.log(
+    `[L4] read ${mismatch.attempt} (journal ${JSON.stringify(mismatch.journal)}) differed: ${JSON.stringify(mismatch.differs)}`,
+  );
 gate(
   "L4",
-  "woof status result equals deriveRunResult and outcome.json",
+  "woof status result equals deriveRunResult and outcome.json (JSON form)",
   agreement.pass,
-  `status result ${final?.result?.outcome}, outcome.json ${outcomeFile?.result?.outcome}, agreed after ${agreement.attempts} read(s)`,
+  `status result ${final?.result?.outcome}, outcome.json ${outcomeFile?.result?.outcome}, agreed after ${agreement.attempts} read(s), journal ${JSON.stringify(lastJournal)}`,
 );
 
 const running = samples.filter((row) => row.status !== null && !TERMINAL.has(row.status));
