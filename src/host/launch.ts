@@ -186,20 +186,8 @@ export async function launchInPane(
     "--no-focus",
   ]);
   // A launch this launcher reports as failed must never start later: close the unclaimed directory.
-  const paneFailed = (message: string) => {
-    let abandoned: ReturnType<typeof abandonHost>;
-    try {
-      abandoned = abandonHost(runDir, `woof run start (pid ${process.pid})`);
-    } catch (error) {
-      abandoned = { ok: false, host: null, message: (error as Error).message };
-    }
-    return rejected(
-      "host_pane_failed",
-      abandoned.ok
-        ? `${message}; the run directory is closed (abandoned) and no run will start there`
-        : `${message}; the run directory could not be closed (abandoned): ${abandoned.message}`,
-    );
-  };
+  const paneFailed = (message: string) =>
+    rejected("host_pane_failed", `${message}; ${closeRunDir(runDir, "woof run start")}`);
   const paneId = split.exitCode === 0 ? paneIdOf(split.stdout) : undefined;
   if (paneId === undefined) {
     return paneFailed(
@@ -242,6 +230,14 @@ export async function launchInPane(
       outcome["launch"]["sha256"] === launchSha256
     ) {
       const reason = typeof outcome["reason"] === "string" ? outcome["reason"] : "";
+      if (reason === "host_claim_failed") {
+        // The host's failure handoff: it holds no claim, so close the directory before reporting.
+        const closed = closeRunDir(runDir, "woof run start after the run host's claim failed");
+        return {
+          code: 3,
+          output: { ...outcome, message: `${String(outcome["message"])}; ${closed}` },
+        };
+      }
       return {
         code: outcome["outcome"] === "rejected" && !isHostInfraReason(reason) ? 2 : 3,
         output: outcome,
@@ -272,6 +268,22 @@ export async function launchInPane(
     // oxlint-disable-next-line no-await-in-loop
     await delay(LAUNCH_POLL_MS);
   }
+}
+
+/**
+ * Closes an unclaimed run directory as abandoned so no later host starts the launch, and says how
+ * that went (a host that did claim first keeps the directory, and the message names it).
+ */
+function closeRunDir(runDir: string, by: string): string {
+  let abandoned: ReturnType<typeof abandonHost>;
+  try {
+    abandoned = abandonHost(runDir, `${by} (pid ${process.pid})`);
+  } catch (error) {
+    abandoned = { ok: false, host: null, message: (error as Error).message };
+  }
+  return abandoned.ok
+    ? "the run directory is closed (abandoned) and no run will start there"
+    : `the run directory could not be closed (abandoned): ${abandoned.message}`;
 }
 
 function rejected(

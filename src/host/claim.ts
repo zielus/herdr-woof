@@ -6,6 +6,7 @@ import {
   futimesSync,
   mkdirSync,
   openSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { hostname } from "node:os";
@@ -64,11 +65,18 @@ export function claimHost(
     });
   } catch (error) {
     closeSync(fd);
-    // The unwritten claim stays: a claimed-but-invalid file reads as lost, never unhosted.
+    // This process created the file exclusively and never produced a valid claim in it, so removing it
+    // is safe: a partial host.json left behind would read as lost and refuse every later host.
+    let removed = true;
+    try {
+      unlinkSync(path);
+    } catch {
+      removed = false;
+    }
     return {
       ok: false,
       reason: "host_claim_failed",
-      message: `cannot write ${path}: ${(error as Error).message}`,
+      message: `cannot write ${path}: ${(error as Error).message}${removed ? "" : "; the partial claim could not be removed"}`,
       host: null,
     };
   }

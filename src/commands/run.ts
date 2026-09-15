@@ -297,15 +297,34 @@ export async function runHostCommand(args: string[]): Promise<number> {
       workspaceId: nonEmpty(process.env["HERDR_WORKSPACE_ID"]) ?? null,
     });
     if (!claim.ok) {
-      console.log(
-        JSON.stringify({
-          outcome: "rejected",
-          reason: claim.reason,
-          message: claim.message,
-          details: [],
-        }),
-      );
-      return claim.reason === "run_host_claimed" ? 2 : 3;
+      const refused = {
+        outcome: "rejected",
+        reason: claim.reason,
+        message: claim.message,
+        details: [],
+      };
+      if (claim.reason === "run_host_claimed") {
+        console.log(JSON.stringify(refused));
+        return 2;
+      }
+      // Failure handoff (PR #6): this host could not claim and holds nothing. An outcome.json bound to
+      // the launch tells the launcher at once, instead of after its host-start timeout; the launcher
+      // then closes the run directory.
+      const launch = launchDigestOf(runDir);
+      const output = launch === null ? refused : { ...refused, launch };
+      if (launch !== null) {
+        try {
+          writeExclusiveFile(
+            join(runDir, OUTCOME_FILE),
+            Buffer.from(`${JSON.stringify(output)}\n`),
+            0o444,
+          );
+        } catch {
+          // Another outcome is already there: the launcher falls back to its timeout.
+        }
+      }
+      console.log(JSON.stringify(output));
+      return 3;
     }
     pauseAfterClaim();
     const launch = launchDigestOf(runDir);

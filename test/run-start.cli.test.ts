@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -369,6 +370,50 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(fakeCalls(ws)).toEqual([]);
     expect(existsSync(runDir)).toBe(false);
   });
+
+  it("PR #6 (claim.ts:68): a claim whose write fails leaves no partial claim, the launcher reports host_claim_failed at once and closes the directory", () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const preload = pathToFileURL(join(repoRoot, "test", "fixtures", "fail-claim-write.mjs")).href;
+    const started = Date.now();
+    const result = woofIn(ws, startArgs(ws, runDir, ["--host-start-timeout-ms", "20000"]), {
+      NODE_OPTIONS: `--import=${preload}`,
+    });
+    const elapsed = Date.now() - started;
+    expect(result.status, result.stdout + result.stderr).toBe(3);
+    expect(result.json).toMatchObject({
+      outcome: "rejected",
+      reason: "host_claim_failed",
+      message: expect.stringContaining("ENOSPC"),
+    });
+    expect(result.json?.["message"]).toContain(
+      "the run directory is closed (abandoned) and no run will start there",
+    );
+    // Promptly: well inside the 20 s host-start timeout the old launcher waited out.
+    expect(elapsed).toBeLessThan(10_000);
+    // The failed host removed its partial claim; the launcher's abandonment is the only claim.
+    expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
+      state: "abandoned",
+      pid: null,
+    });
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
+      reason: "host_claim_failed",
+      launch: {
+        sha256: createHash("sha256")
+          .update(readFileSync(join(runDir, "launch.json")))
+          .digest("hex"),
+      },
+    });
+    // A later host is refused explicitly: the directory was closed as abandoned, not left lost.
+    const late = woofIn(ws, ["run", "host", runDir]);
+    expect(late.status, late.stdout + late.stderr).toBe(2);
+    expect(late.json).toMatchObject({
+      reason: "run_host_claimed",
+      message: expect.stringContaining("(abandoned)"),
+    });
+    expect(woofIn(ws, ["status", runDir]).json?.["status"]?.["liveness"]).toBeUndefined();
+    expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+  }, 60_000);
 
   it("PR #6 (launch.ts:56): an outcome.json that is not this launch's is ignored, and a host's own outcome names the launch", async () => {
     // A pane that never runs the host: the test plays the stale file and then the real host.
