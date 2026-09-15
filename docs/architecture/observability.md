@@ -320,14 +320,20 @@ design intent. Source: `src/host/{claim,probe,metadata}.ts`,
   stale by more than 5× `heartbeatMs`, is `"lost"` (on a terminated run a
   merely stale heartbeat is `"exited"` instead, never `"lost"`). `host-exit.
 json` is itself engine-owned: `woof run start` refuses `run_exists` for a
-  run directory that already holds one, its `pid` is a required positive
-  integer, and it counts only next to a `"hosting"` claim recorded by that
-  same pid — a marker with no claim, an invalid or non-regular marker, a pid
-  mismatch, or a marker next to an `"abandoned"` claim all fail closed as
-  `"lost"`, `host: null`, with `liveness.claimProblem` naming the problem,
-  never `"exited"`. A claim or marker path that exists but does not parse (a
-  torn write, a FIFO, a symlink) is re-read up to three times, 50 ms apart,
-  before it counts. `deriveSnapshot` (no I/O) still always reports
+  run directory that already holds one, and its `pid` is a required positive
+  integer. It completes a claim into `"exited"` only when it names the
+  **same** pid as a `"hosting"` claim. A marker with no claim, an invalid or
+  non-regular marker, or a marker next to a non-hosting (`"exited"`/
+  `"abandoned"`) claim all fail closed as `"lost"`, `host: null`, with
+  `liveness.claimProblem` naming the problem. A marker naming a **different**
+  pid next to a live `"hosting"` claim does not override that claim: the
+  probe reports the claim's own liveness (`"alive"` while its own heartbeat
+  is fresh and its own pid lives, otherwise `"lost"`, never `"exited"`)
+  alongside the same `claimProblem`, so a forged or stale marker next to a
+  genuinely live host cannot make the host disappear. A claim or marker path
+  that exists but does not parse (a torn write, a FIFO, a symlink) is
+  re-read up to three times, 50 ms apart, before it counts. `deriveSnapshot`
+  (no I/O) still always reports
   `"unhosted"`/`null`; only `readSnapshot`, which already does file I/O,
   probes. `RunSnapshot.liveness` is `{owner, runtime, host: HostInfo | null,
 claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
