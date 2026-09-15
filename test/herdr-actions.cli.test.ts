@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,22 +24,43 @@ const fakeHerdr = join(repoRoot, "test", "fixtures", "fake-herdr.mjs");
 const bin = join(repoRoot, "bin", "woof");
 const dirs: string[] = [];
 const hosted: string[] = [];
-afterEach(() => {
+afterEach(async () => {
+  // A detached host may still be writing into the test directory: stop it if it still holds the
+  // run, and wait until its process is gone before anything is removed (PI-007).
   for (const runDir of hosted.splice(0)) {
+    let pid: number | undefined;
     try {
       const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
-      if (
-        host["state"] === "hosting" &&
-        !existsSync(join(runDir, "host-exit.json")) &&
-        typeof host["pid"] === "number"
-      )
-        process.kill(host["pid"], "SIGKILL");
+      if (host["state"] === "hosting" && typeof host["pid"] === "number") pid = host["pid"];
     } catch {
-      // No claim, or the host is already gone.
+      // No claim: no host ever ran.
     }
+    if (pid === undefined) continue;
+    const hostPid = pid;
+    if (!existsSync(join(runDir, "host-exit.json")) && processAlive(hostPid))
+      process.kill(hostPid, "SIGKILL");
+    await waitFor(() => !processAlive(hostPid), `host ${hostPid} to exit`, 15_000);
   }
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(check: () => boolean, what: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await delay(50);
+  }
+}
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
 
@@ -231,7 +253,7 @@ describe("woof herdr actions", () => {
     expect(existsSync(s.guardLog)).toBe(false);
   });
 
-  it("A2: status lists only the context project's active runs; the worktree checkout wins", () => {
+  it("A2 (LV-003): status lists only the focused pane's project runs, even when the workspace's worktree checkout is another repository", () => {
     const s = setup();
     const [a, b] = [s.repo("repo-a"), s.repo("repo-b")];
     openRun(s, "a-active", a);
@@ -239,9 +261,10 @@ describe("woof herdr actions", () => {
     runSdk(ended, `out = await store.terminateRun({ runDir, outcome: "failed", reason: "test" });`);
     openRun(s, "b-active", b);
 
+    // The live topology: a workspace bound to one checkout (b) with the target project (a) focused.
     const result = action(s, "status", {
-      worktree: { checkout_path: a },
-      focused_pane_cwd: b,
+      worktree: { checkout_path: b },
+      focused_pane_cwd: a,
       workspace_cwd: b,
       focused_pane_id: "w5:p3",
     });
@@ -251,6 +274,11 @@ describe("woof herdr actions", () => {
     expect(notifications(s)).toEqual([
       { title: "Woof: 1 active run(s)", body: "a-active created - owner unhosted" },
     ]);
+    // Without a focused pane directory the workspace directory, then the checkout, decide.
+    const workspace = action(s, "status", { worktree: { checkout_path: a }, workspace_cwd: b });
+    expect(workspace.json["runs"].map((run: Json) => run["runId"])).toEqual(["b-active"]);
+    const checkout = action(s, "status", { worktree: { checkout_path: a } });
+    expect(checkout.json["runs"].map((run: Json) => run["runId"])).toEqual(["a-active"]);
 
     const none = action(s, "status", { workspace_cwd: s.repo("repo-c") });
     expect(none.json["runs"]).toEqual([]);
@@ -261,7 +289,7 @@ describe("woof herdr actions", () => {
     expect(existsSync(s.guardLog)).toBe(false);
   });
 
-  it("A3: start needs .woof/start.json, then splits the host pane from the focused pane", () => {
+  it("A3: start needs .woof/start.json, then splits the host pane from the focused pane and the host runs to its end", async () => {
     const s = setup();
     const repo = s.repo("repo-a");
     const context = { focused_pane_id: "w5:p3", focused_pane_cwd: repo };
@@ -313,10 +341,31 @@ describe("woof herdr actions", () => {
       repo,
       "--no-focus",
     ]);
-    expect(notifications(s).at(-1)).toEqual({
+    const runDir = started.json["runDir"] as string;
+    // The host may notify after the action does: look for the action's notification, not the last one.
+    expect(notifications(s)).toContainEqual({
       title: `Woof: started ${started.json["runId"]}`,
-      body: `run directory ${started.json["runDir"]}`,
+      body: `run directory ${runDir}`,
     });
+    // PI-007: the handed-off host opened the run and runs to its own end (the fake Herdr scripts no
+    // agent pane); the test waits for its exit record and for its process to be gone.
+    await waitFor(
+      () => existsSync(join(runDir, "host-exit.json")),
+      "the host to record its exit",
+      60_000,
+    );
+    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
+      "pid"
+    ] as number;
+    await waitFor(() => !processAlive(pid), "the host process to exit", 15_000);
+    const opened = JSON.parse(
+      readFileSync(join(runDir, "journal.jsonl"), "utf8").split("\n")[0] as string,
+    ) as Json;
+    expect(opened).toMatchObject({ type: "run.opened", runId: started.json["runId"] });
+    const exit = JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8")) as Json;
+    const outcome = JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
+    expect(["run", "rejected"]).toContain(outcome["outcome"]);
+    expect(exit["exitCode"]).toEqual(expect.any(Number));
     expect(existsSync(s.guardLog)).toBe(false);
   }, 90_000);
 
@@ -326,7 +375,8 @@ describe("woof herdr actions", () => {
     const single = openRun(s, "a-only", a);
     const [b1, b2] = [openRun(s, "b-one", b), openRun(s, "b-two", b)];
 
-    const cancelled = action(s, "cancel", { focused_pane_cwd: a });
+    // LV-003: the focused pane's project wins over the workspace's worktree checkout (b).
+    const cancelled = action(s, "cancel", { focused_pane_cwd: a, worktree: { checkout_path: b } });
     expect(cancelled.status, cancelled.stdout + cancelled.stderr).toBe(0);
     expect(cancelled.json).toMatchObject({ outcome: "recorded", runId: "a-only", runDir: single });
     expect(statusOf(single)).toBe("cancelled: cancelled via Herdr action");

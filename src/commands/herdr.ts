@@ -16,8 +16,9 @@ import { cliPath, defaultRunId, herdrBin, readWorkflowInput } from "./run.js";
 export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel>
 
 Herdr plugin actions (unstable). The project is the git top level of the
-invocation context's worktree checkout, else the focused pane's directory, else
-the workspace directory (HERDR_PLUGIN_CONTEXT_JSON); never the working directory.
+invocation context's focused pane directory, else the workspace directory, else
+the workspace's worktree checkout (HERDR_PLUGIN_CONTEXT_JSON); never the
+working directory.
 Each action shows a Herdr notification and prints one JSON line.
 
   status  the project's runs that have not ended; exits 0
@@ -191,17 +192,19 @@ async function projectOf(raw: string | undefined): Promise<Outcome> {
   }
   const context = isObject(value) ? value : {};
   const worktree = isObject(context["worktree"]) ? context["worktree"] : {};
+  // The focused pane is what the operator points at. A workspace bound to one git worktree
+  // (the Woof checkout, say) reports that checkout whichever pane is focused, so it comes last.
   const dir = [
-    worktree["checkout_path"],
     context["focused_pane_cwd"],
     context["workspace_cwd"],
+    worktree["checkout_path"],
   ].find((candidate): candidate is string => typeof candidate === "string" && candidate !== "");
   if (dir === undefined) {
     return {
       ok: false,
       reason: "project_context_missing",
       message:
-        "HERDR_PLUGIN_CONTEXT_JSON names no worktree checkout, focused pane directory or workspace directory",
+        "HERDR_PLUGIN_CONTEXT_JSON names no focused pane directory, workspace directory or worktree checkout",
     };
   }
   const roots = await discoverRoots({ projectDir: dir });
