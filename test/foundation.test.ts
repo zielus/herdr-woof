@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -156,12 +156,22 @@ describe("woof CLI", () => {
   });
 
   it("runs the diagnostic command without requiring Herdr or Claude", () => {
-    const result = runCli("doctor");
+    // PATH holds node but neither herdr nor claude: a test never runs the real Herdr CLI.
+    const binDir = mkdtempSync(join(tmpdir(), "woof-doctor-path-"));
+    try {
+      symlinkSync(process.execPath, join(binDir, "node"));
+      const result = spawnSync(cliPath, ["doctor"], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:/usr/bin:/bin` },
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("woof");
-    expect(result.stdout).toContain("herdr");
-    expect(result.stdout).toContain("claude");
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("woof");
+      expect(result.stdout).toContain("herdr status: not found");
+      expect(result.stdout).toContain("claude --version: not found");
+    } finally {
+      rmSync(binDir, { force: true, recursive: true });
+    }
   });
 
   it("reports a probe that exists but cannot be started", () => {

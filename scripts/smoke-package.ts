@@ -1,7 +1,15 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +99,17 @@ try {
   if (version !== pkg.version) {
     throw new Error(`installed woof --version printed ${version}, expected ${pkg.version}`);
   }
-  run(installedBin, ["doctor"], consumer);
+  // PATH holds node but neither herdr nor claude: the smoke never runs the real Herdr CLI.
+  const pathDir = join(workDir, "path");
+  mkdirSync(pathDir);
+  symlinkSync(process.execPath, join(pathDir, "node"));
+  const doctor = run(installedBin, ["doctor"], consumer, {
+    ...process.env,
+    PATH: `${pathDir}:/usr/bin:/bin`,
+  });
+  if (!doctor.includes("herdr status: not found")) {
+    throw new Error(`installed woof doctor printed ${doctor}`);
+  }
   submitRoundTrip(installedBin, consumer);
   runShow(installedBin, consumer);
   run(installedBin, ["run", "build-review", "--help"], consumer);
