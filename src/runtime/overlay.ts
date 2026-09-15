@@ -22,7 +22,7 @@ export interface OverlaySkip {
 
 export type OverlaidSnapshot = Omit<RunSnapshot, "agents" | "liveness"> & {
   agents: Array<Omit<SnapshotAgent, "runtime"> & { runtime: RuntimeOverlay | null }>;
-  liveness: { owner: "unhosted"; runtime: "observed" | "not_observed" };
+  liveness: Omit<RunSnapshot["liveness"], "runtime"> & { runtime: "observed" | "not_observed" };
   /** Assigned agents whose last observation names another terminal; their `runtime` stays null. */
   skipped: OverlaySkip[];
 };
@@ -72,7 +72,11 @@ export function overlayRuntime(
   return {
     ...cloneData(snapshot),
     agents,
-    liveness: { owner: "unhosted", runtime: observed ? "observed" : "not_observed" },
+    liveness: {
+      owner: snapshot.liveness.owner,
+      runtime: observed ? "observed" : "not_observed",
+      host: snapshot.liveness.host === null ? null : { ...snapshot.liveness.host },
+    },
     skipped,
   };
 }

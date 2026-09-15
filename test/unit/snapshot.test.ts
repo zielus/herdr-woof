@@ -635,3 +635,113 @@ describe("deriveSnapshot p3 projection", () => {
     });
   });
 });
+
+describe("deriveSnapshot liveness and recorded configuration (p4)", () => {
+  const fixture = (name: string): Json[] =>
+    readFileSync(join(repoRoot, "test", "fixtures", name), "utf8")
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => {
+        const parsed = parse(line);
+        if (typeof parsed === "string") throw new Error(`${name}: ${parsed}`);
+        return parsed;
+      });
+
+  it("derives p1, p2 and p3-shaped journals as unhosted with no host and no configuration", () => {
+    for (const records of [
+      fixture("p1-journal.jsonl"),
+      fixture("p2-journal.jsonl"),
+      journalOf(parse, opened(), assigned("builder")),
+    ]) {
+      const derived = deriveSnapshot(records);
+      expect(derived.ok).toBe(true);
+      const snapshot = (derived as unknown as { snapshot: Snapshot & { config: unknown } })
+        .snapshot;
+      expect(snapshot.liveness).toEqual({ owner: "unhosted", runtime: "not_observed", host: null });
+      expect(snapshot.config).toBeNull();
+    }
+  });
+
+  it("carries the config digest from run.opened and refuses a malformed one", () => {
+    const config = { path: "config.json", sha256: HEX, bytes: 12 };
+    const snapshot = snapshotOf({ ...opened(), config }) as Snapshot & { config: unknown };
+    expect(snapshot.config).toEqual(config);
+    const line = (body: Json) =>
+      JSON.stringify({
+        schemaVersion: 1,
+        seq: 1,
+        ts: "2026-09-14T10:00:00.000Z",
+        ...opened(),
+        ...body,
+      });
+    expect(parse(line({ config: { ...config, path: "other.json" } }))).toContain(
+      "config.path is not config.json",
+    );
+    expect(parse(line({ config: { ...config, sha256: "x" } }))).toContain("config.sha256");
+  });
+});
+
+describe("host probe rules (p4, pure)", () => {
+  type HostInfo = Json & { state: string; heartbeatAt: string | null };
+  let parseHostInfo: (text: string, mtime: Date) => HostInfo | undefined;
+  let ownerOf: (host: HostInfo, options?: { now?: number; terminal?: boolean }) => string;
+  beforeAll(async () => {
+    ({ parseHostInfo, ownerOf } = await loadDist<{
+      parseHostInfo: typeof parseHostInfo;
+      ownerOf: typeof ownerOf;
+    }>("host/probe.js"));
+  });
+
+  const beat = new Date("2026-09-15T10:00:00.000Z");
+  const claim = (body: Json = {}) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: "woof.host",
+      state: "hosting",
+      pid: 4242,
+      hostname: "remote.invalid",
+      heartbeatMs: 2000,
+      ...body,
+    });
+
+  it("parses a claim and takes the heartbeat from the mtime", () => {
+    expect(parseHostInfo(claim({ paneId: "w1:p2" }), beat)).toEqual({
+      state: "hosting",
+      pid: 4242,
+      hostname: "remote.invalid",
+      paneId: "w1:p2",
+      workspaceId: null,
+      startedAt: null,
+      heartbeatMs: 2000,
+      heartbeatAt: beat.toISOString(),
+      exitedAt: null,
+      exitCode: null,
+    });
+  });
+
+  it("rejects other kinds, versions, states and a hosting claim without a heartbeat interval", () => {
+    for (const body of [
+      { kind: "woof.launch" },
+      { schemaVersion: 2 },
+      { state: "running" },
+      { heartbeatMs: 0 },
+    ]) {
+      expect(parseHostInfo(claim(body), beat), JSON.stringify(body)).toBeUndefined();
+    }
+    expect(parseHostInfo("[]", beat)).toBeUndefined();
+  });
+
+  it("is alive within five heartbeats, lost after, exited when terminal, and follows state", () => {
+    const host = parseHostInfo(claim(), beat) as HostInfo;
+    const at = beat.getTime();
+    expect(ownerOf(host, { now: at + 10_000 })).toBe("alive");
+    expect(ownerOf(host, { now: at + 10_001 })).toBe("lost");
+    expect(ownerOf(host, { now: at + 10_001, terminal: true })).toBe("exited");
+    expect(
+      ownerOf(parseHostInfo(claim({ state: "exited" }), beat) as HostInfo, { now: at + 1e9 }),
+    ).toBe("exited");
+    expect(ownerOf(parseHostInfo(claim({ state: "abandoned" }), beat) as HostInfo)).toBe(
+      "unhosted",
+    );
+  });
+});

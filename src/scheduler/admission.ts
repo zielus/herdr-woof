@@ -424,13 +424,14 @@ function invalidDefinition<Input>(callback: string, message: string): AdmissionR
  */
 export function openAdmittedRun<Input>(
   admitted: Extract<AdmissionResult<Input>, { ok: true }>,
-  options: { runDir: string; runId: string; lock?: LockOptions },
+  options: { runDir: string; runId: string; lock?: LockOptions; configuration?: unknown },
 ): ReturnType<typeof openRun> {
   return openRun({
     runDir: options.runDir,
     runId: options.runId,
     plan: admitted.plan,
     input: admitted.input,
+    ...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
     ...(options.lock !== undefined ? { lock: options.lock } : {}),
   });
 }

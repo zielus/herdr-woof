@@ -79,7 +79,7 @@ describe("overlayRuntime terminal identity and dictionaries", () => {
     const counters = overlaid["counters"] as Record<string, Record<string, number>>;
 
     expect(overlaid.agents[0]?.runtime).toMatchObject({ lifecycle: "working" });
-    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "observed" });
+    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "observed", host: null });
     for (const dictionary of [
       counters["visitsByStage"],
       counters["attemptsByVisit"],
@@ -103,7 +103,7 @@ describe("overlayRuntime terminal identity and dictionaries", () => {
     const overlaid = overlayRuntime(snapshot, tracker);
 
     expect(overlaid.agents[0]?.runtime).toBeNull();
-    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "not_observed" });
+    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "not_observed", host: null });
     expect(overlaid["skipped"]).toEqual([
       {
         agentId: "hasOwnProperty",
@@ -146,7 +146,7 @@ describe("overlayRuntime", () => {
       order: { terminalId: "t1", stateChangeSeq: 6, revision: null },
     });
     expect(overlaid.agents[1]?.runtime).toBeNull();
-    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "observed" });
+    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "observed", host: null });
     // Everything journal-derived is identical; the input snapshot is not mutated.
     expect(overlaid["skipped"]).toEqual([]);
     expect({ ...overlaid, agents: undefined, liveness: undefined, skipped: undefined }).toEqual({
@@ -168,6 +168,6 @@ describe("overlayRuntime", () => {
     const overlaid = overlayRuntime(snapshot, tracker);
 
     expect(overlaid.agents[0]?.runtime).toBeNull();
-    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "not_observed" });
+    expect(overlaid.liveness).toEqual({ owner: "unhosted", runtime: "not_observed", host: null });
   });
 });
