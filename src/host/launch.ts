@@ -51,13 +51,10 @@ export interface LaunchRequest {
 
 /** Why a run directory cannot take a new run, or undefined when it can. */
 export function runDirOccupied(runDir: string): string | undefined {
+  // Any entry at a reserved path occupies the directory, even an empty journal: `run start`
+  // never adopts one (the SDK's openRun keeps its own empty-journal tolerance).
   for (const name of [JOURNAL_FILE, HOST_FILE, LAUNCH_FILE]) {
-    if (!entryExists(join(runDir, name))) continue;
-    if (name === JOURNAL_FILE) {
-      const snapshot = readSnapshot(runDir);
-      if (!snapshot.ok && snapshot.reason === "run_dir_invalid") continue;
-    }
-    return `${runDir} already holds a run (${name})`;
+    if (entryExists(join(runDir, name))) return `${runDir} already holds a run (${name})`;
   }
   return undefined;
 }

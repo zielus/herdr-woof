@@ -8,13 +8,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { distUrl, repoRoot, runNode } from "./helpers/process.js";
+import { distUrl, repoRoot, runNode, runNodeAsync } from "./helpers/process.js";
 
 // Host claim, heartbeat and the metadata reporter (plan T4) as real child
 // processes with a temporary HOME. Herdr is only ever the fake fixture.
@@ -135,16 +135,27 @@ describe("run host claim", () => {
     expect(probe(runDir)["host"]).toMatchObject({ state: "hosting", pid: host.child.pid });
   });
 
-  it("H4: a clean release rewrites the claim as exited with the exit code", async () => {
+  it("H4 (PI-008): a clean release never rewrites the claim; it records the exit in an exclusive marker", async () => {
     const runDir = temp();
     const host = startClaim(runDir, "100");
     await host.firstLine;
+    const claimed = readFileSync(join(runDir, "host.json"), "utf8");
     expect(await host.exit).toBe(0);
+    expect(readFileSync(join(runDir, "host.json"), "utf8")).toBe(claimed);
+    expect(JSON.parse(claimed)).toMatchObject({ state: "hosting", pid: host.child.pid });
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toEqual({
+      schemaVersion: 1,
+      kind: "woof.host.exit",
+      pid: host.child.pid,
+      exitedAt: expect.any(String),
+      exitCode: 4,
+    });
+    expect(statSync(join(runDir, "host.json")).mode & 0o777).toBe(0o644);
+    expect(statSync(join(runDir, "host-exit.json")).mode & 0o777).toBe(0o444);
     expect(probe(runDir)).toMatchObject({
       owner: "exited",
       host: { state: "exited", exitCode: 4, exitedAt: expect.any(String) },
     });
-    expect(statSync(join(runDir, "host.json")).mode & 0o777).toBe(0o644);
   });
 
   it("H5: an abandoned run directory refuses a late host", async () => {
@@ -167,7 +178,57 @@ console.log(JSON.stringify([abandonHost(process.argv[1], "test launcher"), aband
     expect(probe(runDir)).toMatchObject({ owner: "unhosted", host: { state: "abandoned" } });
   });
 
-  it("H6: a FIFO or symlink at host.json refuses the claim and probes unhosted without blocking", () => {
+  it("H8 (PI-008): a claim file that exists but does not parse is lost, never unhosted, and refuses a late host", async () => {
+    const runDir = temp();
+    // What a host killed in the middle of writing its claim leaves behind.
+    writeFileSync(join(runDir, "host.json"), '{"schemaVersion":1,"kind":"woof.host","state":"host');
+    expect(probe(runDir)).toEqual({
+      owner: "lost",
+      host: null,
+      problem: "host.json exists but is not a valid run host claim",
+    });
+    const late = startClaim(runDir, "100");
+    expect(await late.firstLine).toMatchObject({
+      ok: false,
+      reason: "run_host_claimed",
+      host: null,
+    });
+  });
+
+  it("H9 (PI-008): a claim still being written when first read is read again after a short delay", async () => {
+    const runDir = temp();
+    const path = join(runDir, "host.json");
+    const reader = runNodeAsync(
+      `const { probeHost } = await import(${JSON.stringify(distUrl("host/probe.js"))});
+const { existsSync } = await import("node:fs");
+const path = process.argv[1] + "/host.json";
+while (!existsSync(path)) await new Promise((done) => setTimeout(done, 1));
+console.log(JSON.stringify(probeHost(process.argv[1])));`,
+      [runDir],
+      { timeoutMs: 20_000 },
+    );
+    // Let the reader start polling, then create the claim empty and fill it moments later.
+    await delay(1000);
+    writeFileSync(path, "");
+    await delay(20);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.host",
+        state: "hosting",
+        pid: process.pid,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+        heartbeatMs: 60_000,
+      }),
+    );
+    const result = await reader;
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({ owner: "alive", host: { state: "hosting" } });
+  });
+
+  it("H6: a FIFO or symlink at host.json refuses the claim and probes lost with the problem, without blocking", () => {
     for (const kind of ["fifo", "symlink"]) {
       const runDir = temp();
       const path = join(runDir, "host.json");
@@ -185,7 +246,11 @@ console.log(JSON.stringify([abandonHost(process.argv[1], "test launcher"), aband
         reason: "run_host_claimed",
         host: null,
       });
-      expect(probe(runDir), kind).toEqual({ owner: "unhosted", host: null });
+      expect(probe(runDir), kind).toEqual({
+        owner: "lost",
+        host: null,
+        problem: "host.json is not a regular file",
+      });
     }
   });
 });

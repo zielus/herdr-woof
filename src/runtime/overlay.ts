@@ -76,6 +76,9 @@ export function overlayRuntime(
       owner: snapshot.liveness.owner,
       runtime: observed ? "observed" : "not_observed",
       host: snapshot.liveness.host === null ? null : { ...snapshot.liveness.host },
+      ...(snapshot.liveness.claimProblem !== undefined
+        ? { claimProblem: snapshot.liveness.claimProblem }
+        : {}),
     },
     skipped,
   };

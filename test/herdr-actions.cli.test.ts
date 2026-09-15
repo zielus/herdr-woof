@@ -27,7 +27,11 @@ afterEach(() => {
   for (const runDir of hosted.splice(0)) {
     try {
       const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
-      if (host["state"] === "hosting" && typeof host["pid"] === "number")
+      if (
+        host["state"] === "hosting" &&
+        !existsSync(join(runDir, "host-exit.json")) &&
+        typeof host["pid"] === "number"
+      )
         process.kill(host["pid"], "SIGKILL");
     } catch {
       // No claim, or the host is already gone.

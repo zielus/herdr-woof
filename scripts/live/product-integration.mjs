@@ -133,6 +133,7 @@ const read = readSnapshot(runDir);
 const snapshot = read.ok ? read.snapshot : null;
 const config = readJson(join(runDir, "config.json"));
 const host = readJson(join(runDir, "host.json"));
+const hostExit = readJson(join(runDir, "host-exit.json"));
 const launch = readJson(join(runDir, "launch.json"));
 const outcomeFile = readJson(join(runDir, "outcome.json"));
 const final = woofStatus();
@@ -191,8 +192,8 @@ gate(
   running.length > 0 &&
     running.every((row) => row.owner === "alive") &&
     samples.at(-1)?.owner === "exited" &&
-    host?.state === "exited",
-  `${running.length} non-terminal samples, owners ${JSON.stringify([...new Set(running.map((row) => row.owner))])}, final ${samples.at(-1)?.owner}, host.json ${host?.state}`,
+    hostExit !== null,
+  `${running.length} non-terminal samples, owners ${JSON.stringify([...new Set(running.map((row) => row.owner))])}, final ${samples.at(-1)?.owner}, host-exit.json ${JSON.stringify(hostExit)}`,
 );
 
 gate(

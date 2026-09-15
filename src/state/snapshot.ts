@@ -180,7 +180,13 @@ export interface RunSnapshot {
    * gone, `exited` after a clean exit (or a stale claim on a terminated run).
    * Derived snapshots are always unhosted; `readSnapshot` probes `host.json`.
    */
-  liveness: { owner: HostOwner; runtime: "not_observed"; host: HostInfo | null };
+  liveness: {
+    owner: HostOwner;
+    runtime: "not_observed";
+    host: HostInfo | null;
+    /** Present when `host.json` exists but holds no valid claim; the owner is then `lost` (p4). */
+    claimProblem?: string;
+  };
   integrity: { artifacts: "unchecked" | ArtifactIntegrity };
 }
 
@@ -253,7 +259,12 @@ export function readSnapshot(
   });
   if (!derived.ok) return derived;
   const probed = probeHost(runDir, { terminal: derived.snapshot.outcome !== null });
-  derived.snapshot.liveness = { owner: probed.owner, runtime: "not_observed", host: probed.host };
+  derived.snapshot.liveness = {
+    owner: probed.owner,
+    runtime: "not_observed",
+    host: probed.host,
+    ...(probed.problem !== undefined ? { claimProblem: probed.problem } : {}),
+  };
   if (options.verifyArtifacts !== true) return derived;
   const altered: ArtifactIntegrity["altered"] = [];
   let checked = 0;

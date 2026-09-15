@@ -21,7 +21,7 @@ export interface RunStatusView {
   status: RunSnapshot["status"];
   openedAt: string;
   updatedAt: string;
-  liveness: { owner: HostOwner; host: HostInfo | null };
+  liveness: { owner: HostOwner; host: HostInfo | null; claimProblem?: string };
   activeAttempts: Array<{
     agentId: string;
     stageId: string;
@@ -68,7 +68,13 @@ export function runStatusOf(snapshot: RunSnapshot, runDir: string): RunStatusVie
     status: snapshot.status,
     openedAt: snapshot.openedAt,
     updatedAt: snapshot.updatedAt,
-    liveness: { owner: snapshot.liveness.owner, host: snapshot.liveness.host },
+    liveness: {
+      owner: snapshot.liveness.owner,
+      host: snapshot.liveness.host,
+      ...(snapshot.liveness.claimProblem !== undefined
+        ? { claimProblem: snapshot.liveness.claimProblem }
+        : {}),
+    },
     activeAttempts,
     lastGate:
       gate === undefined

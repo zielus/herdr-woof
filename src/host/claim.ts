@@ -3,7 +3,6 @@ import {
   constants,
   fchmodSync,
   fsyncSync,
-  ftruncateSync,
   futimesSync,
   mkdirSync,
   openSync,
@@ -12,15 +11,18 @@ import {
 import { hostname } from "node:os";
 import { join } from "node:path";
 
-import { HOST_FILE, readHostInfo, type HostInfo } from "./probe.js";
+import { HOST_EXIT_FILE, HOST_FILE, readHostInfo, type HostInfo } from "./probe.js";
 
 /**
  * Run host claim (p4 D2): the process that hosts a run creates
- * `<runDir>/host.json` exclusively, keeps the descriptor open and touches its
- * mtime every `heartbeatMs`. A clean exit rewrites the claim through the same
- * descriptor as `exited`. A launcher whose host never started claims the file
- * itself as `abandoned`, so a late host cannot start an unobserved run. The
- * claim is correlation between same-user processes, not authentication.
+ * `<runDir>/host.json` exclusively, writes it once and never rewrites it, keeps
+ * the descriptor open and touches its mtime every `heartbeatMs`. A clean exit
+ * is recorded in a second exclusively created file, `host-exit.json`, which the
+ * probe reads first; no file is ever rewritten in place, so a reader never sees
+ * a claim change under it. A launcher whose host never started claims the file
+ * itself as `abandoned` (one exclusive write), so a late host cannot start an
+ * unobserved run. The claim is correlation between same-user processes, not
+ * authentication.
  */
 
 export const DEFAULT_HEARTBEAT_MS = 2000;
@@ -45,23 +47,24 @@ export function claimHost(
 ): ClaimHostResult {
   const heartbeatMs = options.heartbeatMs ?? heartbeatFromEnv();
   const path = join(runDir, HOST_FILE);
-  const base = {
-    schemaVersion: 1,
-    kind: "woof.host",
-    pid: process.pid,
-    hostname: hostname(),
-    paneId: options.paneId ?? null,
-    workspaceId: options.workspaceId ?? null,
-    startedAt: new Date().toISOString(),
-    heartbeatMs,
-  };
-  const created = createExclusive(runDir, path);
+  const created = createExclusive(runDir, path, 0o644);
   if (!created.ok) return created;
   const fd = created.fd;
   try {
-    rewrite(fd, { ...base, state: "hosting" });
+    writeOnce(fd, {
+      schemaVersion: 1,
+      kind: "woof.host",
+      state: "hosting",
+      pid: process.pid,
+      hostname: hostname(),
+      paneId: options.paneId ?? null,
+      workspaceId: options.workspaceId ?? null,
+      startedAt: new Date().toISOString(),
+      heartbeatMs,
+    });
   } catch (error) {
     closeSync(fd);
+    // The unwritten claim stays: a claimed-but-invalid file reads as lost, never unhosted.
     return {
       ok: false,
       reason: "host_claim_failed",
@@ -88,9 +91,22 @@ export function claimHost(
       released = true;
       clearInterval(timer);
       try {
-        rewrite(fd, { ...base, state: "exited", exitedAt: new Date().toISOString(), exitCode });
+        const marker = createExclusive(runDir, join(runDir, HOST_EXIT_FILE), 0o444);
+        if (marker.ok) {
+          try {
+            writeOnce(marker.fd, {
+              schemaVersion: 1,
+              kind: "woof.host.exit",
+              pid: process.pid,
+              exitedAt: new Date().toISOString(),
+              exitCode,
+            });
+          } finally {
+            closeSync(marker.fd);
+          }
+        }
       } catch {
-        // The stale claim of a terminated run still reads as exited.
+        // Without the marker the claim reads as lost once this process is gone.
       } finally {
         closeSync(fd);
       }
@@ -104,11 +120,11 @@ export function abandonHost(
   by: string,
 ): { ok: true } | { ok: false; host: HostInfo | null; message: string } {
   const path = join(runDir, HOST_FILE);
-  const created = createExclusive(runDir, path);
+  const created = createExclusive(runDir, path, 0o644);
   if (!created.ok) return { ok: false, host: created.host, message: created.message };
   const now = new Date().toISOString();
   try {
-    rewrite(created.fd, {
+    writeOnce(created.fd, {
       schemaVersion: 1,
       kind: "woof.host",
       state: "abandoned",
@@ -130,6 +146,7 @@ export function abandonHost(
 function createExclusive(
   runDir: string,
   path: string,
+  mode: number,
 ):
   | { ok: true; fd: number }
   | { ok: false; reason: "run_host_claimed"; message: string; host: HostInfo | null }
@@ -137,9 +154,9 @@ function createExclusive(
   const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = constants;
   try {
     mkdirSync(runDir, { recursive: true });
-    const fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
+    const fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
     // The create mode is masked by the umask; the descriptor's mode is set exactly.
-    fchmodSync(fd, 0o644);
+    fchmodSync(fd, mode);
     return { ok: true, fd };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
@@ -162,17 +179,11 @@ function createExclusive(
   }
 }
 
-/**
- * Replaces the claim's content through its descriptor (never by path). The new
- * bytes are written over the old ones before the file is cut to their length,
- * so a concurrent reader never sees an empty claim; a torn read fails to parse
- * and `readHostInfo` reads again.
- */
-function rewrite(fd: number, body: Record<string, unknown>): void {
+/** Writes the whole body into a freshly created, empty file; the file is never written again. */
+function writeOnce(fd: number, body: Record<string, unknown>): void {
   const bytes = Buffer.from(`${JSON.stringify(body)}\n`, "utf8");
   let offset = 0;
   while (offset < bytes.byteLength)
     offset += writeSync(fd, bytes, offset, bytes.byteLength - offset, offset);
-  ftruncateSync(fd, bytes.byteLength);
   fsyncSync(fd);
 }

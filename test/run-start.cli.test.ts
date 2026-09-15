@@ -29,7 +29,11 @@ afterEach(() => {
   for (const runDir of runDirs.splice(0)) {
     try {
       const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
-      if (host["state"] === "hosting" && typeof host["pid"] === "number")
+      if (
+        host["state"] === "hosting" &&
+        !existsSync(join(runDir, "host-exit.json")) &&
+        typeof host["pid"] === "number"
+      )
         process.kill(host["pid"], "SIGKILL");
     } catch {
       // No claim, or the host is already gone.
@@ -231,17 +235,8 @@ async function waitForOutcome(runDir: string, timeoutMs = 30_000): Promise<Json>
     timeoutMs,
   );
   await waitFor(
-    () => {
-      try {
-        return (
-          (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)["state"] ===
-          "exited"
-        );
-      } catch {
-        return false; // Not written yet.
-      }
-    },
-    "the host to release its claim",
+    () => existsSync(join(runDir, "host-exit.json")),
+    "the host to record its exit",
     timeoutMs,
   );
   return JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
@@ -415,8 +410,7 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(result.json).toMatchObject({ outcome: "rejected" });
     expect(result.json?.["reason"]).not.toBe("host_unresponsive");
     // The launcher does not load the runtime module; the pane host claimed first, then failed.
-    expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
-      state: "exited",
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
       exitCode: result.status,
     });
     expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toEqual(result.json);
@@ -564,6 +558,18 @@ console.log(JSON.stringify({ h: createHash("sha256").update(readFileSync(process
       status: 2,
       json: { reason: "run_exists" },
     });
+    // PI-003: an empty journal already present occupies the directory for both hosts.
+    const emptyJournal = join(ws.root, "run-empty-journal");
+    mkdirSync(emptyJournal);
+    writeFileSync(join(emptyJournal, "journal.jsonl"), "");
+    for (const host of ["herdr-pane", "foreground"]) {
+      expect(woofIn(ws, [...startArgs(ws, emptyJournal), "--host", host]), host).toMatchObject({
+        status: 2,
+        json: { reason: "run_exists" },
+      });
+    }
+    expect(readFileSync(join(emptyJournal, "journal.jsonl"), "utf8")).toBe("");
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "split")).toEqual([]);
     expect(woofIn(ws, ["run", "start", "--input", ws.inputPath, "--host", "cloud"]).status).toBe(1);
     expect(
       woofIn(ws, [
