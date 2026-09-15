@@ -369,6 +369,40 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(runDir)).toBe(false);
   });
 
+  it("PR #6 (run.ts:191): a runs directory that is a file or cannot be created is journal_write_failed (exit 3) for both hosts, never a throw", () => {
+    const ws = workspace("w9:p2", false);
+    const occupied = join(ws.root, "runs-file");
+    writeFileSync(occupied, "not a directory\n");
+    const readOnly = join(ws.root, "read-only");
+    mkdirSync(readOnly, { mode: 0o555 });
+    try {
+      for (const runsDir of [occupied, join(readOnly, "runs")]) {
+        mkdirSync(join(ws.home, ".woof"), { recursive: true });
+        writeFileSync(
+          join(ws.home, ".woof", "woof.json"),
+          JSON.stringify({ schemaVersion: 1, defaults: { runsDir } }),
+        );
+        for (const host of ["foreground", "herdr-pane"]) {
+          const args = startArgs(ws, "unused").filter(
+            (arg, index, all) => arg !== "--run-dir" && all[index - 1] !== "--run-dir",
+          );
+          const result = woofIn(ws, [...args, "--host", host]);
+          const label = `${host} ${runsDir}`;
+          expect(result.status, label + result.stdout + result.stderr).toBe(3);
+          expect(result.stderr, label).not.toMatch(/at .*\.js:\d+/);
+          expect(result.json, label).toMatchObject({
+            outcome: "rejected",
+            reason: "journal_write_failed",
+            message: expect.stringContaining(runsDir),
+          });
+        }
+      }
+      expect(fakeCalls(ws).filter((argv) => argv[1] === "split")).toEqual([]);
+    } finally {
+      spawnSync("chmod", ["755", readOnly]);
+    }
+  });
+
   it("PR #6 (launch.ts:184, :200): a failed herdr pane split or pane run abandons the run directory, and a later run host is refused", () => {
     for (const failing of ["split", "run"] as const) {
       const ws = workspace("w9:p2", false);

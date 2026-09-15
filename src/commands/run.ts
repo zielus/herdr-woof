@@ -187,8 +187,19 @@ export async function runStartCommand(args: string[]): Promise<number> {
   if (foregroundRunDir === undefined) {
     const resolved = await resolveConfiguration({ projectDir, flags });
     if (!resolved.ok) return rejected(resolved.reason, resolved.message, resolved.details, 2);
-    foregroundRunDir = join(resolved.configuration.settings.runsDir.value, runId);
-    mkdirSync(resolved.configuration.settings.runsDir.value, { recursive: true, mode: 0o700 });
+    const runsDir = resolved.configuration.settings.runsDir.value;
+    foregroundRunDir = join(runsDir, runId);
+    try {
+      mkdirSync(runsDir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      // An unwritable or file-occupied runs directory is an infrastructure rejection, never a throw.
+      return rejected(
+        "journal_write_failed",
+        `cannot create the runs directory ${runsDir}: ${(error as Error).message}`,
+        [],
+        3,
+      );
+    }
   }
   return foreground({
     runDir: foregroundRunDir,

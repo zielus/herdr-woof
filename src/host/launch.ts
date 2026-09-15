@@ -135,6 +135,14 @@ export async function launchInPane(
   try {
     if (options.runDir === undefined) mkdirSync(runsDir, { recursive: true, mode: 0o700 });
     mkdirSync(runDir, { recursive: true });
+  } catch (error) {
+    // A file at the runs directory makes mkdir fail with EEXIST: that is no run, it is infrastructure.
+    return rejected(
+      "journal_write_failed",
+      `cannot create the run directory ${runDir}: ${(error as Error).message}`,
+    );
+  }
+  try {
     const request: LaunchRequest = {
       schemaVersion: 1,
       kind: "woof.launch",
