@@ -42,6 +42,7 @@ import {
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
 import {
+  CONFIG_FILE,
   INPUT_FILE,
   type AgentAssignedRecord,
   type JournalRecord,
@@ -86,6 +87,12 @@ export interface OpenRunInput {
    * sha256 and size are recorded on run.opened. Must be JSON-serializable.
    */
   input?: unknown;
+  /**
+   * Resolved configuration to persist as `<runDir>/config.json` (mode 0444, p4)
+   * with its sha256 and size on run.opened. Nothing reads it back to run the
+   * workflow; it records what the run was admitted with.
+   */
+  configuration?: unknown;
   lock?: LockOptions;
 }
 
@@ -208,15 +215,23 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
       let inputRef: RunOpenedRecord["input"];
       if (input.input !== undefined) {
         const bytes = Buffer.from(`${JSON.stringify(input.input, null, 2)}\n`, "utf8");
-        const written = writeInputFile(runDir, bytes);
+        const written = writeRunFile(runDir, INPUT_FILE, bytes);
         if (written !== undefined) return rejected("run_exists", written);
         inputRef = { path: INPUT_FILE, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
+      }
+      let configRef: RunOpenedRecord["config"];
+      if (input.configuration !== undefined) {
+        const bytes = Buffer.from(`${JSON.stringify(input.configuration, null, 2)}\n`, "utf8");
+        const written = writeRunFile(runDir, CONFIG_FILE, bytes);
+        if (written !== undefined) return rejected("run_exists", written);
+        configRef = { path: CONFIG_FILE, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
       }
       const record = appendRecord(runDir, records, {
         type: "run.opened",
         runId: input.runId,
         plan: validated.plan,
         ...(inputRef !== undefined ? { input: inputRef } : {}),
+        ...(configRef !== undefined ? { config: configRef } : {}),
       });
       return recorded(record as RunOpenedRecord);
     },
@@ -384,12 +399,13 @@ function copyObserved(observed: ObservedState): ObservedState {
 }
 
 /**
- * Creates `input.json` exclusively without following symlinks. An existing file
- * with identical bytes is kept (a retried open); anything else is refused.
- * Returns a refusal message, or undefined when the file holds `bytes`.
+ * Creates a run file (`input.json`, `config.json`) exclusively without
+ * following symlinks. An existing file with identical bytes is kept (a retried
+ * open); anything else is refused. Returns a refusal message, or undefined
+ * when the file holds `bytes`.
  */
-function writeInputFile(runDir: string, bytes: Buffer): string | undefined {
-  const path = join(runDir, INPUT_FILE);
+function writeRunFile(runDir: string, name: string, bytes: Buffer): string | undefined {
+  const path = join(runDir, name);
   const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = constants;
   let fd: number;
   try {

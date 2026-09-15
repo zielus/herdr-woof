@@ -1,4 +1,6 @@
-import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +9,8 @@ import {
   CONTENT,
   artifactRel,
   cleanupRunDirs,
+  distUrl,
+  runNode,
   envelopeFor,
   journal,
   makeRunDir,
@@ -487,5 +491,329 @@ out = await store.openRun({ runDir, runId: "run-1", plan: input.plan, input: inp
     );
     expect(out).toMatchObject({ outcome: "recorded" });
     expect(statSync(join(runDir, "input.json")).mode & 0o777).toBe(0o444);
+  });
+});
+
+describe("state store: recorded configuration (p4)", () => {
+  const OPEN_WITH_CONFIG = `out = await store.openRun({ runDir, runId: "run-1", plan: input.plan, input: input.input, configuration: input.configuration });`;
+  const configuration = {
+    schemaVersion: 1,
+    kind: "woof.config.resolved",
+    roles: { builder: { value: { kind: "claude", model: "sonnet", args: [] }, source: "project" } },
+  };
+
+  it("writes a read-only config.json whose digest run.opened and the snapshot carry", () => {
+    const runDir = makeRunDir();
+    const out = runSdk<Outcome>(runDir, `process.umask(0o077);\n${OPEN_WITH_CONFIG}`, {
+      plan: testPlan(),
+      input: { schemaVersion: 1 },
+      configuration,
+    });
+    expect(out).toMatchObject({ outcome: "recorded" });
+    const path = join(runDir, "config.json");
+    const bytes = readFileSync(path);
+    expect(JSON.parse(bytes.toString("utf8"))).toEqual(configuration);
+    expect(statSync(path).mode & 0o777).toBe(0o444);
+    const record = journal(runDir)[0] as unknown as Record<string, unknown>;
+    expect(record["config"]).toEqual({
+      path: "config.json",
+      sha256: sha256(bytes),
+      bytes: bytes.byteLength,
+    });
+    const snapshot = runSdk<{ snapshot: { config: unknown } }>(runDir, SNAPSHOT).snapshot;
+    expect(snapshot.config).toEqual(record["config"]);
+  });
+
+  it("refuses a second open with other configuration and keeps the recorded file", () => {
+    const runDir = makeRunDir();
+    const first = { plan: testPlan(), configuration };
+    expect(runSdk<Outcome>(runDir, OPEN_WITH_CONFIG, first)).toMatchObject({ outcome: "recorded" });
+    const before = readFileSync(join(runDir, "config.json"));
+    const second = runSdk<Outcome>(runDir, OPEN_WITH_CONFIG, {
+      plan: testPlan(),
+      configuration: { ...configuration, roles: {} },
+    });
+    expect(second).toMatchObject({ outcome: "rejected", reason: "run_exists" });
+    expect(readFileSync(join(runDir, "config.json")).equals(before)).toBe(true);
+  });
+
+  it("refuses a pre-existing config.json with other content and records nothing", () => {
+    const runDir = makeRunDir();
+    writeFileSync(join(runDir, "config.json"), "{}\n");
+    const out = runSdk<Outcome>(runDir, OPEN_WITH_CONFIG, { plan: testPlan(), configuration });
+    expect(out).toMatchObject({ outcome: "rejected", reason: "run_exists" });
+    expect(out.message).toContain("config.json already exists with other content");
+    expect(readFileSync(join(runDir, "journal.jsonl"), "utf8")).toBe("");
+  });
+
+  it("keeps an identical pre-existing config.json (a retried open)", () => {
+    const runDir = makeRunDir();
+    writeFileSync(join(runDir, "config.json"), `${JSON.stringify(configuration, null, 2)}\n`);
+    expect(
+      runSdk<Outcome>(runDir, OPEN_WITH_CONFIG, { plan: testPlan(), configuration }),
+    ).toMatchObject({
+      outcome: "recorded",
+    });
+  });
+});
+
+describe("host probe on real files (p4)", () => {
+  type Probe = { owner: string; host: Record<string, unknown> | null };
+
+  function probe(runDir: string, options: Record<string, unknown> = {}): Probe {
+    const result = runNode(
+      `const { probeHost } = await import(${JSON.stringify(distUrl("host/probe.js"))});
+console.log(JSON.stringify(probeHost(process.argv[1], JSON.parse(process.argv[2]))));`,
+      [runDir, JSON.stringify(options)],
+      { timeoutMs: 5000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return result.json as unknown as Probe;
+  }
+
+  function writeHost(runDir: string, body: Record<string, unknown>, ageMs = 0): string {
+    const path = join(runDir, "host.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.host",
+        state: "hosting",
+        pid: process.pid,
+        hostname: hostname(),
+        paneId: "w1:p9",
+        workspaceId: "w1",
+        startedAt: new Date().toISOString(),
+        heartbeatMs: 1000,
+        ...body,
+      }),
+    );
+    if (ageMs > 0) {
+      const at = new Date(Date.now() - ageMs);
+      utimesSync(path, at, at);
+    }
+    return path;
+  }
+
+  it("reports a fresh hosting claim with a running process as alive", () => {
+    const runDir = makeRunDir();
+    writeHost(runDir, {});
+    const out = probe(runDir);
+    expect(out.owner).toBe("alive");
+    expect(out.host).toMatchObject({
+      state: "hosting",
+      pid: process.pid,
+      paneId: "w1:p9",
+      workspaceId: "w1",
+      heartbeatMs: 1000,
+      exitedAt: null,
+      exitCode: null,
+    });
+    expect(typeof out.host?.["heartbeatAt"]).toBe("string");
+  });
+
+  it("reports a stale heartbeat as lost, and as exited once the run terminated", () => {
+    const runDir = makeRunDir();
+    writeHost(runDir, {}, 6000);
+    expect(probe(runDir).owner).toBe("lost");
+    expect(probe(runDir, { terminal: true }).owner).toBe("exited");
+  });
+
+  it("reports a fresh claim whose process is gone on this machine as lost, but trusts another machine's heartbeat", () => {
+    const runDir = makeRunDir();
+    const gone = spawnSync("node", ["-e", ""]).pid as number;
+    writeHost(runDir, { pid: gone });
+    expect(probe(runDir).owner).toBe("lost");
+    writeHost(runDir, { pid: gone, hostname: "another-machine.invalid" });
+    expect(probe(runDir).owner).toBe("alive");
+  });
+
+  it("reports exited and abandoned claims", () => {
+    const runDir = makeRunDir();
+    writeHost(
+      runDir,
+      { state: "exited", exitedAt: "2026-09-15T00:00:00.000Z", exitCode: 4 },
+      60_000,
+    );
+    expect(probe(runDir)).toMatchObject({
+      owner: "exited",
+      host: { state: "exited", exitCode: 4 },
+    });
+    writeHost(runDir, { state: "abandoned", pid: null, heartbeatMs: null });
+    expect(probe(runDir)).toMatchObject({ owner: "unhosted", host: { state: "abandoned" } });
+  });
+
+  it("reads a FIFO, a symlink or invalid content as lost with the problem (fail closed), without blocking", () => {
+    const notRegular = { owner: "lost", host: null, problem: "host.json is not a regular file" };
+    const fifoDir = makeRunDir();
+    expect(spawnSync("mkfifo", [join(fifoDir, "host.json")]).status).toBe(0);
+    expect(probe(fifoDir)).toEqual(notRegular);
+
+    const linkDir = makeRunDir();
+    const target = writeHost(makeRunDir(), {});
+    symlinkSync(target, join(linkDir, "host.json"));
+    expect(probe(linkDir)).toEqual(notRegular);
+
+    const invalid = {
+      owner: "lost",
+      host: null,
+      problem: "host.json exists but is not a valid run host claim",
+    };
+    const badDir = makeRunDir();
+    writeFileSync(join(badDir, "host.json"), "{not json");
+    expect(probe(badDir)).toEqual(invalid);
+    writeHost(badDir, { kind: "other" });
+    expect(probe(badDir)).toEqual(invalid);
+    expect(probe(makeRunDir())).toEqual({ owner: "unhosted", host: null });
+  });
+
+  it("applies an exit marker over a hosting claim, and a claim problem reaches readSnapshot", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    writeHost(runDir, {});
+    writeFileSync(
+      join(runDir, "host-exit.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.host.exit",
+        pid: process.pid,
+        exitedAt: "2026-09-15T00:00:00.000Z",
+        exitCode: 6,
+      }),
+    );
+    expect(probe(runDir)).toMatchObject({
+      owner: "exited",
+      host: { state: "exited", exitCode: 6, exitedAt: "2026-09-15T00:00:00.000Z" },
+    });
+    const torn = makeRunDir();
+    openPlannedRun(torn);
+    writeFileSync(join(torn, "host.json"), "");
+    expect(runSdk<{ snapshot: { liveness: unknown } }>(torn, SNAPSHOT).snapshot.liveness).toEqual({
+      owner: "lost",
+      runtime: "not_observed",
+      host: null,
+      claimProblem: "host.json exists but is not a valid run host claim",
+    });
+  });
+
+  it("PI-102: an exit marker counts only for the hosting claim whose pid it records; anything else fails closed", () => {
+    const marker = (runDir: string, body: Record<string, unknown> = {}) =>
+      writeFileSync(
+        join(runDir, "host-exit.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          kind: "woof.host.exit",
+          pid: process.pid,
+          exitedAt: "2026-09-15T00:00:00.000Z",
+          exitCode: 6,
+          ...body,
+        }),
+      );
+    const lost = (problem: string) => ({ owner: "lost", host: null, problem });
+
+    const alone = makeRunDir();
+    marker(alone);
+    expect(probe(alone)).toEqual(lost("host-exit.json exists without a host.json claim"));
+
+    // Another pid's marker never makes a claim exited; the claim's own liveness decides.
+    const mismatch = `host-exit.json records pid 1, but host.json was claimed by pid ${process.pid}`;
+    const foreign = makeRunDir();
+    writeHost(foreign, {});
+    marker(foreign, { pid: 1, exitedAt: "2000-01-01T00:00:00.000Z", exitCode: 99 });
+    expect(probe(foreign)).toMatchObject({
+      owner: "alive",
+      host: { state: "hosting", pid: process.pid, exitCode: null },
+      problem: mismatch,
+    });
+    writeHost(foreign, {}, 6000);
+    for (const options of [{}, { terminal: true }]) {
+      expect(probe(foreign, options), JSON.stringify(options)).toMatchObject({
+        owner: "lost",
+        host: { state: "hosting", pid: process.pid },
+        problem: mismatch,
+      });
+    }
+
+    for (const body of [{ pid: undefined }, { pid: 0 }, { pid: "1" }, { exitCode: "0" }]) {
+      const invalid = makeRunDir();
+      writeHost(invalid, {});
+      marker(invalid, body);
+      expect(probe(invalid), JSON.stringify(body)).toEqual(
+        lost("host-exit.json exists but is not a valid run host exit marker"),
+      );
+    }
+
+    const fifo = makeRunDir();
+    writeHost(fifo, {});
+    expect(spawnSync("mkfifo", [join(fifo, "host-exit.json")]).status).toBe(0);
+    expect(probe(fifo)).toEqual(lost("host-exit.json is not a regular file"));
+
+    const abandoned = makeRunDir();
+    writeHost(abandoned, { state: "abandoned", pid: null, heartbeatMs: null });
+    marker(abandoned);
+    expect(probe(abandoned)).toEqual(
+      lost("host-exit.json exists next to a host.json claim in state abandoned"),
+    );
+  });
+
+  it("PR #6 (probe.ts:210): a hosting claim without pid, hostname, startedAt or heartbeatMs is lost with the problem, never alive", () => {
+    const invalid = {
+      owner: "lost",
+      host: null,
+      problem: "host.json exists but is not a valid run host claim",
+    };
+    for (const body of [
+      { pid: undefined },
+      { pid: null },
+      { pid: 0 },
+      { hostname: undefined },
+      { hostname: "" },
+      { startedAt: undefined },
+      { startedAt: "" },
+      { heartbeatMs: undefined },
+    ]) {
+      const runDir = makeRunDir();
+      openPlannedRun(runDir);
+      // Otherwise a fresh claim of this live process: alive if the missing field were tolerated.
+      writeHost(runDir, body);
+      expect(probe(runDir), JSON.stringify(body)).toEqual(invalid);
+      expect(
+        runSdk<{ snapshot: { liveness: unknown } }>(runDir, SNAPSHOT).snapshot.liveness,
+        JSON.stringify(body),
+      ).toEqual({
+        owner: "lost",
+        runtime: "not_observed",
+        host: null,
+        claimProblem: invalid.problem,
+      });
+    }
+  });
+
+  it("projects the probe into readSnapshot liveness", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    expect(runSdk<{ snapshot: { liveness: unknown } }>(runDir, SNAPSHOT).snapshot.liveness).toEqual(
+      {
+        owner: "unhosted",
+        runtime: "not_observed",
+        host: null,
+      },
+    );
+    writeHost(runDir, {});
+    expect(
+      runSdk<{ snapshot: { liveness: Probe } }>(runDir, SNAPSHOT).snapshot.liveness,
+    ).toMatchObject({
+      owner: "alive",
+      runtime: "not_observed",
+      host: { state: "hosting" },
+    });
+    writeHost(runDir, {}, 6000);
+    expect(
+      runSdk<{ snapshot: { liveness: Probe } }>(runDir, SNAPSHOT).snapshot.liveness.owner,
+    ).toBe("lost");
+    terminateRunOk(runDir);
+    expect(
+      runSdk<{ snapshot: { liveness: Probe } }>(runDir, SNAPSHOT).snapshot.liveness.owner,
+    ).toBe("exited");
   });
 });

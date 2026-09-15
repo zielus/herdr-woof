@@ -2,34 +2,78 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 import type { RejectionDetail } from "../contracts/envelope.js";
+import type { AdmissionReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
-import type { AgentSpec, Revision, RunPlan } from "../domain/types.js";
+import {
+  LIMIT_KEYS,
+  type AgentSpec,
+  type Limits,
+  type Revision,
+  type RunPlan,
+} from "../domain/types.js";
 import type { LockOptions } from "../journal/lock.js";
 import { openRun } from "../state/store.js";
 import type { WorkflowDefinition } from "./definition.js";
-import { launchArgs } from "./launch.js";
+import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
 import { revisionOf, type RevisionResult } from "./revision.js";
 
 /**
- * Workflow admission (p3): everything checked before a run directory or pane
- * exists. Validates the caller input with the definition, requires the
- * repository to be a git work tree that neither contains nor lies inside the
- * run directory, resolves each agent's kind, model and launch arguments through
- * the kind table, and builds the run plan (agent stages, planned checks,
- * limits). Every definition callback is guarded: a throw or a malformed return
- * is a `definition_invalid` rejection, never an exception.
+ * Workflow admission (p3, extended in p4): everything checked before a run
+ * directory or pane exists. Validates the caller input with the definition,
+ * requires the repository to be a git work tree that neither contains nor lies
+ * inside the run directory (and, with configuration, to be the configured
+ * project), resolves each agent's kind, model and launch arguments from the
+ * input or the configured role, composes limits per key (input, configuration,
+ * the definition's defaults), and builds the run plan. Every definition
+ * callback is guarded: a throw or a malformed return is a `definition_invalid`
+ * rejection, never an exception. Admission never reads configuration files:
+ * the caller passes what it resolved.
  */
 
-export type AdmissionReason =
-  | "input_invalid"
-  | "repo_invalid"
-  | "agent_kind_unsupported"
-  | "plan_invalid"
-  | "definition_invalid";
+export type { AdmissionReason } from "../contracts/reasons.js";
+
+export type AdmissionSourceName = "flag" | "input" | "project" | "user" | "builtin";
+
+export interface AdmissionSource {
+  source: AdmissionSourceName;
+  /** File that supplied the value; null for input and built-in values. */
+  path: string | null;
+}
+
+/** Resolved configuration as admission consumes it (structural; no file access). */
+export interface AdmissionConfiguration {
+  /**
+   * The resolved project root. When the key is present the repository must be
+   * this directory after symlink resolution (`project_mismatch`); null means
+   * no project was resolved.
+   */
+  projectRoot?: string | null;
+  /** Effective role per role name. */
+  roles: Record<string, { kind: string; model: string | null; args: string[] } & AdmissionSource>;
+  /** Limit values set by configuration layers above the definition's defaults. */
+  limits: Partial<Record<keyof Limits, { value: number } & AdmissionSource>>;
+  /** Directories that were searched for role files, named in `role_unresolved`. */
+  roleDirs?: string[];
+}
+
+export interface AdmissionProvenance {
+  agents: Record<
+    string,
+    { role: string; kind: string; model: string | null; args: string[] } & AdmissionSource
+  >;
+  limits: Partial<Record<keyof Limits, { value: number } & AdmissionSource>>;
+}
 
 export type AdmissionResult<Input> =
-  | { ok: true; input: Input; plan: RunPlan; repository: string; revision: Revision }
+  | {
+      ok: true;
+      input: Input;
+      plan: RunPlan;
+      repository: string;
+      revision: Revision;
+      provenance: AdmissionProvenance;
+    }
   | { ok: false; reason: AdmissionReason; message: string; details: RejectionDetail[] };
 
 type Called<T> = { ok: true; value: T } | { ok: false; message: string };
@@ -39,8 +83,9 @@ export async function admitWorkflow<Input>(options: {
   input: unknown;
   /** Absolute run directory; agents get write access to it. */
   runDir: string;
+  configuration?: AdmissionConfiguration;
 }): Promise<AdmissionResult<Input>> {
-  const { definition } = options;
+  const { definition, configuration } = options;
   // The run directory is used verbatim in launch arguments and requests: absolute and bounded.
   if (typeof options.runDir !== "string" || !isAbsolute(options.runDir)) {
     const message = `the run directory ${String(options.runDir)} must be an absolute path`;
@@ -115,6 +160,22 @@ export async function admitWorkflow<Input>(options: {
     return reject("repo_invalid", message, [{ field: "repository", message }]);
   }
 
+  // Configuration from one work tree is never applied to a run in another.
+  if (configuration !== undefined && configuration.projectRoot !== undefined) {
+    const projectRoot = configuration.projectRoot;
+    if (projectRoot === null || realpathOrSelf(projectRoot) !== realpathOrSelf(repository)) {
+      const project =
+        projectRoot === null
+          ? "no project (the project directory is not in a git work tree)"
+          : `the project ${projectRoot}`;
+      const message = `the run repository ${repository} is not the configured project: configuration was resolved for ${project}; pass --project ${repository}`;
+      return reject("project_mismatch", message, [
+        { field: "repository", message: repository },
+        { field: "project", message: projectRoot ?? "null" },
+      ]);
+    }
+  }
+
   const overlap = runDirOverlap(repository, options.runDir);
   if (overlap !== undefined) {
     return reject("input_invalid", overlap, [{ field: "runDir", message: overlap }]);
@@ -125,37 +186,84 @@ export async function admitWorkflow<Input>(options: {
   const resolved: unknown = resolvedAgents.value;
   if (!isObject(resolved)) return invalidDefinition("resolveAgents", "returned no agent map");
   const agents: AgentSpec[] = [];
+  const provenance: AdmissionProvenance = { agents: {}, limits: {} };
   for (const { agentId, role } of definition.agents) {
-    const agent = Object.hasOwn(resolved, agentId) ? resolved[agentId] : undefined;
+    let agent: unknown = Object.hasOwn(resolved, agentId) ? resolved[agentId] : undefined;
+    let source: AdmissionSource = { source: "input", path: null };
     if (agent === undefined) {
-      return reject("plan_invalid", `no kind or model resolved for agent ${agentId}`, [
-        { field: `agents.${agentId}`, message: "is not resolved" },
-      ]);
-    }
-    if (!isAgentChoice(agent)) {
+      const configured =
+        configuration !== undefined && Object.hasOwn(configuration.roles, role)
+          ? configuration.roles[role]
+          : undefined;
+      if (configured === undefined) {
+        const searched = [
+          `the workflow input (agent ${agentId})`,
+          ...(configuration?.roleDirs ?? []).map((dir) => join(dir, `${role}.json`)),
+          "built-in roles",
+        ];
+        const message = `no agent is resolved for ${agentId} (role ${role}); searched ${searched.join(", ")}`;
+        return reject("role_unresolved", message, [{ field: `agents.${agentId}`, message }]);
+      }
+      source = { source: configured.source, path: configured.path };
+      agent = { kind: configured.kind, model: configured.model, args: configured.args };
+      if (!isAgentChoice(agent)) {
+        const message = `role ${role} from ${describe(source)} is not { kind: string, model: string | null, args: string[] }`;
+        return reject("role_invalid", message, [{ field: `roles.${role}`, message }]);
+      }
+    } else if (!isAgentChoice(agent)) {
       return invalidDefinition(
         "resolveAgents",
         `agent ${agentId} is not { kind: string, model: string | null, args?: string[] }`,
       );
     }
+    const choice = agent as { kind: string; model: string | null; args?: string[] };
+    // Whatever supplied the agent (input, definition or configuration), the engine owns these flags.
+    const owned = engineOwnedArgIndexes(choice.args ?? []);
+    if (owned.length > 0) {
+      const configured = source.source !== "input";
+      const setBy = configured
+        ? describe(source)
+        : `the workflow input or definition (resolveAgents for ${agentId})`;
+      const message = `agent ${agentId} (role ${role}) args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
+      return reject(
+        "role_invalid",
+        message,
+        owned.map((index) => ({
+          field: configured ? `roles.${role}.args.${index}` : `agents.${agentId}.args.${index}`,
+          message: `${choice.args?.[index] ?? ""} is set by the engine (set by ${setBy})`,
+        })),
+      );
+    }
     const launch = launchArgs({
-      kind: agent.kind,
-      model: agent.model,
-      args: agent.args ?? [],
+      kind: choice.kind,
+      model: choice.model,
+      args: choice.args ?? [],
       runDir: options.runDir,
     });
     if (!launch.ok) {
-      return reject(launch.reason, launch.message, [
-        { field: `agents.${agentId}.kind`, message: launch.message },
+      const configured = source.source !== "input";
+      const message = configured
+        ? `${launch.message} (role ${role} from ${describe(source)})`
+        : launch.message;
+      return reject(launch.reason, message, [
+        { field: configured ? `roles.${role}.kind` : `agents.${agentId}.kind`, message },
       ]);
     }
-    agents.push({ agentId, role, kind: agent.kind, model: agent.model, args: launch.args });
+    agents.push({ agentId, role, kind: choice.kind, model: choice.model, args: launch.args });
+    provenance.agents[agentId] = {
+      role,
+      kind: choice.kind,
+      model: choice.model,
+      args: [...(choice.args ?? [])],
+      ...source,
+    };
   }
 
   const limits = call("resolveLimits", () => definition.resolveLimits(input));
   if (!limits.ok) return invalidDefinition("resolveLimits", limits.message);
   if (!isObject(limits.value))
     return invalidDefinition("resolveLimits", "returned no limits object");
+  const composed = composeLimits(limits.value, configuration, definition.limitDefaults, provenance);
   const plan = {
     workflow: { name: definition.name, version: definition.version },
     agents,
@@ -164,13 +272,92 @@ export async function admitWorkflow<Input>(options: {
         ? [{ stageId: stage.stageId, agentId: stage.agentId, verdicts: [...stage.verdicts] }]
         : [],
     ),
-    limits: limits.value,
+    limits: composed,
     checks: definition.stages.flatMap((stage) => (stage.kind === "check" ? [stage.checkId] : [])),
   };
   const checked = validateRunPlan(plan);
-  if (!checked.ok)
-    return reject("plan_invalid", "the resolved run plan is invalid", checked.details);
-  return { ok: true, input, plan: checked.plan, repository, revision: revision.revision };
+  if (!checked.ok) {
+    const details = checked.details.map((detail) => {
+      const key = /^limits\.([A-Za-z]+)$/.exec(detail.field)?.[1] as keyof Limits | undefined;
+      const set = key === undefined ? undefined : provenance.limits[key];
+      return set === undefined
+        ? detail
+        : { field: detail.field, message: `${detail.message} (set by ${describe(set)})` };
+    });
+    return reject("plan_invalid", "the resolved run plan is invalid", details);
+  }
+  return {
+    ok: true,
+    input,
+    plan: checked.plan,
+    repository,
+    revision: revision.revision,
+    provenance,
+  };
+}
+
+/**
+ * Per-key limits: the definition's `resolveLimits(input)` value, then the
+ * configured value, then `limitDefaults`. A definition without defaults keeps
+ * its p3 key order and configuration fills only the keys it lacks.
+ */
+function composeLimits(
+  base: Record<string, unknown>,
+  configuration: AdmissionConfiguration | undefined,
+  defaults: Partial<Limits> | undefined,
+  provenance: AdmissionProvenance,
+): Record<string, unknown> {
+  const order =
+    defaults === undefined
+      ? [...Object.keys(base), ...LIMIT_KEYS.filter((key) => !Object.hasOwn(base, key))]
+      : [
+          ...LIMIT_KEYS,
+          ...Object.keys(base).filter((key) => !(LIMIT_KEYS as readonly string[]).includes(key)),
+        ];
+  const composed: Record<string, unknown> = {};
+  for (const key of order) {
+    const limitKey = key as keyof Limits;
+    const known = (LIMIT_KEYS as readonly string[]).includes(key);
+    if (Object.hasOwn(base, key) && base[key] !== undefined) {
+      composed[key] = base[key];
+      if (known && typeof base[key] === "number")
+        provenance.limits[limitKey] = { value: base[key], source: "input", path: null };
+      continue;
+    }
+    if (!known) continue;
+    const configured =
+      configuration !== undefined && Object.hasOwn(configuration.limits, key)
+        ? configuration.limits[limitKey]
+        : undefined;
+    if (configured !== undefined) {
+      composed[key] = configured.value;
+      provenance.limits[limitKey] = {
+        value: configured.value,
+        source: configured.source,
+        path: configured.path,
+      };
+      continue;
+    }
+    const fallback =
+      defaults !== undefined && Object.hasOwn(defaults, key) ? defaults[limitKey] : undefined;
+    if (fallback !== undefined) {
+      composed[key] = fallback;
+      provenance.limits[limitKey] = { value: fallback, source: "builtin", path: null };
+    }
+  }
+  return composed;
+}
+
+function describe(source: AdmissionSource): string {
+  return source.path === null ? source.source : `${source.source} ${source.path}`;
+}
+
+function realpathOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 /**
@@ -254,13 +441,14 @@ function invalidDefinition<Input>(callback: string, message: string): AdmissionR
  */
 export function openAdmittedRun<Input>(
   admitted: Extract<AdmissionResult<Input>, { ok: true }>,
-  options: { runDir: string; runId: string; lock?: LockOptions },
+  options: { runDir: string; runId: string; lock?: LockOptions; configuration?: unknown },
 ): ReturnType<typeof openRun> {
   return openRun({
     runDir: options.runDir,
     runId: options.runId,
     plan: admitted.plan,
     input: admitted.input,
+    ...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
     ...(options.lock !== undefined ? { lock: options.lock } : {}),
   });
 }

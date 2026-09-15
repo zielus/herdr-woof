@@ -289,3 +289,27 @@ describe("transitionProblem", () => {
     }
   });
 });
+
+describe("workflow definition: optional limitDefaults (p4)", () => {
+  it("accepts a partial set of bounded limit values", () => {
+    expect(
+      validateWorkflowDefinition(
+        definition({ limitDefaults: { maxRounds: 2, maxFormatRepairs: 0 } }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a non-object, unknown keys and out-of-bound values", () => {
+    const fields = (limitDefaults: unknown) => {
+      const result = validateWorkflowDefinition(definition({ limitDefaults }));
+      return result.ok ? [] : result.details.map((detail) => detail.field);
+    };
+    expect(fields([])).toEqual(["limitDefaults"]);
+    expect(fields({ maxRoundz: 1 })).toEqual(["limitDefaults.maxRoundz"]);
+    expect(fields({ maxRounds: 0, runTimeoutMs: 1.5, maxFormatRepairs: -1 })).toEqual([
+      "limitDefaults.maxRounds",
+      "limitDefaults.runTimeoutMs",
+      "limitDefaults.maxFormatRepairs",
+    ]);
+  });
+});

@@ -434,3 +434,160 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
   running elsewhere. Neither command is hosted: each is a foreground CLI
   process, and a killed scheduler leaves a non-terminal run whose only
   resolution is `woof run cancel`.
+
+## Implemented now (p4)
+
+Real shipped behavior for run hosting and the configuration admission adds —
+not design intent. Source: `src/host/{claim,probe,launch,run,files,
+metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
+`src/config/record.ts`.
+
+- **`woof run start` hosts one scheduler process per run in a Herdr pane
+  (D1).** The caller resolves configuration and **pre-admits the input only
+  when the resolved workflow is built-in**; a discovered project/user
+  workflow is neither loaded nor admitted by the launcher (loading it twice,
+  once in the launcher and once in the host, would run a module with
+  top-level side effects twice — see
+  [workflow authoring](../workflows/authoring.md#implemented-now-p4)). Either
+  way the launcher writes `<runDir>/launch.json` (exclusive, mode 0444) with
+  the raw input and flags, splits a sibling pane (`herdr pane split --current
+--direction right --cwd <project root> --no-focus`, or `--split-from
+<pane-id>` for the Herdr `start` action, which has no pane of its own) and
+  types `woof run host <run-dir>` into it. `woof run host` claims the run
+  exclusively (`claimHost`, `host.json`), loads the definition (once, in this
+  process) and re-admits the launch request authoritatively — for a
+  discovered workflow this is the **only** admission it gets, so its loader
+  and definition-dependent refusals (`definition_not_found`,
+  `definition_syntax_unsupported`, `definition_load_failed`,
+  `role_unresolved`, and any other admission reason that depends on the
+  loaded definition) are decided in the pane the launcher already opened,
+  reported through `outcome.json`, and surface to the caller only after that
+  pane exists. The host then records the resolved configuration, opens the
+  run and drives the workflow to the end, writing `<runDir>/outcome.json`
+  (mode 0444, the same line as its stdout, and, for a pane host, `launch:
+{sha256}` — the SHA-256 of the exact `launch.json` bytes it served) before
+  releasing the claim. `--host foreground` and `woof run build-review` claim
+  and run the same host code in this process instead of a pane (a
+  foreground host has no `launch` field: nothing else could ever read its
+  `outcome.json`). Any entry at `journal.jsonl` (even empty), `host.json`,
+  `host-exit.json`, `launch.json` **or `outcome.json`** in the target run
+  directory makes `run start`/`run build-review` refuse `run_exists` before
+  anything is written.
+- **The launcher reports `started` only for the journal this launch's own
+  host opened, and only for a rejection this launch's own host wrote.**
+  Each poll reads `outcome.json` first: one whose `launch.sha256` equals the
+  digest of the `launch.json` the launcher itself wrote is this launch's own
+  outcome (any other `outcome.json` — stale, or from a different launch
+  entirely — is ignored). A rejection there wins over any journal. Otherwise
+  the launcher reads the run directory's journal, but reports `started` only
+  when its `run.opened` carries this launch's own `runId` and, for a
+  built-in workflow, the digest of the exact admitted input the launcher
+  pre-admitted (the same pretty-printed input `openAdmittedRun` records); a
+  discovered workflow, which the launcher never pre-admits, is bound by
+  `runId` alone. A journal that does not match — another process's `openRun`
+  into the same directory, however that happened — ends the launch
+  `run_exists` (exit 2), "\<run-dir\> holds a run that this launch did not
+  open; nothing was started", without naming or otherwise exposing the
+  other run. Only once neither an owning outcome nor a matching journal
+  exists does the launcher fall back to its claim/host-start timeout
+  bookkeeping: `hostStartTimeoutMs` (default 30 000 ms) with no claim seen
+  yet triggers `abandonHost` (`state:"abandoned"`, so a late host cannot
+  start an unobserved run); a claim seen but no matching outcome or journal
+  within a second `hostStartTimeoutMs` is `host_unresponsive` (the host
+  keeps ownership).
+- **A failed claim write removes the partial claim and hands the failure to
+  the launcher at once.** If `claimHost`'s single write to the freshly,
+  exclusively created `host.json` fails, it closes the descriptor and
+  unlinks that file — safe because this process holds the exclusive create
+  and never produced a valid claim in it, so nothing else could have relied
+  on it (a partial claim left behind would otherwise read as `lost` forever
+  and refuse every later host). `claimHost` returns `host_claim_failed`
+  (naming the removal failure too, if the unlink itself fails). `woof run
+host` answers that failure by writing it as a **launch-bound**
+  `outcome.json` (`launch.sha256` of the `launch.json` it read) and exits 3,
+  rather than leaving the launcher to wait out its full timeout with no
+  claim to observe. The launcher reads that outcome at once, closes the run
+  directory as abandoned (the same helper the pane-failure path uses) and
+  exits 3 with the claim error plus the abandonment result. A later `woof
+run host <run-dir>` on that directory is refused `run_host_claimed`
+  ("… already claimed by a run host (abandoned)") — the directory is
+  deliberately closed, like every other launch the launcher reported as
+  failed, never left as an invalid, unowned claim for something else to
+  find.
+- **A pane the launcher itself cannot open or start closes the run
+  directory.** When `herdr pane split` fails (a non-zero exit, a spawn
+  error, or no pane id in its output) or `herdr pane run` exits non-zero,
+  `woof run start` abandons the still-unclaimed run directory
+  (`abandonHost`, `host.json` `state:"abandoned"`) and exits 3
+  `host_pane_failed`, naming the Herdr error and that the directory "is
+  closed (abandoned) and no run will start there". A later `woof run host
+<run-dir>` on that directory is then refused `run_host_claimed`. If
+  abandonment itself fails — most often because `herdr pane run` did launch
+  a host that claimed the directory first, even though its own exit code
+  was non-zero — the message instead says the directory "could not be
+  closed (abandoned)" and names why; that host may still run the request.
+  Neither `launch.json` nor an unclosed run directory is left usable after a
+  reported pane failure.
+- **An unwritable runs directory, or a non-regular input file, is refused
+  before anything else runs.** If the resolved runs directory cannot be
+  created (a file already sits at that path, or a permission error) `woof
+run start`/`run build-review` — foreground or pane-hosted — reject
+  `journal_write_failed` (exit 3), naming the directory and the underlying
+  error, rather than throwing or misreporting `run_exists`. `--input <path>`
+  and, for the Herdr `start` action, `<project>/.woof/start.json` must both
+  be regular files: a FIFO, device or directory is `input_invalid` ("… is
+  not a regular file") at once, before the file is opened for reading, so a
+  named pipe with nothing writing to it can never block the command.
+- **Signals finalize the host exactly once, from the moment a claim
+  exists.** `woof run host` installs a no-op SIGINT/SIGTERM listener before
+  `claimHost` and removes it only after handing off into the code that
+  installs `hostWorkflow`'s own handlers, so the claim, reading the launch
+  request and that handoff are one synchronous stretch: a signal arriving
+  anywhere in that window is finalized as `host_interrupted`, never lost to
+  the process's default termination. Before the run starts opening
+  (`openAdmittedRun` is about to be called), a first SIGINT/SIGTERM ends the
+  host at once — synchronously in the signal handler, not through the abort
+  signal a pending module load or runtime factory might never observe —
+  with `host_interrupted` (launcher exit 3): it records `outcome.json` for a
+  pane host and `host-exit.json` once the host holds a claim (a foreground
+  host claims only once its runtime exists, so a signal before that leaves
+  no run files at all). Once
+  the run is opening, a first signal cancels it through the scheduler as
+  before and a second finalizes synchronously (exit code 130) and exits at
+  once, without waiting for the runtime to settle. The first result reached
+  is authoritative for `outcome.json`, the return value and any later
+  finalize call; writing the outcome and releasing the claim are separate
+  one-time steps, and a release that throws is logged and retried once more
+  on the way out rather than silently changing the result.
+- **Resolved configuration travels with the run (D6).** `admitWorkflow`
+  takes an optional `configuration` and fills any agent `resolveAgents(input)`
+  omits from `configuration.roles[role]` (else `role_unresolved`), and
+  composes each `Limits` key as input → project → user → the definition's own
+  `limitDefaults[key]` when present. `openAdmittedRun` — exported from the
+  SDK, so a caller that admits a run always couples the admitted plan with
+  the validated input it opens with — takes an _optional_ `configuration`;
+  when one is supplied it is recorded atomically with the open, as
+  `config.json` (mode 0444) alongside `input.json`, and `run.opened` gains
+  `config: {sha256, bytes}` (the snapshot's `config` field mirrors it). A
+  caller that opens a run with no `configuration` — preserving p3 callers —
+  gets neither file nor field: `run.opened.config` and the snapshot's
+  `config` stay absent/`null`. Nothing after admission reads
+  `.woof/` again.
+- **New `AdmissionReason` values (p4):** `config_invalid`, `config_conflict`,
+  `setting_scope_invalid`, `role_invalid`, `role_unresolved`,
+  `project_mismatch`, `workflow_not_found`, plus the loader's
+  `definition_not_found|definition_syntax_unsupported|definition_load_failed`
+  — all exit 2. The reasons decided by configuration resolution and built-in
+  admission (`config_invalid`, `config_conflict`, `setting_scope_invalid`,
+  `role_invalid`, `workflow_not_found`, and `role_unresolved`/
+  `project_mismatch`/`plan_invalid` etc. for a **built-in** workflow) are
+  refused before any pane opens. For a discovered workflow they, and the
+  loader reasons, are decided authoritatively only once the host pane already
+  exists — see the launcher/host split above.
+- **Herdr plugin actions drive the same launcher (`src/commands/herdr.ts`).**
+  `woof herdr start` resolves the target project from
+  `HERDR_PLUGIN_CONTEXT_JSON` (focused pane directory → workspace directory
+  → worktree checkout) and calls `launchInPane` directly, splitting from the
+  invocation's focused pane; `woof herdr cancel` cancels the project's one
+  non-terminal run, whatever its owner, and refuses when more than one is
+  active.

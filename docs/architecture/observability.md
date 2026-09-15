@@ -196,7 +196,8 @@ records}`) is the proof of this by construction: it re-derives the
 
 - **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
   process to be reachable, so every snapshot says so explicitly rather than
-  claiming `"active"`. `liveness.runtime` stays `"not_observed"` in every
+  claiming `"active"`. (p4 widens this to a real run-owner probe — see
+  "Implemented now (p4)" below.) `liveness.runtime` stays `"not_observed"` in every
   derived snapshot; only an explicit, non-journaled overlay step
   (`overlayRuntime`) can report `"observed"`, and only when it actually laid
   an observation over at least one agent. `overlayRuntime` uses an
@@ -288,14 +289,163 @@ repository {path, revision}, counters, blocked, artifacts
   `reviewed` revision, and is `null` on any outcome except `completed`, so a
   passing gate from an earlier revision is never reported as approval of
   newer work even though it stays visible in `lastAcceptedByStage`.
+- **Per-key maps in results and snapshots are null-prototype objects.**
+  `RunSnapshot.counters`' id-keyed maps (`visitsByStage`, `attemptsByVisit`,
+  `rejectionsByReason`, `replacementsByAgent`, `gatesByGate`,
+  `formatRepairsByVisit`, `workRetriesByVisit`) and `RunResult.artifacts.
+lastAcceptedByStage` are built with `Object.create(null)` (`src/state/
+reducer.ts`'s `dict()` helper, `src/state/result.ts`), so a stage id or
+  reason such as `constructor` is always an ordinary own key, never shadowed
+  by `Object.prototype`. Their JSON is identical to an ordinary object's, but
+  `node:util.isDeepStrictEqual`/`assert.deepStrictEqual` compares prototypes
+  too and reports a mismatch against a plain-object value with the same
+  keys. Compare a `RunResult` or snapshot with a parsed CLI line or file in
+  JSON form (`JSON.parse(JSON.stringify(...))`, or field-by-field), not with
+  deep-strict equality.
 - **The scheduler reads only what an observer reads.** `decide()` (D1) is a
   pure function of the same `RunSnapshot` that `readSnapshot`/`woof run
 show`/`readEvents` project, so "an external observer agrees with the
   engine's state" holds by construction — there is no separate in-process
   state the scheduler consults instead.
-- **`liveness.owner` stays `"unhosted"` (unchanged).** The scheduler is a
-  foreground process, not a run owner: a killed scheduler leaves a
-  non-terminal run, and the only resolution is `woof run cancel <run-dir>`
-  (which records the termination a live scheduler would otherwise have
-  written) — there is still no daemon, liveness contract or crash-resume
+- **`liveness.owner` stays `"unhosted"` for a foreground scheduler
+  (unchanged).** `woof run build-review`/`--host foreground` run the
+  scheduler in this process: a killed one leaves a non-terminal run, and the
+  only resolution is `woof run cancel <run-dir>` (which records the
+  termination a live scheduler would otherwise have written). p4 adds a real
+  owner and liveness for `woof run start`'s pane-hosted runs — see
+  "Implemented now (p4)" below; there is still no daemon or crash-resume
   path.
+
+## Implemented now (p4)
+
+Real shipped behavior for run-host liveness and the inspection CLI — not
+design intent. Source: `src/host/{claim,probe,metadata}.ts`,
+`src/state/snapshot.ts`, `src/inspect/{status,runs}.ts`,
+`src/commands/{status,runs,events,config,doctor}.ts`.
+
+- **`liveness.owner` widens to `"unhosted" | "alive" | "lost" | "exited"`.**
+  `readSnapshot` probes `<runDir>/host.json` (the exclusive claim a run host
+  creates once and never rewrites, with a heartbeat that touches its mtime
+  every `heartbeatMs`, default 2000 ms) and `<runDir>/host-exit.json` (a
+  second, separately exclusive marker a clean exit creates, which the probe
+  applies first). No claim file and no marker is `"unhosted"`. A claim whose
+  recorded host is this machine and whose pid is gone, or whose heartbeat is
+  stale by more than 5× `heartbeatMs`, is `"lost"` (on a terminated run a
+  merely stale heartbeat is `"exited"` instead, never `"lost"`). `host-exit.
+json` is itself engine-owned: `woof run start` refuses `run_exists` for a
+  run directory that already holds one, and its `pid` is a required positive
+  integer. It completes a claim into `"exited"` only when it names the
+  **same** pid as a `"hosting"` claim. A marker with no claim, an invalid or
+  non-regular marker, or a marker next to a non-hosting (`"exited"`/
+  `"abandoned"`) claim all fail closed as `"lost"`, `host: null`, with
+  `liveness.claimProblem` naming the problem. A marker naming a **different**
+  pid next to a live `"hosting"` claim does not override that claim: the
+  probe reports the claim's own liveness (`"alive"` while its own heartbeat
+  is fresh and its own pid lives, otherwise `"lost"`, never `"exited"`)
+  alongside the same `claimProblem`, so a forged or stale marker next to a
+  genuinely live host cannot make the host disappear. A claim or marker path
+  that exists but does not parse (a torn write, a FIFO, a symlink) is
+  re-read up to three times, 50 ms apart, before it counts. `deriveSnapshot`
+  (no I/O) still always reports
+  `"unhosted"`/`null`; only `readSnapshot`, which already does file I/O,
+  probes. `RunSnapshot.liveness` is `{owner, runtime, host: HostInfo | null,
+claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
+  `runtime: "observed"|"not_observed"`.
+- **A `"hosting"` claim must carry everything `claimHost` writes to be
+  valid.** `parseHostInfo` requires a positive integer `pid`, a non-empty
+  `hostname`, a non-empty `startedAt` and a positive integer `heartbeatMs`
+  for `state: "hosting"` — without any one of them nothing could tell a
+  dead host from a live one, so the claim parses as invalid rather than as a
+  host with an unknown pid. An incomplete hosting claim therefore reads
+  `owner: "lost"`, `host: null`, with `liveness.claimProblem` "host.json
+  exists but is not a valid run host claim" (after the usual re-reads),
+  **never `"alive"`**. `"abandoned"` and `"exited"` claims still allow
+  `pid: null`.
+- **`woof status <run-dir> [--wait]`** (`src/inspect/status.ts`,
+  `RunStatusView`) is the read-only wait primitive: `liveness`, the run's
+  `activeAttempts`, `lastGate`, `attention`, `counters`, `config: {sha256} |
+null` and `cursor`, plus `result` (`deriveRunResult`) once terminal.
+  Without `--wait`: exit 0, or 3 on `run_dir_invalid|journal_corrupt|
+journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
+  `--timeout-ms`, default 540 000 — one Bash call stays under its own
+  600 000 ms cap): a recorded terminal outcome always wins first (**0/4/5/6**
+  completed/failed/exhausted/cancelled); otherwise an unresolved
+  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise **8**
+  means the owner is gone with no recorded outcome — either `lost`,
+  confirmed on two probes at least `2 × heartbeatMs` apart, or `exited` with
+  no terminal journal record (a host interrupted, e.g. by a signal, before
+  the run recorded its own end; the CLI re-reads once more first, so a host
+  that exits just after its final journal write is not caught mid-write). In
+  the `exited` case `woof status`'s printed line also carries `hostOutcome`,
+  the host's own `outcome.json`, when that file exists (a foreground host
+  has none, so its exit 8 carries no `hostOutcome` — only the exit code
+  already visible in `liveness.host.exitCode`); `hostOutcome` is a CLI-only
+  addition to the printed JSON, not part of the `RunStatusView` type itself.
+  Otherwise the timeout elapsing is **7**. The last line printed is always
+  the status at return time.
+- **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
+  (`src/inspect/runs.ts`) lists run directories under a runs directory
+  (`--runs-dir` → the user setting `defaults.runsDir` → `~/.woof/runs`;
+  project scope is refused for this setting): every non-terminal run plus the
+  20 most recent terminal runs by default, sorted by `openedAt` descending.
+  `--project` filters by the run's recorded `config.json` project root
+  (`realpath`); a p3 run with no `config.json` shows `project: null` and is
+  excluded by `--project`. A missing runs directory is `{"exists":false,
+"runs":[]}`, exit 0; an unreadable one exits 3. It takes no lock and loads
+  no workflow definition.
+- **`woof events <run-dir> … [--stats]`** streams the run's `RunEvent`s as
+  NDJSON, ending with `{"kind":"woof.events.end","cursor","terminal",
+"reason"}` (`0` end/terminated, `7` timeout, `2` resync_required, `3`
+  error, `130` SIGINT). `--follow` never takes the journal lock: it passes
+  `subscribeEvents`'s optional `lockFree: true` (default `false`, so the
+  SDK's own documented one-locked-read decision for a persistent torn tail
+  is unchanged unless a caller opts in), so a final journal line that stays
+  partial and unchanged for `tornTailGraceMs` (default 2000 ms) ends the
+  follow with `{"type":"error","reason":"journal_corrupt"}`, the `error` end
+  line, and exit 3, rather than the one locked read that decides it by
+  default. Resumed with `--after <cursor>` at a terminated run's last
+  cursor, `--follow` ends at once with `{"terminal":true,
+"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`; an
+  earlier cursor still delivers the `run.terminated` event through the
+  subscription first. `--stats` prints
+  `{"kind":"woof.events.stats","polls","maxProjectionMs","pollMs","method":
+"iterator step wall time beyond the poll interval"}` to stderr — an
+  estimate from the iterator's own step time, not a measurement taken inside
+  `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
+  its first real consumer). Live evidence on a completed build-review run:
+  `maxProjectionMs` 3.45 ms against a 250 ms poll — about 1.4%, well under
+  the 10% C4 threshold (`docs/research/product-integration-live-2.log`).
+- **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
+events`** and **`woof run show`** are read-only and never take the journal
+  lock or contact Herdr; see
+  [configuration](configuration.md#implemented-now-p4). **`woof doctor
+[--json]`** is not part of that guarantee: it is non-mutating, but it
+  probes the Herdr and Claude executables for diagnostics — JSON mode
+  spawns the configured Herdr binary with `--version` and `claude
+--version`; human mode runs `herdr status` and `claude --version`
+  (`src/commands/doctor.ts`). Both modes resolve the Herdr executable the
+  same way, through `herdrBin()` (`WOOF_HERDR_BIN`, else `herdr`) — human
+  mode is not a special case that resolves `herdr` from `PATH` on its own,
+  and a configured executable that is missing is reported "herdr status:
+  not found" rather than silently falling back to a different `herdr` on
+  `PATH`. Each external probe, in either mode, is bounded at 10 s
+  (`PROBE_TIMEOUT_MS`); a probe that times out is reported as failed rather
+  than hanging the command.
+- **Metadata is a display-only projection, never a source.** The run host
+  reports pane metadata tokens and notifications (`herdr pane
+report-metadata`, `herdr notification show`); nothing in Woof reads a
+  token back, the journal stays authoritative, and a failed report is logged
+  to stderr and never affects the run. Reports are bounded: the host sends
+  at most one metadata report at a time (`createCoalescer`), so a Herdr
+  invocation slower than the poll interval never queues up an unbounded
+  backlog of report calls behind it — a refresh requested while one is in
+  flight coalesces with every other such request into exactly one follow-up
+  report, which reads the snapshot afresh, so the latest state always wins
+  and no stale report is ever sent late. At termination the host stops
+  requesting further reports and waits only for the one in flight (each
+  Herdr call itself capped at 5 s) before sending the final report, so
+  finalizing stays prompt even when Herdr is slow to respond. See
+  [plugins](../integrations/plugins.md#herdr-plugin).
+- **Still not covered:** crash resume or re-hosting a lost run (a `lost`
+  owner is reported and only ever cancelled), parallel scheduling, and a
+  second built-in workflow.

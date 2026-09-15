@@ -51,6 +51,8 @@ export type {
 
 /** Persisted run input, relative to the run directory (p3). */
 export const INPUT_FILE = "input.json";
+/** Resolved configuration recorded with the run, relative to the run directory (p4). */
+export const CONFIG_FILE = "config.json";
 
 /** Fields every journal record carries. */
 export interface RecordBase {
@@ -66,6 +68,8 @@ export interface RunOpenedRecord extends RecordBase {
   plan?: RunPlan;
   /** Digest of the persisted caller input `input.json` (p3, optional). */
   input?: { path: "input.json"; sha256: string; bytes: number };
+  /** Digest of the resolved configuration `config.json` (p4, optional). */
+  config?: { path: "config.json"; sha256: string; bytes: number };
 }
 
 export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
@@ -179,12 +183,15 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
   switch (value["type"]) {
     case "run.opened":
       return (
-        keysProblem(value, ["runId"], ["plan", "input"]) ??
+        keysProblem(value, ["runId"], ["plan", "input", "config"]) ??
         check(isId(value["runId"]), "runId is invalid") ??
         planProblem(value["plan"]) ??
         (value["input"] === undefined
           ? undefined
-          : fileRefProblem(value["input"], "input", INPUT_FILE))
+          : fileRefProblem(value["input"], "input", INPUT_FILE)) ??
+        (value["config"] === undefined
+          ? undefined
+          : fileRefProblem(value["config"], "config", CONFIG_FILE))
       );
     case "attempt.opened":
       return attemptOpenedProblem(value);

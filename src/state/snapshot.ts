@@ -10,6 +10,7 @@ import type {
   Revision,
   RunStatus,
 } from "../domain/types.js";
+import { probeHost, type HostInfo, type HostOwner } from "../host/probe.js";
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
 import type {
   CheckResultRecord,
@@ -147,6 +148,8 @@ export interface RunSnapshot {
   workflow: { name: string; version: string } | null;
   /** Digest of the persisted caller input, when run.opened carries one. */
   input: { path: string; sha256: string; bytes: number } | null;
+  /** Digest of the recorded resolved configuration, when run.opened carries one (p4). */
+  config: { path: string; sha256: string; bytes: number } | null;
   status: RunStatus;
   openedAt: string;
   updatedAt: string;
@@ -171,7 +174,19 @@ export interface RunSnapshot {
     /** Highest accepted (visit, attempt) per stage; a newer unaccepted attempt never hides or replaces it. */
     latestAcceptedByStage: Record<string, AttemptRef & { receiptId: string; acceptedPath: string }>;
   };
-  liveness: { owner: "unhosted"; runtime: "not_observed" };
+  /**
+   * Run owner (p4): `unhosted` when no host claimed the run, `alive` while its
+   * host heartbeats, `lost` when the heartbeat went stale or the host process is
+   * gone, `exited` after a clean exit (or a stale claim on a terminated run).
+   * Derived snapshots are always unhosted; `readSnapshot` probes `host.json`.
+   */
+  liveness: {
+    owner: HostOwner;
+    runtime: "not_observed";
+    host: HostInfo | null;
+    /** Present when `host.json` exists but holds no valid claim; the owner is then `lost` (p4). */
+    claimProblem?: string;
+  };
   integrity: { artifacts: "unchecked" | ArtifactIntegrity };
 }
 
@@ -242,7 +257,15 @@ export function readSnapshot(
     anchor: read.anchor,
     tailPending: read.tailPending,
   });
-  if (!derived.ok || options.verifyArtifacts !== true) return derived;
+  if (!derived.ok) return derived;
+  const probed = probeHost(runDir, { terminal: derived.snapshot.outcome !== null });
+  derived.snapshot.liveness = {
+    owner: probed.owner,
+    runtime: "not_observed",
+    host: probed.host,
+    ...(probed.problem !== undefined ? { claimProblem: probed.problem } : {}),
+  };
+  if (options.verifyArtifacts !== true) return derived;
   const altered: ArtifactIntegrity["altered"] = [];
   let checked = 0;
   for (const stage of derived.snapshot.stages) {
@@ -300,6 +323,7 @@ export function deriveSnapshot(
       journal: { records: records.length, tailPending: options.tailPending ?? false },
       workflow: state.plan === null ? null : { ...state.plan.workflow },
       input: first.input === undefined ? null : { ...first.input },
+      config: first.config === undefined ? null : { ...first.config },
       status: state.status,
       openedAt: state.openedAt ?? first.ts,
       updatedAt: state.updatedAt ?? first.ts,
@@ -331,7 +355,7 @@ export function deriveSnapshot(
         blocked: deriveBlocked(state),
       },
       outputs: { latestAcceptedByStage: latestAccepted(state) },
-      liveness: { owner: "unhosted", runtime: "not_observed" },
+      liveness: { owner: "unhosted", runtime: "not_observed", host: null },
       integrity: { artifacts: "unchecked" },
     },
   };

@@ -164,10 +164,44 @@ InputRef[]}` plus optional `task`/`roleInstructions`, each `InputRef`
   and no attempts of its own; its subject is the accepted stage submission whose
   gate transition entered it. See [initial-workflows.md](initial-workflows.md)
   for `build-review`'s `verify` check.
-- **What remains open:** `.woof`/`~/.woof` configuration-driven role catalogs
-  and provenance (phase 4); a definition can still only be loaded by explicit
-  path (`--runtime-module`-style loading is documented, unstable, and
-  test-oriented for the runtime adapter, not the definition — its factory
-  result is shape-validated against every `RuntimeAdapter` method before any
-  run opens; a missing or non-function member is `runtime_unavailable`,
-  exit 3, naming what is missing or invalid).
+- **What remained open here is now implemented (p4):** see "Implemented now
+  (p4)" below for configuration-driven role catalogs, provenance and
+  project/user workflow discovery. `--runtime-module`-style loading stays
+  documented, unstable, and test-oriented for the runtime adapter, not the
+  definition — its factory result is shape-validated against every
+  `RuntimeAdapter` method before any run opens; a missing or non-function
+  member is `runtime_unavailable`, exit 3, naming what is missing or invalid.
+
+## Implemented now (p4)
+
+Real shipped behavior for configuration-driven roles, limit defaults and
+workflow discovery — not design intent. Source: `src/config/{discover,
+resolve,record}.ts`, `src/scheduler/{admission,definition}.ts`.
+
+- **`resolveAgents(input)` omissions are filled from configured roles.**
+  Admission takes any agent a definition's `resolveAgents` does not return
+  from `configuration.roles[role]` (project → user → built-in, whole-file
+  replacement); if no layer resolves it, `role_unresolved`. The built-in
+  `build-review`'s own `resolveAgents` now returns only the roles present in
+  its input, so an input that omits `agents` entirely resolves purely from
+  configuration.
+- **An optional `WorkflowDefinition.limitDefaults?: Partial<Limits>`.** A
+  definition may supply only selected fallback keys. When present, admission
+  composes each `Limits` key it covers as
+  `resolveLimits(input)[key] ?? project[key] ?? user[key] ??
+limitDefaults[key]`; without it (an external p3 definition with no
+  `limitDefaults`), the definition's own `resolveLimits(input)` result is
+  used as before and configuration only fills the keys it lacks.
+  `build-review` sets `limitDefaults = BUILD_REVIEW_DEFAULT_LIMITS` and its
+  `resolveLimits` now returns only `{...input.limits}`.
+- **Project and user workflow discovery.** `--workflow <name>` (else
+  `defaults.workflow`, else `build-review`) resolves through
+  `workflows/<name>.{mjs,js,ts}` in the project scope, then the user scope,
+  then the built-in catalog. `woof run start`'s launcher pre-admits only the
+  built-in workflow; for a discovered file it does not import the module —
+  **the module body runs exactly once, in the pane host** — so a project
+  definition's top-level side effects never run twice (the launcher and the
+  host would otherwise both trigger them; `test/fixtures/workflows/
+side-effect.mjs` exists for exactly this case). `woof config show` never
+  imports a non-built-in workflow module either: its `workflow.value.version`
+  is `null` for a file, with `path`/`sha256` identifying it instead.

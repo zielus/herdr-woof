@@ -56,9 +56,12 @@ intent. Source: `src/workflows/build-review.ts`.
   `repo_invalid`, naming both the given path and the resolved top level),
   `task {title, description, acceptanceCriteria,
 context?}`, optional `instructions {builder?, reviewer?}`, optional `verify
-{command, timeoutMs}`, `agents {builder, reviewer}` each
-  `{kind, model, args}`, and optional `limits` (each key optional, same bounds
-  as `Limits`, defaulting to `maxAttemptsPerVisit: 2, maxVisitsPerStage: 3,
+{command, timeoutMs}`, optional `agents` (each of `builder`/`reviewer`
+  optional; when present, each is `{kind, model, args}` — an omitted role
+  resolves from configured roles, p4, see "Implemented now (p4)" below), and
+  optional `limits` (each key optional, same bounds as `Limits`; an absent
+  key falls back to configuration, then to this workflow's own default:
+  `maxAttemptsPerVisit: 2, maxVisitsPerStage: 3,
 maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs:
 180000, blockedWaitMs: 600000, deliveryTimeoutMs: 60000`). `task.context`,
   when given, is validated recursively as a JSON value: `null`, booleans,
@@ -93,6 +96,35 @@ maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs:
   the latest check evidence, when a `verify` command was configured.
 - **`plan-build-review` is still not executable** — the phase 5 planner stage
   described below has no definition module yet.
+
+## Implemented now (p4)
+
+Real shipped behavior for build-review's configuration-driven agents/limits
+and the verify check's fingerprint interaction — not design intent. Source:
+`src/workflows/build-review.ts`.
+
+- **`agents` and each role in it are optional.** `resolveAgents` returns only
+  the roles the input actually names; an omitted `builder`/`reviewer` (or an
+  input with no `agents` at all) resolves from the project's or user's
+  `roles/<role>.json`, else the built-in `{kind:"claude", model:null,
+args:[]}` role. `limits` keys fall back the same way: an input key, then
+  project/user `defaults.limits.<key>`, then this workflow's own
+  `limitDefaults` (`BUILD_REVIEW_DEFAULT_LIMITS`, the values above). An input
+  that supplies every field behaves exactly as it did before p4.
+- **Verify outputs must be gitignored (carry-over C-FP).** `revisionOf`
+  fingerprints the repository through a temporary git index (`git add
+--all`), which honours `.gitignore`, `.git/info/exclude` and
+  `core.excludesFile`. A verification command that writes files git does not
+  ignore changes the fingerprint after it runs, so a review dispatched
+  against the pre-verify tree no longer matches — the engine's revision
+  binding (see
+  [domain model](../architecture/domain-model.md#implemented-now-p3))
+  records `reject/revision_moved` and opens another round rather than a false
+  approval; this stays a bounded spurious round, never a false approval.
+  Woof adds no ignore globs of its own (a second ignore engine would diverge
+  from git's own rules); a project's `verify.command` should write any
+  report, log or cache file to a path already covered by that project's
+  `.gitignore`.
 
 ## Plan-build-review
 

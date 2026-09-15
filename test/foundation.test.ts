@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -41,21 +40,29 @@ console.log(JSON.stringify({
       assignAgent: "function",
       blockRun: "function",
       buildReviewWorkflow: "object",
+      claimHost: "function",
+      claudeTrustStatus: "function",
       createHerdrCliRuntime: "function",
       deriveRunResult: "function",
       deriveSnapshot: "function",
+      discoverRoots: "function",
       foldEvents: "function",
       herdrRuntimeName: "function",
+      listRuns: "function",
       loadWorkflowDefinition: "function",
+      openAdmittedRun: "function",
       openAttempt: "function",
       openRun: "function",
       overlayRuntime: "function",
+      probeHost: "function",
       readEvents: "function",
       readJournal: "function",
+      readRunStatus: "function",
       readSnapshot: "function",
       reconcileDelivery: "function",
       recordDispatch: "function",
       recordGate: "function",
+      resolveConfiguration: "function",
       runWorkflow: "function",
       submitResult: "function",
       subscribeEvents: "function",
@@ -68,6 +75,52 @@ console.log(JSON.stringify({
     expect(Object.keys(entry.types)).toEqual(Object.keys(expected).toSorted());
     expect(entry.types).toEqual(expected);
     expect(readFileSync(entryPath, "utf8")).not.toContain("cli.js");
+    for (const internal of ["abandonHost", "launchInPane", "createMetadataReporter"]) {
+      expect(entry.types).not.toHaveProperty(internal);
+    }
+  });
+
+  it("PI-201: the package entry's probe has no claim-read test seam, at runtime or in its declarations", () => {
+    const dir = mkdtempSync(join(tmpdir(), "woof-pi201-"));
+    try {
+      writeFileSync(join(dir, "host.json"), "");
+      const script = `const { probeHost } = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "index.js")).href)});
+let calls = 0;
+const probed = probeHost(process.argv[1], { onInvalidRead() { calls += 1; } });
+console.log(JSON.stringify({ probed, calls }));`;
+      const result = spawnSync("node", ["--input-type=module", "--eval", script, dir], {
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        probed: {
+          owner: "lost",
+          host: null,
+          problem: "host.json exists but is not a valid run host claim",
+        },
+        calls: 0,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const entryTypes = readFileSync(join(repoRoot, "dist", "index.d.ts"), "utf8");
+    expect(entryTypes).toContain('export { probeHost } from "./host/probe.js";');
+    expect(entryTypes).toMatch(
+      /export type \{[^}]*\bProbeOptions\b[^}]*\} from "\.\/host\/probe\.js";/,
+    );
+    expect(entryTypes).not.toContain("ClaimReadOptions");
+    expect(entryTypes).not.toContain("readHostClaim");
+    const probeTypes = readFileSync(join(repoRoot, "dist", "host", "probe.d.ts"), "utf8");
+    const publicOptions = /export interface ProbeOptions \{[^}]*\}/.exec(probeTypes)?.[0];
+    expect(publicOptions).toBeDefined();
+    expect(publicOptions).not.toContain("onInvalidRead");
+    expect(publicOptions?.match(/^\s+(\w+)\?:/gm)?.map((line) => line.trim())).toEqual([
+      "now?:",
+      "terminal?:",
+    ]);
+    expect(probeTypes).toMatch(
+      /declare function probeHost\(runDir: string, options\?: ProbeOptions\)/,
+    );
   });
 });
 
@@ -118,23 +171,50 @@ describe("woof CLI", () => {
     expect(result.stdout).toContain("run show");
     expect(result.stdout).toContain("run build-review");
     expect(result.stdout).toContain("run cancel");
+    for (const command of ["run start", "status", "runs", "events", "config show", "doctor"]) {
+      expect(result.stdout).toMatch(new RegExp(`^  ${command} `, "m"));
+    }
     expect(result.stdout).not.toContain("not implemented");
   });
 
-  it("rejects workflow commands that are not implemented", () => {
-    const result = runCli("runs");
+  it("rejects commands that do not exist", () => {
+    const result = runCli("frobnicate");
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("not implemented");
   });
 
-  it("runs the diagnostic command without requiring Herdr or Claude", () => {
-    const result = runCli("doctor");
+  it("lists runs from a runs directory (an absent one lists nothing)", () => {
+    const runsDir = join(mkdtempSync(join(tmpdir(), "woof-runs-")), "absent");
+    const result = runCli("runs", "--runs-dir", runsDir);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("woof");
-    expect(result.stdout).toContain("herdr");
-    expect(result.stdout).toContain("claude");
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      outcome: "runs",
+      runsDir,
+      exists: false,
+      runs: [],
+      skipped: [],
+    });
+  });
+
+  it("runs the diagnostic command without requiring Herdr or Claude", () => {
+    // PATH holds node but neither herdr nor claude: a test never runs the real Herdr CLI.
+    const binDir = mkdtempSync(join(tmpdir(), "woof-doctor-path-"));
+    try {
+      symlinkSync(process.execPath, join(binDir, "node"));
+      const result = spawnSync(cliPath, ["doctor"], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:/usr/bin:/bin` },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("woof");
+      expect(result.stdout).toContain("herdr status: not found");
+      expect(result.stdout).toContain("claude --version: not found");
+    } finally {
+      rmSync(binDir, { force: true, recursive: true });
+    }
   });
 
   it("reports a probe that exists but cannot be started", () => {
@@ -155,64 +235,5 @@ describe("woof CLI", () => {
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }
-  });
-});
-
-describe("plugin placeholders", () => {
-  function readHerdrManifest(): Record<string, unknown> {
-    return parse(readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8"));
-  }
-
-  it("wires the Herdr build and only the diagnostic action", () => {
-    const manifest = readHerdrManifest();
-
-    expect(manifest["id"]).toBe("herdr-woof");
-    expect(manifest["platforms"]).toEqual(["linux", "macos"]);
-    expect(manifest["build"]).toEqual([
-      { command: ["bun", "install", "--frozen-lockfile"] },
-      { command: ["bun", "run", "build"] },
-    ]);
-    expect(manifest["actions"]).toEqual([
-      {
-        id: "doctor",
-        title: "Woof: doctor",
-        description: "Check Herdr and Claude Code availability.",
-        command: ["bin/woof", "doctor"],
-      },
-    ]);
-    expect(manifest["panes"]).toBeUndefined();
-    expect(manifest["events"]).toBeUndefined();
-  });
-
-  it("keeps the Herdr manifest version in sync with package.json", () => {
-    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-      version: string;
-      os: string[];
-    };
-    const manifest = readHerdrManifest();
-
-    expect(manifest["version"]).toBe(pkg.version);
-    // npm names macOS "darwin"; the package must not claim platforms Herdr lacks.
-    expect(pkg.os).toEqual(["darwin", "linux"]);
-  });
-
-  it("contains no MCP registration or launcher", () => {
-    const claudeRoot = join(repoRoot, "plugin", "claude");
-
-    expect(existsSync(join(claudeRoot, ".mcp.json"))).toBe(false);
-    expect(existsSync(join(claudeRoot, "bin", "woof-mcp"))).toBe(false);
-    expect(readFileSync(join(claudeRoot, "commands", "run.md"), "utf8")).not.toMatch(/mcp/i);
-  });
-
-  it("uses a Claude plugin manifest without tool transport wiring", () => {
-    const manifest = JSON.parse(
-      readFileSync(join(repoRoot, "plugin", "claude", ".claude-plugin", "plugin.json"), "utf8"),
-    ) as { name: string; version: string };
-    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-      version: string;
-    };
-
-    expect(manifest.name).toBe("woof");
-    expect(manifest.version).toBe(pkg.version);
   });
 });

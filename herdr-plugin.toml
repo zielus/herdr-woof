@@ -1,10 +1,11 @@
-# Foundation integration only: this plugin can diagnose local prerequisites but
-# cannot launch or host a Woof workflow yet.
+# Herdr plugin: actions run `bin/woof` from this checkout. Runs report their state
+# as pane metadata from the run host; the actions resolve the project from the
+# invocation context (HERDR_PLUGIN_CONTEXT_JSON).
 id = "herdr-woof"
 name = "Woof"
 version = "0.0.0"
 min_herdr_version = "0.9.0"
-description = "Woof SDK foundation diagnostics. Workflow orchestration is not implemented."
+description = "Start, inspect and cancel Woof workflow runs; runs report state as pane metadata."
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -16,5 +17,23 @@ command = ["bun", "run", "build"]
 [[actions]]
 id = "doctor"
 title = "Woof: doctor"
-description = "Check Herdr and Claude Code availability."
-command = ["bin/woof", "doctor"]
+description = "Check Woof, Herdr, Claude Code, folder trust and configuration for the focused project."
+command = ["bin/woof", "herdr", "doctor"]
+
+[[actions]]
+id = "status"
+title = "Woof: run status"
+description = "Show the active Woof runs of the focused project."
+command = ["bin/woof", "herdr", "status"]
+
+[[actions]]
+id = "start"
+title = "Woof: start from .woof/start.json"
+description = "Start the project's default workflow with the input in .woof/start.json."
+command = ["bin/woof", "herdr", "start"]
+
+[[actions]]
+id = "cancel"
+title = "Woof: cancel the active run"
+description = "Cancel the focused project's single active Woof run."
+command = ["bin/woof", "herdr", "cancel"]

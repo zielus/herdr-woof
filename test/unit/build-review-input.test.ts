@@ -76,3 +76,61 @@ describe("build-review input: the rendered request fits at admission", () => {
     expect(fieldsOf(inputWith({ context }))).toEqual([]);
   });
 });
+
+describe("build-review input: agents and limits are per-run overrides (p4)", () => {
+  type Workflow = {
+    resolveAgents: (input: Json) => Json;
+    resolveLimits: (input: Json) => Json;
+    limitDefaults: Json;
+  };
+  let workflow: Workflow;
+  let defaults: Json;
+  beforeAll(async () => {
+    const loaded = await loadDist<{
+      buildReviewWorkflow: Workflow;
+      BUILD_REVIEW_DEFAULT_LIMITS: Json;
+    }>("workflows/build-review.js");
+    workflow = loaded.buildReviewWorkflow;
+    defaults = loaded.BUILD_REVIEW_DEFAULT_LIMITS;
+  });
+
+  const base = (agents?: unknown): Json => {
+    const input = inputWith({});
+    if (agents === undefined) Reflect.deleteProperty(input, "agents");
+    else input["agents"] = agents;
+    return input;
+  };
+
+  it("accepts no agents, or any single role", () => {
+    expect(fieldsOf(base())).toEqual([]);
+    expect(fieldsOf(base({}))).toEqual([]);
+    expect(fieldsOf(base({ builder: agent }))).toEqual([]);
+    expect(fieldsOf(base({ reviewer: agent }))).toEqual([]);
+  });
+
+  it("still refuses an invalid role entry, an unknown role and a non-object", () => {
+    expect(fieldsOf(base({ builder: { kind: "", model: null, args: [] } }))).toEqual([
+      { field: "agents.builder.kind", message: "must be a non-empty string" },
+    ]);
+    expect(fieldsOf(base({ planner: agent })).map((detail) => detail.field)).toEqual([
+      "agents.planner",
+    ]);
+    expect(fieldsOf(base([])).map((detail) => detail.field)).toEqual(["agents"]);
+  });
+
+  it("resolves only the roles the input names and returns only limit overrides", () => {
+    const only = validateInput(
+      base({ reviewer: { kind: "claude", model: "sonnet", args: ["-x"] } }),
+    );
+    expect(only.ok).toBe(true);
+    const input = (only as { input: Json }).input;
+    expect(workflow.resolveAgents(input)).toEqual({
+      reviewer: { kind: "claude", model: "sonnet", args: ["-x"] },
+    });
+    expect(workflow.resolveLimits(input)).toEqual({});
+    expect(workflow.resolveLimits({ ...input, limits: { maxRounds: 1 } })).toEqual({
+      maxRounds: 1,
+    });
+    expect(workflow.limitDefaults).toEqual(defaults);
+  });
+});

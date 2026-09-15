@@ -68,9 +68,17 @@ export type EnvelopeJson = Record<string, unknown> & {
   artifact: { path: string; sha256: string };
 };
 
+let testHome: string | undefined;
+
+/** A per-test-process HOME, so no child reads the operator's ~/.woof or ~/.claude.json (p4). */
+function childHome(): string {
+  testHome ??= mkdtempSync(join(tmpdir(), "woof-test-home-"));
+  return testHome;
+}
+
 function childEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   // Tests may run inside a Herdr pane; never inherit the caller's run or pane.
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: childHome() };
   env["HERDR_PANE_ID"] = undefined;
   env["WOOF_RUN_DIR"] = undefined;
   Object.assign(env, overrides);
