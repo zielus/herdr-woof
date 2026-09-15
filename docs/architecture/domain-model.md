@@ -464,15 +464,23 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
   reported through `outcome.json`, and surface to the caller only after that
   pane exists. The host then records the resolved configuration, opens the
   run and drives the workflow to the end, writing `<runDir>/outcome.json`
-  (mode 0444, the same line as its stdout) before releasing the claim. The
-  launcher returns once the host has claimed and opened the run, or has
-  written a rejection, within `hostStartTimeoutMs` (default 30 000 ms); otherwise
-  `abandonHost` claims the file itself (`state:"abandoned"`) so a late host
-  cannot start an unobserved run. `--host foreground` and `woof run
+  (mode 0444, the same line as its stdout, and, for a pane host, `launch:
+{sha256}` — the SHA-256 of the exact `launch.json` bytes it served) before
+  releasing the claim. The launcher returns once the host has claimed and
+  opened the run, or has written a rejection **bound to this launch**
+  (`outcome.json.launch.sha256` equals the digest of the `launch.json` the
+  launcher itself wrote — any other `outcome.json`, stale or from a
+  different launch entirely, is ignored and the launcher keeps waiting for
+  the run to open, the host's claim, or the timeout), within
+  `hostStartTimeoutMs` (default 30 000 ms); otherwise `abandonHost` claims
+  the file itself (`state:"abandoned"`) so a late host cannot start an
+  unobserved run. `--host foreground` and `woof run
 build-review` claim and run the same host code in this process instead of
-  a pane. Any entry at `journal.jsonl` (even empty), `host.json`,
-  `host-exit.json` or `launch.json` in the target run directory makes `run
-start`/`run build-review` refuse `run_exists` before anything is written.
+  a pane (a foreground host has no `launch` field: nothing else could ever
+  read its `outcome.json`). Any entry at `journal.jsonl` (even empty),
+  `host.json`, `host-exit.json`, `launch.json` **or `outcome.json`** in the
+  target run directory makes `run start`/`run build-review` refuse
+  `run_exists` before anything is written.
 - **A pane the launcher itself cannot open or start closes the run
   directory.** When `herdr pane split` fails (a non-zero exit, a spawn
   error, or no pane id in its output) or `herdr pane run` exits non-zero,

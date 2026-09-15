@@ -430,7 +430,16 @@ events`** and **`woof run show`** are read-only and never take the journal
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a
   token back, the journal stays authoritative, and a failed report is logged
-  to stderr and never affects the run. See
+  to stderr and never affects the run. Reports are bounded: the host sends
+  at most one metadata report at a time (`createCoalescer`), so a Herdr
+  invocation slower than the poll interval never queues up an unbounded
+  backlog of report calls behind it — a refresh requested while one is in
+  flight coalesces with every other such request into exactly one follow-up
+  report, which reads the snapshot afresh, so the latest state always wins
+  and no stale report is ever sent late. At termination the host stops
+  requesting further reports and waits only for the one in flight (each
+  Herdr call itself capped at 5 s) before sending the final report, so
+  finalizing stays prompt even when Herdr is slow to respond. See
   [plugins](../integrations/plugins.md#herdr-plugin).
 - **Still not covered:** crash resume or re-hosting a lost run (a `lost`
   owner is reported and only ever cancelled), parallel scheduling, and a

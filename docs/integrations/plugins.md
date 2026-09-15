@@ -70,11 +70,14 @@ herdr <action>` from the plugin's own checkout:
 
 Every action, including `doctor`, resolves its target project from
 `HERDR_PLUGIN_CONTEXT_JSON`, never from the action process's own working
-directory (the plugin's checkout): the **focused pane's directory**, else
-the **workspace directory**, else the **workspace's worktree checkout**. No
-usable directory, or one outside a git work tree, is
-`project_context_missing`, notified as "Woof: no project context", and every
-action exits 2 in that case.
+directory (the plugin's checkout). It tries the **focused pane's
+directory**, then the **workspace directory**, then the **workspace's
+worktree checkout**, in that order, and takes the first one that is inside
+a git work tree — a candidate that is outside git, or that no longer exists
+(for example a deleted focused directory), is skipped and the next
+candidate is tried. Only when none of them qualifies is the result
+`project_context_missing`, naming each skipped candidate; that is notified
+as "Woof: no project context", and every action exits 2 in that case.
 
 The run host projects state as pane metadata while it runs: its own pane
 gets `--token woof=<value>` (`starting`, `running <stage> v<visit> a<attempt>
@@ -83,7 +86,10 @@ and every 10 s, `--ttl-ms 30000`; each agent pane gets `--token
 woof=<stage v a|idle>` and `--token woof-role=<role>`. On termination every
 token is sent once more with `--ttl-ms 600000`, so a killed host's tokens
 simply expire rather than staying stuck. `herdr notification show` fires once
-on a new `run.blocked` and once on termination. Metadata is a display-only
+on a new `run.blocked` and once on termination. Reports never queue up: the
+host sends at most one at a time and folds every refresh requested while one
+is in flight into a single, fresh follow-up, so a slow Herdr call bounds
+reporting instead of delaying termination. Metadata is a display-only
 projection — nothing in Woof reads a token back, the journal stays
 authoritative, and a failed report only logs to stderr and never affects the
 run.

@@ -141,6 +141,21 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   is only a warning (`role_kind_unsupported`) in `config show`, and fails
   admission (`agent_kind_unsupported`) only for a role the workflow actually
   resolves to.
+- **A role or workflow name that collides with an `Object.prototype`
+  member resolves cleanly, never as a phantom or a crash.** Role and
+  workflow lookups are matched as own entries only (`Object.hasOwn`) against
+  null-prototype built-in and per-scope dictionaries: `constructor.json` or
+  `toString.json` resolve as ordinary project/user roles, and a workflow
+  role named `constructor` or `toString` that nobody actually defines is
+  `role_unresolved` at admission, same as any other undefined role.
+  `--workflow constructor`/`toString` similarly resolves a project/user
+  `workflows/constructor.mjs` when one exists, else `workflow_not_found` —
+  never the inherited `Object.prototype` member misread as a phantom
+  built-in layer, and never a `TypeError`. `__proto__` is refused earlier,
+  by the existing id-format rule, before it ever reaches a lookup: a role or
+  workflow file stemmed `__proto__` is `config_invalid` ("is not a valid
+  id"), and `--workflow __proto__` is a CLI usage error (exit 1) for the
+  same reason.
 - **Built-in roles and permission visibility.** `builder`/`reviewer` default
   to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
   never adds a permission flag, so an interactive agent with no explicit
