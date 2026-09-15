@@ -83,12 +83,13 @@ export const DEFAULT_HOST_START_TIMEOUT_MS = 30_000;
 /** Built-in roles: claude with no model and no arguments; the engine never adds a permission flag. */
 export function builtinCatalog(): BuiltinCatalog {
   return {
-    workflows: {
+    // Workflow names are user-controlled ids too: no prototype for `constructor` to come from.
+    workflows: Object.assign(Object.create(null) as BuiltinCatalog["workflows"], {
       [buildReviewWorkflow.name]: {
         version: buildReviewWorkflow.version,
         limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
       },
-    },
+    }),
     // Role names are user-controlled ids: the dictionary has no prototype to inherit `constructor` from.
     roles: Object.assign(Object.create(null) as BuiltinCatalog["roles"], {
       builder: { kind: "claude", model: null, args: [] },
@@ -229,7 +230,7 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
   const name = workflowName.value;
   const workflowLayers: Layer<{ name: string; version: string | null }>[] = scopes.flatMap(
     (scope) => {
-      const entry = scope.workflows[name];
+      const entry = Object.hasOwn(scope.workflows, name) ? scope.workflows[name] : undefined;
       return entry === undefined
         ? []
         : [
@@ -242,7 +243,10 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
           ];
     },
   );
-  const builtinWorkflow = input.builtin.workflows[name];
+  // Only an own entry is a built-in workflow; `constructor` is workflow_not_found, not a broken built-in.
+  const builtinWorkflow = Object.hasOwn(input.builtin.workflows, name)
+    ? input.builtin.workflows[name]
+    : undefined;
   if (builtinWorkflow !== undefined)
     workflowLayers.push(builtinLayer({ name, version: builtinWorkflow.version }));
   const workflow =

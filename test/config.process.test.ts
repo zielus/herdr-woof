@@ -438,6 +438,42 @@ describe("woof config show: configuration matrix", () => {
     expect(unresolved.json).toMatchObject({ reason: "role_unresolved" });
   }, 60_000);
 
+  it("PR #6 (resolve.ts:241): workflow names that are Object.prototype keys are workflow_not_found, or the project's own workflow", () => {
+    const env = setup();
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      const out = show(env, ["--project", env.repo, "--workflow", name]);
+      expect(out.stderr, name).not.toMatch(/TypeError|at .*\.js:\d+/);
+      if (name === "__proto__") {
+        // Not a valid id: refused before resolution, never treated as a built-in.
+        expect([1, 2], `${name}: ${out.stdout}${out.stderr}`).toContain(out.status);
+        expect(out.json?.["reason"], name).not.toBe("definition_invalid");
+        continue;
+      }
+      expect(out.status, `${name}: ${out.stdout}${out.stderr}`).toBe(2);
+      expect(out.json, name).toMatchObject({
+        reason: "workflow_not_found",
+        configuration: { workflow: null },
+      });
+    }
+    // A project workflow file with that name is the project's workflow and shadows no built-in.
+    const path = writeJson(
+      join(env.repo, ".woof", "workflows", "constructor.mjs"),
+      readFileSync(
+        join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"),
+        "utf8",
+      ).replace('name: "planner-role"', 'name: "constructor"'),
+    );
+    const own = show(env, ["--project", env.repo, "--workflow", "constructor"]);
+    expect(own.status, own.stdout + own.stderr).toBe(0);
+    expect(own.json?.["configuration"]["workflow"]).toEqual({
+      source: "project",
+      path,
+      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      value: { name: "constructor", version: null },
+      shadowed: [],
+    });
+  });
+
   it("resolves --workflow and refuses an unknown one as workflow_not_found", () => {
     const env = setup();
     const ok = show(env, ["--project", env.repo, "--workflow", "build-review"]);
