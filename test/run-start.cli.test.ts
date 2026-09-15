@@ -23,6 +23,7 @@ import { cliPath, distUrl, repoRoot, runNode } from "./helpers/process.js";
 const fakeHerdr = join(repoRoot, "test", "fixtures", "fake-herdr.mjs");
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
 const slowStopModule = join(repoRoot, "test", "fixtures", "slow-stop-runtime-module.mjs");
+const pendingModule = join(repoRoot, "test", "fixtures", "pending-runtime-module.mjs");
 
 function withRuntime(args: string[], module: string): string[] {
   return args.map((arg) => (arg === runtimeModule ? module : arg));
@@ -480,6 +481,120 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(join(runDir, "outcome.json"))).toBe(false);
   }, 60_000);
 
+  it("PI-102: a foreign exit marker during a live run reads lost with the claim problem, never exited, and survives the host's release", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, withRuntime(startArgs(ws, runDir), slowStopModule), {
+      WOOF_TEST_SCRIPT: "hang",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    await waitFor(
+      () => records(runDir).some((record) => record["type"] === "request.dispatched"),
+      "a dispatch",
+    );
+    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
+      "pid"
+    ] as number;
+    const forged = JSON.stringify({
+      schemaVersion: 1,
+      kind: "woof.host.exit",
+      pid: 1,
+      exitedAt: "2000-01-01T00:00:00.000Z",
+      exitCode: 99,
+    });
+    writeFileSync(join(runDir, "host-exit.json"), forged);
+    const problem = `host-exit.json records pid 1, but host.json was claimed by pid ${pid}`;
+    const running = woofIn(ws, ["status", runDir]).json?.["status"];
+    expect(processAlive(pid)).toBe(true);
+    expect(running["status"]).toBe("running");
+    expect(running["liveness"]).toEqual({ owner: "lost", host: null, claimProblem: problem });
+
+    process.kill(pid, "SIGINT");
+    await delay(300);
+    process.kill(pid, "SIGTERM");
+    await waitFor(() => !processAlive(pid), "the host to exit", 15_000);
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
+      reason: "host_interrupted",
+    });
+    // The host could not create its own marker: the foreign one stays and still fails closed.
+    expect(readFileSync(join(runDir, "host-exit.json"), "utf8")).toBe(forged);
+    expect(woofIn(ws, ["status", runDir]).json?.["status"]["liveness"]).toEqual({
+      owner: "lost",
+      host: null,
+      claimProblem: problem,
+    });
+  }, 60_000);
+
+  it("PI-101: a pane host signalled once while its runtime factory is pending exits 130 and the launcher reports host_interrupted", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const entered = join(ws.root, "entered");
+    const launcher = spawn(
+      "node",
+      [cliPath, ...withRuntime(startArgs(ws, runDir), pendingModule)],
+      {
+        cwd: ws.root,
+        env: env(ws, { WOOF_TEST_ENTERED: entered }),
+      },
+    );
+    let stdout = "";
+    launcher.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    const launched = new Promise<number | null>((resolve) =>
+      launcher.on("close", (code) => resolve(code)),
+    );
+    await waitFor(() => existsSync(entered), "the pane host to enter its runtime factory");
+    const pid = Number(readFileSync(entered, "utf8").trim());
+    expect((JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)["pid"]).toBe(pid);
+    process.kill(pid, "SIGINT");
+    await waitFor(() => !processAlive(pid), "the host to exit after one signal", 10_000);
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
+      pid,
+      exitCode: 130,
+    });
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
+      outcome: "rejected",
+      reason: "host_interrupted",
+    });
+    expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+    expect(await launched).toBe(3);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1) ?? "null")).toMatchObject({
+      outcome: "rejected",
+      reason: "host_interrupted",
+    });
+  }, 60_000);
+
+  it("PI-101: a foreground host signalled once while its runtime factory is pending exits 130 with host_interrupted", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const entered = join(ws.root, "entered");
+    const child = spawn(
+      "node",
+      [cliPath, ...withRuntime(startArgs(ws, runDir), pendingModule), "--host", "foreground"],
+      { cwd: ws.root, env: env(ws, { WOOF_TEST_ENTERED: entered }) },
+    );
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    const exited = new Promise<number | null>((resolve) =>
+      child.on("close", (code) => resolve(code)),
+    );
+    try {
+      await waitFor(() => existsSync(entered), "the host to enter its runtime factory");
+      child.kill("SIGINT");
+      await waitFor(() => child.exitCode !== null, "the host to exit after one signal", 10_000);
+    } finally {
+      // A host that ignores the signal holds no claim for afterEach to find.
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+    expect(await exited).toBe(130);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1) ?? "null")).toMatchObject({
+      outcome: "rejected",
+      reason: "host_interrupted",
+    });
+    // A foreground host claims only once its runtime exists: nothing was claimed or opened.
+    for (const name of ["host.json", "host-exit.json", "journal.jsonl"])
+      expect(existsSync(join(runDir, name)), name).toBe(false);
+  }, 60_000);
+
   it("a pane host that claimed the run and then fails to create its runtime reports the rejection and releases", () => {
     const ws = workspace();
     const runDir = join(ws.root, "run");
@@ -654,6 +769,27 @@ console.log(JSON.stringify({ h: createHash("sha256").update(readFileSync(process
       });
     }
     expect(readFileSync(join(emptyJournal, "journal.jsonl"), "utf8")).toBe("");
+    // PI-102: an exit marker alone is engine-owned and occupies the directory too.
+    const markerOnly = join(ws.root, "run-marker-only");
+    mkdirSync(markerOnly);
+    writeFileSync(
+      join(markerOnly, "host-exit.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.host.exit",
+        pid: 1,
+        exitedAt: "2000-01-01T00:00:00.000Z",
+        exitCode: 99,
+      }),
+    );
+    for (const host of ["herdr-pane", "foreground"]) {
+      expect(woofIn(ws, [...startArgs(ws, markerOnly), "--host", host]), host).toMatchObject({
+        status: 2,
+        json: { reason: "run_exists", message: expect.stringContaining("(host-exit.json)") },
+      });
+    }
+    for (const name of ["journal.jsonl", "host.json", "launch.json"])
+      expect(existsSync(join(markerOnly, name)), name).toBe(false);
     expect(fakeCalls(ws).filter((argv) => argv[1] === "split")).toEqual([]);
     expect(woofIn(ws, ["run", "start", "--input", ws.inputPath, "--host", "cloud"]).status).toBe(1);
     expect(

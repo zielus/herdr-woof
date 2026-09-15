@@ -8,13 +8,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { distUrl, repoRoot, runNode, runNodeAsync } from "./helpers/process.js";
+import { distUrl, repoRoot, runNode } from "./helpers/process.js";
 
 // Host claim, heartbeat and the metadata reporter (plan T4) as real child
 // processes with a temporary HOME. Herdr is only ever the fake fixture.
@@ -195,37 +195,82 @@ console.log(JSON.stringify([abandonHost(process.argv[1], "test launcher"), aband
     });
   });
 
-  it("H9 (PI-008): a claim still being written when first read is read again after a short delay", async () => {
-    const runDir = temp();
-    const path = join(runDir, "host.json");
-    const reader = runNodeAsync(
+  it("H9 (PI-008, PI-105): a claim invalid at the first read is read again after a delay; a claim filled in between wins", () => {
+    // The read seam runs at the boundary between the first (empty) read and the delayed re-read,
+    // so the claim is filled exactly after one invalid read, never before it.
+    const result = runNode(
       `const { probeHost } = await import(${JSON.stringify(distUrl("host/probe.js"))});
-const { existsSync } = await import("node:fs");
-const path = process.argv[1] + "/host.json";
-while (!existsSync(path)) await new Promise((done) => setTimeout(done, 1));
-console.log(JSON.stringify(probeHost(process.argv[1])));`,
-      [runDir],
-      { timeoutMs: 20_000 },
+const { mkdirSync, writeFileSync } = await import("node:fs");
+const { hostname } = await import("node:os");
+const [root, pid] = [process.argv[1], Number(process.argv[2])];
+const claim = JSON.stringify({ schemaVersion: 1, kind: "woof.host", state: "hosting", pid, hostname: hostname(), startedAt: new Date().toISOString(), heartbeatMs: 60000 });
+const out = {};
+for (const name of ["filled", "never"]) {
+  const runDir = root + "/" + name;
+  mkdirSync(runDir);
+  writeFileSync(runDir + "/host.json", "");
+  const reads = [];
+  let filledAt = null;
+  const probed = probeHost(runDir, {
+    onInvalidRead(problem, retry) {
+      reads.push({ problem, retry, at: performance.now() });
+      if (name === "filled" && retry === 1) {
+        writeFileSync(runDir + "/host.json", claim);
+        filledAt = performance.now();
+      }
+    },
+  });
+  const done = performance.now();
+  out[name] = { probed, retries: reads.map(({ problem, retry }) => ({ problem, retry })), waitedMs: done - (filledAt ?? reads[0]?.at ?? done) };
+}
+console.log(JSON.stringify(out));`,
+      [temp(), String(process.pid)],
+      { timeoutMs: 10_000 },
     );
-    // Let the reader start polling, then create the claim empty and fill it moments later.
-    await delay(1000);
-    writeFileSync(path, "");
-    await delay(20);
-    writeFileSync(
-      path,
-      JSON.stringify({
-        schemaVersion: 1,
-        kind: "woof.host",
-        state: "hosting",
-        pid: process.pid,
-        hostname: hostname(),
-        startedAt: new Date().toISOString(),
-        heartbeatMs: 60_000,
-      }),
-    );
-    const result = await reader;
     expect(result.status, result.stderr).toBe(0);
-    expect(result.json).toMatchObject({ owner: "alive", host: { state: "hosting" } });
+    const out = result.json as unknown as Json;
+    const problem = "host.json exists but is not a valid run host claim";
+    expect(out["filled"]["retries"]).toEqual([{ problem, retry: 1 }]);
+    // The re-read came after the retry delay, not straight after the fill.
+    expect(out["filled"]["waitedMs"]).toBeGreaterThanOrEqual(45);
+    expect(out["filled"]["probed"]).toMatchObject({ owner: "alive", host: { state: "hosting" } });
+    expect(out["never"]["retries"]).toEqual([1, 2, 3].map((retry) => ({ problem, retry })));
+    expect(out["never"]["waitedMs"]).toBeGreaterThanOrEqual(135);
+    expect(out["never"]["probed"]).toEqual({ owner: "lost", host: null, problem });
+  });
+
+  it("PI-104: a release that throws is logged and retried once, and the first result stays authoritative", () => {
+    const runDir = temp();
+    const result = runNode(
+      `const { hostWorkflow } = await import(${JSON.stringify(distUrl("host/run.js"))});
+const { readFileSync } = await import("node:fs");
+const [runDir, homeDir] = [process.argv[1], process.argv[2]];
+const logs = [];
+let releases = 0;
+const returned = await hostWorkflow({
+  runDir, runId: "pi-104", projectDir: null, input: { schemaVersion: 1 }, flags: {}, homeDir,
+  createRuntime: async () => ({ ok: false, message: "not reached" }),
+  submitCommand: [process.execPath], claimBeforeOpen: false,
+  release: () => { releases += 1; throw new Error("close failed"); },
+  writeOutcome: true, paneId: null, workspaceId: null, metadata: null,
+  log: (line) => logs.push(line),
+});
+console.log(JSON.stringify({ returned, outcome: JSON.parse(readFileSync(runDir + "/outcome.json", "utf8")), releases, logs }));`,
+      [runDir, temp("woof-host-home-")],
+      { timeoutMs: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    expect(out["returned"]["output"]["outcome"]).toBe("rejected");
+    expect(out["returned"]["output"]["reason"]).not.toBe("engine_invariant");
+    expect(out["outcome"]).toEqual(out["returned"]["output"]);
+    expect(out["returned"]["code"]).toBe(2);
+    expect(out["releases"]).toBe(2);
+    expect(
+      (out["logs"] as string[]).filter(
+        (line) => line === "cannot release the run host claim: close failed",
+      ),
+    ).toHaveLength(2);
   });
 
   it("H6: a FIFO or symlink at host.json refuses the claim and probes lost with the problem, without blocking", () => {

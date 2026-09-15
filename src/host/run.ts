@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -98,36 +99,52 @@ export interface HostWorkflowResult {
 }
 
 /**
- * Every exit path of a claimed host goes through one idempotent finalizer:
- * `outcome.json` (pane host) is written once and the claim is released once,
- * whether the host returns, throws or is signalled. Signal handlers are
- * installed on entry, so a pane host (which claimed before calling this) is
- * covered from its first await. A first SIGINT/SIGTERM cancels: before the run
- * opens the host stops with `host_interrupted`; after, the scheduler records the
- * cancellation. A second signal finalizes synchronously with exit code 130 and
- * exits at once, without waiting for the runtime to settle.
+ * Every exit path of a claimed host goes through one finalizer. The first
+ * result is authoritative: `outcome.json` (pane host) and the returned result
+ * both carry it, whatever happens after. Writing the outcome and releasing the
+ * claim are separate one-time steps; a release that throws is logged, never
+ * replaces the result, and is attempted once more on the way out. Signal
+ * handlers are installed on entry, so a pane host (which claimed before
+ * calling this) is covered from its first await. A first SIGINT/SIGTERM before
+ * the run starts opening finalizes synchronously with `host_interrupted` (exit
+ * code 130) and exits at once, since a pending load or runtime factory never
+ * observes an abort. After the run starts opening, a first signal cancels and
+ * the scheduler records the cancellation; a second signal finalizes
+ * synchronously and exits without waiting for the runtime to settle.
  */
 export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWorkflowResult> {
   const { runDir, runId, log } = options;
   let release = options.release;
-  let finished = false;
+  let result: HostWorkflowResult | undefined;
+  let outcomeWritten = false;
+  let released = false;
+  let opening = false;
   let reportTimer: NodeJS.Timeout | undefined;
+  const releaseClaim = (code: number) => {
+    if (released || release === undefined) return;
+    try {
+      release(code);
+      released = true;
+    } catch (error) {
+      log(`cannot release the run host claim: ${(error as Error).message}`);
+    }
+  };
   const finish = (code: number, output: Record<string, unknown>): HostWorkflowResult => {
-    if (finished) return { code, output };
-    finished = true;
-    if (options.writeOutcome && release !== undefined) {
+    result ??= { code, output };
+    if (options.writeOutcome && release !== undefined && !outcomeWritten) {
+      outcomeWritten = true;
       try {
         writeExclusiveFile(
           join(runDir, OUTCOME_FILE),
-          Buffer.from(`${JSON.stringify(output)}\n`, "utf8"),
+          Buffer.from(`${JSON.stringify(result.output)}\n`, "utf8"),
           0o444,
         );
       } catch (error) {
         log(`cannot write ${OUTCOME_FILE}: ${(error as Error).message}`);
       }
     }
-    release?.(code);
-    return { code, output };
+    releaseClaim(result.code);
+    return result;
   };
   const interrupted = (message: string) =>
     finish(130, { outcome: "rejected", reason: "host_interrupted", message, details: [] });
@@ -136,11 +153,24 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
   let signals = 0;
   const onSignal = () => {
     signals += 1;
-    if (signals > 1) {
-      log("second signal: exiting without waiting for the run to settle");
-      interrupted(
-        "the run host received a second signal and exited without waiting for the run to settle",
+    if (result !== undefined) return;
+    if (!opening || signals > 1) {
+      log(
+        opening
+          ? "second signal: exiting without waiting for the run to settle"
+          : "signal before the run opened: exiting",
       );
+      const final = interrupted(
+        opening
+          ? "the run host received a second signal and exited without waiting for the run to settle"
+          : `the run host received a signal before run ${runId} opened; no run was started`,
+      );
+      // process.exit skips the caller's print: the result line is written here, synchronously.
+      try {
+        writeSync(1, `${JSON.stringify(final.output)}\n`);
+      } catch {
+        // stdout is gone; outcome.json and the exit code still carry the result.
+      }
       process.exit(130);
     }
     log("cancelling the run (send the signal again to exit without waiting)");
@@ -161,16 +191,10 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     if (reportTimer !== undefined) clearInterval(reportTimer);
-    if (!finished) release?.(3);
+    releaseClaim(result?.code ?? 3);
   }
 
   async function host(): Promise<HostWorkflowResult> {
-    const beforeOpen = () =>
-      controller.signal.aborted
-        ? interrupted(
-            `the run host received a signal before run ${runId} opened; no run was started`,
-          )
-        : undefined;
     const reject = (reason: string, message: string, details: unknown[] = []) =>
       finish(isHostInfraReason(reason) ? 3 : 2, { outcome: "rejected", reason, message, details });
 
@@ -183,8 +207,6 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
     });
     if (!resolved.ok) return reject(resolved.reason, resolved.message, resolved.details);
-    const afterResolve = beforeOpen();
-    if (afterResolve !== undefined) return afterResolve;
     const configuration = resolved.configuration;
     const workflow = configuration.workflow;
     if (workflow === null) return reject("workflow_not_found", "no workflow resolved");
@@ -218,8 +240,6 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       configuration: admissionConfiguration(configuration),
     });
     if (!admitted.ok) return reject(admitted.reason, admitted.message, admitted.details);
-    const afterAdmit = beforeOpen();
-    if (afterAdmit !== undefined) return afterAdmit;
     const recorded = recordConfiguration(configuration, admitted, {
       definitionVersion: definition.version,
       ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
@@ -245,9 +265,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       }
       release = claim.release;
     }
-    const afterRuntime = beforeOpen();
-    if (afterRuntime !== undefined) return afterRuntime;
 
+    // From here a signal cancels through the scheduler: the journal may already be written.
+    opening = true;
     const opened = await openAdmittedRun(admitted, { runDir, runId, configuration: recorded });
     if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
     for (const warning of recorded.warnings)

@@ -6,14 +6,17 @@ import { join } from "node:path";
  * Run host probe (p4 D2): reads `<runDir>/host.json`, the claim a run host
  * creates exclusively, writes once and keeps fresh by touching its mtime every
  * `heartbeatMs`, and `<runDir>/host-exit.json`, the exclusive marker of a clean
- * exit, which wins over the claim's own state. Pure file inspection with no
- * journal access, so the snapshot reader can report whether a run still has a
- * live owner.
+ * exit. The marker counts only for the claim it belongs to: a hosting claim
+ * whose pid it names. Pure file inspection with no journal access, so the
+ * snapshot reader can report whether a run still has a live owner.
  *
- * No claim file reads as unhosted. A claim path that exists but is not a
- * readable, valid claim (a torn write by a killed host, a FIFO, a symlink) is
- * read again after a short delay and then fails closed: the owner is `lost`
- * with `host: null` and the problem, never `unhosted`.
+ * No claim file and no marker reads as unhosted. Anything else that is not a
+ * valid claim with, at most, its own marker (a torn write by a killed host, a
+ * FIFO, a symlink, a marker without a claim, an invalid marker, a marker for
+ * another pid or next to a claim that is not hosting) is read again after a
+ * short delay where it could still be mid-write, and then fails closed: the
+ * owner is `lost` with `host: null` and the problem, never `unhosted` or
+ * `exited`.
  */
 
 export const HOST_FILE = "host.json";
@@ -47,6 +50,8 @@ export interface ProbeOptions {
   now?: number;
   /** The run is terminated: a stale `hosting` claim reports exited, never lost. */
   terminal?: boolean;
+  /** Unstable test seam: called with the problem before each delayed re-read of an invalid claim. */
+  onInvalidRead?: (problem: string, retry: number) => void;
 }
 
 /** What a run directory's claim path holds. */
@@ -61,9 +66,13 @@ export interface HostProbe {
 }
 
 /** Reads the claim with the exit marker applied, re-reading an invalid one after short delays. */
-export function readHostClaim(runDir: string): HostClaim {
+export function readHostClaim(
+  runDir: string,
+  options: Pick<ProbeOptions, "onInvalidRead"> = {},
+): HostClaim {
   let read = readClaimOnce(runDir);
-  for (let retry = 0; read.retry && retry < INVALID_RETRIES; retry += 1) {
+  for (let retry = 1; read.retry && retry <= INVALID_RETRIES; retry += 1) {
+    if (read.claim.kind === "invalid") options.onInvalidRead?.(read.claim.problem, retry);
     sleepSync(INVALID_RETRY_MS);
     read = readClaimOnce(runDir);
   }
@@ -76,24 +85,41 @@ export function readHostInfo(runDir: string): HostInfo | undefined {
   return claim.kind === "valid" ? claim.host : undefined;
 }
 
+function invalid(problem: string, retry: boolean): { claim: HostClaim; retry: boolean } {
+  return { claim: { kind: "invalid", problem }, retry };
+}
+
 function readClaimOnce(runDir: string): { claim: HostClaim; retry: boolean } {
   const file = readRegularFile(join(runDir, HOST_FILE));
-  if (file.kind === "absent") return { claim: { kind: "none" }, retry: false };
-  if (file.kind === "problem")
-    return { claim: { kind: "invalid", problem: `${HOST_FILE} ${file.problem}` }, retry: true };
-  const host = parseHostInfo(file.text, file.mtime);
-  if (host === undefined) {
-    return {
-      claim: { kind: "invalid", problem: `${HOST_FILE} exists but is not a valid run host claim` },
-      retry: true,
-    };
-  }
-  if (host.state !== "hosting") return { claim: { kind: "valid", host }, retry: false };
+  // A host creates its claim before its marker and never removes either.
   const marker = readRegularFile(join(runDir, HOST_EXIT_FILE));
+  if (file.kind === "absent") {
+    return marker.kind === "absent"
+      ? { claim: { kind: "none" }, retry: false }
+      : // A claim and marker created between the two reads show up on the re-read.
+        invalid(`${HOST_EXIT_FILE} exists without a ${HOST_FILE} claim`, true);
+  }
+  if (file.kind === "problem") return invalid(`${HOST_FILE} ${file.problem}`, true);
+  const host = parseHostInfo(file.text, file.mtime);
+  if (host === undefined)
+    return invalid(`${HOST_FILE} exists but is not a valid run host claim`, true);
   if (marker.kind === "absent") return { claim: { kind: "valid", host }, retry: false };
-  const exit = marker.kind === "text" ? parseHostExit(marker.text) : undefined;
-  // A marker still being written is read again; one that never parses leaves the claim as is.
-  if (exit === undefined) return { claim: { kind: "valid", host }, retry: true };
+  // A marker still being written is read again; one that never becomes valid fails closed.
+  if (marker.kind === "problem") return invalid(`${HOST_EXIT_FILE} ${marker.problem}`, true);
+  const exit = parseHostExit(marker.text);
+  if (exit === undefined)
+    return invalid(`${HOST_EXIT_FILE} exists but is not a valid run host exit marker`, true);
+  if (host.state !== "hosting")
+    return invalid(
+      `${HOST_EXIT_FILE} exists next to a ${HOST_FILE} claim in state ${host.state}`,
+      false,
+    );
+  if (exit.pid !== host.pid) {
+    return invalid(
+      `${HOST_EXIT_FILE} records pid ${exit.pid}, but ${HOST_FILE} was claimed by pid ${host.pid ?? "none"}`,
+      false,
+    );
+  }
   return {
     claim: {
       kind: "valid",
@@ -177,8 +203,10 @@ export function parseHostInfo(text: string, mtime: Date): HostInfo | undefined {
   };
 }
 
-/** Parses host-exit.json text (pure). */
-export function parseHostExit(text: string): { exitedAt: string; exitCode: number } | undefined {
+/** Parses host-exit.json text; the pid must be a positive integer (pure). */
+export function parseHostExit(
+  text: string,
+): { pid: number; exitedAt: string; exitCode: number } | undefined {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -187,18 +215,20 @@ export function parseHostExit(text: string): { exitedAt: string; exitCode: numbe
   }
   if (!isObject(value) || value["schemaVersion"] !== 1 || value["kind"] !== "woof.host.exit")
     return undefined;
+  const pid = positiveInteger(value["pid"]);
   const { exitedAt, exitCode } = value;
   if (
+    pid === null ||
     typeof exitedAt !== "string" ||
     typeof exitCode !== "number" ||
     !Number.isSafeInteger(exitCode)
   )
     return undefined;
-  return { exitedAt, exitCode };
+  return { pid, exitedAt, exitCode };
 }
 
 export function probeHost(runDir: string, options: ProbeOptions = {}): HostProbe {
-  const claim = readHostClaim(runDir);
+  const claim = readHostClaim(runDir, options);
   if (claim.kind === "none") return { owner: "unhosted", host: null };
   if (claim.kind === "invalid") return { owner: "lost", host: null, problem: claim.problem };
   return { owner: ownerOf(claim.host, options), host: claim.host };

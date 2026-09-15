@@ -696,6 +696,54 @@ console.log(JSON.stringify(probeHost(process.argv[1], JSON.parse(process.argv[2]
     });
   });
 
+  it("PI-102: an exit marker counts only for the hosting claim whose pid it records; anything else fails closed", () => {
+    const marker = (runDir: string, body: Record<string, unknown> = {}) =>
+      writeFileSync(
+        join(runDir, "host-exit.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          kind: "woof.host.exit",
+          pid: process.pid,
+          exitedAt: "2026-09-15T00:00:00.000Z",
+          exitCode: 6,
+          ...body,
+        }),
+      );
+    const lost = (problem: string) => ({ owner: "lost", host: null, problem });
+
+    const alone = makeRunDir();
+    marker(alone);
+    expect(probe(alone)).toEqual(lost("host-exit.json exists without a host.json claim"));
+
+    const foreign = makeRunDir();
+    writeHost(foreign, {});
+    marker(foreign, { pid: 1, exitedAt: "2000-01-01T00:00:00.000Z", exitCode: 99 });
+    expect(probe(foreign)).toEqual(
+      lost(`host-exit.json records pid 1, but host.json was claimed by pid ${process.pid}`),
+    );
+
+    for (const body of [{ pid: undefined }, { pid: 0 }, { pid: "1" }, { exitCode: "0" }]) {
+      const invalid = makeRunDir();
+      writeHost(invalid, {});
+      marker(invalid, body);
+      expect(probe(invalid), JSON.stringify(body)).toEqual(
+        lost("host-exit.json exists but is not a valid run host exit marker"),
+      );
+    }
+
+    const fifo = makeRunDir();
+    writeHost(fifo, {});
+    expect(spawnSync("mkfifo", [join(fifo, "host-exit.json")]).status).toBe(0);
+    expect(probe(fifo)).toEqual(lost("host-exit.json is not a regular file"));
+
+    const abandoned = makeRunDir();
+    writeHost(abandoned, { state: "abandoned", pid: null, heartbeatMs: null });
+    marker(abandoned);
+    expect(probe(abandoned)).toEqual(
+      lost("host-exit.json exists next to a host.json claim in state abandoned"),
+    );
+  });
+
   it("projects the probe into readSnapshot liveness", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);

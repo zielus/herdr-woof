@@ -15,7 +15,7 @@ import { validateWorkflowDefinition } from "../scheduler/definition.js";
 import { readSnapshot } from "../state/snapshot.js";
 import { abandonHost } from "./claim.js";
 import { entryExists, readJsonFile, shellQuote, writeExclusiveFile } from "./files.js";
-import { HOST_FILE, readHostInfo } from "./probe.js";
+import { HOST_EXIT_FILE, HOST_FILE, readHostInfo } from "./probe.js";
 import { OUTCOME_FILE, isHostInfraReason } from "./run.js";
 
 /**
@@ -53,7 +53,7 @@ export interface LaunchRequest {
 export function runDirOccupied(runDir: string): string | undefined {
   // Any entry at a reserved path occupies the directory, even an empty journal: `run start`
   // never adopts one (the SDK's openRun keeps its own empty-journal tolerance).
-  for (const name of [JOURNAL_FILE, HOST_FILE, LAUNCH_FILE]) {
+  for (const name of [JOURNAL_FILE, HOST_FILE, HOST_EXIT_FILE, LAUNCH_FILE]) {
     if (entryExists(join(runDir, name))) return `${runDir} already holds a run (${name})`;
   }
   return undefined;
