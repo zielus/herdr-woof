@@ -281,6 +281,26 @@ describe("woof herdr actions", () => {
     const checkout = action(s, "status", { worktree: { checkout_path: a } });
     expect(checkout.json["runs"].map((run: Json) => run["runId"])).toEqual(["a-active"]);
 
+    // PR #6 (herdr.ts:256): a focused pane outside git, or a directory that no longer exists, falls
+    // through to the next candidate in the same precedence.
+    const gone = join(s.root, "deleted-pane-dir");
+    const outside = action(s, "status", {
+      focused_pane_cwd: s.home,
+      workspace_cwd: a,
+      worktree: { checkout_path: b },
+      focused_pane_id: "w5:p3",
+    });
+    expect(outside.status, outside.stdout + outside.stderr).toBe(0);
+    expect(outside.json["runs"].map((run: Json) => run["runId"])).toEqual(["a-active"]);
+    const deleted = action(s, "status", { focused_pane_cwd: gone, worktree: { checkout_path: b } });
+    expect(deleted.status, deleted.stdout + deleted.stderr).toBe(0);
+    expect(deleted.json["runs"].map((run: Json) => run["runId"])).toEqual(["b-active"]);
+    const nowhere = action(s, "status", { focused_pane_cwd: s.home, workspace_cwd: gone });
+    expect(nowhere.status).toBe(2);
+    expect(nowhere.json).toMatchObject({ outcome: "rejected", reason: "project_context_missing" });
+    expect(nowhere.json["message"]).toContain(`${s.home} is not inside a git work tree`);
+    expect(nowhere.json["message"]).toContain(gone);
+
     const none = action(s, "status", { workspace_cwd: s.repo("repo-c") });
     expect(none.json["runs"]).toEqual([]);
     expect(notifications(s).at(-1)).toEqual({

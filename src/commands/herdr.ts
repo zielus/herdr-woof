@@ -249,12 +249,13 @@ async function projectRootOf(
   const worktree = isObject(context["worktree"]) ? context["worktree"] : {};
   // The focused pane is what the operator points at. A workspace bound to one git worktree
   // (the Woof checkout, say) reports that checkout whichever pane is focused, so it comes last.
-  const dir = [
+  // A candidate outside any git work tree, or one that no longer exists, falls through to the next.
+  const candidates = [
     context["focused_pane_cwd"],
     context["workspace_cwd"],
     worktree["checkout_path"],
-  ].find((candidate): candidate is string => typeof candidate === "string" && candidate !== "");
-  if (dir === undefined) {
+  ].filter((candidate): candidate is string => typeof candidate === "string" && candidate !== "");
+  if (candidates.length === 0) {
     return {
       ok: false,
       reason: "project_context_missing",
@@ -262,22 +263,23 @@ async function projectRootOf(
         "HERDR_PLUGIN_CONTEXT_JSON names no focused pane directory, workspace directory or worktree checkout",
     };
   }
-  const roots = await discoverRoots({ projectDir: dir });
-  if (!roots.ok) return { ok: false, reason: roots.reason, message: roots.message };
-  const root = roots.roots.project?.root;
-  if (root === undefined) {
-    return {
-      ok: false,
-      reason: "project_context_missing",
-      message: `${dir} is not inside a git work tree`,
-    };
+  const skipped: string[] = [];
+  for (const dir of candidates) {
+    // Candidates are tried in precedence order; each depends on the previous one failing.
+    // oxlint-disable-next-line no-await-in-loop
+    const roots = await discoverRoots({ projectDir: dir });
+    const root = roots.ok ? roots.roots.project?.root : undefined;
+    if (root !== undefined) {
+      const focused = context["focused_pane_id"];
+      return {
+        ok: true,
+        root,
+        focusedPaneId: typeof focused === "string" && focused !== "" ? focused : null,
+      };
+    }
+    skipped.push(roots.ok ? `${dir} is not inside a git work tree` : roots.message);
   }
-  const focused = context["focused_pane_id"];
-  return {
-    ok: true,
-    root,
-    focusedPaneId: typeof focused === "string" && focused !== "" ? focused : null,
-  };
+  return { ok: false, reason: "project_context_missing", message: skipped.join("; ") };
 }
 
 async function notify(title: string, body: string): Promise<void> {
