@@ -26,6 +26,12 @@ export interface SubscribeOptions {
   pollMs?: number;
   /** How long an unchanged partial final line may persist before one locked read decides it. */
   tornTailGraceMs?: number;
+  /**
+   * Never take the journal lock. A partial final line unchanged for `tornTailGraceMs` then ends the
+   * subscription with `error`/`journal_corrupt` instead of the one locked read that would decide it
+   * (a writer stalled that long mid-line reads as corruption). Default false.
+   */
+  lockFree?: boolean;
   signal?: AbortSignal;
 }
 
@@ -44,7 +50,9 @@ export interface SubscribeOptions {
  * inspected, for example EACCES, EPERM or ENOTDIR). A partial final line is normally a
  * write in flight; if the same partial line persists for `tornTailGraceMs`, one
  * `readJournal` under the journal lock decides: no append is in flight under
- * the lock, so a line still torn there is persisted corruption.
+ * the lock, so a line still torn there is persisted corruption. With `lockFree`
+ * the lock is never taken: the persisting partial line ends the subscription
+ * with `error`/`journal_corrupt` after the same grace period.
  */
 export async function* subscribeEvents(
   runDir: string,
@@ -73,6 +81,9 @@ export async function* subscribeEvents(
       return undefined;
     }
     if (Date.now() - tail.since < graceMs) return undefined;
+    if (options.lockFree === true) {
+      return `the journal's final line at byte ${at} stayed partial and unchanged for ${graceMs} ms; a lock-free subscription does not decide it under the journal lock`;
+    }
     const locked = await withJournalLock(runDir, () => readJournal(runDir), { timeoutMs: pollMs });
     if (!locked.ok) return undefined; // a writer holds the lock: its append is still in flight
     if (!locked.value.ok) return locked.value.message;

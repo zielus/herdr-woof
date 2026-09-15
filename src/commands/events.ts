@@ -16,7 +16,8 @@ Prints the run's lifecycle events as NDJSON, one event per line, resuming after
 terminates, --timeout-ms passes or SIGINT; resumed with --after at a terminated
 run's last cursor it ends at once with "terminated". The last line is always
 {"kind":"woof.events.end","cursor","terminal","reason"}. --stats prints the
-polling statistics to stderr. Read-only: no Herdr.
+polling statistics to stderr. Read-only: no journal lock, no Herdr; a partial
+final journal line unchanged for 2 s ends a follow with a journal_corrupt error.
 Exits 0 end or terminated, 7 timeout, 2 resync_required (the cursor cannot
 resume; the reason is printed before the end line), 3 journal error, 130 SIGINT.`;
 
@@ -135,9 +136,12 @@ export async function eventsCommand(args: string[]): Promise<number> {
     controller.abort();
   };
   process.on("SIGINT", onSignal);
+  // Inspection never takes the journal lock (PR #6): a partial final line that persists past the
+  // subscription's grace period ends the follow with error/journal_corrupt instead of a locked read.
   const iterator = subscribeEvents(runDir, {
     ...(values.after !== undefined ? { after: values.after } : {}),
     pollMs,
+    lockFree: true,
     signal: controller.signal,
   });
   let cursor: string | null = values.after ?? null;

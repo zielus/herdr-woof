@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -471,6 +472,47 @@ console.log(JSON.stringify(readEvents(process.argv[1], { limit: 10000 })));`,
       terminal: true,
       reason: "terminated",
     });
+  });
+
+  it("PR #6 (events.ts:118): --follow never takes the journal lock; a persistent torn tail ends with journal_corrupt after the grace period", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    // A partial final line that never completes, while a sentinel holds journal.lock throughout: a
+    // follower that tried to decide the tail under the lock would wait on it until its timeout.
+    appendFileSync(join(runDir, "journal.jsonl"), '{"schemaVersion":1,"seq":2,"ts":"2026-09-15T');
+    const lockPath = join(runDir, "journal.lock");
+    const sentinel = `woof-pr6-follow-sentinel ${Date.now()}\n`;
+    writeFileSync(lockPath, sentinel);
+    const before = statSync(lockPath);
+    const started = Date.now();
+    const followed = woof(
+      ["events", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "15000"],
+      { timeoutMs: 30_000 },
+    );
+    const elapsed = Date.now() - started;
+    expect(followed.status, followed.stdout + followed.stderr).toBe(3);
+    const printed = lines(followed.stdout);
+    expect(printed[0]).toMatchObject({ type: "run.opened" });
+    expect(printed.at(-2)).toEqual({
+      type: "error",
+      reason: "journal_corrupt",
+      message: expect.stringContaining("lock-free subscription"),
+    });
+    expect(printed.at(-1)).toEqual({
+      kind: "woof.events.end",
+      cursor: printed[0]?.["cursor"],
+      terminal: false,
+      reason: "error",
+    });
+    expect(elapsed).toBeGreaterThanOrEqual(1900);
+    expect(elapsed).toBeLessThan(10_000);
+    const after = statSync(lockPath);
+    expect(readFileSync(lockPath, "utf8")).toBe(sentinel);
+    expect([after.ino, after.size, after.mtimeMs]).toEqual([
+      before.ino,
+      before.size,
+      before.mtimeMs,
+    ]);
   });
 
   it("I6: a foreign cursor exits 2 with resync_required; --follow exits 7 at its timeout", () => {
