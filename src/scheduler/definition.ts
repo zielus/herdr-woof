@@ -1,6 +1,12 @@
 import { isId, isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
-import type { Limits, Revision } from "../domain/types.js";
+import {
+  LIMIT_KEYS,
+  MAX_COUNT_LIMIT,
+  MAX_DURATION_LIMIT_MS,
+  type Limits,
+  type Revision,
+} from "../domain/types.js";
 import type { AcceptedRef, EvidenceRef } from "../state/result.js";
 import type { SnapshotGate } from "../state/snapshot.js";
 
@@ -23,12 +29,22 @@ export interface WorkflowDefinition<Input = unknown> {
     value: unknown,
   ): { ok: true; input: Input } | { ok: false; details: RejectionDetail[] };
   agents: Array<{ agentId: string; role: string }>;
-  /** Kind, model and caller launch arguments per agent id, from input. */
+  /**
+   * Kind, model and caller launch arguments per agent id, from input. An agent
+   * the map omits is filled at admission from the configured role (p4), or
+   * refused as `role_unresolved`.
+   */
   resolveAgents(
     input: Input,
   ): Record<string, { kind: string; model: string | null; args: string[] }>;
-  /** Resolved limits, including maxFormatRepairs. */
-  resolveLimits(input: Input): Limits & { maxFormatRepairs: number };
+  /**
+   * Limits from input. Without `limitDefaults` this is the complete set (p3);
+   * with it, only the per-run overrides (p4). Configuration fills every key
+   * the result lacks.
+   */
+  resolveLimits(input: Input): Partial<Limits>;
+  /** Built-in value per limit key, below input and configuration (p4, optional). */
+  limitDefaults?: Partial<Limits>;
   /** Absolute path of the git work tree the agents work in. */
   repository(input: Input): string;
   /** An agent stage id. */
@@ -148,6 +164,27 @@ export function validateWorkflowDefinition<Input = unknown>(
   }
   for (const field of DEFINITION_FUNCTIONS) {
     if (typeof value[field] !== "function") fail(field, "must be a function");
+  }
+  const limitDefaults = value["limitDefaults"];
+  if (limitDefaults !== undefined) {
+    if (!isPlainObject(limitDefaults)) {
+      fail("limitDefaults", "must be an object of limit values");
+    } else {
+      for (const [key, raw] of Object.entries(limitDefaults)) {
+        if (!(LIMIT_KEYS as readonly string[]).includes(key)) {
+          fail(`limitDefaults.${key}`, "is not a limit");
+          continue;
+        }
+        const [min, max] =
+          key === "maxFormatRepairs"
+            ? [0, MAX_COUNT_LIMIT]
+            : key.endsWith("Ms")
+              ? [1, MAX_DURATION_LIMIT_MS]
+              : [1, MAX_COUNT_LIMIT];
+        if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < min || raw > max)
+          fail(`limitDefaults.${key}`, `must be an integer between ${min} and ${max}`);
+      }
+    }
   }
 
   const agentIds = new Set<string>();

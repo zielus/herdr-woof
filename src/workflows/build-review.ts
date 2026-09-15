@@ -32,7 +32,11 @@ export interface BuildReviewInput {
   task: { title: string; description: string; acceptanceCriteria: string[]; context?: unknown };
   instructions?: { builder?: string; reviewer?: string };
   verify?: { command: string[]; timeoutMs: number };
-  agents: Record<"builder" | "reviewer", { kind: string; model: string | null; args: string[] }>;
+  /** Per-run agent overrides; a role left out comes from configuration (p4). */
+  agents?: Partial<
+    Record<"builder" | "reviewer", { kind: string; model: string | null; args: string[] }>
+  >;
+  /** Per-run limit overrides; other keys come from configuration, then the defaults below. */
   limits?: Partial<Limits>;
 }
 
@@ -117,12 +121,13 @@ function validateInput(
   }
 
   const agents = value["agents"];
-  if (!isPlainObject(agents)) {
-    fail("agents", "must be an object with builder and reviewer");
-  } else {
+  if (agents !== undefined && !isPlainObject(agents)) {
+    fail("agents", "must be an object with builder and/or reviewer");
+  } else if (agents !== undefined) {
     exact(agents, ["builder", "reviewer"], "agents.", fail);
     for (const role of ["builder", "reviewer"]) {
       const agent = agents[role];
+      if (agent === undefined) continue;
       if (!isPlainObject(agent)) {
         fail(`agents.${role}`, "must be an object with kind, model and args");
         continue;
@@ -202,19 +207,18 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
     { agentId: "builder", role: "builder" },
     { agentId: "reviewer", role: "reviewer" },
   ],
-  resolveAgents: (input) => ({
-    builder: {
-      kind: input.agents.builder.kind,
-      model: input.agents.builder.model,
-      args: [...input.agents.builder.args],
-    },
-    reviewer: {
-      kind: input.agents.reviewer.kind,
-      model: input.agents.reviewer.model,
-      args: [...input.agents.reviewer.args],
-    },
-  }),
-  resolveLimits: (input) => ({ ...BUILD_REVIEW_DEFAULT_LIMITS, ...input.limits }),
+  // Only the roles the input names; admission fills the others from configured roles.
+  resolveAgents: (input) => {
+    const agents: Record<string, { kind: string; model: string | null; args: string[] }> = {};
+    for (const role of ["builder", "reviewer"] as const) {
+      const agent = input.agents?.[role];
+      if (agent !== undefined)
+        agents[role] = { kind: agent.kind, model: agent.model, args: [...agent.args] };
+    }
+    return agents;
+  },
+  resolveLimits: (input) => ({ ...input.limits }),
+  limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
   repository: (input) => input.repo,
   start: "build",
   roundStage: "review",

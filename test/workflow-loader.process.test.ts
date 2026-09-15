@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { distUrl, repoRoot, runNode } from "./helpers/process.js";
+
+type Json = Record<string, unknown>;
 
 // The loader runs in a real child `node`, so .ts loading uses Node's own type stripping.
 const fixtures = join(repoRoot, "test", "fixtures", "workflows");
@@ -197,5 +199,296 @@ console.log(JSON.stringify({ outcome: opened.outcome ?? opened.reason }));`,
     expect(out.threw).toBeUndefined();
     expect(out).toMatchObject({ ok: false, reason: "definition_invalid", details: [{ field }] });
     expect(out.message).toContain(message);
+  });
+});
+
+describe("admitWorkflow with resolved configuration (p4)", () => {
+  function repoDir(): { dir: string; repo: string; runDir: string } {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "woof-admit-config-")));
+    dirs.push(dir);
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
+    return { dir, repo, runDir: join(dir, "run") };
+  }
+
+  /** Admits `definition` (a fixture path, or "build-review") with `input` and `configuration`. */
+  function admitWith(
+    definition: string,
+    input: unknown,
+    configuration: unknown,
+    runDir: string,
+    env: Record<string, string> = {},
+  ): Json {
+    const result = runNode(
+      `const { loadWorkflowDefinition } = await import(${JSON.stringify(distUrl("scheduler/loader.js"))});
+const { admitWorkflow } = await import(${JSON.stringify(distUrl("scheduler/admission.js"))});
+const { buildReviewWorkflow } = await import(${JSON.stringify(distUrl("workflows/build-review.js"))});
+const [path, input, configuration, runDir] = [process.argv[1], JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), process.argv[4]];
+let definition = buildReviewWorkflow;
+if (path !== "build-review") {
+  const loaded = await loadWorkflowDefinition(path);
+  if (!loaded.ok) { console.log(JSON.stringify(loaded)); process.exit(0); }
+  definition = loaded.definition;
+}
+const admitted = await admitWorkflow({ definition, input, runDir, ...(configuration === null ? {} : { configuration }) });
+console.log(JSON.stringify(admitted));`,
+      [definition, JSON.stringify(input), JSON.stringify(configuration), runDir],
+      { env },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return result.json as unknown as Json;
+  }
+
+  const task = { title: "T", description: "D", acceptanceCriteria: ["holds"] };
+  const roles = (dir: string) => ({
+    builder: {
+      kind: "claude",
+      model: "sonnet",
+      args: ["--permission-mode", "auto"],
+      source: "project",
+      path: `${dir}/.woof/roles/builder.json`,
+    },
+    reviewer: { kind: "claude", model: null, args: [], source: "builtin", path: null },
+  });
+
+  it("fills omitted agents from configured roles and records each agent's source", () => {
+    const { repo, runDir } = repoDir();
+    const out = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      { projectRoot: repo, roles: roles(repo), limits: {} },
+      runDir,
+    );
+    expect(out).toMatchObject({ ok: true });
+    expect((out["plan"] as Json)["agents"]).toEqual([
+      {
+        agentId: "builder",
+        role: "builder",
+        kind: "claude",
+        model: "sonnet",
+        args: ["--model", "sonnet", "--add-dir", runDir, "--permission-mode", "auto"],
+      },
+      {
+        agentId: "reviewer",
+        role: "reviewer",
+        kind: "claude",
+        model: null,
+        args: ["--add-dir", runDir],
+      },
+    ]);
+    expect((out["provenance"] as Json)["agents"]).toEqual({
+      builder: {
+        role: "builder",
+        kind: "claude",
+        model: "sonnet",
+        args: ["--permission-mode", "auto"],
+        source: "project",
+        path: `${repo}/.woof/roles/builder.json`,
+      },
+      reviewer: {
+        role: "reviewer",
+        kind: "claude",
+        model: null,
+        args: [],
+        source: "builtin",
+        path: null,
+      },
+    });
+  });
+
+  it("lets an input agent override the configured role", () => {
+    const { repo, runDir } = repoDir();
+    const out = admitWith(
+      "build-review",
+      {
+        schemaVersion: 1,
+        repo,
+        task,
+        agents: { builder: { kind: "claude", model: "opus", args: [] } },
+      },
+      { projectRoot: repo, roles: roles(repo), limits: {} },
+      runDir,
+    );
+    expect(((out["provenance"] as Json)["agents"] as Json)["builder"]).toMatchObject({
+      model: "opus",
+      source: "input",
+      path: null,
+    });
+  });
+
+  it("composes limits per key: input, then configuration, then the definition's defaults", () => {
+    const { repo, runDir } = repoDir();
+    const out = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task, limits: { maxAttemptsPerVisit: 1 } },
+      {
+        projectRoot: repo,
+        roles: roles(repo),
+        limits: {
+          maxRounds: { value: 5, source: "user", path: "/home/.woof/woof.json" },
+          runTimeoutMs: { value: 1000, source: "project", path: `${repo}/.woof/woof.json` },
+          maxAttemptsPerVisit: { value: 9, source: "project", path: `${repo}/.woof/woof.json` },
+        },
+      },
+      runDir,
+    );
+    expect((out["plan"] as Json)["limits"]).toEqual({
+      maxAttemptsPerVisit: 1,
+      maxVisitsPerStage: 3,
+      maxRounds: 5,
+      maxFormatRepairs: 2,
+      runTimeoutMs: 1000,
+      readinessWaitMs: 180_000,
+      blockedWaitMs: 600_000,
+      deliveryTimeoutMs: 60_000,
+    });
+    const limits = (out["provenance"] as Json)["limits"] as Record<string, Json>;
+    expect(limits["maxAttemptsPerVisit"]).toEqual({ value: 1, source: "input", path: null });
+    expect(limits["maxRounds"]).toEqual({
+      value: 5,
+      source: "user",
+      path: "/home/.woof/woof.json",
+    });
+    expect(limits["runTimeoutMs"]).toMatchObject({ source: "project" });
+    expect(limits["readinessWaitMs"]).toEqual({ value: 180_000, source: "builtin", path: null });
+  });
+
+  it("annotates plan_invalid details with the layer that set the key", () => {
+    const { repo, runDir } = repoDir();
+    const out = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      {
+        projectRoot: repo,
+        roles: roles(repo),
+        limits: { maxRounds: { value: 0, source: "user", path: "/home/.woof/woof.json" } },
+      },
+      runDir,
+    );
+    expect(out).toMatchObject({ ok: false, reason: "plan_invalid" });
+    expect(out["details"]).toEqual([
+      {
+        field: "limits.maxRounds",
+        message: "must be an integer between 1 and 1000 (set by user /home/.woof/woof.json)",
+      },
+    ]);
+  });
+
+  it("refuses an agent no input, role file or built-in role defines as role_unresolved", () => {
+    const { repo, runDir } = repoDir();
+    const planner = join(fixtures, "planner-role.mjs");
+    const out = admitWith(
+      planner,
+      {},
+      {
+        projectRoot: repo,
+        roles: roles(repo),
+        limits: {},
+        roleDirs: [`${repo}/.woof/roles`, "/home/.woof/roles"],
+      },
+      runDir,
+      { WOOF_TEST_REPO: repo },
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "role_unresolved",
+      details: [{ field: "agents.planner" }],
+    });
+    expect(out["message"]).toContain(`${repo}/.woof/roles/planner.json`);
+    expect(out["message"]).toContain("/home/.woof/roles/planner.json");
+    // Without configuration the omitted agent is refused the same way.
+    expect(admitWith(planner, {}, null, runDir, { WOOF_TEST_REPO: repo })).toMatchObject({
+      ok: false,
+      reason: "role_unresolved",
+    });
+    // A configured planner role admits it.
+    const configured = admitWith(
+      planner,
+      {},
+      {
+        roles: {
+          planner: {
+            kind: "claude",
+            model: null,
+            args: [],
+            source: "user",
+            path: "/home/.woof/roles/planner.json",
+          },
+        },
+        limits: {},
+      },
+      runDir,
+      { WOOF_TEST_REPO: repo },
+    );
+    expect(configured).toMatchObject({
+      ok: true,
+      provenance: { agents: { planner: { source: "user" } } },
+    });
+  });
+
+  it("names the role file when a configured role's kind is unsupported", () => {
+    const { repo, runDir } = repoDir();
+    const configured = roles(repo);
+    configured.builder.kind = "codex";
+    const out = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      { projectRoot: repo, roles: configured, limits: {} },
+      runDir,
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "agent_kind_unsupported",
+      details: [{ field: "roles.builder.kind" }],
+    });
+    expect(out["message"]).toContain(`${repo}/.woof/roles/builder.json`);
+  });
+
+  it("refuses a repository that is not the configured project as project_mismatch", () => {
+    const { repo, runDir } = repoDir();
+    const other = repoDir();
+    const out = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      { projectRoot: other.repo, roles: roles(repo), limits: {} },
+      runDir,
+    );
+    expect(out).toMatchObject({ ok: false, reason: "project_mismatch" });
+    expect(out["message"]).toContain(repo);
+    expect(out["message"]).toContain(other.repo);
+    expect(out["message"]).toContain(`--project ${repo}`);
+    const none = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      { projectRoot: null, roles: roles(repo), limits: {} },
+      runDir,
+    );
+    expect(none).toMatchObject({ ok: false, reason: "project_mismatch" });
+  });
+
+  it("keeps an external p3 definition's complete limits: configuration fills only missing keys", () => {
+    const { repo, runDir } = repoDir();
+    const out = admitWith(
+      join(fixtures, "callbacks.mjs"),
+      { topic: "t" },
+      {
+        roles: {},
+        limits: { maxRounds: { value: 7, source: "project", path: "/p/.woof/woof.json" } },
+      },
+      runDir,
+      { WOOF_TEST_CALLBACK: "none", WOOF_TEST_REPO: repo },
+    );
+    expect(out).toMatchObject({ ok: true });
+    expect((out["plan"] as Json)["limits"]).toEqual({
+      maxAttemptsPerVisit: 2,
+      maxVisitsPerStage: 3,
+      maxRounds: 1,
+      maxFormatRepairs: 1,
+      runTimeoutMs: 60_000,
+      readinessWaitMs: 10_000,
+      blockedWaitMs: 10_000,
+      deliveryTimeoutMs: 10_000,
+    });
   });
 });

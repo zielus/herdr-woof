@@ -90,6 +90,31 @@ export type StoreReason =
   | "reconcile_exists"
   | "assignment_mismatch";
 
+/**
+ * Reasons workflow admission refuses a run with, before any pane or journal
+ * write. p4 adds the configuration reasons and the loader reasons, so a host
+ * that resolves configuration and loads a definition reports one closed set.
+ */
+export const ADMISSION_REASONS = [
+  "input_invalid",
+  "repo_invalid",
+  "agent_kind_unsupported",
+  "plan_invalid",
+  "definition_invalid",
+  "config_invalid",
+  "config_conflict",
+  "setting_scope_invalid",
+  "role_invalid",
+  "role_unresolved",
+  "project_mismatch",
+  "workflow_not_found",
+  "definition_not_found",
+  "definition_syntax_unsupported",
+  "definition_load_failed",
+] as const;
+
+export type AdmissionReason = (typeof ADMISSION_REASONS)[number];
+
 export function isInfraReason(reason: string): reason is InfraReason {
   return (INFRA_REASONS as readonly string[]).includes(reason);
 }
