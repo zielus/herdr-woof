@@ -17,7 +17,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cliPath, distUrl, repoRoot, runNode } from "./helpers/process.js";
+import { cliPath, distUrl, repoRoot, runNode, testPlan } from "./helpers/process.js";
 
 // `woof run start` / `woof run host` (plan T5) as real processes. The Herdr CLI
 // is the fake fixture by absolute path (WOOF_HERDR_BIN); its `pane run` entry
@@ -413,6 +413,36 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     });
     expect(woofIn(ws, ["status", runDir]).json?.["status"]?.["liveness"]).toBeUndefined();
     expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+  }, 60_000);
+
+  it("PR #6 (launch.ts:135): a foreign journal opened after the preflight is run_exists, never started, and the other run is not exposed", async () => {
+    // A pane that never runs the host: another SDK caller opens a run in the directory after
+    // woof run start's occupancy check and launch request.
+    const ws = workspace("w9:p2", false);
+    const runDir = join(ws.root, "run");
+    const launcher = spawn("node", [cliPath, ...startArgs(ws, runDir)], {
+      cwd: ws.root,
+      env: env(ws),
+    });
+    let stdout = "";
+    launcher.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    const launched = new Promise<number | null>((resolve) =>
+      launcher.on("close", (code) => resolve(code)),
+    );
+    await waitFor(() => existsSync(join(runDir, "launch.json")), "the launch request");
+    const opened = runNode(
+      `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
+console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId: "foreign-run-7", plan: JSON.parse(process.argv[2]) })));`,
+      [runDir, JSON.stringify(testPlan())],
+    );
+    expect(opened.status, opened.stderr).toBe(0);
+    expect(await launched, stdout).toBe(2);
+    const last = JSON.parse(stdout.trim().split("\n").at(-1) ?? "null") as Json;
+    expect(last).toMatchObject({ outcome: "rejected", reason: "run_exists" });
+    expect(last["outcome"]).not.toBe("started");
+    expect(stdout).not.toContain("foreign-run-7");
+    // The foreign run is untouched.
+    expect(records(runDir)[0]).toMatchObject({ type: "run.opened", runId: "foreign-run-7" });
   }, 60_000);
 
   it("PR #6 (launch.ts:56): an outcome.json that is not this launch's is ignored, and a host's own outcome names the launch", async () => {

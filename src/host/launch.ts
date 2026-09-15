@@ -112,6 +112,8 @@ export async function launchInPane(
   const runDir = options.runDir ?? join(runsDir, options.runId);
 
   // Only a built-in workflow is admitted here: a project module's code runs once, in the host.
+  // The digest of its admitted input is what the host's run.opened records (input.json).
+  let expectedInputSha256: string | undefined;
   if (configuration.workflow?.source === "builtin") {
     const definition = validateWorkflowDefinition(
       builtinWorkflowDefinition(configuration.workflow.value.name),
@@ -129,6 +131,9 @@ export async function launchInPane(
       configuration: admissionConfiguration(configuration),
     });
     if (!admitted.ok) return rejected(admitted.reason, admitted.message, admitted.details);
+    expectedInputSha256 = sha256Hex(
+      Buffer.from(`${JSON.stringify(admitted.input, null, 2)}\n`, "utf8"),
+    );
   }
 
   const occupied = runDirOccupied(runDir);
@@ -214,33 +219,48 @@ export async function launchInPane(
   const startedAt = Date.now();
   let hostSeenAt: number | undefined;
   for (;;) {
-    const snapshot = readSnapshot(runDir);
-    if (snapshot.ok) {
-      return {
-        code: 0,
-        output: startedOutput(runDir, paneId, snapshot.snapshot),
-      };
-    }
     const outcome = readJsonFile(join(runDir, OUTCOME_FILE));
     // An outcome.json that does not name this launch (a stale or foreign file) is not this host's
     // result: keep waiting for the run to open, the host's claim or the timeout (PR #6).
-    if (
+    const own =
       isPlainObject(outcome) &&
       isPlainObject(outcome["launch"]) &&
       outcome["launch"]["sha256"] === launchSha256
-    ) {
-      const reason = typeof outcome["reason"] === "string" ? outcome["reason"] : "";
+        ? outcome
+        : undefined;
+    // This host's rejection wins over any journal: a run it refused to open is never "started".
+    const refused = own !== undefined && own["outcome"] === "rejected";
+    if (!refused) {
+      const snapshot = readSnapshot(runDir);
+      if (snapshot.ok) {
+        // Only the journal this launch's host opened is this run (PR #6): its run id, and for a
+        // built-in workflow the admitted input, must match. Another run is refused without naming it.
+        const opened = snapshot.snapshot;
+        if (
+          opened.runId !== options.runId ||
+          (expectedInputSha256 !== undefined && opened.input?.sha256 !== expectedInputSha256)
+        ) {
+          return rejected(
+            "run_exists",
+            `${runDir} holds a run that this launch did not open; nothing was started`,
+          );
+        }
+        return { code: 0, output: startedOutput(runDir, paneId, opened) };
+      }
+    }
+    if (own !== undefined) {
+      const reason = typeof own["reason"] === "string" ? own["reason"] : "";
       if (reason === "host_claim_failed") {
         // The host's failure handoff: it holds no claim, so close the directory before reporting.
         const closed = closeRunDir(runDir, "woof run start after the run host's claim failed");
         return {
           code: 3,
-          output: { ...outcome, message: `${String(outcome["message"])}; ${closed}` },
+          output: { ...own, message: `${String(own["message"])}; ${closed}` },
         };
       }
       return {
-        code: outcome["outcome"] === "rejected" && !isHostInfraReason(reason) ? 2 : 3,
-        output: outcome,
+        code: own["outcome"] === "rejected" && !isHostInfraReason(reason) ? 2 : 3,
+        output: own,
       };
     }
     const now = Date.now();
