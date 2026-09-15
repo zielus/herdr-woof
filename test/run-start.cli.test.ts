@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -368,6 +369,62 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(fakeCalls(ws)).toEqual([]);
     expect(existsSync(runDir)).toBe(false);
   });
+
+  it("PR #6 (launch.ts:56): an outcome.json that is not this launch's is ignored, and a host's own outcome names the launch", async () => {
+    // A pane that never runs the host: the test plays the stale file and then the real host.
+    const ws = workspace("w9:p2", false);
+    const runDir = join(ws.root, "run");
+    const launcher = spawn("node", [cliPath, ...startArgs(ws, runDir)], {
+      cwd: ws.root,
+      env: env(ws),
+    });
+    let stdout = "";
+    launcher.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    const launched = new Promise<number | null>((resolve) =>
+      launcher.on("close", (code) => resolve(code)),
+    );
+    await waitFor(() => existsSync(join(runDir, "launch.json")), "the launch request");
+    const foreign = JSON.stringify({
+      outcome: "rejected",
+      reason: "definition_invalid",
+      message: "an outcome left by another launch",
+      details: [],
+    });
+    writeFileSync(join(runDir, "outcome.json"), foreign);
+    await delay(1000);
+    expect(launcher.exitCode, stdout).toBeNull();
+    const host = spawn("node", [cliPath, "run", "host", runDir], {
+      cwd: ws.root,
+      env: env(ws, { HERDR_PANE_ID: "w9:p2" }),
+      stdio: "ignore",
+    });
+    const hostExited = new Promise<number | null>((resolve) =>
+      host.on("close", (code) => resolve(code)),
+    );
+    expect(await launched, stdout).toBe(0);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1) ?? "null")).toMatchObject({
+      outcome: "started",
+      runDir,
+    });
+    await hostExited;
+    // The host ran the launch to its end; it could not replace the foreign file.
+    expect(records(runDir).at(-1)).toMatchObject({ type: "run.terminated", outcome: "completed" });
+    expect(readFileSync(join(runDir, "outcome.json"), "utf8")).toBe(foreign);
+
+    // A normal launch: the host's outcome.json carries the digest of the launch request it served.
+    const normal = workspace();
+    const normalDir = join(normal.root, "run");
+    expect(woofIn(normal, startArgs(normal, normalDir)).status).toBe(0);
+    const outcome = await waitForOutcome(normalDir);
+    expect(outcome).toMatchObject({
+      outcome: "run",
+      launch: {
+        sha256: createHash("sha256")
+          .update(readFileSync(join(normalDir, "launch.json")))
+          .digest("hex"),
+      },
+    });
+  }, 90_000);
 
   it("PR #6 (run.ts:293): with a slow Herdr and a 1 ms poll, the pane host's metadata reports stay bounded and it finalizes promptly", async () => {
     const ws = workspace();
@@ -934,6 +991,26 @@ console.log(JSON.stringify({ h: createHash("sha256").update(readFileSync(process
     }
     for (const name of ["journal.jsonl", "host.json", "launch.json"])
       expect(existsSync(join(markerOnly, name)), name).toBe(false);
+    // PR #6 (launch.ts:56): a pre-existing outcome.json occupies the directory as well.
+    const outcomeOnly = join(ws.root, "run-outcome-only");
+    mkdirSync(outcomeOnly);
+    writeFileSync(
+      join(outcomeOnly, "outcome.json"),
+      JSON.stringify({
+        outcome: "rejected",
+        reason: "definition_invalid",
+        message: "stale",
+        details: [],
+      }),
+    );
+    for (const host of ["herdr-pane", "foreground"]) {
+      expect(woofIn(ws, [...startArgs(ws, outcomeOnly), "--host", host]), host).toMatchObject({
+        status: 2,
+        json: { reason: "run_exists", message: expect.stringContaining("(outcome.json)") },
+      });
+    }
+    for (const name of ["journal.jsonl", "host.json", "launch.json"])
+      expect(existsSync(join(outcomeOnly, name)), name).toBe(false);
     expect(fakeCalls(ws).filter((argv) => argv[1] === "split")).toEqual([]);
     expect(woofIn(ws, ["run", "start", "--input", ws.inputPath, "--host", "cloud"]).status).toBe(1);
     expect(

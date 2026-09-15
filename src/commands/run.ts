@@ -1,14 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { resolveConfiguration } from "../config/resolve.js";
+import { sha256Hex } from "../contracts/canonical-json.js";
 import { isId, isPlainObject } from "../contracts/envelope.js";
 import { claimHost } from "../host/claim.js";
 import { entryExists, writeExclusiveFile } from "../host/files.js";
-import { launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
+import { LAUNCH_FILE, launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
 import {
   OUTCOME_FILE,
   hostWorkflow,
@@ -307,6 +308,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
       return claim.reason === "run_host_claimed" ? 2 : 3;
     }
     pauseAfterClaim();
+    const launch = launchDigestOf(runDir);
     const request = readLaunchRequest(runDir);
     if (typeof request === "string") {
       const output = {
@@ -314,6 +316,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
         reason: "launch_invalid",
         message: request,
         details: [],
+        ...(launch !== null ? { launch } : {}),
       };
       try {
         if (!entryExists(join(runDir, OUTCOME_FILE)))
@@ -340,6 +343,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
       claimBeforeOpen: false,
       release: claim.release,
       writeOutcome: true,
+      launch,
       paneId,
     });
   } finally {
@@ -349,6 +353,15 @@ export async function runHostCommand(args: string[]): Promise<number> {
   const result = await hosted;
   console.log(JSON.stringify(result.output));
   return result.code;
+}
+
+/** The digest of the launch request as the claimed host reads it; null when it cannot be read. */
+function launchDigestOf(runDir: string): { sha256: string } | null {
+  try {
+    return { sha256: sha256Hex(readFileSync(join(runDir, LAUNCH_FILE))) };
+  } catch {
+    return null;
+  }
 }
 
 /** Replaces the default SIGINT/SIGTERM termination during the claim handoff; hostWorkflow handles the signal. */

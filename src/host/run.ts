@@ -85,6 +85,11 @@ export interface HostWorkflowOptions {
   release?: (exitCode: number) => void;
   /** Write `outcome.json` (the printed line) before releasing the claim. */
   writeOutcome: boolean;
+  /**
+   * The launch request this host serves (a pane host): its digest is added to the result as
+   * `launch`, so the launcher can tell this host's outcome.json from a stale or foreign one.
+   */
+  launch?: { sha256: string } | null;
   paneId: string | null;
   workspaceId: string | null;
   /** Herdr metadata projection; null outside a Herdr pane. */
@@ -130,7 +135,13 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     }
   };
   const finish = (code: number, output: Record<string, unknown>): HostWorkflowResult => {
-    result ??= { code, output };
+    result ??= {
+      code,
+      output:
+        options.launch === undefined || options.launch === null
+          ? output
+          : { ...output, launch: options.launch },
+    };
     if (options.writeOutcome && release !== undefined && !outcomeWritten) {
       outcomeWritten = true;
       try {

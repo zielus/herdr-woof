@@ -15,6 +15,7 @@ import { validateWorkflowDefinition } from "../scheduler/definition.js";
 import { readSnapshot } from "../state/snapshot.js";
 import { abandonHost } from "./claim.js";
 import { entryExists, readJsonFile, shellQuote, writeExclusiveFile } from "./files.js";
+import { sha256Hex } from "../contracts/canonical-json.js";
 import { HOST_EXIT_FILE, HOST_FILE, readHostInfo } from "./probe.js";
 import { OUTCOME_FILE, isHostInfraReason } from "./run.js";
 
@@ -53,7 +54,7 @@ export interface LaunchRequest {
 export function runDirOccupied(runDir: string): string | undefined {
   // Any entry at a reserved path occupies the directory, even an empty journal: `run start`
   // never adopts one (the SDK's openRun keeps its own empty-journal tolerance).
-  for (const name of [JOURNAL_FILE, HOST_FILE, HOST_EXIT_FILE, LAUNCH_FILE]) {
+  for (const name of [JOURNAL_FILE, HOST_FILE, HOST_EXIT_FILE, LAUNCH_FILE, OUTCOME_FILE]) {
     if (entryExists(join(runDir, name))) return `${runDir} already holds a run (${name})`;
   }
   return undefined;
@@ -142,6 +143,8 @@ export async function launchInPane(
       `cannot create the run directory ${runDir}: ${(error as Error).message}`,
     );
   }
+  // The digest of the launch request written below: only an outcome.json carrying it is this launch's.
+  let launchSha256: string;
   try {
     const request: LaunchRequest = {
       schemaVersion: 1,
@@ -154,11 +157,9 @@ export async function launchInPane(
       requestedAt: new Date().toISOString(),
       launcher: { pid: process.pid, paneId: options.launcherPaneId },
     };
-    writeExclusiveFile(
-      join(runDir, LAUNCH_FILE),
-      Buffer.from(`${JSON.stringify(request, null, 2)}\n`, "utf8"),
-      0o444,
-    );
+    const bytes = Buffer.from(`${JSON.stringify(request, null, 2)}\n`, "utf8");
+    launchSha256 = sha256Hex(bytes);
+    writeExclusiveFile(join(runDir, LAUNCH_FILE), bytes, 0o444);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return code === "EEXIST"
@@ -233,7 +234,13 @@ export async function launchInPane(
       };
     }
     const outcome = readJsonFile(join(runDir, OUTCOME_FILE));
-    if (isPlainObject(outcome)) {
+    // An outcome.json that does not name this launch (a stale or foreign file) is not this host's
+    // result: keep waiting for the run to open, the host's claim or the timeout (PR #6).
+    if (
+      isPlainObject(outcome) &&
+      isPlainObject(outcome["launch"]) &&
+      outcome["launch"]["sha256"] === launchSha256
+    ) {
       const reason = typeof outcome["reason"] === "string" ? outcome["reason"] : "";
       return {
         code: outcome["outcome"] === "rejected" && !isHostInfraReason(reason) ? 2 : 3,
