@@ -120,8 +120,12 @@ herdr plugin action invoke status --plugin herdr-woof
    resolved), 8 (owner lost — suggests `run cancel`, never cancels unasked)
    or a terminal code (0/4/5/6).
 6. Reports `outcome`, `reason`, `limit`, `counters.rounds` and the artifact
-   references from `result`, reads and summarizes the accepted review, and
-   claims success only when `outcome` is `completed`.
+   references from `result`. `artifacts.review` is non-null only when
+   `outcome` is `completed` (never on `failed`/`exhausted`/`cancelled`), and
+   `artifacts.completion`/`artifacts.verification` can each be `null` too (no
+   completing gate reached, or no `verify` command configured); the command
+   reads and summarizes the accepted review only when `artifacts.review` is
+   present. Claims success only when `outcome` is `completed`.
 
 It never answers an agent's permission or trust prompt, runs `claude -p` or a
 permission-bypass flag, edits `~/.claude.json` or Herdr configuration, sends
