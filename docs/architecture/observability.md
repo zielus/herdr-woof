@@ -289,6 +289,19 @@ repository {path, revision}, counters, blocked, artifacts
   `reviewed` revision, and is `null` on any outcome except `completed`, so a
   passing gate from an earlier revision is never reported as approval of
   newer work even though it stays visible in `lastAcceptedByStage`.
+- **Per-key maps in results and snapshots are null-prototype objects.**
+  `RunSnapshot.counters`' id-keyed maps (`visitsByStage`, `attemptsByVisit`,
+  `rejectionsByReason`, `replacementsByAgent`, `gatesByGate`,
+  `formatRepairsByVisit`, `workRetriesByVisit`) and `RunResult.artifacts.
+lastAcceptedByStage` are built with `Object.create(null)` (`src/state/
+reducer.ts`'s `dict()` helper, `src/state/result.ts`), so a stage id or
+  reason such as `constructor` is always an ordinary own key, never shadowed
+  by `Object.prototype`. Their JSON is identical to an ordinary object's, but
+  `node:util.isDeepStrictEqual`/`assert.deepStrictEqual` compares prototypes
+  too and reports a mismatch against a plain-object value with the same
+  keys. Compare a `RunResult` or snapshot with a parsed CLI line or file in
+  JSON form (`JSON.parse(JSON.stringify(...))`, or field-by-field), not with
+  deep-strict equality.
 - **The scheduler reads only what an observer reads.** `decide()` (D1) is a
   pure function of the same `RunSnapshot` that `readSnapshot`/`woof run
 show`/`readEvents` project, so "an external observer agrees with the
