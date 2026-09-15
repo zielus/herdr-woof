@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { UsageError, parse, readStdin, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
+import { doctorCommand } from "./commands/doctor.js";
+import { eventsCommand } from "./commands/events.js";
 import {
   RUN_BUILD_REVIEW_USAGE,
   RUN_HOST_USAGE,
@@ -13,6 +14,8 @@ import {
   runHostCommand,
   runStartCommand,
 } from "./commands/run.js";
+import { runsCommand } from "./commands/runs.js";
+import { statusCommand } from "./commands/status.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import { readSnapshot } from "./state/snapshot.js";
 import { terminateRun } from "./state/store.js";
@@ -72,12 +75,15 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       console.log(VERSION);
       return 0;
     case "doctor":
-      console.log(`woof ${VERSION}`);
-      console.log(probe("herdr", ["status"]));
-      console.log(probe("claude", ["--version"]));
-      return 0;
+      return doctorCommand(args);
     case "config":
       return configCommand(args);
+    case "status":
+      return statusCommand(args);
+    case "runs":
+      return runsCommand(args);
+    case "events":
+      return eventsCommand(args);
     case "submit":
       return submitCommand(args);
     case "attempt":
@@ -108,6 +114,11 @@ function printHelp(): void {
   console.log("  attempt open  Declare an open attempt and its owner in a run journal");
   console.log("  submit        Validate a result envelope and record it in the run journal");
   console.log("  run show      Print a JSON snapshot of a run journal (read-only)");
+  console.log("");
+  console.log("Inspection (read-only):");
+  console.log("  status        Print a run's status and owner liveness; --wait until it needs you");
+  console.log("  runs          List the runs under the runs directory");
+  console.log("  events        Print a run's lifecycle events as NDJSON; --follow to keep reading");
   console.log("");
   console.log("Configuration:");
   console.log("  config show   Print the effective configuration and where each value came from");
@@ -284,29 +295,4 @@ function runShowCommand(args: string[]): number {
 function count(value: string, flag: string): number {
   if (!/^[1-9][0-9]*$/.test(value)) throw new UsageError(`${flag} must be an integer >= 1`);
   return Number(value);
-}
-
-function probe(commandName: string, args: readonly string[]): string {
-  const label = `${commandName} ${args.join(" ")}`;
-  const result = spawnSync(commandName, args, { encoding: "utf8" });
-
-  if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT") {
-    return `${label}: not found`;
-  }
-  if (result.status === 0) {
-    const output = result.stdout.trim();
-    return output === "" ? `${label}: available` : `${label}:\n${indent(output)}`;
-  }
-
-  // stdio is null when the executable exists but cannot be started (EACCES).
-  const detail =
-    (result.stderr ?? "").trim() || result.error?.message || `exit ${result.status ?? "unknown"}`;
-  return `${label}: failed (${detail.split("\n")[0]})`;
-}
-
-function indent(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => `  ${line}`)
-    .join("\n");
 }

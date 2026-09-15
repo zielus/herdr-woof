@@ -83,7 +83,7 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
   "host/probe.js": { areas: ["contracts"] },
   inspect: {
     areas: ["inspect", "state", "observe", "contracts", "domain"],
-    modules: ["host/probe.js"],
+    modules: ["host/probe.js", "host/files.js"],
   },
   // Command handlers may import any area; only cli.ts imports them (checked below).
   commands: {

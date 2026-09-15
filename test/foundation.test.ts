@@ -121,11 +121,25 @@ describe("woof CLI", () => {
     expect(result.stdout).not.toContain("not implemented");
   });
 
-  it("rejects workflow commands that are not implemented", () => {
-    const result = runCli("runs");
+  it("rejects commands that do not exist", () => {
+    const result = runCli("frobnicate");
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("not implemented");
+  });
+
+  it("lists runs from a runs directory (an absent one lists nothing)", () => {
+    const runsDir = join(mkdtempSync(join(tmpdir(), "woof-runs-")), "absent");
+    const result = runCli("runs", "--runs-dir", runsDir);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      outcome: "runs",
+      runsDir,
+      exists: false,
+      runs: [],
+      skipped: [],
+    });
   });
 
   it("runs the diagnostic command without requiring Herdr or Claude", () => {

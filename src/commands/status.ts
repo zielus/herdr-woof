@@ -1,0 +1,116 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { parseArgs } from "node:util";
+
+import { OUTCOME_EXIT_CODES } from "../host/run.js";
+import { readRunStatus, type ReadRunStatusResult } from "../inspect/status.js";
+import { UsageError, milliseconds, parse } from "./common.js";
+
+export const STATUS_USAGE = `Usage: woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] [--poll-ms <n>]
+                   [--verify-artifacts]
+
+Prints one JSON line {"outcome":"status","status","result"} for the run in
+<run-dir>: status, owner liveness (unhosted, alive, lost, exited), active
+attempts, the last gate, attention and counters; result is the run result once
+the run has ended. Read-only: no journal lock, no Herdr.
+
+Without --wait: exits 0, or 3 when the journal cannot be read (run_dir_invalid,
+journal_corrupt, journal_replaced).
+With --wait (poll every --poll-ms, default 1000; --timeout-ms default 540000):
+  0 completed, 4 failed, 5 exhausted, 6 cancelled (a recorded outcome always wins);
+  7 still running when the timeout passes;
+  8 the owner is lost (confirmed by two probes at least two heartbeats apart);
+  9 the run is blocked and needs the operator (unless --allow-blocked).
+The last line printed is always the status at return time.`;
+
+const DEFAULT_WAIT_TIMEOUT_MS = 540_000;
+const DEFAULT_HEARTBEAT_MS = 2000;
+
+export async function statusCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(
+    () =>
+      parseArgs({
+        args,
+        strict: true,
+        allowPositionals: true,
+        options: {
+          wait: { type: "boolean" },
+          "timeout-ms": { type: "string" },
+          "allow-blocked": { type: "boolean" },
+          "poll-ms": { type: "string" },
+          "verify-artifacts": { type: "boolean" },
+          help: { type: "boolean", short: "h" },
+        },
+      }),
+    STATUS_USAGE,
+  );
+  if (values.help === true) {
+    console.log(STATUS_USAGE);
+    return 0;
+  }
+  const [target, ...extra] = positionals;
+  if (target === undefined || target === "" || extra.length > 0)
+    throw new UsageError(`expected exactly one <run-dir>\n\n${STATUS_USAGE}`);
+  const runDir = canonical(resolve(target));
+  const pollMs =
+    values["poll-ms"] === undefined ? 1000 : milliseconds(values["poll-ms"], "--poll-ms", 1);
+  const timeoutMs =
+    values["timeout-ms"] === undefined
+      ? DEFAULT_WAIT_TIMEOUT_MS
+      : milliseconds(values["timeout-ms"], "--timeout-ms", 0, 604_800_000);
+  const read = () =>
+    readRunStatus(runDir, { verifyArtifacts: values["verify-artifacts"] === true });
+
+  let current = read();
+  if (values.wait !== true) return print(current, 0);
+
+  const deadline = Date.now() + timeoutMs;
+  let lostSince: number | undefined;
+  for (;;) {
+    if (!current.ok) return print(current, 3);
+    const { status, result } = current;
+    if (result !== null) return print(current, OUTCOME_EXIT_CODES[result.outcome]);
+    if (status.attention.blocked !== null && values["allow-blocked"] !== true)
+      return print(current, 9);
+    const now = Date.now();
+    if (status.liveness.owner === "lost") {
+      lostSince ??= now;
+      const heartbeatMs = status.liveness.host?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+      if (now - lostSince >= 2 * heartbeatMs) return print(current, 8);
+    } else {
+      lostSince = undefined;
+    }
+    if (now >= deadline) return print(current, 7);
+    // Waiting on the journal another process writes is sequential by design.
+    // oxlint-disable-next-line no-await-in-loop
+    await delay(Math.max(1, Math.min(pollMs, deadline - now)));
+    current = read();
+  }
+}
+
+function print(current: ReadRunStatusResult, code: number): number {
+  if (current.ok) {
+    console.log(
+      JSON.stringify({ outcome: "status", status: current.status, result: current.result }),
+    );
+    return code;
+  }
+  console.log(
+    JSON.stringify({
+      outcome: "rejected",
+      reason: current.reason,
+      message: current.message,
+      ...(current.line !== undefined ? { line: current.line } : {}),
+    }),
+  );
+  return 3;
+}
+
+function canonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}

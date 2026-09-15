@@ -300,6 +300,11 @@ describe("woof run start --host herdr-pane", () => {
       .split("\n")
       .findLast((line) => line.startsWith("{"));
     expect(JSON.parse(hostStdout ?? "null")).toEqual(outcome);
+    // The caller's wait returns the same result (plan §3.9 step 5).
+    const waited = woofIn(ws, ["status", runDir, "--wait", "--poll-ms", "50"]);
+    expect(waited.status, waited.stdout + waited.stderr).toBe(0);
+    expect(waited.json?.["result"]).toEqual(outcome["result"]);
+    expect(waited.json?.["status"]["liveness"]).toMatchObject({ owner: "exited" });
 
     const derived = runNode(
       `const { readSnapshot } = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
@@ -366,12 +371,48 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     ] as number;
     process.kill(pid, "SIGKILL");
     await waitFor(() => show(ws, runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
+    const waitedLost = woofIn(ws, [
+      "status",
+      runDir,
+      "--wait",
+      "--poll-ms",
+      "50",
+      "--timeout-ms",
+      "15000",
+    ]);
+    expect(waitedLost.status, waitedLost.stdout).toBe(8);
+    expect(waitedLost.json?.["status"]["liveness"]).toMatchObject({ owner: "lost" });
     const cancelled = woofIn(ws, ["run", "cancel", runDir]);
     expect(cancelled.status, cancelled.stdout).toBe(0);
     expect(show(ws, runDir)).toMatchObject({
       status: "cancelled",
       liveness: { owner: "lost", host: { state: "hosting", pid } },
     });
+    // A recorded outcome wins over a lost owner.
+    expect(woofIn(ws, ["status", runDir, "--wait"]).status).toBe(6);
+  }, 60_000);
+
+  it("a pane host that claimed the run and then fails to create its runtime reports the rejection and releases", () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const started = Date.now();
+    const result = woofIn(
+      ws,
+      startArgs(ws, runDir).map((arg) =>
+        arg === runtimeModule ? join(repoRoot, "test", "fixtures", "bad-runtime-module.mjs") : arg,
+      ),
+    );
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.json).toMatchObject({ outcome: "rejected" });
+    expect(result.json?.["reason"]).not.toBe("host_unresponsive");
+    // The launcher does not load the runtime module; the pane host claimed first, then failed.
+    expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
+      state: "exited",
+      exitCode: result.status,
+    });
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toEqual(result.json);
+    expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
   }, 60_000);
 
   it("S5: outside Herdr the launcher refuses and names --host foreground", () => {
