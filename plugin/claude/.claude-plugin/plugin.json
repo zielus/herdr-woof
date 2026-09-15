@@ -1,6 +1,6 @@
 {
   "name": "woof",
-  "description": "Woof SDK foundation. Workflow orchestration is not implemented.",
+  "description": "Start and inspect Woof workflow runs in Herdr",
   "version": "0.0.0",
   "author": { "name": "zielu" },
   "repository": "https://github.com/zielus/herdr-woof",

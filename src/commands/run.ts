@@ -81,7 +81,7 @@ const RUNTIME_METHODS = [
   "stop",
 ] as const;
 
-const cliPath = join(dirname(dirname(fileURLToPath(import.meta.url))), "cli.js");
+export const cliPath = join(dirname(dirname(fileURLToPath(import.meta.url))), "cli.js");
 
 export async function runStartCommand(args: string[]): Promise<number> {
   const { values } = parse(
@@ -407,7 +407,7 @@ function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {
   };
 }
 
-async function readWorkflowInput(
+export async function readWorkflowInput(
   inputArg: string,
 ): Promise<{ ok: true; value: unknown } | { ok: false; message: string }> {
   try {
@@ -425,7 +425,7 @@ export function herdrBin(): string {
   return nonEmpty(process.env["WOOF_HERDR_BIN"]) ?? "herdr";
 }
 
-function defaultRunId(workflow: string | undefined): string {
+export function defaultRunId(workflow: string | undefined): string {
   const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const prefix =
     workflow === undefined || workflow === "build-review" ? "br" : workflow.slice(0, 24);

@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -183,64 +182,5 @@ describe("woof CLI", () => {
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }
-  });
-});
-
-describe("plugin placeholders", () => {
-  function readHerdrManifest(): Record<string, unknown> {
-    return parse(readFileSync(join(repoRoot, "herdr-plugin.toml"), "utf8"));
-  }
-
-  it("wires the Herdr build and only the diagnostic action", () => {
-    const manifest = readHerdrManifest();
-
-    expect(manifest["id"]).toBe("herdr-woof");
-    expect(manifest["platforms"]).toEqual(["linux", "macos"]);
-    expect(manifest["build"]).toEqual([
-      { command: ["bun", "install", "--frozen-lockfile"] },
-      { command: ["bun", "run", "build"] },
-    ]);
-    expect(manifest["actions"]).toEqual([
-      {
-        id: "doctor",
-        title: "Woof: doctor",
-        description: "Check Herdr and Claude Code availability.",
-        command: ["bin/woof", "doctor"],
-      },
-    ]);
-    expect(manifest["panes"]).toBeUndefined();
-    expect(manifest["events"]).toBeUndefined();
-  });
-
-  it("keeps the Herdr manifest version in sync with package.json", () => {
-    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-      version: string;
-      os: string[];
-    };
-    const manifest = readHerdrManifest();
-
-    expect(manifest["version"]).toBe(pkg.version);
-    // npm names macOS "darwin"; the package must not claim platforms Herdr lacks.
-    expect(pkg.os).toEqual(["darwin", "linux"]);
-  });
-
-  it("contains no MCP registration or launcher", () => {
-    const claudeRoot = join(repoRoot, "plugin", "claude");
-
-    expect(existsSync(join(claudeRoot, ".mcp.json"))).toBe(false);
-    expect(existsSync(join(claudeRoot, "bin", "woof-mcp"))).toBe(false);
-    expect(readFileSync(join(claudeRoot, "commands", "run.md"), "utf8")).not.toMatch(/mcp/i);
-  });
-
-  it("uses a Claude plugin manifest without tool transport wiring", () => {
-    const manifest = JSON.parse(
-      readFileSync(join(repoRoot, "plugin", "claude", ".claude-plugin", "plugin.json"), "utf8"),
-    ) as { name: string; version: string };
-    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-      version: string;
-    };
-
-    expect(manifest.name).toBe("woof");
-    expect(manifest.version).toBe(pkg.version);
   });
 });

@@ -6,6 +6,7 @@ import { UsageError, parse, readStdin, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { eventsCommand } from "./commands/events.js";
+import { herdrCommand } from "./commands/herdr.js";
 import {
   RUN_BUILD_REVIEW_USAGE,
   RUN_HOST_USAGE,
@@ -84,6 +85,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       return runsCommand(args);
     case "events":
       return eventsCommand(args);
+    case "herdr":
+      return herdrCommand(args);
     case "submit":
       return submitCommand(args);
     case "attempt":
@@ -130,6 +133,11 @@ function printHelp(): void {
   console.log("  run cancel        Cancel a run recorded in a run directory");
   console.log("  run build-review  Run the build-review workflow in this process (compatibility)");
   console.log("  run host          Host a launched run in this process (internal)");
+  console.log("");
+  console.log("Herdr plugin actions (unstable; project from HERDR_PLUGIN_CONTEXT_JSON):");
+  console.log("  herdr status      Notify the focused project's active runs");
+  console.log("  herdr start       Start a run with the project's .woof/start.json input");
+  console.log("  herdr cancel      Cancel the focused project's single active run");
 }
 
 async function runCancelCommand(args: string[]): Promise<number> {
