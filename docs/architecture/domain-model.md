@@ -466,21 +466,54 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
   run and drives the workflow to the end, writing `<runDir>/outcome.json`
   (mode 0444, the same line as its stdout, and, for a pane host, `launch:
 {sha256}` — the SHA-256 of the exact `launch.json` bytes it served) before
-  releasing the claim. The launcher returns once the host has claimed and
-  opened the run, or has written a rejection **bound to this launch**
-  (`outcome.json.launch.sha256` equals the digest of the `launch.json` the
-  launcher itself wrote — any other `outcome.json`, stale or from a
-  different launch entirely, is ignored and the launcher keeps waiting for
-  the run to open, the host's claim, or the timeout), within
-  `hostStartTimeoutMs` (default 30 000 ms); otherwise `abandonHost` claims
-  the file itself (`state:"abandoned"`) so a late host cannot start an
-  unobserved run. `--host foreground` and `woof run
-build-review` claim and run the same host code in this process instead of
-  a pane (a foreground host has no `launch` field: nothing else could ever
-  read its `outcome.json`). Any entry at `journal.jsonl` (even empty),
-  `host.json`, `host-exit.json`, `launch.json` **or `outcome.json`** in the
-  target run directory makes `run start`/`run build-review` refuse
-  `run_exists` before anything is written.
+  releasing the claim. `--host foreground` and `woof run build-review` claim
+  and run the same host code in this process instead of a pane (a
+  foreground host has no `launch` field: nothing else could ever read its
+  `outcome.json`). Any entry at `journal.jsonl` (even empty), `host.json`,
+  `host-exit.json`, `launch.json` **or `outcome.json`** in the target run
+  directory makes `run start`/`run build-review` refuse `run_exists` before
+  anything is written.
+- **The launcher reports `started` only for the journal this launch's own
+  host opened, and only for a rejection this launch's own host wrote.**
+  Each poll reads `outcome.json` first: one whose `launch.sha256` equals the
+  digest of the `launch.json` the launcher itself wrote is this launch's own
+  outcome (any other `outcome.json` — stale, or from a different launch
+  entirely — is ignored). A rejection there wins over any journal. Otherwise
+  the launcher reads the run directory's journal, but reports `started` only
+  when its `run.opened` carries this launch's own `runId` and, for a
+  built-in workflow, the digest of the exact admitted input the launcher
+  pre-admitted (the same pretty-printed input `openAdmittedRun` records); a
+  discovered workflow, which the launcher never pre-admits, is bound by
+  `runId` alone. A journal that does not match — another process's `openRun`
+  into the same directory, however that happened — ends the launch
+  `run_exists` (exit 2), "\<run-dir\> holds a run that this launch did not
+  open; nothing was started", without naming or otherwise exposing the
+  other run. Only once neither an owning outcome nor a matching journal
+  exists does the launcher fall back to its claim/host-start timeout
+  bookkeeping: `hostStartTimeoutMs` (default 30 000 ms) with no claim seen
+  yet triggers `abandonHost` (`state:"abandoned"`, so a late host cannot
+  start an unobserved run); a claim seen but no matching outcome or journal
+  within a second `hostStartTimeoutMs` is `host_unresponsive` (the host
+  keeps ownership).
+- **A failed claim write removes the partial claim and hands the failure to
+  the launcher at once.** If `claimHost`'s single write to the freshly,
+  exclusively created `host.json` fails, it closes the descriptor and
+  unlinks that file — safe because this process holds the exclusive create
+  and never produced a valid claim in it, so nothing else could have relied
+  on it (a partial claim left behind would otherwise read as `lost` forever
+  and refuse every later host). `claimHost` returns `host_claim_failed`
+  (naming the removal failure too, if the unlink itself fails). `woof run
+host` answers that failure by writing it as a **launch-bound**
+  `outcome.json` (`launch.sha256` of the `launch.json` it read) and exits 3,
+  rather than leaving the launcher to wait out its full timeout with no
+  claim to observe. The launcher reads that outcome at once, closes the run
+  directory as abandoned (the same helper the pane-failure path uses) and
+  exits 3 with the claim error plus the abandonment result. A later `woof
+run host <run-dir>` on that directory is refused `run_host_claimed`
+  ("… already claimed by a run host (abandoned)") — the directory is
+  deliberately closed, like every other launch the launcher reported as
+  failed, never left as an invalid, unowned claim for something else to
+  find.
 - **A pane the launcher itself cannot open or start closes the run
   directory.** When `herdr pane split` fails (a non-zero exit, a spawn
   error, or no pane id in its output) or `herdr pane run` exits non-zero,

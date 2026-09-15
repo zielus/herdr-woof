@@ -423,9 +423,14 @@ events`** and **`woof run show`** are read-only and never take the journal
   probes the Herdr and Claude executables for diagnostics — JSON mode
   spawns the configured Herdr binary with `--version` and `claude
 --version`; human mode runs `herdr status` and `claude --version`
-  (`src/commands/doctor.ts`). Each external probe, in either mode, is
-  bounded at 10 s (`PROBE_TIMEOUT_MS`); a probe that times out is reported
-  as failed rather than hanging the command.
+  (`src/commands/doctor.ts`). Both modes resolve the Herdr executable the
+  same way, through `herdrBin()` (`WOOF_HERDR_BIN`, else `herdr`) — human
+  mode is not a special case that resolves `herdr` from `PATH` on its own,
+  and a configured executable that is missing is reported "herdr status:
+  not found" rather than silently falling back to a different `herdr` on
+  `PATH`. Each external probe, in either mode, is bounded at 10 s
+  (`PROBE_TIMEOUT_MS`); a probe that times out is reported as failed rather
+  than hanging the command.
 - **Metadata is a display-only projection, never a source.** The run host
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a

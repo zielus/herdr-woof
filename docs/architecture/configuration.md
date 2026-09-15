@@ -155,7 +155,14 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   by the existing id-format rule, before it ever reaches a lookup: a role or
   workflow file stemmed `__proto__` is `config_invalid` ("is not a valid
   id"), and `--workflow __proto__` is a CLI usage error (exit 1) for the
-  same reason.
+  same reason. The same own-property guard applies where a run's admitted
+  agents are matched back against `configuration.roles` to build the
+  recorded provenance in `config.json`: an input agent whose role is
+  `constructor` or `toString`, with no such role actually configured,
+  records cleanly as `{source:"input", path:null, sha256:null,
+shadowed:[]}` rather than picking up `Object.prototype`'s own `constructor`/
+  `toString` as a phantom shadowed layer (or throwing, before this was
+  fixed).
 - **Built-in roles and permission visibility.** `builder`/`reviewer` default
   to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
   never adds a permission flag, so an interactive agent with no explicit
