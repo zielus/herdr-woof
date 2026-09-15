@@ -199,14 +199,23 @@ export function parseHostInfo(text: string, mtime: Date): HostInfo | undefined {
   const state = value["state"];
   if (state !== "hosting" && state !== "exited" && state !== "abandoned") return undefined;
   const heartbeatMs = positiveInteger(value["heartbeatMs"]);
-  if (state === "hosting" && heartbeatMs === null) return undefined;
+  const pid = positiveInteger(value["pid"]);
+  const claimedOn = stringOrNull(value["hostname"]);
+  const startedAt = stringOrNull(value["startedAt"]);
+  // A hosting claim carries everything claimHost writes; without a pid or hostname nothing could
+  // tell a dead host from a live one, so such a claim is invalid (lost), never alive.
+  if (
+    state === "hosting" &&
+    (heartbeatMs === null || pid === null || claimedOn === null || startedAt === null)
+  )
+    return undefined;
   return {
     state,
-    pid: positiveInteger(value["pid"]),
-    hostname: stringOrNull(value["hostname"]),
+    pid,
+    hostname: claimedOn,
     paneId: stringOrNull(value["paneId"]),
     workspaceId: stringOrNull(value["workspaceId"]),
-    startedAt: stringOrNull(value["startedAt"]),
+    startedAt,
     heartbeatMs,
     heartbeatAt: Number.isFinite(mtime.getTime()) ? mtime.toISOString() : null,
     exitedAt: stringOrNull(value["exitedAt"]),

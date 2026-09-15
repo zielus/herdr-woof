@@ -700,6 +700,7 @@ describe("host probe rules (p4, pure)", () => {
       state: "hosting",
       pid: 4242,
       hostname: "remote.invalid",
+      startedAt: "2026-09-15T09:59:00.000Z",
       heartbeatMs: 2000,
       ...body,
     });
@@ -711,7 +712,7 @@ describe("host probe rules (p4, pure)", () => {
       hostname: "remote.invalid",
       paneId: "w1:p2",
       workspaceId: null,
-      startedAt: null,
+      startedAt: "2026-09-15T09:59:00.000Z",
       heartbeatMs: 2000,
       heartbeatAt: beat.toISOString(),
       exitedAt: null,
@@ -725,6 +726,15 @@ describe("host probe rules (p4, pure)", () => {
       { schemaVersion: 2 },
       { state: "running" },
       { heartbeatMs: 0 },
+      // PR #6 (probe.ts:210): a hosting claim carries every field claimHost writes.
+      { pid: null },
+      { pid: 0 },
+      { pid: "4242" },
+      { hostname: null },
+      { hostname: "" },
+      { startedAt: null },
+      { startedAt: "" },
+      { heartbeatMs: null },
     ]) {
       expect(parseHostInfo(claim(body), beat), JSON.stringify(body)).toBeUndefined();
     }

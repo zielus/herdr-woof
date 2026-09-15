@@ -756,6 +756,39 @@ console.log(JSON.stringify(probeHost(process.argv[1], JSON.parse(process.argv[2]
     );
   });
 
+  it("PR #6 (probe.ts:210): a hosting claim without pid, hostname, startedAt or heartbeatMs is lost with the problem, never alive", () => {
+    const invalid = {
+      owner: "lost",
+      host: null,
+      problem: "host.json exists but is not a valid run host claim",
+    };
+    for (const body of [
+      { pid: undefined },
+      { pid: null },
+      { pid: 0 },
+      { hostname: undefined },
+      { hostname: "" },
+      { startedAt: undefined },
+      { startedAt: "" },
+      { heartbeatMs: undefined },
+    ]) {
+      const runDir = makeRunDir();
+      openPlannedRun(runDir);
+      // Otherwise a fresh claim of this live process: alive if the missing field were tolerated.
+      writeHost(runDir, body);
+      expect(probe(runDir), JSON.stringify(body)).toEqual(invalid);
+      expect(
+        runSdk<{ snapshot: { liveness: unknown } }>(runDir, SNAPSHOT).snapshot.liveness,
+        JSON.stringify(body),
+      ).toEqual({
+        owner: "lost",
+        runtime: "not_observed",
+        host: null,
+        claimProblem: invalid.problem,
+      });
+    }
+  });
+
   it("projects the probe into readSnapshot liveness", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
