@@ -297,6 +297,45 @@ console.log(JSON.stringify(admitted));`,
     });
   });
 
+  it("PI-002: refuses engine-owned args from a definition's resolveAgents and from a configured role", () => {
+    const { repo, runDir } = repoDir();
+    const fromDefinition = admitWith(
+      join(repoRoot, "test", "fixtures", "workflows", "engine-flag-agent.mjs"),
+      { anything: true },
+      null,
+      runDir,
+      { WOOF_TEST_REPO: repo },
+    );
+    expect(fromDefinition).toMatchObject({
+      ok: false,
+      reason: "role_invalid",
+      details: [
+        {
+          field: "agents.planner.args.1",
+          message: expect.stringContaining("resolveAgents for planner"),
+        },
+      ],
+    });
+    const configured = roles(repo);
+    configured.builder.args = ["--model", "opus"];
+    const fromRole = admitWith(
+      "build-review",
+      { schemaVersion: 1, repo, task },
+      { projectRoot: repo, roles: configured, limits: {} },
+      runDir,
+    );
+    expect(fromRole).toMatchObject({
+      ok: false,
+      reason: "role_invalid",
+      details: [
+        {
+          field: "roles.builder.args.0",
+          message: expect.stringContaining(`${repo}/.woof/roles/builder.json`),
+        },
+      ],
+    });
+  });
+
   it("lets an input agent override the configured role", () => {
     const { repo, runDir } = repoDir();
     const out = admitWith(

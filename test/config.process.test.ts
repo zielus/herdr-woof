@@ -564,6 +564,72 @@ describe("woof config show: configuration matrix", () => {
     expect(plan["plan"]["agents"][1]["args"]).not.toContain("--dangerously-skip-permissions");
   }, 60_000);
 
+  it("PI-002: input agent args that set --model or --add-dir are role_invalid before any run opens", () => {
+    const env = setup();
+    for (const args of [
+      ["--model", "opus"],
+      ["--model=opus"],
+      ["--add-dir", "/tmp"],
+      ["--add-dir=/tmp"],
+    ]) {
+      const out = startForeground(
+        env,
+        baseInput(env, { agents: { builder: { kind: "claude", model: "sonnet", args } } }),
+      );
+      expect(out.status, out.stdout + out.stderr).toBe(2);
+      expect(out.json).toMatchObject({
+        outcome: "rejected",
+        reason: "role_invalid",
+        details: [
+          {
+            field: "agents.builder.args.0",
+            message: expect.stringContaining("set by the workflow input"),
+          },
+        ],
+      });
+      expect(existsSync(join(out.runDir, "journal.jsonl"))).toBe(false);
+    }
+  }, 60_000);
+
+  it("PI-004: a permission bypass set by the input is reported in config.json and on stderr", () => {
+    const env = setup();
+    const out = startForeground(
+      env,
+      baseInput(env, {
+        agents: {
+          builder: { kind: "claude", model: null, args: ["--dangerously-skip-permissions"] },
+        },
+      }),
+    );
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const bypass = (recordedConfig(out)["warnings"] as Json[]).filter(
+      (warning) => warning["code"] === "permission_bypass_configured",
+    );
+    expect(bypass).toEqual([
+      {
+        code: "permission_bypass_configured",
+        message: expect.stringContaining("set by the workflow input"),
+      },
+    ]);
+    expect(out.stderr).toContain("warning permission_bypass_configured");
+  }, 60_000);
+
+  it("PI-004: a role-file bypass that runs is reported once", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ args: ["--dangerously-skip-permissions"] }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const bypass = (recordedConfig(out)["warnings"] as Json[]).filter(
+      (warning) => warning["code"] === "permission_bypass_configured",
+    );
+    expect(bypass).toEqual([
+      { code: "permission_bypass_configured", message: expect.any(String), path },
+    ]);
+  }, 60_000);
+
   it("rejects a --project that is not a directory", () => {
     const env = setup();
     const out = show(env, ["--project", join(env.root, "missing")]);

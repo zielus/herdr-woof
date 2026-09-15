@@ -1,4 +1,5 @@
 import { isId, isPlainObject } from "../contracts/envelope.js";
+import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes } from "../scheduler/launch.js";
 import {
   COUNT_LIMIT_KEYS,
   DURATION_LIMIT_KEYS,
@@ -66,8 +67,6 @@ export const MAX_HOST_START_TIMEOUT_MS = 600_000;
 export const MAX_POLL_MS = 3_600_000;
 const MAX_DESCRIPTION = 500;
 
-/** Launch flags the engine owns: a role that sets them would silently override the resolved values. */
-const ENGINE_FLAGS = ["--model", "--add-dir"];
 const BYPASS_FLAGS: ReadonlySet<string> = new Set([
   "--dangerously-skip-permissions",
   "--allow-dangerously-skip-permissions",
@@ -215,14 +214,13 @@ export function validateRoleFile(
   if (details.length > 0) return invalid(file.path, details);
 
   const argv = (args as string[] | undefined) ?? [];
-  const engineOwned = argv.flatMap((arg, index) =>
-    ENGINE_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)) ? [index] : [],
-  );
+  // A role that sets an engine-owned flag would silently override the resolved values.
+  const engineOwned = engineOwnedArgIndexes(argv);
   if (engineOwned.length > 0) {
     return {
       ok: false,
       reason: "role_invalid",
-      message: `${file.path}: args must not set ${ENGINE_FLAGS.join(" or ")}; use the model field (the engine adds both)`,
+      message: `${file.path}: args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}; use the model field (the engine adds both)`,
       details: engineOwned.map((index) => ({
         field: `${file.path}#/args/${index}`,
         message: `${argv[index]} is set by the engine`,

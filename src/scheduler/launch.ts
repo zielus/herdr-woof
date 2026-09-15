@@ -10,6 +10,16 @@ export type LaunchResult =
 
 export const SUPPORTED_AGENT_KINDS = ["claude"] as const;
 
+/** Launch flags the engine owns: it sets them from the resolved model and the run directory. */
+export const ENGINE_OWNED_FLAGS = ["--model", "--add-dir"] as const;
+
+/** Indexes of caller arguments that set an engine-owned flag, in split or `--flag=value` form. */
+export function engineOwnedArgIndexes(args: readonly string[]): number[] {
+  return args.flatMap((arg, index) =>
+    ENGINE_OWNED_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)) ? [index] : [],
+  );
+}
+
 export function launchArgs(agent: {
   kind: string;
   model: string | null;

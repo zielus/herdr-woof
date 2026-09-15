@@ -14,7 +14,7 @@ import {
 import type { LockOptions } from "../journal/lock.js";
 import { openRun } from "../state/store.js";
 import type { WorkflowDefinition } from "./definition.js";
-import { launchArgs } from "./launch.js";
+import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
 import { revisionOf, type RevisionResult } from "./revision.js";
 
@@ -217,6 +217,23 @@ export async function admitWorkflow<Input>(options: {
       );
     }
     const choice = agent as { kind: string; model: string | null; args?: string[] };
+    // Whatever supplied the agent (input, definition or configuration), the engine owns these flags.
+    const owned = engineOwnedArgIndexes(choice.args ?? []);
+    if (owned.length > 0) {
+      const configured = source.source !== "input";
+      const setBy = configured
+        ? describe(source)
+        : `the workflow input or definition (resolveAgents for ${agentId})`;
+      const message = `agent ${agentId} (role ${role}) args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
+      return reject(
+        "role_invalid",
+        message,
+        owned.map((index) => ({
+          field: configured ? `roles.${role}.args.${index}` : `agents.${agentId}.args.${index}`,
+          message: `${choice.args?.[index] ?? ""} is set by the engine (set by ${setBy})`,
+        })),
+      );
+    }
     const launch = launchArgs({
       kind: choice.kind,
       model: choice.model,
