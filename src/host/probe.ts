@@ -12,11 +12,12 @@ import { join } from "node:path";
  *
  * No claim file and no marker reads as unhosted. Anything else that is not a
  * valid claim with, at most, its own marker (a torn write by a killed host, a
- * FIFO, a symlink, a marker without a claim, an invalid marker, a marker for
- * another pid or next to a claim that is not hosting) is read again after a
- * short delay where it could still be mid-write, and then fails closed: the
- * owner is `lost` with `host: null` and the problem, never `unhosted` or
- * `exited`.
+ * FIFO, a symlink, a marker without a claim, an invalid marker, a marker next
+ * to a claim that is not hosting) is read again after a short delay where it
+ * could still be mid-write, and then fails closed: the owner is `lost` with
+ * `host: null` and the problem, never `unhosted` or `exited`. A hosting claim
+ * next to another pid's marker keeps its own liveness (`alive` while its host
+ * lives, otherwise `lost`, never `exited`) and carries the problem.
  */
 
 export const HOST_FILE = "host.json";
@@ -56,12 +57,19 @@ export interface ProbeOptions {
 
 /** What a run directory's claim path holds. */
 export type HostClaim =
-  { kind: "none" } | { kind: "invalid"; problem: string } | { kind: "valid"; host: HostInfo };
+  | { kind: "none" }
+  | { kind: "invalid"; problem: string }
+  /** `problem`: a valid hosting claim next to an exit marker that is not its own. */
+  | { kind: "valid"; host: HostInfo; problem?: string };
 
 export interface HostProbe {
   owner: HostOwner;
   host: HostInfo | null;
-  /** Set when a claim path exists but holds no valid claim (the owner is then `lost`). */
+  /**
+   * Set when the claim path holds no valid claim (owner `lost`, host null), or when a
+   * valid hosting claim sits next to another pid's exit marker (the claim's own
+   * liveness decides between `alive` and `lost`; never `exited`).
+   */
   problem?: string;
 }
 
@@ -115,10 +123,15 @@ function readClaimOnce(runDir: string): { claim: HostClaim; retry: boolean } {
       false,
     );
   if (exit.pid !== host.pid) {
-    return invalid(
-      `${HOST_EXIT_FILE} records pid ${exit.pid}, but ${HOST_FILE} was claimed by pid ${host.pid ?? "none"}`,
-      false,
-    );
+    // Another pid's marker proves nothing about this host: its own claim decides whether it lives.
+    return {
+      claim: {
+        kind: "valid",
+        host,
+        problem: `${HOST_EXIT_FILE} records pid ${exit.pid}, but ${HOST_FILE} was claimed by pid ${host.pid ?? "none"}`,
+      },
+      retry: false,
+    };
   }
   return {
     claim: {
@@ -231,7 +244,9 @@ export function probeHost(runDir: string, options: ProbeOptions = {}): HostProbe
   const claim = readHostClaim(runDir, options);
   if (claim.kind === "none") return { owner: "unhosted", host: null };
   if (claim.kind === "invalid") return { owner: "lost", host: null, problem: claim.problem };
-  return { owner: ownerOf(claim.host, options), host: claim.host };
+  const owner = ownerOf(claim.host, options);
+  if (claim.problem === undefined) return { owner, host: claim.host };
+  return { owner: owner === "alive" ? "alive" : "lost", host: claim.host, problem: claim.problem };
 }
 
 /** The owner state of a parsed claim (pure except for the same-host pid check). */

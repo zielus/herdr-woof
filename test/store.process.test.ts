@@ -715,12 +715,24 @@ console.log(JSON.stringify(probeHost(process.argv[1], JSON.parse(process.argv[2]
     marker(alone);
     expect(probe(alone)).toEqual(lost("host-exit.json exists without a host.json claim"));
 
+    // Another pid's marker never makes a claim exited; the claim's own liveness decides.
+    const mismatch = `host-exit.json records pid 1, but host.json was claimed by pid ${process.pid}`;
     const foreign = makeRunDir();
     writeHost(foreign, {});
     marker(foreign, { pid: 1, exitedAt: "2000-01-01T00:00:00.000Z", exitCode: 99 });
-    expect(probe(foreign)).toEqual(
-      lost(`host-exit.json records pid 1, but host.json was claimed by pid ${process.pid}`),
-    );
+    expect(probe(foreign)).toMatchObject({
+      owner: "alive",
+      host: { state: "hosting", pid: process.pid, exitCode: null },
+      problem: mismatch,
+    });
+    writeHost(foreign, {}, 6000);
+    for (const options of [{}, { terminal: true }]) {
+      expect(probe(foreign, options), JSON.stringify(options)).toMatchObject({
+        owner: "lost",
+        host: { state: "hosting", pid: process.pid },
+        problem: mismatch,
+      });
+    }
 
     for (const body of [{ pid: undefined }, { pid: 0 }, { pid: "1" }, { exitCode: "0" }]) {
       const invalid = makeRunDir();

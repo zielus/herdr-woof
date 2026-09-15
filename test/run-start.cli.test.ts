@@ -481,7 +481,7 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(join(runDir, "outcome.json"))).toBe(false);
   }, 60_000);
 
-  it("PI-102: a foreign exit marker during a live run reads lost with the claim problem, never exited, and survives the host's release", async () => {
+  it("PI-102: a foreign exit marker during a live run reads alive with the claim problem, never exited, and lost once the host is gone", async () => {
     const ws = workspace();
     const runDir = join(ws.root, "run");
     const started = woofIn(ws, withRuntime(startArgs(ws, runDir), slowStopModule), {
@@ -507,7 +507,11 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     const running = woofIn(ws, ["status", runDir]).json?.["status"];
     expect(processAlive(pid)).toBe(true);
     expect(running["status"]).toBe("running");
-    expect(running["liveness"]).toEqual({ owner: "lost", host: null, claimProblem: problem });
+    expect(running["liveness"]).toMatchObject({
+      owner: "alive",
+      host: { state: "hosting", pid, exitCode: null },
+      claimProblem: problem,
+    });
 
     process.kill(pid, "SIGINT");
     await delay(300);
@@ -516,11 +520,11 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
       reason: "host_interrupted",
     });
-    // The host could not create its own marker: the foreign one stays and still fails closed.
+    // The host could not create its own marker: the foreign one stays, and the gone host is lost.
     expect(readFileSync(join(runDir, "host-exit.json"), "utf8")).toBe(forged);
-    expect(woofIn(ws, ["status", runDir]).json?.["status"]["liveness"]).toEqual({
+    expect(woofIn(ws, ["status", runDir]).json?.["status"]["liveness"]).toMatchObject({
       owner: "lost",
-      host: null,
+      host: { state: "hosting", pid },
       claimProblem: problem,
     });
   }, 60_000);
