@@ -110,19 +110,19 @@ export function recordConfiguration(
       };
     }
   }
-  const warnings: ConfigWarning[] = [...configuration.warnings];
-  // A bypass is reported for the agents that actually run, after the input replaced any role;
-  // a role file already warned about keeps its one warning.
+  // A run reports a bypass only for the agents that actually run: a role's own warning is dropped
+  // (the role may be unused, or replaced by an input agent), and each role file is reported once.
+  const warnings: ConfigWarning[] = configuration.warnings.filter(
+    (warning) => warning.code !== "permission_bypass_configured",
+  );
+  const reported = new Set<string>();
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
     if (!configuresPermissionBypass(agent.args)) continue;
     const path = agent.source === "input" ? null : agent.path;
-    if (
-      path !== null &&
-      warnings.some(
-        (warning) => warning.code === "permission_bypass_configured" && warning.path === path,
-      )
-    )
-      continue;
+    if (path !== null) {
+      if (reported.has(path)) continue;
+      reported.add(path);
+    }
     const setBy =
       agent.source === "input"
         ? "the workflow input"

@@ -630,6 +630,42 @@ describe("woof config show: configuration matrix", () => {
     ]);
   }, 60_000);
 
+  it("PI-103: a role-file bypass an input agent replaces is not reported for the run; an input bypass over it is reported once", () => {
+    const env = setup();
+    writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ args: ["--dangerously-skip-permissions"] }),
+    );
+    const bypassWarnings = (out: { runDir: string }) =>
+      (recordedConfig(out)["warnings"] as Json[]).filter(
+        (warning) => warning["code"] === "permission_bypass_configured",
+      );
+    const safe = startForeground(
+      env,
+      baseInput(env, { agents: { builder: { kind: "claude", model: null, args: [] } } }),
+    );
+    expect(safe.status, safe.stdout + safe.stderr).toBe(0);
+    expect(bypassWarnings(safe)).toEqual([]);
+    expect(safe.stderr).not.toContain("permission_bypass_configured");
+
+    const unsafe = startForeground(
+      env,
+      baseInput(env, {
+        agents: {
+          builder: { kind: "claude", model: null, args: ["--dangerously-skip-permissions"] },
+        },
+      }),
+    );
+    expect(unsafe.status, unsafe.stdout + unsafe.stderr).toBe(0);
+    expect(bypassWarnings(unsafe)).toEqual([
+      {
+        code: "permission_bypass_configured",
+        message: expect.stringContaining("set by the workflow input"),
+      },
+    ]);
+    expect(unsafe.stderr.split("warning permission_bypass_configured")).toHaveLength(2);
+  }, 60_000);
+
   it("rejects a --project that is not a directory", () => {
     const env = setup();
     const out = show(env, ["--project", join(env.root, "missing")]);
