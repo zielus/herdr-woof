@@ -128,9 +128,11 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   "configuration"?}` (exit 2, with a partial configuration once the roots
   resolved). It never imports a workflow module and takes no journal lock.
 - **Refusals.** `config_invalid` (unknown key, wrong type, unreadable/
-  oversized file), `config_conflict` (two files with one stem in one scope,
-  e.g. `build-review.ts` and `.mjs`, or a definition whose `name` differs from
-  its file stem), `setting_scope_invalid` (`runsDir` in a project file),
+  oversized file, or — decided when the host loads a discovered workflow's
+  module — a definition whose `name` differs from its file stem),
+  `config_conflict` (two files with one stem in one scope, e.g.
+  `build-review.ts` and `.mjs`), `setting_scope_invalid` (`runsDir` in a
+  project file),
   `role_invalid` (a role's `args` sets an engine-owned flag), `role_unresolved`
   (admission only: no layer resolves a role the workflow uses),
   `project_mismatch` (admission only: the input's repository is not the

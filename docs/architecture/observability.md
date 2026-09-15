@@ -372,9 +372,15 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   its first real consumer). Live evidence on a completed build-review run:
   `maxProjectionMs` 3.45 ms against a 250 ms poll — about 1.4%, well under
   the 10% C4 threshold (`docs/research/product-integration-live-2.log`).
-- **`woof config show`** and **`woof doctor [--json]`** are read-only and
-  contact neither the journal nor Herdr; see
-  [configuration](configuration.md#implemented-now-p4).
+- **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
+events`** and **`woof run show`** are read-only and never take the journal
+  lock or contact Herdr; see
+  [configuration](configuration.md#implemented-now-p4). **`woof doctor
+[--json]`** is not part of that guarantee: it is non-mutating, but it
+  probes the Herdr and Claude executables for diagnostics — JSON mode
+  spawns the configured Herdr binary with `--version` and `claude
+--version`; human mode runs `herdr status` and `claude --version`
+  (`src/commands/doctor.ts`).
 - **Metadata is a display-only projection, never a source.** The run host
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a

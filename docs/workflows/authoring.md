@@ -185,8 +185,9 @@ resolve,record}.ts`, `src/scheduler/{admission,definition}.ts`.
   `build-review`'s own `resolveAgents` now returns only the roles present in
   its input, so an input that omits `agents` entirely resolves purely from
   configuration.
-- **An optional `WorkflowDefinition.limitDefaults: Limits`.** When a
-  definition declares it, admission composes each `Limits` key as
+- **An optional `WorkflowDefinition.limitDefaults?: Partial<Limits>`.** A
+  definition may supply only selected fallback keys. When present, admission
+  composes each `Limits` key it covers as
   `resolveLimits(input)[key] ?? project[key] ?? user[key] ??
 limitDefaults[key]`; without it (an external p3 definition with no
   `limitDefaults`), the definition's own `resolveLimits(input)` result is

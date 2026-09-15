@@ -443,18 +443,30 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
 `src/config/record.ts`.
 
 - **`woof run start` hosts one scheduler process per run in a Herdr pane
-  (D1).** The caller resolves configuration and pre-admits the input, writes
-  `<runDir>/launch.json` (exclusive, mode 0444) with the raw input and flags,
-  splits a sibling pane (`herdr pane split --current --direction right --cwd
-<project root> --no-focus`, or `--split-from <pane-id>` for the Herdr
-  `start` action, which has no pane of its own) and types `woof run host
-<run-dir>` into it. `woof run host` claims the run exclusively
-  (`claimHost`, `host.json`), re-validates and re-admits the launch request
-  authoritatively, records the resolved configuration, opens the run and
-  drives the workflow to the end, writing `<runDir>/outcome.json` (mode 0444,
-  the same line as its stdout) before releasing the claim. The launcher
-  returns once the host has claimed and opened the run, or has written a
-  rejection, within `hostStartTimeoutMs` (default 30 000 ms); otherwise
+  (D1).** The caller resolves configuration and **pre-admits the input only
+  when the resolved workflow is built-in**; a discovered project/user
+  workflow is neither loaded nor admitted by the launcher (loading it twice,
+  once in the launcher and once in the host, would run a module with
+  top-level side effects twice — see
+  [workflow authoring](../workflows/authoring.md#implemented-now-p4)). Either
+  way the launcher writes `<runDir>/launch.json` (exclusive, mode 0444) with
+  the raw input and flags, splits a sibling pane (`herdr pane split --current
+--direction right --cwd <project root> --no-focus`, or `--split-from
+<pane-id>` for the Herdr `start` action, which has no pane of its own) and
+  types `woof run host <run-dir>` into it. `woof run host` claims the run
+  exclusively (`claimHost`, `host.json`), loads the definition (once, in this
+  process) and re-admits the launch request authoritatively — for a
+  discovered workflow this is the **only** admission it gets, so its loader
+  and definition-dependent refusals (`definition_not_found`,
+  `definition_syntax_unsupported`, `definition_load_failed`,
+  `role_unresolved`, and any other admission reason that depends on the
+  loaded definition) are decided in the pane the launcher already opened,
+  reported through `outcome.json`, and surface to the caller only after that
+  pane exists. The host then records the resolved configuration, opens the
+  run and drives the workflow to the end, writing `<runDir>/outcome.json`
+  (mode 0444, the same line as its stdout) before releasing the claim. The
+  launcher returns once the host has claimed and opened the run, or has
+  written a rejection, within `hostStartTimeoutMs` (default 30 000 ms); otherwise
   `abandonHost` claims the file itself (`state:"abandoned"`) so a late host
   cannot start an unobserved run. `--host foreground` and `woof run
 build-review` claim and run the same host code in this process instead of
@@ -481,16 +493,26 @@ start`/`run build-review` refuse `run_exists` before anything is written.
   omits from `configuration.roles[role]` (else `role_unresolved`), and
   composes each `Limits` key as input → project → user → the definition's own
   `limitDefaults[key]` when present. `openAdmittedRun` — exported from the
-  SDK, so a caller that admits a run always opens it with the validated input
-  and resolved configuration together — writes `config.json` (mode 0444)
-  alongside `input.json`; `run.opened` gains an optional `config: {sha256,
-bytes}`, and the snapshot's `config` field mirrors it. Nothing after
-  admission reads `.woof/` again.
+  SDK, so a caller that admits a run always couples the admitted plan with
+  the validated input it opens with — takes an _optional_ `configuration`;
+  when one is supplied it is recorded atomically with the open, as
+  `config.json` (mode 0444) alongside `input.json`, and `run.opened` gains
+  `config: {sha256, bytes}` (the snapshot's `config` field mirrors it). A
+  caller that opens a run with no `configuration` — preserving p3 callers —
+  gets neither file nor field: `run.opened.config` and the snapshot's
+  `config` stay absent/`null`. Nothing after admission reads
+  `.woof/` again.
 - **New `AdmissionReason` values (p4):** `config_invalid`, `config_conflict`,
   `setting_scope_invalid`, `role_invalid`, `role_unresolved`,
   `project_mismatch`, `workflow_not_found`, plus the loader's
   `definition_not_found|definition_syntax_unsupported|definition_load_failed`
-  — all exit 2, all before any pane opens.
+  — all exit 2. The reasons decided by configuration resolution and built-in
+  admission (`config_invalid`, `config_conflict`, `setting_scope_invalid`,
+  `role_invalid`, `workflow_not_found`, and `role_unresolved`/
+  `project_mismatch`/`plan_invalid` etc. for a **built-in** workflow) are
+  refused before any pane opens. For a discovered workflow they, and the
+  loader reasons, are decided authoritatively only once the host pane already
+  exists — see the launcher/host split above.
 - **Herdr plugin actions drive the same launcher (`src/commands/herdr.ts`).**
   `woof herdr start` resolves the target project from
   `HERDR_PLUGIN_CONTEXT_JSON` (focused pane directory → workspace directory
