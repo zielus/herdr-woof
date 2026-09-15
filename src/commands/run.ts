@@ -13,6 +13,7 @@ import {
   OUTCOME_FILE,
   hostWorkflow,
   type HostWorkflowOptions,
+  type HostWorkflowResult,
   type RuntimeFactory,
 } from "../host/run.js";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
@@ -282,53 +283,84 @@ export async function runHostCommand(args: string[]): Promise<number> {
     throw new UsageError(`expected exactly one <run-dir>\n\n${RUN_HOST_USAGE}`);
   const runDir = resolve(target);
   const paneId = nonEmpty(process.env["HERDR_PANE_ID"]) ?? null;
-  const claim = claimHost(runDir, {
-    paneId,
-    workspaceId: nonEmpty(process.env["HERDR_WORKSPACE_ID"]) ?? null,
-  });
-  if (!claim.ok) {
-    console.log(
-      JSON.stringify({
-        outcome: "rejected",
-        reason: claim.reason,
-        message: claim.message,
-        details: [],
-      }),
-    );
-    return claim.reason === "run_host_claimed" ? 2 : 3;
-  }
-  const request = readLaunchRequest(runDir);
-  if (typeof request === "string") {
-    const output = { outcome: "rejected", reason: "launch_invalid", message: request, details: [] };
-    try {
-      if (!entryExists(join(runDir, OUTCOME_FILE)))
-        writeExclusiveFile(
-          join(runDir, OUTCOME_FILE),
-          Buffer.from(`${JSON.stringify(output)}\n`),
-          0o444,
-        );
-    } finally {
-      claim.release(3);
+  // Between the claim and hostWorkflow installing its own handlers, a SIGINT/SIGTERM must not end the
+  // process by its default action with the claim still hosting. These listeners replace that default;
+  // the handoff below is synchronous, so a signal that arrives meanwhile is emitted only after
+  // hostWorkflow has installed its handlers, which finalize host_interrupted (PR #6).
+  process.on("SIGINT", deferSignal);
+  process.on("SIGTERM", deferSignal);
+  let hosted: Promise<HostWorkflowResult>;
+  try {
+    const claim = claimHost(runDir, {
+      paneId,
+      workspaceId: nonEmpty(process.env["HERDR_WORKSPACE_ID"]) ?? null,
+    });
+    if (!claim.ok) {
+      console.log(
+        JSON.stringify({
+          outcome: "rejected",
+          reason: claim.reason,
+          message: claim.message,
+          details: [],
+        }),
+      );
+      return claim.reason === "run_host_claimed" ? 2 : 3;
     }
-    console.log(JSON.stringify(output));
-    return 3;
+    pauseAfterClaim();
+    const request = readLaunchRequest(runDir);
+    if (typeof request === "string") {
+      const output = {
+        outcome: "rejected",
+        reason: "launch_invalid",
+        message: request,
+        details: [],
+      };
+      try {
+        if (!entryExists(join(runDir, OUTCOME_FILE)))
+          writeExclusiveFile(
+            join(runDir, OUTCOME_FILE),
+            Buffer.from(`${JSON.stringify(output)}\n`),
+            0o444,
+          );
+      } finally {
+        claim.release(3);
+      }
+      console.log(JSON.stringify(output));
+      return 3;
+    }
+    const { runtimeModule, ...flags } = request.flags;
+    hosted = hostWorkflow({
+      ...baseHostOptions(runtimeModule),
+      runDir,
+      runId: request.runId,
+      ...(request.workflow !== null ? { workflow: request.workflow } : {}),
+      projectDir: request.projectDir,
+      input: request.input,
+      flags,
+      claimBeforeOpen: false,
+      release: claim.release,
+      writeOutcome: true,
+      paneId,
+    });
+  } finally {
+    process.off("SIGINT", deferSignal);
+    process.off("SIGTERM", deferSignal);
   }
-  const { runtimeModule, ...flags } = request.flags;
-  const result = await hostWorkflow({
-    ...baseHostOptions(runtimeModule),
-    runDir,
-    runId: request.runId,
-    ...(request.workflow !== null ? { workflow: request.workflow } : {}),
-    projectDir: request.projectDir,
-    input: request.input,
-    flags,
-    claimBeforeOpen: false,
-    release: claim.release,
-    writeOutcome: true,
-    paneId,
-  });
+  const result = await hosted;
   console.log(JSON.stringify(result.output));
   return result.code;
+}
+
+/** Replaces the default SIGINT/SIGTERM termination during the claim handoff; hostWorkflow handles the signal. */
+function deferSignal(): void {}
+
+/** Unstable test seam: `woof run host` waits this many milliseconds (1–10 000), synchronously, right after its claim. */
+const CLAIM_HANDOFF_ENV = "WOOF_TEST_CLAIM_HANDOFF_MS";
+
+function pauseAfterClaim(): void {
+  const raw = process.env[CLAIM_HANDOFF_ENV];
+  if (raw === undefined || !/^[1-9][0-9]{0,4}$/.test(raw)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(Number(raw), 10_000));
 }
 
 async function foreground(options: {

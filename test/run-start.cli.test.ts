@@ -369,6 +369,43 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(runDir)).toBe(false);
   });
 
+  it("PR #6 (run.ts:277): a signal between the pane host's claim and its own handlers still finalizes host_interrupted", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    // The unstable test seam holds the host, synchronously, right after its claim: the signal lands
+    // in the window before hostWorkflow installs its handlers.
+    const launcher = spawn(
+      "node",
+      [cliPath, ...startArgs(ws, runDir, ["--host-start-timeout-ms", "10000"])],
+      { cwd: ws.root, env: env(ws, { WOOF_TEST_CLAIM_HANDOFF_MS: "3000" }) },
+    );
+    let stdout = "";
+    launcher.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    const launched = new Promise<number | null>((resolve) =>
+      launcher.on("close", (code) => resolve(code)),
+    );
+    await waitFor(() => existsSync(join(runDir, "host.json")), "the host to claim the run");
+    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
+      "pid"
+    ] as number;
+    process.kill(pid, "SIGINT");
+    await waitFor(() => !processAlive(pid), "the host to exit", 15_000);
+    expect(existsSync(join(runDir, "host-exit.json")), "host-exit.json").toBe(true);
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
+      pid,
+      exitCode: 130,
+    });
+    expect(JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8"))).toMatchObject({
+      outcome: "rejected",
+      reason: "host_interrupted",
+    });
+    expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
+    expect(await launched).toBe(3);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1) ?? "null")).toMatchObject({
+      reason: "host_interrupted",
+    });
+  }, 60_000);
+
   it("PR #6 (run.ts:191): a runs directory that is a file or cannot be created is journal_write_failed (exit 3) for both hosts, never a throw", () => {
     const ws = workspace("w9:p2", false);
     const occupied = join(ws.root, "runs-file");
