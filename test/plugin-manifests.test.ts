@@ -193,6 +193,23 @@ describe("Claude Code plugin", () => {
     return end === -1 ? rest : rest.slice(0, end);
   }
 
+  it("PR #6 (run.md:105): the report step covers exit codes 0, 4, 5 and 6 and guards every nullable artifact reference", () => {
+    const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
+    const report = section(text, "## 6. Report");
+    expect(report).toContain("every terminal exit code: 0, 4, 5 and 6");
+    expect(report).toContain("The artifact references may be null.");
+    expect(report).toContain("`artifacts.review` is null unless\n`outcome` is `completed`");
+    expect(report).toContain("only for\na reference that is not null");
+    expect(report).toContain(
+      "Read the accepted\nreview file and summarize its findings only when `artifacts.review` is not\nnull.",
+    );
+    // No unconditional dereference or review read remains.
+    expect(report).not.toMatch(/^Read the accepted review file and summarize its\nfindings\./m);
+    const wait = section(text, "## 5. Wait");
+    expect(wait).toContain("`hostOutcome.reason`");
+    expect(wait).toContain("- 0, 4, 5 or 6: go to step 6.");
+  });
+
   it("PI-005, LV-001, LV-002: run.md always applies the trust gate, states the verify shape and stops after a second rejection", () => {
     const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
     const trust = section(text, "## 3. Folder trust");

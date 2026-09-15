@@ -93,17 +93,27 @@ Run `WOOF status <runDir> --wait --timeout-ms 540000` with a Bash timeout of
   (`startup_blocked` means a trust or permission question in an agent pane).
   Wait again with `--allow-blocked` only after the user says it is resolved or
   asks to keep waiting.
-- 8: report that the run's owner is lost and suggest `woof run cancel <runDir>`.
-  Never cancel unasked.
+- 8: the run's owner is gone without recording an end (lost, or exited after
+  an interruption). Report it, with `hostOutcome.reason` and
+  `hostOutcome.message` when the output has `hostOutcome`, and suggest
+  `woof run cancel <runDir>`. Never cancel unasked.
 - 0, 4, 5 or 6: go to step 6.
 
 ## 6. Report
 
-From `result`, report `outcome`, `reason`, `limit`, `counters.rounds`,
-`artifacts.review.acceptedPath`, `artifacts.completion.acceptedPath` and
-`artifacts.verification.path`. Read the accepted review file and summarize its
-findings. Print the `result` JSON line in a fenced block. Claim success only
-when `outcome` is `completed`.
+This step applies to every terminal exit code: 0, 4, 5 and 6. From `result`,
+report `outcome`, `reason`, `limit` and `counters.rounds`.
+
+The artifact references may be null. `artifacts.review` is null unless
+`outcome` is `completed`; `artifacts.completion` and `artifacts.verification`
+can be null for any outcome. Report `artifacts.review.acceptedPath`,
+`artifacts.completion.acceptedPath` and `artifacts.verification.path` only for
+a reference that is not null, and say "none" for a null one. Read the accepted
+review file and summarize its findings only when `artifacts.review` is not
+null.
+
+Print the `result` JSON line in a fenced block. Claim success only when
+`outcome` is `completed`.
 
 ## Never
 
