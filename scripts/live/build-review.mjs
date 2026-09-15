@@ -4,6 +4,12 @@
 //
 //   node scripts/live/build-review.mjs --probe
 //   node scripts/live/build-review.mjs 2>&1 | tee docs/research/build-review-live.log
+//   node scripts/live/build-review.mjs --fixture-only [--with-roles]
+//
+// --fixture-only re-initializes the fixture repository, prints its path and
+// exits (p4 live check). --with-roles also writes `.woof/roles/builder.json`
+// and `reviewer.json` (claude, sonnet, `--permission-mode auto`) before the
+// fixture's single commit, so the tree is clean when a run starts.
 //
 // It rebuilds the fixture repository at one fixed path, writes the input, runs
 // the real `woof run build-review` CLI with two Claude agents, samples `woof run
@@ -33,6 +39,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { DEFAULT_GRACE_MS, observerDisagreements, workingWhileActive } from "./lib/observer.mjs";
+
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
 if (!existsSync(cliPath)) {
@@ -44,6 +52,8 @@ const { createHerdrCliRuntime, deriveRunResult, readEvents, readJournal } = awai
 const { revisionOf } = await load("scheduler/revision.js");
 
 const probe = process.argv.includes("--probe");
+const fixtureOnly = process.argv.includes("--fixture-only");
+const withRoles = process.argv.includes("--with-roles");
 const phaseDir = join(homedir(), ".herdr-dev", "runs", "herdr-woof", "p3-build-review-loop");
 const probeLog = join(phaseDir, "live-probe.log");
 // The one fixture path the operator trusts in Claude Code; see the header.
@@ -103,7 +113,10 @@ log(`git --version: ${sh("git", ["--version"]).stdout}`, "git");
 log(`woof commit: ${sh("git", ["-C", woofRoot, "rev-parse", "HEAD"]).stdout}`, "commit");
 log(`woof worktree status --porcelain:\n${worktreeStatusBefore || "(clean)"}`);
 log(`precondition: ${trustPrecondition}`);
-if (process.env["HERDR_ENV"] !== "1" || (process.env["HERDR_PANE_ID"] ?? "") === "") {
+if (
+  !fixtureOnly &&
+  (process.env["HERDR_ENV"] !== "1" || (process.env["HERDR_PANE_ID"] ?? "") === "")
+) {
   log("precondition failed: run this inside a Herdr pane (HERDR_ENV=1, HERDR_PANE_ID)");
   process.exit(1);
 }
@@ -120,7 +133,7 @@ const requiredLine = `// woof-acceptance: ${nonce}`;
 // Re-initialize the fixed fixture repository from scratch; the run directory is per stamp, outside it.
 rmSync(repo, { recursive: true, force: true });
 mkdirSync(join(repo, "src"), { recursive: true });
-mkdirSync(live, { recursive: true });
+if (!fixtureOnly) mkdirSync(live, { recursive: true });
 const gitAs = (...args) =>
   sh(
     "git",
@@ -147,8 +160,26 @@ writeFileSync(
   'export function slugify(text) {\n  throw new Error("not implemented");\n}\n',
 );
 writeFileSync(join(repo, "README.md"), "Fixture for Woof live acceptance.\n");
+if (withRoles) {
+  mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+  const role = {
+    schemaVersion: 1,
+    kind: "claude",
+    model: "sonnet",
+    args: ["--permission-mode", "auto"],
+  };
+  for (const name of ["builder", "reviewer"]) {
+    writeFileSync(join(repo, ".woof", "roles", `${name}.json`), `${JSON.stringify(role)}\n`);
+  }
+}
 gitAs("add", "-A");
 gitAs("commit", "-q", "-m", "fixture");
+if (fixtureOnly) {
+  const status = sh("git", ["-C", repo, "status", "--porcelain"]).stdout;
+  log(`fixture status --porcelain: ${status || "(clean)"}`);
+  console.log(repo);
+  process.exit(status === "" ? 0 : 1);
+}
 
 const agent = { kind: "claude", model: "sonnet", args: ["--permission-mode", "auto"] };
 const input = probe
@@ -555,22 +586,16 @@ if (probe) {
     `status ${snapshot?.status}, altered ${JSON.stringify(snapshot?.integrity?.artifacts?.altered)}`,
   );
 
-  const workingWhileActive = (agentId) =>
-    samples.some(
-      (row) =>
-        row.agents[agentId]?.herdr === "working" && row.agents[agentId]?.activeAttempt !== null,
-    );
-  const disagreement = samples.filter(
-    (row) =>
-      !["completed", "failed", "cancelled", "exhausted"].includes(row.status) &&
-      Object.values(row.agents).some(
-        (value) => value.herdr === "working" && value.activeAttempt === null,
-      ),
-  );
+  // p4 G10: `working` without an open attempt within DEFAULT_GRACE_MS of that agent's
+  // acceptance is the agent finishing its turn; `gone` with an open attempt always disagrees.
+  const disagreement = observerDisagreements(samples, records, { graceMs: DEFAULT_GRACE_MS });
+  for (const item of disagreement) log(`[observer] ${JSON.stringify(item)}`);
   gate(
     10,
-    "observer agreement between Herdr samples and snapshots",
-    workingWhileActive("builder") && workingWhileActive("reviewer") && disagreement.length === 0,
+    `observer agreement between Herdr samples and snapshots (grace ${DEFAULT_GRACE_MS} ms after acceptance)`,
+    workingWhileActive(samples, "builder") &&
+      workingWhileActive(samples, "reviewer") &&
+      disagreement.length === 0,
     `${samples.length} samples, ${disagreement.length} disagreeing`,
   );
 
