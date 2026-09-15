@@ -59,6 +59,13 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
   state: { areas: ["state", "domain", "contracts", "journal"] },
   observe: { areas: ["observe", "state", "journal", "contracts"] },
   submission: { areas: ["submission", "contracts", "journal", "state"] },
+  // p3 (plan D15): the scheduler reads state and runtime, writes through the store and
+  // openAttempt, and re-hashes accepted copies; it never reaches the journal file or observe/.
+  scheduler: {
+    areas: ["scheduler", "domain", "contracts", "state", "runtime"],
+    modules: ["submission/attempt.js", "journal/accepted-copy.js"],
+  },
+  workflows: { areas: ["workflows", "scheduler", "domain", "contracts"] },
 };
 
 describe("module boundaries in dist", () => {
@@ -72,6 +79,8 @@ describe("module boundaries in dist", () => {
       "cli.js",
       "state/reducer.js",
       "runtime/herdr/adapter.js",
+      "scheduler/driver.js",
+      "workflows/build-review.js",
     ]) {
       expect(graph.has(module), module).toBe(true);
     }
@@ -112,6 +121,30 @@ describe("module boundaries in dist", () => {
     expect(reachable("testing.js").has("cli.js")).toBe(false);
     expect(reachable("index.js").has("runtime/scripted.js")).toBe(false);
     expect([...graph].filter(([, imports]) => imports.includes("cli.js"))).toEqual([]);
+  });
+
+  it("lets only the entry points, the scheduler and workflows import scheduler/ and workflows/", () => {
+    const allowed = new Set(["index.js", "cli.js", "scheduler", "workflows"]);
+    const violations = [...graph].flatMap(([from, imports]) =>
+      imports
+        .filter((target) => ["scheduler", "workflows"].includes(area(target)))
+        .filter(() => !allowed.has(from) && !allowed.has(area(from)))
+        .map((target) => `${from} imports ${target}`),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it("names no built-in stage and appends no journal record in dist/scheduler", () => {
+    const found: string[] = [];
+    for (const file of files(join(dist, "scheduler"), ".js")) {
+      const source = readFileSync(file, "utf8");
+      for (const match of source.matchAll(/["'`](build|verify|review|repair)["'`]/g)) {
+        found.push(`${relative(dist, file)}: ${match[0]}`);
+      }
+      if (source.includes("appendRecord")) found.push(`${relative(dist, file)}: appendRecord`);
+    }
+    expect(files(join(dist, "scheduler"), ".js").length).toBeGreaterThan(5);
+    expect(found).toEqual([]);
   });
 
   it("loads the entry points in a real process without running the CLI", () => {

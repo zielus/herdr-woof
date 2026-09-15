@@ -21,7 +21,7 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string } }
 interface Runtime {
   openPane(input: Json): Promise<Result<{ paneId: string }>>;
   startAgent(input: Json): Promise<Result<Handle>>;
-  observe(handle: Handle): Promise<Result<Observation>>;
+  observe(handle: Handle, options?: Json): Promise<Result<Observation>>;
   waitFor(handle: Handle, states: string[], timeoutMs: number): Promise<Result<Observation>>;
   deliver(
     handle: Handle,
@@ -419,6 +419,26 @@ describe("scripted runtime adapter behaviour", () => {
       outcome: "not_delivered",
       error: { code: "not_found" },
     });
+  });
+
+  it("delays observe by observeDelayMs and times out at a shorter observe timeout", async () => {
+    const { runtime, handle } = await started({
+      timeline: [{ status: "idle", stateChangeSeq: 1 }],
+      observeDelayMs: 80,
+    });
+    const began = Date.now();
+    expect(await runtime.observe(handle, { timeoutMs: 10 })).toMatchObject({
+      ok: false,
+      error: { code: "timeout" },
+    });
+    expect(Date.now() - began).toBeLessThan(70);
+    expect(await runtime.observe(handle, { timeoutMs: 1000 })).toMatchObject({ ok: true });
+    expect(await runtime.observe(handle)).toMatchObject({ ok: true });
+    expect(() =>
+      createScriptedRuntime({
+        agents: { x: { timeline: [{ status: "idle" }], observeDelayMs: -1 } },
+      }),
+    ).toThrow(TypeError);
   });
 
   it("reports an unscripted agent as not found", async () => {

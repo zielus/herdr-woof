@@ -35,3 +35,27 @@ All notable changes to this project are documented here. The format follows
   Declared limits are validated and counted, not yet enforced; gate, block
   and delivery-reconciliation records remain design-only (phase 3). No
   version bump (`check:version` stays at 0.0.0).
+- Scheduler and the built-in `build-review` workflow (p3): a workflow
+  definition contract (`WorkflowDefinition`, `validateWorkflowDefinition`)
+  and loader (`loadWorkflowDefinition`) for strip-only TypeScript or
+  compiled `.js`/`.mjs` modules; a pure decision core (`decide`) plus an
+  effectful driver (`runWorkflow`) that dispatches agents, runs engine-owned
+  check gates, records gate decisions, blocks/unblocks on a runtime prompt,
+  reconciles ambiguous deliveries, and enforces every declared limit
+  (`maxAttemptsPerVisit`, `maxVisitsPerStage`, `maxRounds`, the new optional
+  `maxFormatRepairs`, `runTimeoutMs`, `readinessWaitMs`, `blockedWaitMs`,
+  `deliveryTimeoutMs`) by ending the run `exhausted` with the limit's name;
+  four new journal record types (`gate.recorded`, `run.blocked`,
+  `run.unblocked`, `delivery.reconciled`) and their reducer rules, still
+  `schemaVersion: 1`; engine-owned git-tree revision binding so a passing
+  review from an older revision never approves newer work; a bounded
+  format-repair loop distinct from work retries; a persisted, hashed worker
+  request format; downstream re-hashing of accepted artifacts before they
+  are handed to the next agent (closing the p2 C2 requirement); the built-in
+  `build-review` workflow (build → verify → review → repair) with its input
+  schema; and the CLI/SDK surfaces `woof run build-review` and `woof run
+cancel` (`runWorkflow`, `admitWorkflow`, `buildReviewWorkflow`,
+  `deriveRunResult`, `recordGate`, `blockRun`, `unblockRun`,
+  `reconcileDelivery`). Configuration-driven role catalogs, a second
+  built-in workflow, MCP, run hosting, crash resume and parallel scheduling
+  remain out of scope. No version bump (`check:version` stays at 0.0.0).

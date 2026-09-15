@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import {
   isNotDeliveredCode,
   runtimeError,
@@ -5,6 +7,7 @@ import {
   type DeliveryResult,
   type Lifecycle,
   type LifecycleObservation,
+  type ObserveOptions,
   type OpenPaneInput,
   type RuntimeAdapter,
   type RuntimeError,
@@ -43,6 +46,19 @@ export interface HerdrCliRuntime extends RuntimeAdapter {
 }
 
 const FORBIDDEN_SUBCOMMANDS = new Set(["read", "send-keys", "run", "explain"]);
+const START_RETRY_INTERVAL_MS = 1000;
+const START_RETRY_WINDOW_MS = 15_000;
+/** Herdr refuses an `agent start --timeout` of 3000 ms or less. */
+const MIN_START_TIMEOUT_MS = 3001;
+
+/** The same `agent start` argv with its `--timeout` value replaced. */
+export function withStartTimeout(args: string[], timeoutMs: number): string[] {
+  const index = args.indexOf("--timeout");
+  if (index < 0 || index + 1 >= args.length) {
+    throw new TypeError(`agent start argv has no "--timeout <ms>" pair: ${JSON.stringify(args)}`);
+  }
+  return args.map((item, position) => (position === index + 1 ? String(timeoutMs) : item));
+}
 
 /**
  * Runtime adapter over the Herdr CLI (`herdr agent` / `herdr pane` JSON
@@ -83,10 +99,16 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     return parseHerdrOutput(args, exec);
   }
 
-  async function observe(handle: AgentHandle): Promise<RuntimeResult<LifecycleObservation>> {
+  async function observe(
+    handle: AgentHandle,
+    observeOptions: ObserveOptions = {},
+  ): Promise<RuntimeResult<LifecycleObservation>> {
     const bad = invalidName(handle.runtimeName);
     if (bad !== undefined) return { ok: false, error: bad };
-    const got = await run(["agent", "get", handle.runtimeName], commandTimeoutMs);
+    // Both reads share one bound: the supplied timeout, or the command timeout.
+    const deadline = Date.now() + (observeOptions.timeoutMs ?? commandTimeoutMs);
+    const left = () => Math.max(1, deadline - Date.now());
+    const got = await run(["agent", "get", handle.runtimeName], left());
     if (got.ok) {
       const info = parseAgentInfo(got.result["agent"]);
       if (info === undefined)
@@ -97,7 +119,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       };
     }
     if (got.error.runtimeCode !== "agent_not_found") return got;
-    const pane = await run(["pane", "get", handle.paneId], commandTimeoutMs);
+    const pane = await run(["pane", "get", handle.paneId], left());
     if (!pane.ok && pane.error.runtimeCode !== "pane_not_found") return pane;
     return {
       ok: true,
@@ -111,6 +133,43 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         observedAt: now(),
       },
     };
+  }
+
+  /**
+   * A pane this instance just split may not be an available shell yet: Herdr
+   * answers `agent start` with `agent_pane_busy`. Only for such a pane, start is
+   * retried every second for up to 15 s (never beyond the start timeout). Any
+   * other pane or error is returned at once.
+   */
+  async function startWhenShellAvailable(
+    args: string[],
+    input: StartAgentInput,
+  ): Promise<HerdrOutcome> {
+    const startDeadline = Date.now() + input.timeoutMs;
+    const retryDeadline = Date.now() + Math.min(START_RETRY_WINDOW_MS, input.timeoutMs);
+    // A retry must finish (including the kill grace) by the supplied start deadline.
+    const budgetAt = (at: number) => startDeadline - at - graceMs;
+    const retry = async (busy: HerdrOutcome): Promise<HerdrOutcome> => {
+      const at = Date.now() + START_RETRY_INTERVAL_MS;
+      if (at > retryDeadline || budgetAt(at) < MIN_START_TIMEOUT_MS) return busy;
+      await delay(START_RETRY_INTERVAL_MS);
+      const budget = budgetAt(Date.now());
+      if (budget < MIN_START_TIMEOUT_MS) return busy;
+      const retried = await run(withStartTimeout(args, budget), budget);
+      if (retried.ok) return retried;
+      if (retried.error.runtimeCode === "agent_pane_busy") return retry(retried);
+      // A retry that ran out of time does not hide the busy pane that caused it.
+      return retried.error.code === "timeout" ? busy : retried;
+    };
+    const started = await run(args, input.timeoutMs);
+    if (
+      started.ok ||
+      started.error.runtimeCode !== "agent_pane_busy" ||
+      !ownedPanes.has(input.paneId)
+    ) {
+      return started;
+    }
+    return retry(started);
   }
 
   return {
@@ -134,7 +193,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         "--no-focus",
         ...Object.entries(input.env ?? {}).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
       ];
-      const split = await run(args, commandTimeoutMs);
+      const split = await run(args, input.timeoutMs ?? commandTimeoutMs);
       if (!split.ok) return split;
       const pane = split.result["pane"];
       const paneId =
@@ -162,7 +221,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         String(input.timeoutMs),
         ...(input.args !== undefined && input.args.length > 0 ? ["--", ...input.args] : []),
       ];
-      const started = await run(args, input.timeoutMs);
+      const started = await startWhenShellAvailable(args, input);
       if (!started.ok) return started;
       const info = parseAgentInfo(started.result["agent"]);
       if (info === undefined) return protocol(args, "agent start returned no agent");
@@ -219,9 +278,11 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     ): Promise<DeliveryResult> {
       const bad = invalidName(handle.runtimeName);
       if (bad !== undefined) return { outcome: "not_delivered", error: bad };
+      // One deadline bounds the precondition read and the prompt together.
+      const deadline = Date.now() + delivery.timeoutMs;
       // Precondition read: nothing is sent yet, so every failure here is not_delivered.
       // The read and the prompt are not atomic; a human typing in between is not detected.
-      const before = await observe(handle);
+      const before = await observe(handle, { timeoutMs: delivery.timeoutMs });
       if (!before.ok) {
         const error = before.error;
         return {
@@ -262,6 +323,16 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
           ),
         };
       }
+      const left = deadline - Date.now();
+      if (left < 1) {
+        return {
+          outcome: "not_delivered",
+          error: runtimeError(
+            "runtime_unavailable",
+            `no time left within ${delivery.timeoutMs} ms to prompt ${handle.runtimeName}; nothing was sent`,
+          ),
+        };
+      }
       const args = [
         "agent",
         "prompt",
@@ -273,9 +344,9 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         "--until",
         "blocked",
         "--timeout",
-        String(delivery.timeoutMs),
+        String(left),
       ];
-      const prompted = await run(args, delivery.timeoutMs);
+      const prompted = await run(args, left);
       if (!prompted.ok) {
         const error = prompted.error;
         if (

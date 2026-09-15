@@ -7,15 +7,21 @@ import { loadDist, repoRoot } from "../helpers/dist.js";
 import {
   HEX,
   PLAN,
+  REV,
   accepted,
   assigned,
   attempt,
+  blocked,
+  checkGate,
   dispatched,
   duplicate,
+  gate,
   journalOf as buildJournal,
   opened,
+  reconciled,
   rejected,
   terminated,
+  unblocked,
 } from "../helpers/records.js";
 
 type Json = Record<string, unknown>;
@@ -24,6 +30,8 @@ interface AttemptStateJson {
   status: string;
   accepted?: Json;
   rejections: Record<string, number>;
+  rejectionLog: Json[];
+  cause: string;
 }
 interface StateJson {
   runId: string | undefined;
@@ -34,6 +42,9 @@ interface StateJson {
   assignments: Map<string, Json[]>;
   dispatches: Map<string, Json>;
   termination: Json | undefined;
+  gates: Json[];
+  blocks: Array<{ blocked: Json; unblocked?: Json }>;
+  reconciliations: Map<number, Json>;
   counters: Json;
 }
 type ReplayResult =
@@ -98,6 +109,13 @@ describe("p1 journal compatibility", () => {
       rejectionsByReason: { artifact_missing: 1 },
       dispatches: { started: 0, not_delivered: 0, ambiguous: 0 },
       replacementsByAgent: {},
+      rounds: 0,
+      gatesByDecision: { pass: 0, reject: 0 },
+      gatesByGate: {},
+      formatRepairsByVisit: {},
+      workRetriesByVisit: {},
+      blocks: 0,
+      reconciliations: { delivered: 0, abandoned: 0 },
     });
   });
 
@@ -310,6 +328,36 @@ describe("request.dispatched rules", () => {
       );
     }
   });
+  it("accepts exactly one started dispatch for an attempt accepted before its dispatch was recorded", () => {
+    const acceptedFirst = () => [...base(), accepted(4, "build", "builder", null)];
+    const state = expectOk(journalOf(...acceptedFirst(), dispatched("build", "builder")));
+    expect(state.dispatches.get("build/1/1")).toMatchObject({ delivery: "started" });
+    expect(state.attempts.get("build/1/1")?.status).toBe("accepted");
+    expectRefused(
+      journalOf(...acceptedFirst(), dispatched("build", "builder"), dispatched("build", "builder")),
+      "dispatch_exists",
+    );
+    for (const [delivery, reason] of [
+      ["ambiguous", "stalled"],
+      ["not_delivered", "agent_busy"],
+    ] as const) {
+      expectRefused(
+        journalOf(...acceptedFirst(), dispatched("build", "builder", 1, 1, delivery, reason)),
+        "attempt_unknown",
+      );
+    }
+  });
+  it("refuses a started dispatch for an accepted attempt once a newer attempt of the stage opened", () => {
+    expectRefused(
+      journalOf(
+        ...base(),
+        accepted(4, "build", "builder", null),
+        attempt("build", "builder", 1, 2),
+        dispatched("build", "builder"),
+      ),
+      "dispatch_not_latest",
+    );
+  });
   it("refuses a dispatch for a superseded attempt", () => {
     expectRefused(
       journalOf(...base(), attempt("build", "builder", 1, 2), dispatched("build", "builder")),
@@ -395,6 +443,13 @@ describe("counters", () => {
     rejectionsByReason: {},
     dispatches: { started: 0, not_delivered: 0, ambiguous: 0 },
     replacementsByAgent: {},
+    rounds: 0,
+    gatesByDecision: { pass: 0, reject: 0 },
+    gatesByGate: {},
+    formatRepairsByVisit: {},
+    workRetriesByVisit: {},
+    blocks: 0,
+    reconciliations: { delivered: 0, abandoned: 0 },
   };
   // Each step names only the counters that must change; everything else must not.
   const steps: Array<[Json, Json]> = [
@@ -408,7 +463,14 @@ describe("counters", () => {
       dispatched("build", "builder", 1, 1, "ambiguous", "timeout"),
       { dispatches: { started: 0, not_delivered: 0, ambiguous: 1 } },
     ],
-    [attempt("build", "builder", 1, 2), { attemptsOpened: 2, attemptsByVisit: { "build/1": 2 } }],
+    [
+      attempt("build", "builder", 1, 2),
+      {
+        attemptsOpened: 2,
+        attemptsByVisit: { "build/1": 2 },
+        workRetriesByVisit: { "build/1": 1 },
+      },
+    ],
     [assigned("builder", "w1:p2"), { replacementsByAgent: { builder: 1 } }],
     [
       dispatched("build", "builder", 1, 2, "not_delivered", "not_found"),
@@ -502,5 +564,531 @@ describe("refuseAppend", () => {
   it("throws a TypeError for a candidate that breaks its field contract", () => {
     const records = journalOf(opened());
     expect(() => refuseAppend(records, terminated("exhausted"))).toThrow(TypeError);
+  });
+});
+
+function readFixture(name: string): Json[] {
+  return readFileSync(join(repoRoot, "test", "fixtures", name), "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const record = parseRecordLine(line);
+      if (typeof record === "string") throw new Error(`${name}: ${record}`);
+      return record;
+    });
+}
+
+describe("p2 journal compatibility (p3 reader)", () => {
+  it("replays the committed p2 journal to the same attempt and dispatch state", () => {
+    const records = readFixture("p2-journal.jsonl");
+    const state = expectOk(records);
+    expect(state.runId).toBe("p2-fixture");
+    expect(state.revision).toBe(11);
+    expect(state.status).toBe("exhausted");
+    expect(state.plan).toEqual(records[0]?.["plan"]);
+    expect([...state.attempts].map(([key, value]) => [key, value.status, value.cause])).toEqual([
+      ["build/1/1", "superseded", "initial"],
+      ["build/1/2", "accepted", "work_retry"],
+      ["review/1/1", "open", "initial"],
+    ]);
+    expect(
+      [...state.dispatches].map(([key, value]) => [key, value["delivery"], value["reason"]]),
+    ).toEqual([
+      ["build/1/1", "ambiguous", "stalled"],
+      ["build/1/2", "started", "observed_working"],
+      ["review/1/1", "not_delivered", "agent_busy"],
+    ]);
+    expect([...state.assignments.keys()]).toEqual(["builder", "reviewer"]);
+    expect(state.termination).toMatchObject({ outcome: "exhausted", limit: "maxAttemptsPerVisit" });
+    expect(state.gates).toEqual([]);
+    expect(state.blocks).toEqual([]);
+    expect(state.counters).toMatchObject({
+      attemptsOpened: 3,
+      submissionsAccepted: 1,
+      dispatches: { started: 1, not_delivered: 1, ambiguous: 1 },
+      rounds: 0,
+      workRetriesByVisit: { "build/1": 1 },
+      formatRepairsByVisit: {},
+    });
+  });
+});
+
+describe("p3 record field contracts", () => {
+  const line = (body: Json, seq = 9) =>
+    JSON.stringify({ schemaVersion: 1, seq, ts: "2026-09-14T10:00:00.000Z", ...body });
+  const without = (body: Json, key: string): Json => {
+    const copy = { ...body };
+    Reflect.deleteProperty(copy, key);
+    return copy;
+  };
+  const stageGate = gate(4, "build");
+  const verifyGate = checkGate(4, "verify", "build");
+
+  const good: Array<[string, Json]> = [
+    ["stage gate", stageGate],
+    [
+      "stage gate with reviewed and outcome",
+      { ...stageGate, reviewed: REV, next: { outcome: "completed" } },
+    ],
+    ["check gate", verifyGate],
+    [
+      "check gate that timed out",
+      {
+        ...verifyGate,
+        check: {
+          ...(verifyGate["check"] as Json),
+          exitCode: null,
+          signal: "SIGTERM",
+          timedOut: true,
+        },
+      },
+    ],
+    ["revision without head", { ...stageGate, revision: { head: null, tree: "d".repeat(64) } }],
+    ["run.blocked", blocked("builder")],
+    ["run.blocked with attempt", blocked("builder", ["build", 1, 1])],
+    [
+      "run.blocked on startup",
+      {
+        ...blocked("builder"),
+        reason: "startup_blocked",
+        observed: { runtimeStatus: null, terminalId: null, stateChangeSeq: null },
+      },
+    ],
+    ["run.unblocked", unblocked("builder")],
+    ["delivery.reconciled delivered", reconciled(4, "build", "builder")],
+    [
+      "delivery.reconciled by submission",
+      reconciled(4, "build", "builder", 1, 1, "delivered", "submission_recorded"),
+    ],
+    [
+      "delivery.reconciled abandoned",
+      reconciled(4, "build", "builder", 1, 1, "abandoned", "no_evidence_before_deadline"),
+    ],
+    [
+      "request.dispatched with request, target and revision",
+      {
+        ...dispatched("build", "builder"),
+        request: { path: "requests/build/visit-1/attempt-1/request.md", sha256: HEX, bytes: 120 },
+        target: { terminalId: "term-1", sessionId: null },
+        revision: REV,
+      },
+    ],
+    [
+      "run.opened with input",
+      { ...opened(), input: { path: "input.json", sha256: HEX, bytes: 12 } },
+    ],
+    [
+      "run.opened with a p3 plan",
+      opened({
+        ...PLAN,
+        checks: ["verify"],
+        limits: { ...PLAN.limits, maxFormatRepairs: 0 },
+        agents: PLAN.agents.map((agent) => ({ ...agent, args: ["--add-dir", "/tmp"] })),
+      }),
+    ],
+    ["run.terminated exhausting maxFormatRepairs", terminated("exhausted", "maxFormatRepairs")],
+  ];
+  for (const [name, body] of good) {
+    it(`accepts ${name}`, () => {
+      expect(parseRecordLine(line(body))).toMatchObject({ type: body["type"] });
+    });
+  }
+
+  const bad: Array<[string, Json]> = [
+    ["gate: unexpected field", { ...stageGate, extra: 1 }],
+    ["gate: stage gate without verdict", without(stageGate, "verdict")],
+    ["gate: stage gate with check", { ...stageGate, check: verifyGate["check"] }],
+    ["gate: check gate without check", without(verifyGate, "check")],
+    ["gate: check gate with verdict", { ...verifyGate, verdict: null }],
+    ["gate: check gate with reviewed", { ...verifyGate, reviewed: REV }],
+    [
+      "gate: evidence path not derived from the gate",
+      {
+        ...verifyGate,
+        check: {
+          ...(verifyGate["check"] as Json),
+          evidence: { path: "checks/other/build-v1-a1/output.log", sha256: HEX, bytes: 1 },
+        },
+      },
+    ],
+    [
+      "gate: empty check command",
+      { ...verifyGate, check: { ...(verifyGate["check"] as Json), command: [] } },
+    ],
+    ["gate: unknown kind", { ...stageGate, kind: "vote" }],
+    ["gate: unknown decision", { ...stageGate, decision: "maybe" }],
+    ["gate: empty reason", { ...stageGate, reason: "" }],
+    ["gate: reason over 200 characters", { ...stageGate, reason: "x".repeat(201) }],
+    ["gate: negative round", { ...stageGate, round: -1 }],
+    [
+      "gate: next with both shapes",
+      { ...stageGate, next: { stageId: "review", outcome: "completed" } },
+    ],
+    ["gate: next outcome cancelled", { ...stageGate, next: { outcome: "cancelled" } }],
+    ["gate: acceptedSeq 0", gate(0, "build")],
+    [
+      "gate: bad receipt id",
+      { ...stageGate, subject: { ...(stageGate["subject"] as Json), receiptId: "r-1" } },
+    ],
+    ["gate: short tree", { ...stageGate, revision: { head: null, tree: "abc" } }],
+    ["gate: uppercase head", { ...stageGate, revision: { head: "B".repeat(40), tree: REV.tree } }],
+    ["run.blocked: unknown reason", { ...blocked("builder"), reason: "tired" }],
+    ["run.blocked: partial attempt fields", { ...blocked("builder"), stageId: "build" }],
+    ["run.blocked: empty requiredAction", { ...blocked("builder"), requiredAction: "" }],
+    [
+      "run.blocked: requiredAction over 2000 characters",
+      { ...blocked("builder"), requiredAction: "x".repeat(2001) },
+    ],
+    [
+      "run.blocked: observed with extra field",
+      {
+        ...blocked("builder"),
+        observed: { runtimeStatus: null, terminalId: null, stateChangeSeq: null, pane: "x" },
+      },
+    ],
+    ["run.unblocked: other resolution", { ...unblocked("builder"), resolution: "cancelled" }],
+    [
+      "delivery.reconciled: not_delivered resolution",
+      reconciled(4, "build", "builder", 1, 1, "not_delivered", "observed_activity"),
+    ],
+    [
+      "delivery.reconciled: evidence of another resolution",
+      reconciled(4, "build", "builder", 1, 1, "abandoned", "observed_activity"),
+    ],
+    ["delivery.reconciled: dispatchSeq 0", reconciled(0, "build", "builder")],
+    [
+      "request.dispatched: request path of another attempt",
+      {
+        ...dispatched("build", "builder"),
+        request: { path: "requests/build/visit-1/attempt-2/request.md", sha256: HEX, bytes: 1 },
+      },
+    ],
+    [
+      "request.dispatched: target without sessionId",
+      { ...dispatched("build", "builder"), target: { terminalId: "t" } },
+    ],
+    [
+      "request.dispatched: invalid revision",
+      { ...dispatched("build", "builder"), revision: { tree: REV.tree } },
+    ],
+    [
+      "run.opened: input with another path",
+      { ...opened(), input: { path: "in.json", sha256: HEX, bytes: 1 } },
+    ],
+    [
+      "run.opened: plan with invalid maxFormatRepairs",
+      opened({ ...PLAN, limits: { ...PLAN.limits, maxFormatRepairs: 1001 } }),
+    ],
+  ];
+  for (const [name, body] of bad) {
+    it(`fails closed on ${name}`, () => {
+      expect(typeof parseRecordLine(line(body))).toBe("string");
+    });
+  }
+});
+
+describe("attempt cause derivation", () => {
+  const causes = (...bodies: Json[]) => {
+    const state = expectOk(journalOf(opened(), assigned("builder"), ...bodies));
+    return Object.fromEntries([...state.attempts].map(([key, value]) => [key, value.cause]));
+  };
+
+  it("derives initial, format_repair and work_retry from the previous attempt of the visit", () => {
+    expect(causes(attempt("build", "builder"))).toEqual({ "build/1/1": "initial" });
+    // Started and not accepted → format repair.
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder"),
+        attempt("build", "builder", 1, 2),
+      ),
+    ).toMatchObject({ "build/1/2": "format_repair" });
+    // Not delivered → work retry.
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder", 1, 1, "not_delivered", "agent_busy"),
+        attempt("build", "builder", 1, 2),
+      ),
+    ).toMatchObject({ "build/1/2": "work_retry" });
+    // No dispatch → work retry.
+    expect(causes(attempt("build", "builder"), attempt("build", "builder", 1, 2))).toMatchObject({
+      "build/1/2": "work_retry",
+    });
+    // Accepted with status failed → work retry.
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder"),
+        { ...accepted(5, "build", "builder", null), status: "failed" },
+        attempt("build", "builder", 1, 2),
+      ),
+    ).toMatchObject({ "build/1/2": "work_retry" });
+    // Ambiguous reconciled delivered → format repair; unreconciled → work retry.
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder", 1, 1, "ambiguous", "stalled"),
+        reconciled(4, "build", "builder"),
+        attempt("build", "builder", 1, 2),
+      ),
+    ).toMatchObject({ "build/1/2": "format_repair" });
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder", 1, 1, "ambiguous", "stalled"),
+        attempt("build", "builder", 1, 2),
+      ),
+    ).toMatchObject({ "build/1/2": "work_retry" });
+    // A new visit starts initial again.
+    expect(
+      causes(
+        attempt("build", "builder"),
+        dispatched("build", "builder"),
+        attempt("build", "builder", 2, 1),
+      ),
+    ).toMatchObject({ "build/2/1": "initial" });
+  });
+
+  it("counts format repairs and work retries per visit and logs rejection messages", () => {
+    const state = expectOk(
+      journalOf(
+        opened(),
+        assigned("builder"),
+        attempt("build", "builder"),
+        dispatched("build", "builder"),
+        {
+          ...rejected("artifact_hash_mismatch", {
+            runId: "run-1",
+            agentId: "builder",
+            stageId: "build",
+            visit: 1,
+            attempt: 1,
+          }),
+          message: "sha256 differs",
+        },
+        attempt("build", "builder", 1, 2),
+        dispatched("build", "builder", 1, 2, "not_delivered", "agent_busy"),
+        attempt("build", "builder", 1, 3),
+      ),
+    );
+    expect(state.counters).toMatchObject({
+      formatRepairsByVisit: { "build/1": 1 },
+      workRetriesByVisit: { "build/1": 1 },
+    });
+    expect(state.attempts.get("build/1/1")?.rejectionLog).toEqual([
+      { seq: 5, reason: "artifact_hash_mismatch", message: "sha256 differs" },
+    ]);
+  });
+});
+
+describe("request.dispatched target rule", () => {
+  it("refuses a target terminal that differs from the current assignment", () => {
+    const base = [
+      opened(),
+      { ...assigned("builder"), terminalId: "term-1" },
+      attempt("build", "builder"),
+    ];
+    const target = (terminalId: string | null) => ({
+      ...dispatched("build", "builder"),
+      target: { terminalId, sessionId: null },
+    });
+    expectOk(journalOf(...base, target("term-1")));
+    expectOk(journalOf(...base, target(null)));
+    expectRefused(journalOf(...base, target("term-2")), "assignment_mismatch");
+    // An assignment without a terminal id cannot be contradicted.
+    expectOk(
+      journalOf(opened(), assigned("builder"), attempt("build", "builder"), target("term-9")),
+    );
+  });
+});
+
+describe("gate.recorded rules", () => {
+  // seq 3 attempt, 4 dispatch, 5 accepted build/1/1.
+  const built = () => [
+    opened(),
+    assigned("builder"),
+    attempt("build", "builder"),
+    dispatched("build", "builder"),
+    accepted(5, "build", "builder", null),
+  ];
+
+  it("records a stage gate and counts it", () => {
+    const state = expectOk(journalOf(...built(), gate(5, "build")));
+    expect(state.gates).toHaveLength(1);
+    expect(state.counters).toMatchObject({
+      rounds: 0,
+      gatesByDecision: { pass: 1, reject: 0 },
+      gatesByGate: { build: 1 },
+    });
+  });
+  it("refuses a gate after termination", () => {
+    expectRefused(journalOf(...built(), terminated(), gate(5, "build")), "run_closed");
+  });
+  it("refuses a subject that is not an acceptance of exactly that attempt and receipt", () => {
+    expectRefused(journalOf(...built(), gate(4, "build")), "gate_subject_unknown");
+    expectRefused(journalOf(...built(), gate(5, "build", 1, 2)), "gate_subject_unknown");
+    expectRefused(
+      journalOf(...built(), {
+        ...gate(5, "build"),
+        subject: {
+          stageId: "build",
+          visit: 1,
+          attempt: 1,
+          acceptedSeq: 5,
+          receiptId: "rcpt-5-000000000000",
+        },
+      }),
+      "gate_subject_unknown",
+    );
+  });
+  it("refuses a subject that a newer attempt superseded", () => {
+    expectRefused(
+      journalOf(...built(), attempt("build", "builder", 2, 1), gate(5, "build")),
+      "gate_subject_stale",
+    );
+  });
+  it("refuses a stage gate naming another stage or verdict, and a check gate naming a plan stage", () => {
+    expectRefused(
+      journalOf(...built(), gate(5, "build", 1, 1, { gate: "review" })),
+      "gate_mismatch",
+    );
+    expectRefused(
+      journalOf(...built(), gate(5, "build", 1, 1, { verdict: "approve" })),
+      "gate_mismatch",
+    );
+    expectRefused(journalOf(...built(), checkGate(5, "review", "build")), "gate_mismatch");
+    expectOk(journalOf(...built(), checkGate(5, "verify", "build")));
+  });
+  it("refuses a second gate with the same id for the same acceptance", () => {
+    expectRefused(journalOf(...built(), gate(5, "build"), gate(5, "build")), "gate_exists");
+    expectOk(journalOf(...built(), gate(5, "build"), checkGate(5, "verify", "build")));
+  });
+  it("with planned checks, refuses an unplanned check or next target", () => {
+    const planned = [opened({ ...PLAN, checks: ["verify"] }), ...built().slice(1)];
+    expectOk(journalOf(...planned, checkGate(5, "verify", "build")));
+    expectOk(journalOf(...planned, gate(5, "build", 1, 1, { next: { stageId: "verify" } })));
+    expectRefused(journalOf(...planned, checkGate(5, "lint", "build")), "stage_unknown");
+    expectRefused(
+      journalOf(...planned, gate(5, "build", 1, 1, { next: { stageId: "deploy" } })),
+      "stage_unknown",
+    );
+    // Without planned checks the next target is only an id.
+    expectOk(journalOf(...built(), gate(5, "build", 1, 1, { next: { stageId: "deploy" } })));
+  });
+  it("refuses a round below the highest or more than one above it", () => {
+    expectRefused(journalOf(...built(), gate(5, "build", 1, 1, { round: 2 })), "round_invalid");
+    const state = expectOk(
+      journalOf(
+        ...built(),
+        gate(5, "build", 1, 1, { round: 1 }),
+        checkGate(5, "verify", "build", 1, 1, { round: 1 }),
+      ),
+    );
+    expect(state.counters["rounds"]).toBe(1);
+    expectRefused(
+      journalOf(...built(), gate(5, "build", 1, 1, { round: 1 }), checkGate(5, "verify", "build")),
+      "round_invalid",
+    );
+  });
+});
+
+describe("run.blocked and run.unblocked rules", () => {
+  const base = () => [
+    opened(),
+    assigned("builder"),
+    attempt("build", "builder"),
+    dispatched("build", "builder"),
+  ];
+
+  it("derives blocked and returns to running after unblock", () => {
+    const blockedState = expectOk(journalOf(...base(), blocked("builder", ["build", 1, 1])));
+    expect(blockedState.status).toBe("blocked");
+    const resumed = expectOk(journalOf(...base(), blocked("builder"), unblocked("builder")));
+    expect(resumed.status).toBe("running");
+    expect(resumed.blocks).toHaveLength(1);
+    expect(resumed.counters["blocks"]).toBe(1);
+    const again = expectOk(
+      journalOf(...base(), blocked("builder"), unblocked("builder"), blocked("builder")),
+    );
+    expect(again.status).toBe("blocked");
+    expect(again.counters["blocks"]).toBe(2);
+  });
+  it("allows termination while blocked and keeps the block in history", () => {
+    const state = expectOk(journalOf(...base(), blocked("builder"), terminated()));
+    expect(state.status).toBe("cancelled");
+    expect(state.blocks).toHaveLength(1);
+  });
+  it("refuses a block after termination, for an unknown or unassigned agent, or while blocked", () => {
+    expectRefused(journalOf(...base(), terminated(), blocked("builder")), "run_closed");
+    expectRefused(journalOf(...base(), blocked("ghost")), "agent_unknown");
+    expectRefused(journalOf(...base(), blocked("reviewer")), "agent_unassigned");
+    expectRefused(journalOf(...base(), blocked("builder"), blocked("builder")), "run_blocked");
+  });
+  it("refuses a block naming an attempt that is not open or not the agent's", () => {
+    expectRefused(journalOf(...base(), blocked("builder", ["build", 1, 2])), "attempt_unknown");
+    expectRefused(
+      journalOf(...base(), assigned("reviewer"), blocked("reviewer", ["build", 1, 1])),
+      "owner_mismatch",
+    );
+  });
+  it("refuses an unblock without a block by that agent, or after termination", () => {
+    expectRefused(journalOf(...base(), unblocked("builder")), "not_blocked");
+    expectRefused(
+      journalOf(...base(), assigned("reviewer"), blocked("builder"), unblocked("reviewer")),
+      "not_blocked",
+    );
+    expectRefused(
+      journalOf(...base(), blocked("builder"), terminated(), unblocked("builder")),
+      "run_closed",
+    );
+  });
+});
+
+describe("delivery.reconciled rules", () => {
+  // seq 4 is the dispatch.
+  const base = (delivery = "ambiguous", reason = "stalled") => [
+    opened(),
+    assigned("builder"),
+    attempt("build", "builder"),
+    dispatched("build", "builder", 1, 1, delivery, reason),
+  ];
+
+  it("records one reconciliation and drops nothing else", () => {
+    const state = expectOk(journalOf(...base(), reconciled(4, "build", "builder")));
+    expect(state.reconciliations.get(4)).toMatchObject({ resolution: "delivered" });
+    expect(state.counters["reconciliations"]).toEqual({ delivered: 1, abandoned: 0 });
+  });
+  it("refuses a reconciliation of a dispatch that is not ambiguous for exactly that agent and attempt", () => {
+    expectRefused(
+      journalOf(...base("started", "observed_working"), reconciled(4, "build", "builder")),
+      "dispatch_not_ambiguous",
+    );
+    expectRefused(
+      journalOf(...base(), reconciled(3, "build", "builder")),
+      "dispatch_not_ambiguous",
+    );
+    expectRefused(
+      journalOf(...base(), reconciled(4, "build", "builder", 1, 2)),
+      "dispatch_not_ambiguous",
+    );
+    expectRefused(
+      journalOf(...base(), assigned("reviewer"), reconciled(4, "build", "reviewer")),
+      "dispatch_not_ambiguous",
+    );
+  });
+  it("refuses a second reconciliation and one after termination", () => {
+    expectRefused(
+      journalOf(
+        ...base(),
+        reconciled(4, "build", "builder"),
+        reconciled(4, "build", "builder", 1, 1, "abandoned", "no_evidence_before_deadline"),
+      ),
+      "reconcile_exists",
+    );
+    expectRefused(
+      journalOf(...base(), terminated(), reconciled(4, "build", "builder")),
+      "run_closed",
+    );
   });
 });

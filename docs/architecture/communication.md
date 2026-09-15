@@ -112,9 +112,17 @@ open` and the run-facts store call it from inside their own locked
 
 **Not implemented in p1:** the engine does not parse artifact-embedded
 metadata or check it for agreement with the envelope's `verdict` (item 5 under
-"Acceptance of a result" below); there is no bounded format-repair loop —
-every rejection is journaled, but nothing retries or re-prompts the worker
-automatically.
+"Acceptance of a result" below). This is still open in p3: the envelope stays
+v1, unchanged.
+
+**Format repair is implemented (p3).** See
+[domain model](domain-model.md#implemented-now-p3) for the full rule (D5): when
+an agent settles `ready` after a started dispatch with no accepted submission
+for the attempt, the scheduler opens a new attempt in the same visit and sends
+a format-repair request naming the journaled rejections (or "no submission was
+recorded"). It is bounded by its own limit, `maxFormatRepairs` (per visit,
+distinct from `maxAttemptsPerVisit`), and never resends into the old attempt —
+p2's one-dispatch-per-attempt invariant (`dispatch_exists`) is unchanged.
 
 ## Work request
 
@@ -123,6 +131,44 @@ structured task input, relevant project context, exact input artifact references
 expected output contract, destination for new artifacts, and the mechanism for
 submitting the envelope. Work-specific permissions and limits are resolved before
 dispatch, not invented by the worker.
+
+### Implemented now (p3)
+
+Real shipped behavior for the rendered work request — not design intent.
+Source: `src/scheduler/request.ts`.
+
+- **`renderRequest`** produces deterministic Markdown (`# Woof work request
+v1`) for one attempt: run/workflow/agent/role identity; stage, visit,
+  attempt, cause (`initial | format repair | work retry`) and round; the
+  repository path and the exact revision (`tree`/`HEAD`) the request was sent
+  against; the goal, task (title, description, acceptance criteria, optional
+  JSON context) and optional per-role project instructions; an "Inputs" section
+  listing each input's absolute path plus, for an accepted artifact, its stage,
+  visit, attempt, receipt id and sha256 (or, for check evidence, its sha256);
+  the artifact destination and size cap (32 MiB); and the exact `woof submit`
+  command line, shell-quoted. A format-repair request replaces the goal/task
+  with the previous attempt's journaled rejections (or "none — no submission
+  was recorded") and keeps everything else. The driver persists the rendered
+  text to `requests/<stageId>/visit-<n>/attempt-<m>/request.md` (mode `0444`),
+  records its path/sha256/bytes on `request.dispatched.request`, and delivers
+  the identical text. Every rendered request is capped at 32 KiB
+  (`request_too_large` at dispatch time otherwise). The built-in
+  `build-review` workflow also enforces this at admission, before a run
+  opens: beyond the 24 KiB compact-JSON cap on `task`/`instructions`, it
+  renders (with the real `renderRequest` and its own `request()` functions)
+  the largest request the given input could produce — the review, and the
+  repair entered by either the review or the verify check, each with every
+  input it names, at the admitted maximum run-directory length and maximal
+  counters/ids/digests — and rejects the input if that render would exceed
+  32 KiB, so a compact-JSON `task.context` that expands large once
+  pretty-printed into a request is caught before any agent starts.
+- **Revision binding is engine-owned, not carried in the envelope.** The
+  scheduler computes and journals the repository revision at dispatch
+  (`request.dispatched.revision`) and again immediately before recording a
+  revision-bound gate (`gate.recorded.revision`, with `reviewed` naming the
+  revision the accepted attempt was dispatched against); a worker never states
+  or is trusted to state which revision it reviewed. See
+  [domain model](domain-model.md#implemented-now-p3) (D4).
 
 ## Review output example
 
@@ -204,9 +250,19 @@ attempt (`dispatch_exists`); there is no resend, so trying again is only
 expressible as a new, explicitly opened attempt. An `ambiguous` dispatch
 whose attempt is still open surfaces in
 `snapshot.attention.ambiguousDeliveries` until the attempt is accepted or
-superseded. Turning an `ambiguous` dispatch into a resolved one — a
-`delivery.reconciled` record — is deferred to phase 3; nothing in p2 writes
-or infers reconciliation.
+superseded. **Reconciliation is implemented (p3, D8):** after an `ambiguous`
+dispatch the scheduler sends nothing further to that agent and waits for
+evidence — a `submission.accepted`/identity-bearing `submission.rejected` for
+the attempt, or a tracked observation of the same terminal taken after the
+dispatch showing `working`/`blocked` — either of which records
+`delivery.reconciled{resolution:"delivered"}` and the attempt continues as if
+started; with neither before `deliveryTimeoutMs` elapses, it records
+`delivery.reconciled{resolution:"abandoned",
+evidence:"no_evidence_before_deadline"}` and the run ends
+`exhausted{limit:"deliveryTimeoutMs"}`. `not_delivered` stays in the domain
+type but no p3 record can carry it as a reconciliation resolution: no evidence
+proves a prompt was never delivered after an ambiguous dispatch. Reconciliation
+never resends the prompt.
 
 ## Transport choice
 

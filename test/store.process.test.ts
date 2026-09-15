@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +17,9 @@ import {
   runNodeAsync,
   runSdk,
   sdkScript,
+  sha256,
   submit,
+  terminateRunOk,
   testPlan,
   writeArtifact,
 } from "./helpers/process.js";
@@ -333,5 +335,157 @@ describe("snapshot artifact integrity (C2)", () => {
         problem: expect.stringContaining("no longer matches its journal record"),
       },
     ]);
+  });
+});
+
+describe("state store: p3 control records", () => {
+  const RECEIPT_OF = (seq: number) => `"rcpt-${seq}-" + "a".repeat(12)`;
+  const REV = `{ head: null, tree: "c".repeat(40) }`;
+  const GATE = (seq: number, extra = "") => `out = await store.recordGate({
+  runDir, gate: input.gate ?? "report", kind: input.kind ?? "stage",
+  subject: { stageId: "report", visit: 1, attempt: input.attempt ?? 1, acceptedSeq: ${seq}, receiptId: input.receiptId ?? ${RECEIPT_OF(seq)} },
+  decision: "pass", reason: "reported", round: 0, next: { stageId: "review" },
+  revision: ${REV}, ${extra}
+});`;
+  const CHECK = `check: { command: ["node", "--test"], exitCode: 0, signal: null, timedOut: false,
+  evidence: { path: "checks/verify/report-v1-a1/output.log", sha256: "a".repeat(64), bytes: 1 } },`;
+  const OBSERVED = `{ runtimeStatus: "blocked", terminalId: "term_1", stateChangeSeq: 7 }`;
+  const BLOCK = `out = await store.blockRun({ runDir, agentId: "worker", reason: "blocked_on_input", requiredAction: "answer the prompt", observed: ${OBSERVED} });`;
+  const UNBLOCK = `out = await store.unblockRun({ runDir, agentId: "worker", observed: ${OBSERVED} });`;
+  const RECONCILE = `out = await store.reconcileDelivery({ runDir, agentId: "worker", stageId: "report", visit: 1, attempt: input.attempt ?? 1, dispatchSeq: input.dispatchSeq, resolution: "delivered", evidence: "observed_activity" });`;
+
+  it("refuses a gate on an unaccepted, already gated or superseded subject and writes nothing", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    runSdk(runDir, ASSIGN_WORKER);
+    openAttemptOk(runDir); // seq 3
+    let before = journalBytes(runDir);
+    expect(runSdk<Outcome>(runDir, GATE(3, `verdict: "pass",`))).toMatchObject({
+      outcome: "rejected",
+      reason: "gate_subject_unknown",
+    });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+
+    const rel = artifactRel();
+    const sha = writeArtifact(runDir, rel, CONTENT);
+    const accepted = submit(runDir, envelopeFor({ artifact: { path: rel, sha256: sha } }));
+    expect(accepted.json?.outcome).toBe("accepted"); // seq 4
+    const receiptId = accepted.json?.receipt?.receiptId;
+    expect(runSdk<Outcome>(runDir, GATE(4, `verdict: "pass",`), { receiptId })).toMatchObject({
+      outcome: "recorded",
+      revision: 5,
+    });
+    before = journalBytes(runDir);
+    expect(runSdk<Outcome>(runDir, GATE(4, `verdict: "pass",`), { receiptId })).toMatchObject({
+      reason: "gate_exists",
+    });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+
+    openAttemptOk(runDir, { attempt: 2 });
+    before = journalBytes(runDir);
+    expect(
+      runSdk<Outcome>(runDir, GATE(4, CHECK), { receiptId, gate: "verify", kind: "check" }),
+    ).toMatchObject({ reason: "gate_subject_stale" });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+  });
+
+  it("refuses a second block, an unblock without a block and repeated or non-ambiguous reconciliation", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    runSdk(runDir, ASSIGN_WORKER);
+    expect(runSdk<Outcome>(runDir, UNBLOCK)).toMatchObject({ reason: "not_blocked" });
+    expect(runSdk<Outcome>(runDir, BLOCK)).toMatchObject({ outcome: "recorded" });
+    let before = journalBytes(runDir);
+    expect(runSdk<Outcome>(runDir, BLOCK)).toMatchObject({ reason: "run_blocked" });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+    expect(runSdk<{ snapshot: { status: string } }>(runDir, SNAPSHOT).snapshot.status).toBe(
+      "blocked",
+    );
+    expect(runSdk<Outcome>(runDir, UNBLOCK)).toMatchObject({ outcome: "recorded" });
+
+    openAttemptOk(runDir); // seq 5
+    expect(runSdk<Outcome>(runDir, DISPATCH)).toMatchObject({ revision: 6 });
+    before = journalBytes(runDir);
+    expect(runSdk<Outcome>(runDir, RECONCILE, { dispatchSeq: 6 })).toMatchObject({
+      reason: "dispatch_not_ambiguous",
+    });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+    openAttemptOk(runDir, { attempt: 2 }); // seq 7
+    expect(
+      runSdk<Outcome>(runDir, DISPATCH, { attempt: 2, delivery: "ambiguous", reason: "stalled" }),
+    ).toMatchObject({ revision: 8 });
+    expect(runSdk<Outcome>(runDir, RECONCILE, { attempt: 2, dispatchSeq: 8 })).toMatchObject({
+      outcome: "recorded",
+      revision: 9,
+    });
+    before = journalBytes(runDir);
+    expect(runSdk<Outcome>(runDir, RECONCILE, { attempt: 2, dispatchSeq: 8 })).toMatchObject({
+      reason: "reconcile_exists",
+    });
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+  });
+
+  it("refuses every control record after termination", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    runSdk(runDir, ASSIGN_WORKER);
+    openAttemptOk(runDir);
+    expect(
+      runSdk<Outcome>(runDir, DISPATCH, { delivery: "ambiguous", reason: "timeout" }),
+    ).toMatchObject({ revision: 4 });
+    runSdk(runDir, BLOCK);
+    const rel = artifactRel();
+    const sha = writeArtifact(runDir, rel, CONTENT);
+    const receiptId = submit(runDir, envelopeFor({ artifact: { path: rel, sha256: sha } })).json
+      ?.receipt?.receiptId; // seq 6
+    terminateRunOk(runDir);
+    const before = journalBytes(runDir);
+    for (const [body, input] of [
+      [GATE(6, `verdict: "pass",`), { receiptId }],
+      [BLOCK, {}],
+      [UNBLOCK, {}],
+      [RECONCILE, { dispatchSeq: 4 }],
+    ] as const) {
+      expect(runSdk<Outcome>(runDir, body, input), body).toMatchObject({
+        outcome: "rejected",
+        reason: "run_closed",
+      });
+    }
+    expect(journalBytes(runDir).equals(before)).toBe(true);
+  });
+
+  it("persists the run input as a read-only input.json whose digest the record carries", () => {
+    const runDir = makeRunDir();
+    const input = { schemaVersion: 1, task: { title: "Implement slugify" } };
+    const out = runSdk<Outcome>(
+      runDir,
+      `out = await store.openRun({ runDir, runId: "run-1", plan: input.plan, input: input.input });`,
+      { plan: testPlan(), input },
+    );
+    expect(out).toMatchObject({ outcome: "recorded" });
+    const path = join(runDir, "input.json");
+    const bytes = readFileSync(path);
+    expect(JSON.parse(bytes.toString("utf8"))).toEqual(input);
+    expect(statSync(path).mode & 0o777).toBe(0o444);
+    const record = journal(runDir)[0] as unknown as Record<string, unknown>;
+    expect(record["input"]).toEqual({
+      path: "input.json",
+      sha256: sha256(bytes),
+      bytes: bytes.byteLength,
+    });
+    const snapshot = runSdk<{ snapshot: { input: unknown } }>(runDir, SNAPSHOT).snapshot;
+    expect(snapshot.input).toEqual(record["input"]);
+  });
+
+  it("makes input.json exactly 0444 under a restrictive umask", () => {
+    const runDir = makeRunDir();
+    const out = runSdk<Outcome>(
+      runDir,
+      `process.umask(0o077);
+out = await store.openRun({ runDir, runId: "run-1", plan: input.plan, input: input.input });`,
+      { plan: testPlan(), input: { schemaVersion: 1 } },
+    );
+    expect(out).toMatchObject({ outcome: "recorded" });
+    expect(statSync(join(runDir, "input.json")).mode & 0o777).toBe(0o444);
   });
 });

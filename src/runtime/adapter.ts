@@ -114,6 +114,13 @@ export interface OpenPaneInput {
   cwd: string;
   env?: Record<string, string>;
   direction?: "right" | "down";
+  /** Upper bound for the split; an adapter uses its own command timeout when absent. */
+  timeoutMs?: number;
+}
+
+export interface ObserveOptions {
+  /** Upper bound for the observation; an adapter uses its own command timeout when absent. */
+  timeoutMs?: number;
 }
 
 export interface StartAgentInput {
@@ -130,13 +137,20 @@ export interface RuntimeAdapter {
   readonly adapter: "herdr" | "scripted";
   openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>>;
   startAgent(input: StartAgentInput): Promise<RuntimeResult<AgentHandle>>;
-  /** A pane or agent that no longer exists is the `gone` lifecycle, not an error. */
-  observe(handle: AgentHandle): Promise<RuntimeResult<LifecycleObservation>>;
+  /**
+   * A pane or agent that no longer exists is the `gone` lifecycle, not an error.
+   * With `timeoutMs`, an observation that cannot finish in time is a `timeout` error.
+   */
+  observe(
+    handle: AgentHandle,
+    options?: ObserveOptions,
+  ): Promise<RuntimeResult<LifecycleObservation>>;
   waitFor(
     handle: AgentHandle,
     states: Lifecycle[],
     timeoutMs: number,
   ): Promise<RuntimeResult<LifecycleObservation>>;
+  /** `timeoutMs` is one deadline for the precondition read and the prompt together. */
   deliver(
     handle: AgentHandle,
     text: string,

@@ -6,21 +6,25 @@ import {
   TERMINAL_OUTCOMES,
   type DispatchDelivery,
   type Limits,
+  type Revision,
   type TerminalOutcome,
 } from "../domain/types.js";
 import {
   check,
   exactKeysProblem,
+  fileRefProblem,
   keysProblem,
   nonEmptyStringProblem,
   paneProblem,
+  revisionProblem,
 } from "./record-fields.js";
 import type { RecordBase } from "./records.js";
 
 /**
  * Run-fact records added in p2: agent assignment, request dispatch with its
- * delivery certainty, and termination. Gate, block and delivery-reconciliation
- * records arrive with the scheduler (phase 3).
+ * delivery certainty, and termination. p3 adds optional request, target and
+ * revision fields to request.dispatched; the p3 control records live in
+ * control-records.ts.
  */
 
 export interface AgentAssignedRecord extends RecordBase {
@@ -41,6 +45,17 @@ export interface RequestDispatchedRecord extends RecordBase {
   /** Closed per delivery value; see DISPATCH_REASONS. */
   reason: string;
   paneId?: string;
+  /** Persisted request text (p3): `requests/<stage>/visit-<n>/attempt-<m>/request.md`. */
+  request?: { path: string; sha256: string; bytes: number };
+  /** Runtime identity observed at dispatch (p3). */
+  target?: { terminalId: string | null; sessionId: string | null };
+  /** Repository revision when the request was sent (p3). */
+  revision?: Revision;
+}
+
+/** Persisted request file of an attempt, relative to the run directory. */
+export function requestPathFor(stageId: string, visit: number, attempt: number): string {
+  return `requests/${stageId}/visit-${visit}/attempt-${attempt}/request.md`;
 }
 
 export interface RunTerminatedRecord extends RecordBase {
@@ -73,7 +88,7 @@ export function requestDispatchedProblem(value: Record<string, unknown>): string
     keysProblem(
       value,
       ["agentId", "stageId", "visit", "attempt", "delivery", "reason"],
-      ["paneId"],
+      ["paneId", "request", "target", "revision"],
     ) ??
     check(isId(value["agentId"]), "agentId is invalid") ??
     check(isId(value["stageId"]), "stageId is invalid") ??
@@ -89,7 +104,38 @@ export function requestDispatchedProblem(value: Record<string, unknown>): string
     check(
       typeof value["reason"] === "string" && reasons.includes(value["reason"]),
       `reason is not one of ${reasons.join(", ")} for delivery ${String(delivery)}`,
-    ) ?? paneProblem(value)
+    ) ??
+    paneProblem(value) ??
+    (value["request"] === undefined
+      ? undefined
+      : fileRefProblem(
+          value["request"],
+          "request",
+          requestPathFor(
+            value["stageId"] as string,
+            value["visit"] as number,
+            value["attempt"] as number,
+          ),
+        )) ??
+    (value["target"] === undefined ? undefined : targetProblem(value["target"])) ??
+    (value["revision"] === undefined ? undefined : revisionProblem(value["revision"], "revision"))
+  );
+}
+
+function targetProblem(target: unknown): string | undefined {
+  if (!isPlainObject(target)) return "target is not an object";
+  return (
+    exactKeysProblem(target, ["terminalId", "sessionId"], [], "target.") ??
+    check(
+      target["terminalId"] === null ||
+        (typeof target["terminalId"] === "string" && target["terminalId"] !== ""),
+      "target.terminalId is not a non-empty string or null",
+    ) ??
+    check(
+      target["sessionId"] === null ||
+        (typeof target["sessionId"] === "string" && target["sessionId"] !== ""),
+      "target.sessionId is not a non-empty string or null",
+    )
   );
 }
 

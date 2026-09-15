@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import {
   AMBIGUOUS_CODES,
   NOT_DELIVERED_CODES,
@@ -9,6 +11,7 @@ import {
   type Lifecycle,
   type LifecycleObservation,
   type NotDeliveredCode,
+  type ObserveOptions,
   type OpenPaneInput,
   type RuntimeAdapter,
   type RuntimeResult,
@@ -20,7 +23,7 @@ import {
  * synthetic workflows (exported from `herdr-woof/testing`, not the main
  * entry). Each agent follows a scripted timeline of raw statuses; tests move
  * it with `advance`, delivery triggers, or injected observations. It uses no
- * timers and performs no journal writes.
+ * timers (except an agent's `observeDelayMs`) and performs no journal writes.
  */
 
 export interface TimelineEntry {
@@ -47,6 +50,11 @@ export interface ScriptedAgent {
   /** Each observe returns the entry at the cursor, then moves the cursor forward. */
   advanceOnObserve?: boolean;
   sessionId?: string;
+  /**
+   * Each observe takes this many milliseconds (a real timer). With a shorter
+   * observe `timeoutMs`, observe returns a `timeout` error when that bound passes.
+   */
+  observeDelayMs?: number;
 }
 
 export interface ScriptedCall {
@@ -101,6 +109,12 @@ export function createScriptedRuntime(options: {
           `scripted agent ${name} has onDeliver ${JSON.stringify(value)}; use "started", "not_delivered:<${NOT_DELIVERED_CODES.join("|")}>" or "ambiguous:<${AMBIGUOUS_CODES.join("|")}>"`,
         );
       }
+    }
+    if (
+      script.observeDelayMs !== undefined &&
+      (!Number.isSafeInteger(script.observeDelayMs) || script.observeDelayMs < 0)
+    ) {
+      throw new TypeError(`scripted agent ${name} needs a non-negative integer observeDelayMs`);
     }
     const afterDeliver = script.afterDeliver;
     if (
@@ -189,9 +203,26 @@ export function createScriptedRuntime(options: {
       return { ok: true, value: handle };
     },
 
-    async observe(handle: AgentHandle): Promise<RuntimeResult<LifecycleObservation>> {
+    async observe(
+      handle: AgentHandle,
+      observeOptions: ObserveOptions = {},
+    ): Promise<RuntimeResult<LifecycleObservation>> {
       record("observe", handle.runtimeName, {});
       const state = agents.get(handle.runtimeName);
+      const slow = state?.script.observeDelayMs ?? 0;
+      if (slow > 0) {
+        const bound = observeOptions.timeoutMs ?? Number.POSITIVE_INFINITY;
+        await delay(Math.min(slow, bound));
+        if (slow > bound) {
+          return {
+            ok: false,
+            error: runtimeError(
+              "timeout",
+              `observe of ${handle.runtimeName} did not finish within ${bound} ms`,
+            ),
+          };
+        }
+      }
       if (state === undefined || state.stopped) return { ok: true, value: gone(handle) };
       const queued = state.queue.shift();
       if (queued !== undefined) return { ok: true, value: queued };

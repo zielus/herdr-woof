@@ -1,7 +1,9 @@
 # Initial workflows
 
-Status: required examples and recommended stage mappings. These are not executable
-definitions in the current checkout.
+Status: required examples and recommended stage mappings. `build-review` is now
+an executable, built-in workflow definition, runnable via `woof run
+build-review` (p3; see "Implemented now (p3)" below). `plan-build-review` is
+still not an executable definition in the current checkout (phase 5).
 
 ## Build-review
 
@@ -41,6 +43,56 @@ On success, return the run identity, outcome, final change reference, completion
 artifact, passing review artifact and verification references. On other exits,
 return the reason, failed or blocked location, counters and last accepted outputs.
 Never return a passing review from an earlier revision as approval of newer work.
+
+## Implemented now (p3)
+
+Real shipped behavior for the built-in `build-review` definition — not design
+intent. Source: `src/workflows/build-review.ts`.
+
+- **Executable via `woof run build-review --input <path|-> --run-dir <dir>`.**
+  Input is validated with an exact key set: `schemaVersion: 1`, `repo` (an
+  absolute path, required at admission to be the top level of a git work tree
+  — `git rev-parse --show-toplevel`; a nested directory is rejected
+  `repo_invalid`, naming both the given path and the resolved top level),
+  `task {title, description, acceptanceCriteria,
+context?}`, optional `instructions {builder?, reviewer?}`, optional `verify
+{command, timeoutMs}`, `agents {builder, reviewer}` each
+  `{kind, model, args}`, and optional `limits` (each key optional, same bounds
+  as `Limits`, defaulting to `maxAttemptsPerVisit: 2, maxVisitsPerStage: 3,
+maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs:
+180000, blockedWaitMs: 600000, deliveryTimeoutMs: 60000`). `task.context`,
+  when given, is validated recursively as a JSON value: `null`, booleans,
+  finite numbers, strings, arrays (checked by index, so a hole is refused) and
+  plain objects only — `undefined`, functions, `bigint`, symbols, non-finite
+  numbers, non-plain objects (for example a `Date`), a cycle, or nesting past
+  1000 levels are all refused, each reported at its exact path (for example
+  `task.context.nested`). `task` and `instructions` together are still capped
+  at 24 KiB compact JSON, and admission additionally renders, with the real
+  `renderRequest` and the definition's own `request()` functions, the largest
+  request this input could produce (the review, and the repair entered by
+  either the review or the verify check, each with every input it names, at
+  the admitted maximum run-directory length and maximal counters/ids/digests)
+  and refuses the input when that render would exceed the 32 KiB request cap
+  — a compact-JSON context can still be too large once pretty-printed into a
+  request.
+- **Stages:** `build` (builder) → `verify` (an engine-run check, only when
+  `input.verify` is given — otherwise the build/repair gate routes straight to
+  `review`) → `review` (reviewer, verdicts `pass`/`fail`) → `repair`
+  (same builder). A failing check routes to `repair`; a `review` verdict
+  `fail` routes to `repair` with `requires: "round"`; `repair` re-enters
+  `verify` or `review` exactly like `build`. `review` is the round stage.
+- **Revision binding (`bindsRevision: true` on `review`).** A `pass` verdict
+  completes the run only when the review's dispatched-against tree equals the
+  current repository tree and equals the tree of the latest builder/repair
+  gate; otherwise the engine records `reject/revision_moved` and opens another
+  review round (bounded by `maxRounds`). A passing review from an earlier
+  revision is never reported as approval of newer work.
+- **Outcome.** `RunResult.artifacts.review` is non-null only when the run
+  completed; `artifacts.completion` is the accepted build/repair submission
+  the completing review was dispatched against; `artifacts.verification` is
+  the latest check evidence, when a `verify` command was configured.
+- **`plan-build-review` is still not executable** — the phase 5 planner stage
+  described below has no definition module yet.
 
 ## Plan-build-review
 

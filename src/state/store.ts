@@ -1,10 +1,37 @@
-import { mkdirSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
+import { sha256Hex } from "../contracts/canonical-json.js";
 import { isId, type RejectionDetail } from "../contracts/envelope.js";
 import type { StoreReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
-import type { DispatchDelivery, Limits, RunPlan, TerminalOutcome } from "../domain/types.js";
+import type {
+  BlockReason,
+  DispatchDelivery,
+  GateDecision,
+  Limits,
+  Revision,
+  RunPlan,
+  TerminalOutcome,
+} from "../domain/types.js";
+import type {
+  CheckResultRecord,
+  DeliveryReconciledRecord,
+  GateNext,
+  GateRecordedRecord,
+  GateSubject,
+  ObservedState,
+  RunBlockedRecord,
+  RunUnblockedRecord,
+} from "../journal/control-records.js";
 import {
   JOURNAL_FILE,
   JournalFileError,
@@ -14,14 +41,16 @@ import {
   readJournal,
 } from "../journal/journal.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
-import type {
-  AgentAssignedRecord,
-  JournalRecord,
-  NewJournalRecord,
-  RequestDispatchedRecord,
-  RunOpenedRecord,
-  RunTerminatedRecord,
+import {
+  INPUT_FILE,
+  type AgentAssignedRecord,
+  type JournalRecord,
+  type NewJournalRecord,
+  type RequestDispatchedRecord,
+  type RunOpenedRecord,
+  type RunTerminatedRecord,
 } from "../journal/records.js";
+import { writeAll } from "../journal/write-all.js";
 import { candidateRecord, refuseAppend, replay } from "./reducer.js";
 
 /**
@@ -52,6 +81,11 @@ export interface OpenRunInput {
   runDir: string;
   runId: string;
   plan: RunPlan;
+  /**
+   * Caller input to persist as `<runDir>/input.json` (mode 0444, p3). Its
+   * sha256 and size are recorded on run.opened. Must be JSON-serializable.
+   */
+  input?: unknown;
   lock?: LockOptions;
 }
 
@@ -71,6 +105,52 @@ export interface RecordDispatchInput extends StoreInput {
   /** Closed per delivery; see DISPATCH_REASONS. */
   reason: string;
   paneId?: string;
+  /** Persisted request file (p3); path is `requests/<stage>/visit-<n>/attempt-<m>/request.md`. */
+  request?: { path: string; sha256: string; bytes: number };
+  /** Runtime identity observed at dispatch (p3). */
+  target?: { terminalId: string | null; sessionId: string | null };
+  /** Repository revision when the request was sent (p3). */
+  revision?: Revision;
+}
+
+export interface RecordGateInput extends StoreInput {
+  gate: string;
+  kind: "stage" | "check";
+  subject: GateSubject;
+  decision: GateDecision;
+  reason: string;
+  round: number;
+  next: GateNext;
+  revision: Revision;
+  /** Required for stage gates: the accepted verdict. */
+  verdict?: string | null;
+  reviewed?: Revision;
+  /** Required for check gates. */
+  check?: CheckResultRecord;
+}
+
+export interface BlockRunInput extends StoreInput {
+  agentId: string;
+  reason: BlockReason;
+  requiredAction: string;
+  observed: ObservedState;
+  /** The blocked agent's open attempt, when there is one. */
+  attempt?: { stageId: string; visit: number; attempt: number };
+}
+
+export interface UnblockRunInput extends StoreInput {
+  agentId: string;
+  observed: ObservedState;
+}
+
+export interface ReconcileDeliveryInput extends StoreInput {
+  agentId: string;
+  stageId: string;
+  visit: number;
+  attempt: number;
+  dispatchSeq: number;
+  resolution: "delivered" | "abandoned";
+  evidence: DeliveryReconciledRecord["evidence"];
 }
 
 export interface TerminateRunInput extends StoreInput {
@@ -84,7 +164,10 @@ export interface TerminateRunInput extends StoreInput {
  * Creates `<runDir>/journal.jsonl` with a `run.opened` record carrying the
  * validated plan. Refuses `plan_invalid` (one detail per field) and
  * `run_exists` when the journal already holds records. An existing empty
- * journal is opened.
+ * journal is opened. With `input`, `<runDir>/input.json` is created exclusively
+ * (never through a symlink, mode 0444) before the record is appended, and the
+ * record carries its sha256 and size; an existing `input.json` with other
+ * content is `run_exists`.
  */
 export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpenedRecord>> {
   if (typeof input.runDir !== "string" || input.runDir === "") {
@@ -122,10 +205,18 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
       } else {
         createJournal(runDir);
       }
+      let inputRef: RunOpenedRecord["input"];
+      if (input.input !== undefined) {
+        const bytes = Buffer.from(`${JSON.stringify(input.input, null, 2)}\n`, "utf8");
+        const written = writeInputFile(runDir, bytes);
+        if (written !== undefined) return rejected("run_exists", written);
+        inputRef = { path: INPUT_FILE, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
+      }
       const record = appendRecord(runDir, records, {
         type: "run.opened",
         runId: input.runId,
         plan: validated.plan,
+        ...(inputRef !== undefined ? { input: inputRef } : {}),
       });
       return recorded(record as RunOpenedRecord);
     },
@@ -172,7 +263,163 @@ export async function recordDispatch(
     delivery: input.delivery,
     reason: input.reason,
     ...(input.paneId !== undefined ? { paneId: input.paneId } : {}),
+    ...(input.request !== undefined
+      ? {
+          request: {
+            path: input.request.path,
+            sha256: input.request.sha256,
+            bytes: input.request.bytes,
+          },
+        }
+      : {}),
+    ...(input.target !== undefined
+      ? { target: { terminalId: input.target.terminalId, sessionId: input.target.sessionId } }
+      : {}),
+    ...(input.revision !== undefined ? { revision: copyRevision(input.revision) } : {}),
   });
+}
+
+/**
+ * Records a gate decision on a journaled acceptance (p3). The store checks
+ * only that the record is possible (subject is the latest accepted attempt,
+ * gate and verdict agree, no second gate, round order, planned checks); the
+ * caller decides the decision and the next step.
+ */
+export async function recordGate(
+  input: RecordGateInput,
+): Promise<StoreOutcome<GateRecordedRecord>> {
+  return appendFact<GateRecordedRecord>(input, {
+    type: "gate.recorded",
+    gate: input.gate,
+    kind: input.kind,
+    subject: {
+      stageId: input.subject.stageId,
+      visit: input.subject.visit,
+      attempt: input.subject.attempt,
+      acceptedSeq: input.subject.acceptedSeq,
+      receiptId: input.subject.receiptId,
+    },
+    decision: input.decision,
+    reason: input.reason,
+    round: input.round,
+    next:
+      "stageId" in input.next ? { stageId: input.next.stageId } : { outcome: input.next.outcome },
+    revision: copyRevision(input.revision),
+    ...(input.verdict !== undefined ? { verdict: input.verdict } : {}),
+    ...(input.reviewed !== undefined ? { reviewed: copyRevision(input.reviewed) } : {}),
+    ...(input.check !== undefined
+      ? {
+          check: {
+            command: [...input.check.command],
+            exitCode: input.check.exitCode,
+            signal: input.check.signal,
+            timedOut: input.check.timedOut,
+            evidence: {
+              path: input.check.evidence.path,
+              sha256: input.check.evidence.sha256,
+              bytes: input.check.evidence.bytes,
+            },
+          },
+        }
+      : {}),
+  });
+}
+
+/** Records that the run is blocked on an agent, with the observation that showed it (p3). */
+export async function blockRun(input: BlockRunInput): Promise<StoreOutcome<RunBlockedRecord>> {
+  return appendFact<RunBlockedRecord>(input, {
+    type: "run.blocked",
+    agentId: input.agentId,
+    reason: input.reason,
+    requiredAction: input.requiredAction,
+    observed: copyObserved(input.observed),
+    ...(input.attempt !== undefined
+      ? {
+          stageId: input.attempt.stageId,
+          visit: input.attempt.visit,
+          attempt: input.attempt.attempt,
+        }
+      : {}),
+  });
+}
+
+/** Records that the blocking agent was observed no longer blocked (p3). */
+export async function unblockRun(
+  input: UnblockRunInput,
+): Promise<StoreOutcome<RunUnblockedRecord>> {
+  return appendFact<RunUnblockedRecord>(input, {
+    type: "run.unblocked",
+    agentId: input.agentId,
+    resolution: "observed_unblocked",
+    observed: copyObserved(input.observed),
+  });
+}
+
+/** Resolves one ambiguous dispatch on evidence: delivered, or abandoned at its deadline (p3). */
+export async function reconcileDelivery(
+  input: ReconcileDeliveryInput,
+): Promise<StoreOutcome<DeliveryReconciledRecord>> {
+  return appendFact<DeliveryReconciledRecord>(input, {
+    type: "delivery.reconciled",
+    agentId: input.agentId,
+    stageId: input.stageId,
+    visit: input.visit,
+    attempt: input.attempt,
+    dispatchSeq: input.dispatchSeq,
+    resolution: input.resolution,
+    evidence: input.evidence,
+  });
+}
+
+function copyRevision(revision: Revision): Revision {
+  return { head: revision.head, tree: revision.tree };
+}
+
+function copyObserved(observed: ObservedState): ObservedState {
+  return {
+    runtimeStatus: observed.runtimeStatus,
+    terminalId: observed.terminalId,
+    stateChangeSeq: observed.stateChangeSeq,
+  };
+}
+
+/**
+ * Creates `input.json` exclusively without following symlinks. An existing file
+ * with identical bytes is kept (a retried open); anything else is refused.
+ * Returns a refusal message, or undefined when the file holds `bytes`.
+ */
+function writeInputFile(runDir: string, bytes: Buffer): string | undefined {
+  const path = join(runDir, INPUT_FILE);
+  const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = constants;
+  let fd: number;
+  try {
+    fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o444);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    let existing: Buffer | undefined;
+    try {
+      const readFd = openSync(path, constants.O_RDONLY | O_NOFOLLOW);
+      try {
+        existing = readFileSync(readFd);
+      } finally {
+        closeSync(readFd);
+      }
+    } catch {
+      existing = undefined;
+    }
+    return existing !== undefined && existing.equals(bytes)
+      ? undefined
+      : `${path} already exists with other content`;
+  }
+  try {
+    writeAll(fd, bytes);
+    fsyncSync(fd);
+    // The create mode is masked by the umask; the descriptor's mode is set exactly.
+    fchmodSync(fd, 0o444);
+  } finally {
+    closeSync(fd);
+  }
+  return undefined;
 }
 
 /** Records the run's terminal outcome, once. The caller decides the outcome. */

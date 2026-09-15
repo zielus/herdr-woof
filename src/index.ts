@@ -5,12 +5,14 @@
  * boundary. The package's ESM metadata makes this compiled file importable as
  * a module. Test doubles live in `herdr-woof/testing`, not here.
  *
- * Everything below is a p2 contract, unstable until v1: the p1 result handoff
- * (`openAttempt`, `submitResult`, `readJournal`), run plans and domain types,
- * the state store, snapshots, events and the runtime adapter contract. There
- * is no scheduler: nothing here chooses a next stage, evaluates a verdict,
- * resends a prompt or turns a runtime observation into a journal record.
- * `woof attempt open`, `woof submit` and `woof run show` call the same
+ * Everything below is unstable until v1: the p1 result handoff (`openAttempt`,
+ * `submitResult`, `readJournal`), run plans and domain types, the state store,
+ * snapshots, events and the runtime adapter contract (p2), and the p3 workflow
+ * engine: definitions and their loader, admission, the sequential scheduler
+ * (`runWorkflow`), the built-in build-review workflow and the run result. The
+ * scheduler is the only component that chooses a next stage; it records its
+ * decisions through the store. `woof attempt open`, `woof submit`,
+ * `woof run show`, `woof run build-review` and `woof run cancel` call the same
  * functions.
  */
 export const SDK_FOUNDATION = true;
@@ -37,6 +39,7 @@ export { DISPATCH_REASONS } from "./domain/types.js";
 export type {
   AgentKind,
   AgentSpec,
+  AttemptCause,
   AttemptRef,
   AttemptStatus,
   BlockInfo,
@@ -47,6 +50,7 @@ export type {
   GateResult,
   Limits,
   Outcome,
+  Revision,
   RoleName,
   RunPlan,
   RunStatus,
@@ -63,14 +67,34 @@ export { MAX_ARTIFACT_BYTES } from "./journal/accepted-copy.js";
 export { submitResult } from "./submission/submit.js";
 export type { SubmitInput } from "./submission/submit.js";
 
-export { assignAgent, openRun, recordDispatch, terminateRun } from "./state/store.js";
+export {
+  assignAgent,
+  blockRun,
+  openRun,
+  reconcileDelivery,
+  recordDispatch,
+  recordGate,
+  terminateRun,
+  unblockRun,
+} from "./state/store.js";
 export type {
   AssignAgentInput,
+  BlockRunInput,
   OpenRunInput,
+  ReconcileDeliveryInput,
   RecordDispatchInput,
+  RecordGateInput,
   StoreOutcome,
   TerminateRunInput,
+  UnblockRunInput,
 } from "./state/store.js";
+export { deriveRunResult } from "./state/result.js";
+export type {
+  AcceptedRef,
+  DeriveRunResultOptions,
+  EvidenceRef,
+  RunResult,
+} from "./state/result.js";
 export type { Counters } from "./state/reducer.js";
 export { deriveSnapshot, readSnapshot } from "./state/snapshot.js";
 export type {
@@ -79,6 +103,8 @@ export type {
   RunSnapshot,
   SnapshotAgent,
   SnapshotAttempt,
+  SnapshotBlocked,
+  SnapshotGate,
   SnapshotStage,
 } from "./state/snapshot.js";
 
@@ -115,3 +141,27 @@ export { overlayRuntime } from "./runtime/overlay.js";
 export type { OverlaidSnapshot, OverlaySkip, RuntimeOverlay } from "./runtime/overlay.js";
 export { createHerdrCliRuntime } from "./runtime/herdr/adapter.js";
 export type { HerdrCliRuntime, HerdrCliRuntimeOptions } from "./runtime/herdr/adapter.js";
+
+export { validateWorkflowDefinition } from "./scheduler/definition.js";
+export type {
+  AgentStage,
+  CheckGateContext,
+  CheckStage,
+  InputRef,
+  RequestContext,
+  RunHistory,
+  StageGateContext,
+  StageRequest,
+  Transition,
+  ValidateDefinitionResult,
+  WorkflowDefinition,
+} from "./scheduler/definition.js";
+export { loadWorkflowDefinition } from "./scheduler/loader.js";
+export type { LoadDefinitionResult, LoadReason } from "./scheduler/loader.js";
+export { admitWorkflow } from "./scheduler/admission.js";
+export type { AdmissionReason, AdmissionResult } from "./scheduler/admission.js";
+export { runWorkflow } from "./scheduler/driver.js";
+export type { RunWorkflowOptions, RunWorkflowResult } from "./scheduler/driver.js";
+export type { Action, AgentRuntimeView } from "./scheduler/core.js";
+export { buildReviewWorkflow } from "./workflows/build-review.js";
+export type { BuildReviewInput } from "./workflows/build-review.js";

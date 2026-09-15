@@ -178,7 +178,8 @@ out = { current, near, start, observed, waited, delivered, stopped };`,
         "--until",
         "blocked",
         "--timeout",
-        "7000",
+        // What is left of the 7000 ms delivery deadline after the precondition read.
+        expect.stringMatching(/^(6\d{3}|7000)$/),
       ],
       ["pane", "close", PANE],
       ["agent", "get", NAME],
@@ -506,6 +507,132 @@ out = { first, second };`,
     });
     expect(log).toEqual([]);
   });
+
+  it("retries agent start on agent_pane_busy only for a pane it just split", () => {
+    const busyThenStarted: Entry[] = [
+      splitReturning(PANE),
+      { match: ["agent", "start"], call: 1, ...error("agent_pane_busy") },
+      { match: ["agent", "start"], call: 2, ...error("agent_pane_busy") },
+      { match: ["agent", "start"], call: 3, stdout: agentJson("idle", 10, "agent_started") },
+    ];
+    const owned = runAdapter(
+      busyThenStarted,
+      `await runtime.openPane({ near: "current", cwd: "/tmp/run" });
+out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: 30000 });`,
+    );
+    expect(owned.out).toMatchObject({ ok: true, value: { paneId: PANE, paneOwned: true } });
+    expect(owned.log.filter((args) => args[1] === "start")).toHaveLength(3);
+    expect(owned.elapsed).toBeGreaterThanOrEqual(1900);
+
+    // A pane this instance did not split is not retried.
+    const foreign = runAdapter(
+      busyThenStarted.slice(1),
+      `out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: 30000 });`,
+    );
+    expect(foreign.out).toMatchObject({ ok: false, error: { runtimeCode: "agent_pane_busy" } });
+    expect(foreign.log.filter((args) => args[1] === "start")).toHaveLength(1);
+  }, 30_000);
+
+  it("bounds deliver's precondition read and prompt by one deadline", () => {
+    const hungRead = runAdapter(
+      [{ match: ["agent", "get"], hangMs: 10_000, stdout: "" }],
+      `const began = Date.now();
+out = { delivered: await runtime.deliver(handle, "x", { timeoutMs: 300 }), took: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(hungRead.out["delivered"]).toMatchObject({
+      outcome: "not_delivered",
+      error: { code: "runtime_unavailable" },
+    });
+    expect(hungRead.out["took"]).toBeLessThan(1000);
+    expect(hungRead.log.filter((args) => args[1] === "prompt")).toEqual([]);
+
+    const hungPrompt = runAdapter(
+      [
+        { match: ["agent", "get"], stdout: agentJson("idle", 5) },
+        { match: ["agent", "prompt"], hangMs: 10_000, stdout: "" },
+      ],
+      `const began = Date.now();
+out = { delivered: await runtime.deliver(handle, "x", { timeoutMs: 800 }), took: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(hungPrompt.out["delivered"]).toMatchObject({
+      outcome: "ambiguous",
+      error: { code: "timeout" },
+    });
+    expect(hungPrompt.out["took"]).toBeLessThan(800 + 100 + 400);
+    const prompt = hungPrompt.log.find((args) => args[1] === "prompt") ?? [];
+    expect(Number(prompt[prompt.indexOf("--timeout") + 1])).toBeLessThanOrEqual(800);
+  }, 30_000);
+
+  it("bounds observe and pane split by a supplied timeout", () => {
+    const { out } = runAdapter(
+      [
+        { match: ["agent", "get"], hangMs: 10_000, stdout: "" },
+        { match: ["pane", "split"], hangMs: 10_000, stdout: "" },
+      ],
+      `let began = Date.now();
+const observed = await runtime.observe(handle, { timeoutMs: 300 });
+const observeMs = Date.now() - began;
+began = Date.now();
+const pane = await runtime.openPane({ near: "current", cwd: "/tmp/run", timeoutMs: 300 });
+out = { observed, observeMs, pane, paneMs: Date.now() - began };`,
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(out).toMatchObject({
+      observed: { ok: false, error: { code: "timeout" } },
+      pane: { ok: false, error: { code: "timeout" } },
+    });
+    expect(out["observeMs"]).toBeLessThan(1000);
+    expect(out["paneMs"]).toBeLessThan(1000);
+  }, 30_000);
+
+  it("keeps start retries within the supplied timeout and returns the busy result, not a timeout", () => {
+    const startBody = (timeoutMs: number) =>
+      `await runtime.openPane({ near: "current", cwd: "/tmp/run" });
+const began = Date.now();
+out = { result: await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, paneOwned: true, timeoutMs: ${timeoutMs} }), took: Date.now() - began };`;
+    const startTimeouts = (log: string[][]) =>
+      log
+        .filter((args) => args[1] === "start")
+        .map((args) => Number(args[args.indexOf("--timeout") + 1]));
+
+    // A persistently busy owned pane.
+    const persistent = runAdapter(
+      [splitReturning(PANE), { match: ["agent", "start"], ...error("agent_pane_busy") }],
+      startBody(6000),
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(persistent.out["result"]).toMatchObject({
+      ok: false,
+      error: { runtimeCode: "agent_pane_busy" },
+    });
+    expect(persistent.out["took"]).toBeLessThan(6000);
+    const persistentTimeouts = startTimeouts(persistent.log);
+    expect(persistentTimeouts.length).toBeGreaterThanOrEqual(2);
+    expect(persistentTimeouts[0]).toBe(6000);
+    for (const value of persistentTimeouts.slice(1)) {
+      expect(value).toBeGreaterThan(3000);
+      expect(value).toBeLessThan(6000);
+    }
+
+    // Busy, then a second start that never answers: bounded by the supplied timeout.
+    const slow = runAdapter(
+      [
+        splitReturning(PANE),
+        { match: ["agent", "start"], call: 1, ...error("agent_pane_busy") },
+        { match: ["agent", "start"], call: 2, hangMs: 60_000, stdout: "" },
+      ],
+      startBody(5000),
+      { herdrEnv: "1", graceMs: 100 },
+    );
+    expect(slow.out["result"]).toMatchObject({
+      ok: false,
+      error: { runtimeCode: "agent_pane_busy" },
+    });
+    expect(slow.out["took"]).toBeLessThan(5000 + 400);
+    expect(startTimeouts(slow.log)).toHaveLength(2);
+  }, 30_000);
 
   it("never invoked read, send-keys, run or explain across every scenario", () => {
     expect(allLogs.length).toBeGreaterThan(20);

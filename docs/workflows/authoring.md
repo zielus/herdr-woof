@@ -1,6 +1,9 @@
 # Authoring a workflow
 
-Status: authoring contract. Workflow syntax and API are not implemented yet.
+Status: authoring contract, plus an implemented definition contract and loader
+(p3). See "Implemented now (p3)" below for what a real definition module looks
+like and how it is validated and loaded; configuration-driven role/catalog
+discovery is still open.
 
 A workflow defines how work progresses. Adding a new workflow should normally
 mean adding a definition, roles and artifact contracts, without adding a special
@@ -58,3 +61,113 @@ Research/discussion workflows can assign researchers or critics and pass their
 artifacts to a synthesis stage. They must also define termination and ownership.
 Parallel execution is a separate scheduler capability; do not imply it exists
 because several agents are declared in a definition.
+
+## Implemented now (p3)
+
+Real shipped behavior for the definition contract, validation and the loader —
+not design intent. Source: `src/scheduler/definition.ts`,
+`src/scheduler/loader.ts`, `src/scheduler/admission.ts`.
+
+- **A definition is an ES module whose default export is a `WorkflowDefinition`.**
+  It declares `schemaVersion: 1`, `name`/`version` (ids), `agents` (non-empty,
+  unique `{agentId, role}`), `stages` (a mix of `AgentStage` and `CheckStage`,
+  §3.1), `start` (an agent stage id), `roundStage` (null or an agent stage id),
+  and a static `edges` map from every stage/check id to its allowed next ids
+  and terminal outcomes (`"completed"`/`"failed"`). Four functions —
+  `validateInput`, `resolveAgents`, `resolveLimits`, `repository` — are called
+  from caller input, not from a snapshot; every other stage/check function
+  (`request`, `next`, `command`) is called by the scheduler from
+  snapshot-derived context only, must be synchronous and side-effect free, and
+  is guarded: a throw or a malformed return value ends the run
+  `failed{reason:"definition_threw: …"}` or is reported as
+  `definition_contract_violated`/`transition_undeclared`, never an uncaught
+  exception.
+- **`validateWorkflowDefinition(value)`** checks this shape before any input is
+  read: valid ids; unique stage/check ids across both kinds; every agent
+  stage's `agentId` is declared; `start` is an agent stage; `roundStage` is null
+  or an agent stage; every function member is a function; a safe, single-file
+  `artifactFile` basename; an `edges` entry for every stage and check whose
+  every target is a known id or an outcome; and no cycle made only of checks (a
+  checks-only cycle would have no visit bound to end it). It never throws and
+  returns one `RejectionDetail` per problem.
+- **`loadWorkflowDefinition(path)`** (`loadModuleDefault` underneath) loads
+  `.js`/`.mjs` everywhere and `.ts` through Node's built-in type stripping
+  (erasable syntax only — no `enum`, `namespace`, parameter properties or
+  decorators; Node does not strip `.ts` under `node_modules`, so a packaged
+  definition must ship compiled `.js`). **Loading a definition module executes
+  its code.** Rejections are one of `definition_not_found` (missing file),
+  `definition_syntax_unsupported` (Node's `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`/
+  `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), `definition_load_failed` (any
+  other import error, including a throwing module body), or
+  `definition_invalid` (no default export, or a default export that fails
+  `validateWorkflowDefinition`). The built-in `build-review` definition ships
+  as a compiled module.
+- **Admission** (`admitWorkflow`) first checks the run directory itself:
+  absolute and at most `MAX_RUN_DIR_BYTES` (512) bytes, otherwise
+  `input_invalid` (field `runDir`) before any callback runs — the run
+  directory is used verbatim in launch arguments and requests. It then calls
+  the definition's four input callbacks in order — `validateInput`,
+  `repository`, `resolveAgents`, `resolveLimits` — each guarded individually;
+  a throw or a return shape that does not match the contract (missing `{ok}`,
+  a `details` entry that is not exactly `{field: string, message: string}`, a
+  non-string repository path, an agent map entry that is not `{kind, model,
+args?}`, a non-object limits result) is `definition_invalid` naming the
+  callback, never an exception. `repository(input)` must return the **top
+  level** of a git work tree —
+  `revisionOf` resolves `git rev-parse --show-toplevel` from the given path and
+  fingerprints the whole tree from there; a path that is not that top level
+  (a nested directory) is rejected `repo_invalid`, naming both the given path
+  and the resolved top level. A repository path git itself cannot take (for
+  example one containing a NUL byte) makes `revisionOf` throw; admission
+  catches that and rejects it `repo_invalid` too, naming the path, rather than
+  letting the exception escape. A run directory that equals, contains, or lies
+  inside that repository is rejected `input_invalid` before any agent kind is
+  resolved. Agent kind/model/args resolve through the kind table
+  (`src/scheduler/launch.ts`; only `"claude"` is currently supported —
+  `agent_kind_unsupported` otherwise) into the run plan. The repository
+  admission resolved is the one the scheduler uses for every later pane, check
+  and fingerprint; `runWorkflow` never calls `definition.repository(input)`
+  again after admission.
+- **Static edges are enforced at transition time, not only at validation.**
+  `transitionProblem` checks every value a stage/check `next()` returns against
+  its contract (a `pass`/`reject` decision, a non-empty reason of at most 200
+  characters, exactly one of `to`/`outcome`, `completed` only from `pass` and
+  `failed` only from `reject`; `requires: "round"` is valid only when the
+  definition declares a `roundStage` — `requires: "round"` in a definition with
+  `roundStage: null` is `definition_contract_violated`) and against the static
+  `edges[from]` list; a target outside that list ends the run
+  `failed{reason:"transition_undeclared: …"}` before any dispatch or gate
+  write, even though the same shape already passed
+  `validateWorkflowDefinition`. An agent stage's `request()` return is checked
+  the same way for every dispatch cause except `format_repair`
+  (`stageRequestProblem`: `{goal: string, instructions: string, inputs:
+InputRef[]}` plus optional `task`/`roleInstructions`, each `InputRef`
+  `{label: non-empty string, from: {stageId: string} xor {checkId: string}}`);
+  a malformed return ends the run
+  `failed{reason:"definition_contract_violated: <stage>: request() …"}` before
+  any dispatch. `null` is reserved for a format-repair dispatch (which never
+  calls `request()`) and is never a valid return otherwise. A present
+  `task.context` is checked the same way, as a JSON value (`jsonValueProblem`,
+  `src/contracts/json-value.ts` — no `BigInt`, function, symbol, non-finite
+  number, cycle, or non-plain object such as a `Date`; nesting bounded to
+  1000 levels): a violation is the same
+  `definition_contract_violated: <stage>: request() task.context …` failure,
+  caught before the request is rendered rather than surfacing later as an
+  engine invariant. This is the shared check the built-in `build-review`
+  workflow's own input validation uses for its `task.context` field, so a
+  context a definition accepts at input time can never fail this later
+  contract check with different rules.
+- **Check stages** (`kind: "check"`) run an engine-owned command instead of an
+  agent: `command(input) → {argv, timeoutMs}`, executed with no shell in the
+  repository (`src/scheduler/check.ts`), and `next(ctx)` receives the exit code,
+  signal, timeout flag and evidence file. A check has no `AgentSpec`, no visits
+  and no attempts of its own; its subject is the accepted stage submission whose
+  gate transition entered it. See [initial-workflows.md](initial-workflows.md)
+  for `build-review`'s `verify` check.
+- **What remains open:** `.woof`/`~/.woof` configuration-driven role catalogs
+  and provenance (phase 4); a definition can still only be loaded by explicit
+  path (`--runtime-module`-style loading is documented, unstable, and
+  test-oriented for the runtime adapter, not the definition — its factory
+  result is shape-validated against every `RuntimeAdapter` method before any
+  run opens; a missing or non-function member is `runtime_unavailable`,
+  exit 3, naming what is missing or invalid).

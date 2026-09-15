@@ -65,10 +65,27 @@ function subjectOf(
     case "run.terminated":
       return {};
     case "agent.assigned":
+    case "run.unblocked":
       return { agentId: record.agentId };
+    case "run.blocked":
+      return record.stageId === undefined
+        ? { agentId: record.agentId }
+        : {
+            agentId: record.agentId,
+            stageId: record.stageId,
+            visit: record.visit as number,
+            attempt: record.attempt as number,
+          };
+    case "gate.recorded":
+      return {
+        stageId: record.subject.stageId,
+        visit: record.subject.visit,
+        attempt: record.subject.attempt,
+      };
     case "attempt.opened":
     case "submission.accepted":
     case "request.dispatched":
+    case "delivery.reconciled":
       return {
         agentId: record.agentId,
         stageId: record.stageId,

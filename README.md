@@ -4,10 +4,12 @@ Woof is the future orchestration SDK for coding agents running through Herdr.
 This repository provides a package boundary, build and packaging checks, a
 diagnostic CLI, truthful Herdr/Claude plugin placeholders, a first working
 slice of result handoff (a worker-callable `woof submit` CLI/SDK bridge
-backed by an append-only run journal), and a p2 run-facts and snapshot layer
+backed by an append-only run journal), a p2 run-facts and snapshot layer
 (run plans, journaled agent assignment/dispatch/termination, derived
-snapshots and events, and a Herdr runtime adapter — see below). It does not
-run workflows, delegate agents, or publish a stable `HerdrAgentsSDK` API yet.
+snapshots and events, and a Herdr runtime adapter), and a p3 scheduler that
+runs the built-in `build-review` workflow end to end — see below. It does
+not run a second built-in workflow, delegate agents outside a workflow, host
+a run, or publish a stable `HerdrAgentsSDK` API yet.
 
 ## Requirements
 
@@ -37,6 +39,9 @@ bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 bin/woof submit --envelope <path|-> [--run-dir <dir>]
 bin/woof run show <run-dir> [--verify-artifacts]
+bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
+  [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
+bin/woof run cancel <run-dir> [--reason <text>]
 ```
 
 `doctor` reports whether Herdr and Claude Code can be invoked; neither is
@@ -135,16 +140,82 @@ adapter's own: if the observation right after delivery is not `working` or
 `blocked`, the outcome is downgraded to `ambiguous/protocol_error` (the call
 is still logged as `sent`).
 
-What still does not exist: a scheduler or workflow engine, workflow
-definitions or a loader, `.woof`/`~/.woof` configuration, an MCP adapter, or
-run hosting (there is no daemon or live run owner — every store call and
-`submit` open the journal themselves, in process). Declared limits are
-validated and counted but never enforced; gate, block and
-delivery-reconciliation related domain result shapes exist
-(`GateResult`/`GateDecision`, `BlockInfo`, `DeliveryResolution`), but their
-journal record types, writers, readers, events and behaviour — and the run
-status `blocked` they would produce — are not implemented. Crash resume is
-not claimed.
+## Build-review loop (p3)
+
+A scheduler now runs the built-in `build-review` workflow end to end: build
+→ verify (an engine-run check, only when the input names a command) → review
+→ repair, until a review passes on the exact repaired revision or a limit
+ends the run. It launches `claude` agents in Herdr panes next to the
+scheduler's own (`HERDR_ENV=1` and `HERDR_PANE_ID` must be set), so an
+interactive Claude agent it starts must already be allowed to run — the
+operator must have trusted the target repository in Claude Code at least
+once (open `claude` there and answer its folder-trust question) before
+`woof run build-review` can start an agent in it; Woof surfaces an untrusted
+repository as `run.blocked{reason:"startup_blocked"}` and never bypasses
+that dialog. `repo` must be the top level of that git work tree (`git
+rev-parse --show-toplevel`); a nested directory is rejected `repo_invalid`,
+naming both the given path and the resolved top level:
+
+```sh
+cat > input.json <<'EOF'
+{
+  "schemaVersion": 1,
+  "repo": "/abs/path/to/git/worktree",
+  "task": {
+    "title": "Implement slugify",
+    "description": "Implement slugify(text) in src/slugify.mjs.",
+    "acceptanceCriteria": ["lowercase", "hyphenated", "tests pass"]
+  },
+  "verify": { "command": ["node", "--test"], "timeoutMs": 120000 },
+  "agents": {
+    "builder": { "kind": "claude", "model": "sonnet", "args": ["--permission-mode", "auto"] },
+    "reviewer": { "kind": "claude", "model": "sonnet", "args": ["--permission-mode", "auto"] }
+  }
+}
+EOF
+bin/woof run build-review --input input.json --run-dir /tmp/woof-run
+# {"outcome":"run","result":{"outcome":"completed","limit":null,...}}
+```
+
+`agents.builder`/`agents.reviewer` resolve `kind`, `model` and caller launch
+arguments; the engine adds only `--model <model>` (when given) and
+`--add-dir <runDir>` — never a permission flag. `limits` is optional (each
+key optional, same bounds as elsewhere) and defaults to
+`maxAttemptsPerVisit: 2, maxVisitsPerStage: 3, maxRounds: 3,
+maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs: 180000,
+blockedWaitMs: 600000, deliveryTimeoutMs: 60000`.
+
+`--poll-ms` must be an integer of at least 1 (usage error otherwise).
+Progress goes to stderr; stdout prints exactly one JSON line. Exit codes:
+`0` completed, `4` failed, `5` exhausted, `6` cancelled, `2` rejected before
+launch (bad input, a repository that is not the git work tree's top level or
+one git itself cannot take, an unsupported agent kind, a run directory
+overlapping the repository, an existing run directory), `3` a runtime or
+journal infrastructure failure (including `HERDR_ENV`/`HERDR_PANE_ID` unset
+without `--runtime-module`, a `--runtime-module` factory whose result is
+missing or misshapes a `RuntimeAdapter` method — checked before any run
+opens — or a run that finished but left a pane the driver could not stop,
+returned as `RunResult` plus an attached `runtime_cleanup_failed` error), `1`
+a usage error. `woof run cancel <run-dir>` records
+`run.terminated{outcome:"cancelled"}` for a scheduler that may still be
+running elsewhere (its own next tick then stops it); exit `0` when
+recorded, `2` when the run is already terminated, `3` on a journal failure.
+
+See [domain model](docs/architecture/domain-model.md#implemented-now-p3),
+[communication](docs/architecture/communication.md#implemented-now-p3),
+[observability](docs/architecture/observability.md#implemented-now-p3),
+[workflow authoring](docs/workflows/authoring.md#implemented-now-p3) and
+[initial workflows](docs/workflows/initial-workflows.md#implemented-now-p3)
+for the definition contract, the scheduler's decision rules, format repair,
+blocking/reconciliation, revision binding and the terminal `RunResult`.
+
+What still does not exist: `.woof`/`~/.woof` configuration or role catalogs
+(agents resolve from the CLI input object only), a second built-in workflow
+(`plan-build-review`, phase 5), an MCP adapter, run hosting (there is no
+daemon or live run owner — every store call, `submit` and the scheduler
+itself open the journal in process; a killed scheduler leaves a non-terminal
+run whose only resolution is `woof run cancel`), crash resume, and parallel
+scheduling (one active request per agent, one sequential decision loop).
 
 ## Integrations and scope
 

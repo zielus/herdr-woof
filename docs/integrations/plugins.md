@@ -1,16 +1,19 @@
 # Woof integration surfaces
 
-Status: foundation, plus a p1 result-handoff prototype and a p2 run-facts/
-snapshot prototype. Result submission (p1) and run inspection/observability
-(p2: run plans, journaled facts, snapshots, events and a Herdr runtime
-adapter, `woof run show`) now exist as CLI/SDK contracts (see below). The
-workflow runtime, agent delegation and run hosting are not implemented, and
-the Herdr and Claude Code plugins still expose none of any of it — every
-capability below is a CLI/SDK surface only, never a plugin action.
+Status: foundation, plus a p1 result-handoff prototype, a p2 run-facts/
+snapshot prototype, and a p3 workflow-runtime prototype. Result submission
+(p1), run inspection/observability (p2: run plans, journaled facts,
+snapshots, events and a Herdr runtime adapter, `woof run show`), and the
+workflow runtime (p3: a scheduler, the built-in `build-review` definition,
+`woof run build-review` and `woof run cancel`) now exist as CLI/SDK
+contracts (see below). Agent delegation outside a workflow and run hosting
+are still not implemented, and the Herdr and Claude Code plugins still
+expose none of any of it — every capability below is a CLI/SDK surface
+only, never a plugin action.
 
 ## CLI
 
-The built `woof` executable has six supported commands:
+The built `woof` executable has eight supported commands:
 
 - `woof --help`
 - `woof --version`
@@ -24,6 +27,19 @@ The built `woof` executable has six supported commands:
   snapshot of a run journal: status, agents, per-stage attempts, counters,
   and any ambiguous deliveries still open. It takes no journal lock, never
   contacts Herdr, and works on a terminated run and on a p1 journal.
+- `woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>]
+[--poll-ms <n>] [--keep-panes] [--runtime-module <path>]` (`--poll-ms` must
+  be an integer of at least 1) — runs the
+  built-in `build-review` workflow's scheduler in the foreground against a
+  Herdr runtime (requires `HERDR_ENV=1` and `HERDR_PANE_ID`) or, for tests, a
+  `--runtime-module`. Prints one JSON line and exits `0` completed, `4`
+  failed, `5` exhausted, `6` cancelled, `2` rejected before launch, `3` a
+  runtime/journal infrastructure failure (including a pane that could not be
+  stopped while settling), `1` usage.
+- `woof run cancel <run-dir> [--reason <text>]` — records
+  `run.terminated{outcome:"cancelled"}` for a run whose scheduler may still
+  be running elsewhere; the scheduler stops at its next tick and refuses
+  late submissions.
 
 `doctor` reports the local availability of `herdr status` and `claude --version`.
 It is diagnostic only and succeeds even when either executable is absent.
@@ -33,9 +49,14 @@ for the envelope, decision order, journal, and its correlation-not-authenticatio
 limit. `run show` is a p2 prototype — see
 [domain model](../architecture/domain-model.md#implemented-now-p2) and
 [observability](../architecture/observability.md#implemented-now-p2) for the
-snapshot shape and what it does not yet cover. Every other workflow-oriented
-command fails explicitly as not implemented; the CLI does not invent run
-state or host a runtime pane.
+snapshot shape and what it does not yet cover. `run build-review` and `run
+cancel` are a p3 prototype — see
+[domain model](../architecture/domain-model.md#implemented-now-p3) and
+[workflow authoring](../workflows/authoring.md#implemented-now-p3) for the
+scheduler, the definition contract and the loader. Every other
+workflow-oriented command (a second built-in workflow, agent delegation
+outside a workflow, run hosting) fails explicitly as not implemented; the
+CLI does not invent run state or host a runtime pane.
 
 ## Herdr plugin
 

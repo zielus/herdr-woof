@@ -1,9 +1,8 @@
 /**
  * Domain types for runs, plans, agents, stages, attempts and outcomes (p2
  * contract, unstable until v1). Role, agent kind, model, agent identity and
- * workflow stage stay distinct. Gate, block and delivery-reconciliation types
- * exist so consumers can handle them now; their journal records arrive with
- * the scheduler (phase 3).
+ * workflow stage stay distinct. Gate, block and delivery-reconciliation
+ * records are written by the scheduler (p3).
  */
 
 /** Role name; an id. */
@@ -19,7 +18,7 @@ export type RunStatus =
   | "starting"
   /** At least one request.dispatched, not blocked, not terminated. */
   | "running"
-  /** Never derived in p2: run.blocked records arrive in phase 3. */
+  /** An unresolved run.blocked record, not terminated. */
   | "blocked"
   | "completed"
   | "failed"
@@ -40,6 +39,8 @@ export interface AgentSpec {
   role: RoleName;
   kind: AgentKind;
   model: string | null;
+  /** Resolved launch arguments passed to the runtime (p3, optional). */
+  args?: string[];
 }
 
 export interface StageSpec {
@@ -62,16 +63,24 @@ export interface Limits {
   readinessWaitMs: number;
   blockedWaitMs: number;
   deliveryTimeoutMs: number;
+  /** Format-repair attempts per visit, 0–1000; absent means 0 (p3). */
+  maxFormatRepairs?: number;
 }
 
 export const COUNT_LIMIT_KEYS = ["maxAttemptsPerVisit", "maxVisitsPerStage", "maxRounds"] as const;
+/** Count limits a plan may omit; an absent one means 0. */
+export const OPTIONAL_COUNT_LIMIT_KEYS = ["maxFormatRepairs"] as const;
 export const DURATION_LIMIT_KEYS = [
   "runTimeoutMs",
   "readinessWaitMs",
   "blockedWaitMs",
   "deliveryTimeoutMs",
 ] as const;
-export const LIMIT_KEYS: readonly (keyof Limits)[] = [...COUNT_LIMIT_KEYS, ...DURATION_LIMIT_KEYS];
+export const LIMIT_KEYS: readonly (keyof Limits)[] = [
+  ...COUNT_LIMIT_KEYS,
+  ...OPTIONAL_COUNT_LIMIT_KEYS,
+  ...DURATION_LIMIT_KEYS,
+];
 
 /** Upper bound for count limits. */
 export const MAX_COUNT_LIMIT = 1000;
@@ -88,6 +97,8 @@ export interface RunPlan {
   agents: AgentSpec[];
   stages: StageSpec[];
   limits: Limits;
+  /** Engine-run check ids (p3, optional): unique, disjoint from stage ids. */
+  checks?: string[];
 }
 
 export interface AttemptRef {
@@ -127,7 +138,15 @@ export const DISPATCH_REASONS = {
   ambiguous: ["stalled", "timeout", "protocol_error", "runtime_error"],
 } as const satisfies Record<DispatchDelivery, readonly string[]>;
 
-// Types only in p2; records arrive with the scheduler.
+/** Why an attempt was opened, derived from the previous attempt of its visit (p3). */
+export type AttemptCause = "initial" | "format_repair" | "work_retry";
+
+/** Engine-computed repository fingerprint: HEAD (null without commits) and a git tree id. */
+export interface Revision {
+  head: string | null;
+  tree: string;
+}
+
 export type GateDecision = "pass" | "reject";
 
 export interface GateResult {
@@ -147,7 +166,16 @@ export interface BlockInfo {
   since: string;
 }
 
+/** `not_delivered` is kept in the type; no p3 record can carry it (no evidence proves non-delivery). */
 export type DeliveryResolution = "delivered" | "not_delivered" | "abandoned";
+
+export const BLOCK_REASONS = ["blocked_on_input", "startup_blocked"] as const;
+export type BlockReason = (typeof BLOCK_REASONS)[number];
+
+export const RECONCILE_EVIDENCE = {
+  delivered: ["submission_recorded", "observed_activity"],
+  abandoned: ["no_evidence_before_deadline"],
+} as const;
 
 export interface Outcome {
   outcome: TerminalOutcome;

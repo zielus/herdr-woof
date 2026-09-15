@@ -13,7 +13,23 @@ import {
 import { INFRA_REASONS, REJECTION_REASONS } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
 import type { RunPlan } from "../domain/types.js";
-import { check, exactKeysProblem, keysProblem, paneProblem } from "./record-fields.js";
+import {
+  deliveryReconciledProblem,
+  gateRecordedProblem,
+  runBlockedProblem,
+  runUnblockedProblem,
+  type DeliveryReconciledRecord,
+  type GateRecordedRecord,
+  type RunBlockedRecord,
+  type RunUnblockedRecord,
+} from "./control-records.js";
+import {
+  check,
+  exactKeysProblem,
+  fileRefProblem,
+  keysProblem,
+  paneProblem,
+} from "./record-fields.js";
 import {
   agentAssignedProblem,
   requestDispatchedProblem,
@@ -23,7 +39,18 @@ import {
   type RunTerminatedRecord,
 } from "./run-records.js";
 
-export type { AgentAssignedRecord, RequestDispatchedRecord, RunTerminatedRecord };
+export type {
+  AgentAssignedRecord,
+  DeliveryReconciledRecord,
+  GateRecordedRecord,
+  RequestDispatchedRecord,
+  RunBlockedRecord,
+  RunTerminatedRecord,
+  RunUnblockedRecord,
+};
+
+/** Persisted run input, relative to the run directory (p3). */
+export const INPUT_FILE = "input.json";
 
 /** Fields every journal record carries. */
 export interface RecordBase {
@@ -37,6 +64,8 @@ export interface RunOpenedRecord extends RecordBase {
   runId: string;
   /** Resolved run plan; absent for plan-less runs (p1 shape, or opened by openAttempt). */
   plan?: RunPlan;
+  /** Digest of the persisted caller input `input.json` (p3, optional). */
+  input?: { path: "input.json"; sha256: string; bytes: number };
 }
 
 export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
@@ -83,7 +112,11 @@ export type JournalRecord =
   | SubmissionRejectedRecord
   | AgentAssignedRecord
   | RequestDispatchedRecord
-  | RunTerminatedRecord;
+  | RunTerminatedRecord
+  | GateRecordedRecord
+  | RunBlockedRecord
+  | RunUnblockedRecord
+  | DeliveryReconciledRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -146,9 +179,12 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
   switch (value["type"]) {
     case "run.opened":
       return (
-        keysProblem(value, ["runId"], ["plan"]) ??
+        keysProblem(value, ["runId"], ["plan", "input"]) ??
         check(isId(value["runId"]), "runId is invalid") ??
-        planProblem(value["plan"])
+        planProblem(value["plan"]) ??
+        (value["input"] === undefined
+          ? undefined
+          : fileRefProblem(value["input"], "input", INPUT_FILE))
       );
     case "attempt.opened":
       return attemptOpenedProblem(value);
@@ -164,6 +200,14 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return requestDispatchedProblem(value);
     case "run.terminated":
       return runTerminatedProblem(value);
+    case "gate.recorded":
+      return gateRecordedProblem(value);
+    case "run.blocked":
+      return runBlockedProblem(value);
+    case "run.unblocked":
+      return runUnblockedProblem(value);
+    case "delivery.reconciled":
+      return deliveryReconciledProblem(value);
     default:
       return "unknown record type";
   }

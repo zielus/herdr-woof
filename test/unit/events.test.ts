@@ -3,15 +3,21 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadDist } from "../helpers/dist.js";
 import {
   PLAN,
+  REV,
   accepted,
   assigned,
   attempt,
+  blocked,
+  checkGate,
   dispatched,
   duplicate,
+  gate,
   journalOf,
   opened,
+  reconciled,
   rejected,
   terminated,
+  unblocked,
 } from "../helpers/records.js";
 
 type Json = Record<string, unknown>;
@@ -122,6 +128,11 @@ describe("projectEvents", () => {
       rejected("envelope_malformed"),
       accepted(7, "build", "builder", null),
       duplicate(7),
+      gate(7, "build"),
+      blocked("builder"),
+      unblocked("builder"),
+      blocked("builder", ["build", 1, 1]),
+      reconciled(4, "build", "builder"),
       terminated("completed"),
     );
     const events = projectEvents(records, ANCHOR);
@@ -141,6 +152,11 @@ describe("projectEvents", () => {
       buildSubject,
       buildSubject,
       {},
+      buildSubject,
+      buildSubject,
+      { stageId: "build", visit: 1, attempt: 1 },
+      { agentId: "builder" },
+      { agentId: "builder" },
       buildSubject,
       buildSubject,
       {},
@@ -173,9 +189,14 @@ function random(seed: number): () => number {
 function generateJournal(seed: number, refusals: Set<string>): Json[] {
   const next = random(seed);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
-  const records = journalOf(parse, opened(next() < 0.5 ? PLAN : null));
-  const length = 5 + Math.floor(next() * 26);
-  for (let tries = 0; records.length < length && tries < 500; tries += 1) {
+  const plan = next() < 0.5 ? PLAN : null;
+  const records = journalOf(
+    parse,
+    opened(plan !== null && next() < 0.5 ? { ...PLAN, checks: ["verify"] } : plan),
+  );
+  const length = 5 + Math.floor(next() * 36);
+  const ofType = (type: string) => records.filter((record) => record["type"] === type);
+  for (let tries = 0; records.length < length && tries < 600; tries += 1) {
     const seq = records.length + 1;
     const agent = pick(["builder", "reviewer"]);
     const stage = agent === "builder" ? "build" : "review";
@@ -183,18 +204,23 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
     const attemptNo = 1 + Math.floor(next() * 3);
     const roll = next();
     let body: Json;
-    if (roll < 0.15) {
+    if (roll < 0.1) {
       body = assigned(agent, `w1:${agent}-${Math.floor(next() * 3)}`);
-    } else if (roll < 0.4) {
+      if (next() < 0.5) body = { ...body, terminalId: pick(["term-a", "term-b"]) };
+    } else if (roll < 0.28) {
       body = attempt(stage, agent, visit, attemptNo);
-    } else if (roll < 0.55) {
+    } else if (roll < 0.4) {
       const [delivery, reason] = pick([
         ["started", "observed_working"],
         ["ambiguous", "timeout"],
         ["not_delivered", "not_found"],
       ] as const);
       body = dispatched(stage, agent, visit, attemptNo, delivery, reason);
-    } else if (roll < 0.7) {
+      if (next() < 0.3) {
+        const target = { terminalId: pick(["term-a", "term-b"]), sessionId: null };
+        body = { ...body, target, revision: REV };
+      }
+    } else if (roll < 0.52) {
       body = accepted(
         seq,
         stage,
@@ -203,11 +229,11 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
         visit,
         attemptNo,
       );
-    } else if (roll < 0.8) {
-      const acceptances = records.filter((record) => record["type"] === "submission.accepted");
+    } else if (roll < 0.57) {
+      const acceptances = ofType("submission.accepted");
       if (acceptances.length === 0) continue;
       body = duplicate(pick(acceptances)["seq"] as number);
-    } else if (roll < 0.9) {
+    } else if (roll < 0.63) {
       body = rejected(pick(["artifact_missing", "attempt_stale", "run_closed"]), {
         runId: "run-1",
         agentId: agent,
@@ -215,8 +241,62 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
         visit,
         attempt: attemptNo,
       });
-    } else if (roll < 0.96) {
-      // Invalid by construction (some only under a plan).
+    } else if (roll < 0.72) {
+      const acceptances = ofType("submission.accepted");
+      if (acceptances.length === 0) continue;
+      const target = pick(acceptances);
+      const ref = [
+        target["stageId"] as string,
+        target["visit"] as number,
+        target["attempt"] as number,
+      ] as const;
+      const overrides = {
+        round: Math.floor(next() * 3),
+        next: pick([
+          { stageId: "review" },
+          { stageId: "verify" },
+          { stageId: "deploy" },
+          { outcome: "completed" },
+        ]),
+      };
+      body =
+        next() < 0.6
+          ? gate(target["seq"] as number, ...ref, { ...overrides, verdict: target["verdict"] })
+          : checkGate(target["seq"] as number, pick(["verify", "lint"]), ...ref, overrides);
+    } else if (roll < 0.76) {
+      body = next() < 0.5 ? blocked(agent) : blocked(agent, [stage, visit, attemptNo]);
+    } else if (roll < 0.79) {
+      body = unblocked(agent);
+    } else if (roll < 0.84) {
+      const dispatches = ofType("request.dispatched");
+      if (dispatches.length === 0) continue;
+      const target = pick(dispatches);
+      const [resolution, evidence] = pick([
+        ["delivered", "observed_activity"],
+        ["delivered", "submission_recorded"],
+        ["abandoned", "no_evidence_before_deadline"],
+      ] as const);
+      body = reconciled(
+        target["seq"] as number,
+        target["stageId"] as string,
+        next() < 0.9 ? (target["agentId"] as string) : agent,
+        target["visit"] as number,
+        target["attempt"] as number,
+        resolution,
+        evidence,
+      );
+    } else if (roll < 0.93) {
+      // Invalid by construction (some only under a plan or a known terminal).
+      const acceptance = ofType("submission.accepted").at(-1);
+      const latest = ofType("attempt.opened").at(-1);
+      const acceptedRef =
+        acceptance === undefined
+          ? undefined
+          : ([
+              acceptance["stageId"] as string,
+              acceptance["visit"] as number,
+              acceptance["attempt"] as number,
+            ] as const);
       body = pick([
         opened(PLAN, "run-2"),
         attempt(stage, agent, visit, attemptNo, undefined, "run-2"),
@@ -225,6 +305,31 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
         attempt("review", "reviewer", visit, attemptNo, ["approve"]),
         assigned("stranger"),
         duplicate(1),
+        gate(1, stage, visit, attemptNo),
+        latest === undefined
+          ? duplicate(1)
+          : {
+              ...dispatched(
+                latest["stageId"] as string,
+                latest["agentId"] as string,
+                latest["visit"] as number,
+                latest["attempt"] as number,
+              ),
+              target: { terminalId: "term-z", sessionId: null },
+            },
+        acceptance === undefined || acceptedRef === undefined
+          ? duplicate(1)
+          : gate(acceptance["seq"] as number, ...acceptedRef, {
+              gate: "other",
+              verdict: acceptance["verdict"],
+            }),
+        acceptance === undefined || acceptedRef === undefined
+          ? duplicate(1)
+          : checkGate(
+              acceptance["seq"] as number,
+              acceptedRef[0] === "build" ? "review" : "build",
+              ...acceptedRef,
+            ),
       ]);
     } else {
       body = terminated(pick(["completed", "failed", "cancelled"]));
@@ -277,9 +382,13 @@ describe("snapshot and events consistency", () => {
     expect([...types].toSorted()).toEqual([
       "agent.assigned",
       "attempt.opened",
+      "delivery.reconciled",
+      "gate.recorded",
       "request.dispatched",
+      "run.blocked",
       "run.opened",
       "run.terminated",
+      "run.unblocked",
       "submission.accepted",
       "submission.duplicate",
       "submission.rejected",
@@ -289,12 +398,22 @@ describe("snapshot and events consistency", () => {
       "agent_busy",
       "agent_unassigned",
       "agent_unknown",
+      "assignment_mismatch",
       "assignment_unchanged",
       "attempt_open_conflict",
       "attempt_unknown",
       "dispatch_exists",
+      "dispatch_not_ambiguous",
+      "gate_exists",
+      "gate_mismatch",
+      "gate_subject_stale",
+      "gate_subject_unknown",
       "invalid_transition",
+      "not_blocked",
       "owner_mismatch",
+      "reconcile_exists",
+      "round_invalid",
+      "run_blocked",
       "run_closed",
       "run_exists",
       "run_mismatch",
