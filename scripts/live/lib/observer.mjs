@@ -7,6 +7,9 @@
 // `records` are journal records; only `submission.accepted` ({ agentId, ts })
 // is read.
 
+import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
+
 export const DEFAULT_GRACE_MS = 15_000;
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "exhausted"]);
@@ -63,4 +66,46 @@ export function workingWhileActive(samples, agentId) {
       row.agents[agentId].activeAttempt !== null &&
       row.agents[agentId].activeAttempt !== undefined,
   );
+}
+
+/**
+ * Live gate L4: the `woof status` result and `outcome.json` both equal
+ * `deriveRunResult` of the terminal snapshot. `read()` returns fresh
+ * `{ status, outcome, derived }` reads; a disagreement is read again up to
+ * `attempts` times, `delayMs` apart, before it counts. Each mismatch names the
+ * reads that differed from `derived` and their differing top-level fields.
+ */
+export async function settledResultAgreement(
+  read,
+  { attempts = 3, delayMs = 2000, sleep = delay } = {},
+) {
+  const mismatches = [];
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // Each read settles before the next one; sequential by design.
+    // oxlint-disable-next-line no-await-in-loop
+    const { status, outcome, derived } = await read();
+    const differs = [];
+    if (derived === null || derived === undefined) {
+      differs.push({ read: "derived", fields: [] });
+    } else {
+      for (const [name, value] of [
+        ["status", status],
+        ["outcome.json", outcome],
+      ]) {
+        if (!isDeepStrictEqual(value, derived))
+          differs.push({ read: name, fields: differingFields(value, derived) });
+      }
+    }
+    if (differs.length === 0) return { pass: true, attempts: attempt, mismatches };
+    mismatches.push({ attempt, differs });
+    // oxlint-disable-next-line no-await-in-loop
+    if (attempt < attempts) await sleep(delayMs);
+  }
+  return { pass: false, attempts, mismatches };
+}
+
+function differingFields(value, expected) {
+  if (value === null || typeof value !== "object") return ["(whole value)"];
+  const keys = new Set([...Object.keys(value), ...Object.keys(expected)]);
+  return [...keys].filter((key) => !isDeepStrictEqual(value[key], expected[key])).toSorted();
 }

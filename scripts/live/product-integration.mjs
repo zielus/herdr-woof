@@ -17,7 +17,9 @@ import { appendFileSync, existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isDeepStrictEqual, parseArgs } from "node:util";
+import { parseArgs } from "node:util";
+
+import { settledResultAgreement } from "./lib/observer.mjs";
 
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
@@ -176,13 +178,30 @@ const derived =
   snapshot?.outcome === null || snapshot === null
     ? null
     : deriveRunResult(snapshot, { runDir, repository: config?.repository ?? null });
+// The first reads already happened above; L4 re-reads all three on a mismatch (LV-005).
+let firstRead = true;
+const agreement = await settledResultAgreement(() => {
+  if (firstRead) {
+    firstRead = false;
+    return { status: final?.result, outcome: outcomeFile?.result, derived };
+  }
+  const again = readSnapshot(runDir);
+  return {
+    status: woofStatus()?.result,
+    outcome: readJson(join(runDir, "outcome.json"))?.result,
+    derived:
+      again.ok && again.snapshot.outcome !== null
+        ? deriveRunResult(again.snapshot, { runDir, repository: config?.repository ?? null })
+        : null,
+  };
+});
+for (const mismatch of agreement.mismatches)
+  console.log(`[L4] read ${mismatch.attempt} differed: ${JSON.stringify(mismatch.differs)}`);
 gate(
   "L4",
   "woof status result equals deriveRunResult and outcome.json",
-  derived !== null &&
-    isDeepStrictEqual(final?.result, derived) &&
-    isDeepStrictEqual(outcomeFile?.result, derived),
-  `status result ${final?.result?.outcome}, outcome.json ${outcomeFile?.result?.outcome}`,
+  agreement.pass,
+  `status result ${final?.result?.outcome}, outcome.json ${outcomeFile?.result?.outcome}, agreed after ${agreement.attempts} read(s)`,
 );
 
 const running = samples.filter((row) => row.status !== null && !TERMINAL.has(row.status));

@@ -134,3 +134,76 @@ describe("observerDisagreements (live gate 10)", () => {
     expect(result["working"]).toEqual({ builder: false, reviewer: false });
   });
 });
+
+describe("live gate L4 settled result agreement (LV-005)", () => {
+  function agreement(reads: Json[], options: Json = {}): Json {
+    const result = runNode(
+      `const observer = await import(${JSON.stringify(observerUrl)});
+const { reads, options } = JSON.parse(process.argv[1]);
+const slept = [];
+let next = 0;
+const out = await observer.settledResultAgreement(async () => reads[Math.min(next++, reads.length - 1)], {
+  ...options,
+  sleep: async (ms) => { slept.push(ms); },
+});
+console.log(JSON.stringify({ ...out, reads: next, slept }));`,
+      [JSON.stringify({ reads, options })],
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout.trim()) as Json;
+  }
+
+  const derived = { outcome: "completed", revision: 12, counters: { rounds: 1 } };
+
+  it("passes at once when status and outcome.json equal the derived result", () => {
+    expect(agreement([{ status: derived, outcome: { ...derived }, derived }])).toEqual({
+      pass: true,
+      attempts: 1,
+      mismatches: [],
+      reads: 1,
+      slept: [],
+    });
+  });
+
+  it("re-reads a transient mismatch after the delay and names the read and fields that differed", () => {
+    const stale = { ...derived, revision: 11 };
+    expect(
+      agreement([
+        { status: derived, outcome: stale, derived },
+        { status: derived, outcome: derived, derived },
+      ]),
+    ).toEqual({
+      pass: true,
+      attempts: 2,
+      mismatches: [{ attempt: 1, differs: [{ read: "outcome.json", fields: ["revision"] }] }],
+      reads: 2,
+      slept: [2000],
+    });
+  });
+
+  it("fails after the bounded attempts when the mismatch persists", () => {
+    const out = agreement([{ status: null, outcome: derived, derived: null }], {
+      attempts: 3,
+      delayMs: 5,
+    });
+    expect(out).toMatchObject({ pass: false, attempts: 3, reads: 3, slept: [5, 5] });
+    expect(out["mismatches"]).toEqual(
+      [1, 2, 3].map((attempt) => ({ attempt, differs: [{ read: "derived", fields: [] }] })),
+    );
+    const diverged = agreement(
+      [{ status: null, outcome: { ...derived, outcome: "failed" }, derived }],
+      {
+        attempts: 1,
+      },
+    );
+    expect(diverged["mismatches"]).toEqual([
+      {
+        attempt: 1,
+        differs: [
+          { read: "status", fields: ["(whole value)"] },
+          { read: "outcome.json", fields: ["outcome"] },
+        ],
+      },
+    ]);
+  });
+});
