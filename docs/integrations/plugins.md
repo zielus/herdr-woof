@@ -15,7 +15,9 @@ reports the result. Every command and action below is a real, tested surface.
 - `--help`, `--version`, `doctor [--json] [--repo <dir>]` — `--json` reports
   the CLI path, Herdr environment, Claude Code availability, the read-only
   Claude folder-trust status of `--repo` (or the working directory), and
-  whether its configuration resolves. Diagnostic only; always exits 0.
+  whether its configuration resolves. Each external probe (`herdr`,
+  `claude`), in either mode, is bounded at 10 s. Diagnostic only; always
+  exits 0.
 - Prototype result handoff (unstable): `attempt open`, `submit`, `run show
 <run-dir> [--verify-artifacts]` — see
   [communication.md](../architecture/communication.md#implemented-now-p1-prototype).

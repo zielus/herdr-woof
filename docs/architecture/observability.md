@@ -351,6 +351,16 @@ json` is itself engine-owned: `woof run start` refuses `run_exists` for a
   probes. `RunSnapshot.liveness` is `{owner, runtime, host: HostInfo | null,
 claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
   `runtime: "observed"|"not_observed"`.
+- **A `"hosting"` claim must carry everything `claimHost` writes to be
+  valid.** `parseHostInfo` requires a positive integer `pid`, a non-empty
+  `hostname`, a non-empty `startedAt` and a positive integer `heartbeatMs`
+  for `state: "hosting"` — without any one of them nothing could tell a
+  dead host from a live one, so the claim parses as invalid rather than as a
+  host with an unknown pid. An incomplete hosting claim therefore reads
+  `owner: "lost"`, `host: null`, with `liveness.claimProblem` "host.json
+  exists but is not a valid run host claim" (after the usual re-reads),
+  **never `"alive"`**. `"abandoned"` and `"exited"` claims still allow
+  `pid: null`.
 - **`woof status <run-dir> [--wait]`** (`src/inspect/status.ts`,
   `RunStatusView`) is the read-only wait primitive: `liveness`, the run's
   `activeAttempts`, `lastGate`, `attention`, `counters`, `config: {sha256} |
@@ -393,7 +403,9 @@ events`** and **`woof run show`** are read-only and never take the journal
   probes the Herdr and Claude executables for diagnostics — JSON mode
   spawns the configured Herdr binary with `--version` and `claude
 --version`; human mode runs `herdr status` and `claude --version`
-  (`src/commands/doctor.ts`).
+  (`src/commands/doctor.ts`). Each external probe, in either mode, is
+  bounded at 10 s (`PROBE_TIMEOUT_MS`); a probe that times out is reported
+  as failed rather than hanging the command.
 - **Metadata is a display-only projection, never a source.** The run host
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a

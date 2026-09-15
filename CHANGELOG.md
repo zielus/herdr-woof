@@ -64,7 +64,8 @@ cancel` (`runWorkflow`, `admitWorkflow`, `buildReviewWorkflow`,
   workflow definition module per file) with project → user → built-in
   precedence, per-field provenance and `woof config show`; `woof run start`
   hosting one scheduler process per run in a Herdr pane, claimed exclusively
-  with a heartbeat (`woof run host`, `--host foreground`); the read-only
+  with a heartbeat and an engine-owned `host-exit.json` marker on a clean
+  exit (`woof run host`, `--host foreground`); the read-only
   inspection CLI `woof status [--wait]`, `woof runs` and `woof events
 [--follow] [--stats]`; a functional Herdr plugin (`doctor`, `status`,
   `start`, `cancel` actions, pane metadata and notifications) and Claude Code

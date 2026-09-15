@@ -473,6 +473,20 @@ build-review` claim and run the same host code in this process instead of
   a pane. Any entry at `journal.jsonl` (even empty), `host.json`,
   `host-exit.json` or `launch.json` in the target run directory makes `run
 start`/`run build-review` refuse `run_exists` before anything is written.
+- **A pane the launcher itself cannot open or start closes the run
+  directory.** When `herdr pane split` fails (a non-zero exit, a spawn
+  error, or no pane id in its output) or `herdr pane run` exits non-zero,
+  `woof run start` abandons the still-unclaimed run directory
+  (`abandonHost`, `host.json` `state:"abandoned"`) and exits 3
+  `host_pane_failed`, naming the Herdr error and that the directory "is
+  closed (abandoned) and no run will start there". A later `woof run host
+<run-dir>` on that directory is then refused `run_host_claimed`. If
+  abandonment itself fails — most often because `herdr pane run` did launch
+  a host that claimed the directory first, even though its own exit code
+  was non-zero — the message instead says the directory "could not be
+  closed (abandoned)" and names why; that host may still run the request.
+  Neither `launch.json` nor an unclosed run directory is left usable after a
+  reported pane failure.
 - **Signals finalize the host exactly once, from the moment a claim
   exists.** Before the run starts opening (`openAdmittedRun` is about to be
   called), a first SIGINT/SIGTERM ends the host at once — synchronously in
