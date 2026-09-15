@@ -138,6 +138,9 @@ function printHelp(): void {
   console.log("  herdr status      Notify the focused project's active runs");
   console.log("  herdr start       Start a run with the project's .woof/start.json input");
   console.log("  herdr cancel      Cancel the focused project's single active run");
+  console.log(
+    "  herdr doctor      Check Woof, Herdr, Claude Code, trust and config for the focused project",
+  );
 }
 
 async function runCancelCommand(args: string[]): Promise<number> {

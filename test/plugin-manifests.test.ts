@@ -103,6 +103,19 @@ describe("herdr-plugin.toml", () => {
       expect(bin).toBe("bin/woof");
       expect(listed(help, path.join(" ")), path.join(" ")).toBe(true);
     }
+    // PR #6 (herdr-plugin.toml:21): every action, doctor included, resolves its project from the
+    // invocation context through `woof herdr`.
+    expect(
+      (manifest["actions"] as Array<{ id: string; command: string[] }>).map((action) => [
+        action.id,
+        action.command,
+      ]),
+    ).toEqual([
+      ["doctor", ["bin/woof", "herdr", "doctor"]],
+      ["status", ["bin/woof", "herdr", "status"]],
+      ["start", ["bin/woof", "herdr", "start"]],
+      ["cancel", ["bin/woof", "herdr", "cancel"]],
+    ]);
   });
 });
 

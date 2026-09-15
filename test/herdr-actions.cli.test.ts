@@ -233,7 +233,7 @@ function statusOf(runDir: string): string {
 describe("woof herdr actions", () => {
   it("A1: without a project context each action notifies and exits 2", () => {
     const s = setup();
-    for (const name of ["status", "start", "cancel"]) {
+    for (const name of ["status", "start", "cancel", "doctor"]) {
       const result = action(s, name, undefined);
       expect(result.status, result.stdout + result.stderr).toBe(2);
       expect(result.json).toMatchObject({ outcome: "rejected", reason: "project_context_missing" });
@@ -246,6 +246,7 @@ describe("woof herdr actions", () => {
         title: "Woof: no project context",
         body: expect.stringContaining("HERDR_PLUGIN_CONTEXT_JSON"),
       },
+      { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.stringContaining(s.home) },
@@ -368,6 +369,60 @@ describe("woof herdr actions", () => {
     expect(exit["exitCode"]).toEqual(expect.any(Number));
     expect(existsSync(s.guardLog)).toBe(false);
   }, 90_000);
+
+  it("A5, PR #6 (herdr-plugin.toml:21): doctor checks the focused pane's project with its trust and configuration, not the working directory", () => {
+    const s = setup();
+    const [a, b] = [s.repo("repo-a"), s.repo("repo-b")];
+    mkdirSync(join(a, ".woof"), { recursive: true });
+    writeFileSync(join(a, ".woof", "woof.json"), "{");
+    writeFileSync(
+      join(s.home, ".claude.json"),
+      JSON.stringify({ projects: { [a]: { hasTrustDialogAccepted: true } } }),
+    );
+    // Claude Code on PATH is a shim; Herdr is only the fake, by absolute path.
+    writeFileSync(join(s.root, "guard", "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", {
+      mode: 0o755,
+    });
+    const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Json[];
+    writeFileSync(
+      s.scenario,
+      JSON.stringify([...scenario, { match: ["--version"], stdout: "herdr 0.0.0-fake\n" }]),
+    );
+
+    // The live topology: the workspace is bound to checkout b while project a is focused.
+    const focused = action(s, "doctor", {
+      worktree: { checkout_path: b },
+      focused_pane_cwd: a,
+      workspace_cwd: b,
+      focused_pane_id: "w5:p3",
+    });
+    expect(focused.status, focused.stdout + focused.stderr).toBe(0);
+    expect(focused.json).toMatchObject({
+      outcome: "doctor",
+      project: a,
+      woof: { cli: join(repoRoot, "dist", "cli.js") },
+      herdr: { status: "available", version: "herdr 0.0.0-fake" },
+      claude: { status: "available", version: "9.9.9 (Claude Code)" },
+      trust: { dir: a, status: "trusted" },
+      config: { ok: false, reason: "config_invalid" },
+    });
+    const workspace = action(s, "doctor", { worktree: { checkout_path: a }, workspace_cwd: b });
+    expect(workspace.status).toBe(0);
+    expect(workspace.json).toMatchObject({
+      project: b,
+      trust: { dir: b, status: "untrusted" },
+      config: { ok: true, project: b },
+    });
+    const [first, second] = notifications(s);
+    expect(notifications(s)).toHaveLength(2);
+    expect(first).toEqual({ title: "Woof: doctor", body: expect.stringContaining(a) });
+    expect(first?.body).toContain("herdr available (herdr 0.0.0-fake)");
+    expect(first?.body).toContain("trust trusted");
+    expect(first?.body).toContain("config config_invalid");
+    expect(second?.body).toContain("config ok");
+    expect(calls(s).filter((argv) => argv[0] === "--version")).toHaveLength(2);
+    expect(existsSync(s.guardLog)).toBe(false);
+  });
 
   it("PR #6 (run.ts:414): start refuses a FIFO at .woof/start.json as input_invalid without blocking or splitting", () => {
     const s = setup();

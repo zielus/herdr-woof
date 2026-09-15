@@ -17,8 +17,8 @@ command = ["bun", "run", "build"]
 [[actions]]
 id = "doctor"
 title = "Woof: doctor"
-description = "Check Herdr and Claude Code availability."
-command = ["bin/woof", "doctor"]
+description = "Check Woof, Herdr, Claude Code, folder trust and configuration for the focused project."
+command = ["bin/woof", "herdr", "doctor"]
 
 [[actions]]
 id = "status"

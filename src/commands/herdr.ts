@@ -11,9 +11,10 @@ import { readRunStatus } from "../inspect/status.js";
 import { execHerdr } from "../runtime/herdr/exec.js";
 import { terminateRun } from "../state/store.js";
 import { UsageError } from "./common.js";
+import { doctorReport } from "./doctor.js";
 import { cliPath, defaultRunId, herdrBin, readWorkflowInput } from "./run.js";
 
-export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel>
+export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel|doctor>
 
 Herdr plugin actions (unstable). The project is the git top level of the
 invocation context's focused pane directory, else the workspace directory, else
@@ -25,6 +26,8 @@ Each action shows a Herdr notification and prints one JSON line.
   start   start the default workflow with <project>/.woof/start.json in a pane
           split from the focused pane; exits like woof run start
   cancel  cancel the project's single active run; refuses (exit 2) when several are active
+  doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
+          configuration (a configuration problem is reported, not refused); exits 0
 
 Exits 2 without a project context.`;
 
@@ -47,22 +50,22 @@ export async function herdrCommand(args: string[]): Promise<number> {
     console.log(HERDR_USAGE);
     return 0;
   }
-  if ((action !== "status" && action !== "start" && action !== "cancel") || extra.length > 0) {
+  if (
+    (action !== "status" && action !== "start" && action !== "cancel" && action !== "doctor") ||
+    extra.length > 0
+  ) {
     throw new UsageError(
-      `expected "herdr status", "herdr start" or "herdr cancel"\n\n${HERDR_USAGE}`,
+      `expected "herdr status", "herdr start", "herdr cancel" or "herdr doctor"\n\n${HERDR_USAGE}`,
     );
   }
-  const resolved = await projectOf(process.env["HERDR_PLUGIN_CONTEXT_JSON"]);
-  if (!resolved.ok) {
-    await notify(
-      resolved.reason === "project_context_missing"
-        ? "Woof: no project context"
-        : `Woof: rejected (${resolved.reason})`,
-      resolved.message,
-    );
-    print({ outcome: "rejected", reason: resolved.reason, message: resolved.message, details: [] });
-    return 2;
+  const context = process.env["HERDR_PLUGIN_CONTEXT_JSON"];
+  if (action === "doctor") {
+    // Doctor needs only the project root: a configuration that does not resolve is what it reports.
+    const rooted = await projectRootOf(context);
+    return rooted.ok ? doctor(rooted.root) : refuseContext(rooted);
   }
+  const resolved = await projectOf(context);
+  if (!resolved.ok) return refuseContext(resolved);
   const { project } = resolved;
   if (action === "start") return start(project);
   let runs: RunListEntry[];
@@ -183,7 +186,59 @@ async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
   return isInfraReason(outcome.reason) ? 3 : 2;
 }
 
+async function refuseContext(refused: { reason: string; message: string }): Promise<number> {
+  await notify(
+    refused.reason === "project_context_missing"
+      ? "Woof: no project context"
+      : `Woof: rejected (${refused.reason})`,
+    refused.message,
+  );
+  print({ outcome: "rejected", reason: refused.reason, message: refused.message, details: [] });
+  return 2;
+}
+
+async function doctor(root: string): Promise<number> {
+  const report = await doctorReport(root);
+  await notify(
+    "Woof: doctor",
+    [
+      root,
+      `herdr ${probeLine(report.herdr.status, report.herdr.version)}`,
+      `claude ${probeLine(report.claude.status, report.claude.version)}`,
+      `trust ${report.trust.status}`,
+      report.config.ok ? "config ok" : `config ${report.config.reason}: ${report.config.message}`,
+    ].join("\n"),
+  );
+  print({ outcome: "doctor", project: root, ...report });
+  return 0;
+}
+
+function probeLine(status: string, version: string | null): string {
+  return version === null ? status : `${status} (${version})`;
+}
+
 async function projectOf(raw: string | undefined): Promise<Outcome> {
+  const rooted = await projectRootOf(raw);
+  if (!rooted.ok) return rooted;
+  const resolved = await resolveConfiguration({ projectDir: rooted.root });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason, message: resolved.message };
+  return {
+    ok: true,
+    project: {
+      root: rooted.root,
+      runsDir: resolved.configuration.settings.runsDir.value,
+      focusedPaneId: rooted.focusedPaneId,
+    },
+  };
+}
+
+/** The git top level named by the invocation context: focused pane, then workspace, then worktree. */
+async function projectRootOf(
+  raw: string | undefined,
+): Promise<
+  | { ok: true; root: string; focusedPaneId: string | null }
+  | { ok: false; reason: string; message: string }
+> {
   let value: unknown;
   try {
     value = raw === undefined ? undefined : JSON.parse(raw);
@@ -217,16 +272,11 @@ async function projectOf(raw: string | undefined): Promise<Outcome> {
       message: `${dir} is not inside a git work tree`,
     };
   }
-  const resolved = await resolveConfiguration({ projectDir: root });
-  if (!resolved.ok) return { ok: false, reason: resolved.reason, message: resolved.message };
   const focused = context["focused_pane_id"];
   return {
     ok: true,
-    project: {
-      root,
-      runsDir: resolved.configuration.settings.runsDir.value,
-      focusedPaneId: typeof focused === "string" && focused !== "" ? focused : null,
-    },
+    root,
+    focusedPaneId: typeof focused === "string" && focused !== "" ? focused : null,
   };
 }
 

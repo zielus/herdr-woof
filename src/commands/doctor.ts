@@ -44,31 +44,47 @@ export async function doctorCommand(args: string[]): Promise<number> {
     console.log(probe("claude", ["--version"]));
     return 0;
   }
-  const repo = resolve(values.repo ?? process.cwd());
+  console.log(JSON.stringify(await doctorReport(resolve(values.repo ?? process.cwd()))));
+  return 0;
+}
+
+type ProbeStatus = "available" | "not_found" | "failed";
+
+/** What `woof doctor --json` prints, and `woof herdr doctor` reports for its project. */
+export interface DoctorReport {
+  woof: { version: string; cli: string; node: string };
+  herdr: { env: boolean; paneId: string | null; status: ProbeStatus; version: string | null };
+  claude: { status: ProbeStatus; version: string | null };
+  trust: { dir: string; status: ReturnType<typeof claudeTrustStatus>["status"] };
+  config:
+    | { ok: true; project: string | null; warnings: unknown[] }
+    | { ok: false; reason: string; message: string };
+}
+
+/** Probes Herdr and Claude Code and reads the repository's Claude trust and configuration (read-only). */
+export async function doctorReport(repo: string): Promise<DoctorReport> {
   const herdr = versionOf(herdrBin());
   const claude = versionOf("claude");
   const resolved = await resolveConfiguration({ projectDir: repo });
-  console.log(
-    JSON.stringify({
-      woof: { version: VERSION, cli: cliPath, node: process.execPath },
-      herdr: {
-        env: process.env["HERDR_ENV"] === "1",
-        paneId: process.env["HERDR_PANE_ID"] ?? null,
-        status: herdr.status,
-        version: herdr.version,
-      },
-      claude: { status: claude.status, version: claude.version },
-      trust: (({ dir, status }) => ({ dir, status }))(claudeTrustStatus(repo)),
-      config: resolved.ok
-        ? {
-            ok: true,
-            project: resolved.configuration.roots.project?.root ?? null,
-            warnings: resolved.configuration.warnings,
-          }
-        : { ok: false, reason: resolved.reason, message: resolved.message },
-    }),
-  );
-  return 0;
+  const trust = claudeTrustStatus(repo);
+  return {
+    woof: { version: VERSION, cli: cliPath, node: process.execPath },
+    herdr: {
+      env: process.env["HERDR_ENV"] === "1",
+      paneId: process.env["HERDR_PANE_ID"] ?? null,
+      status: herdr.status,
+      version: herdr.version,
+    },
+    claude: { status: claude.status, version: claude.version },
+    trust: { dir: trust.dir, status: trust.status },
+    config: resolved.ok
+      ? {
+          ok: true,
+          project: resolved.configuration.roots.project?.root ?? null,
+          warnings: resolved.configuration.warnings,
+        }
+      : { ok: false, reason: resolved.reason, message: resolved.message },
+  };
 }
 
 /** Bound on each probe of an external executable, so a hung `herdr` or `claude` cannot block doctor. */
