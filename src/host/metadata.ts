@@ -172,6 +172,49 @@ export function createMetadataProjector(options: MetadataProjectorOptions) {
   };
 }
 
+/**
+ * Runs `task` at most once at a time. A request while it runs coalesces with every other such
+ * request into one follow-up run, which reads the state afresh, so the latest snapshot wins and no
+ * work queues up behind a slow Herdr. `drain` stops further runs and waits for the one in flight.
+ */
+export function createCoalescer(task: () => Promise<void>): {
+  request(): void;
+  drain(): Promise<void>;
+} {
+  let running: Promise<void> | null = null;
+  let again = false;
+  let closed = false;
+  const loop = async () => {
+    try {
+      for (;;) {
+        again = false;
+        // One run at a time by design: the follow-up starts only after the previous one settled.
+        // oxlint-disable-next-line no-await-in-loop
+        await task();
+        // A request during the run, or drain, changed these while the task was awaited.
+        if (!again || closed) break;
+      }
+    } finally {
+      running = null;
+    }
+  };
+  return {
+    request() {
+      if (closed) return;
+      if (running !== null) {
+        again = true;
+        return;
+      }
+      running = loop();
+    },
+    async drain() {
+      closed = true;
+      again = false;
+      await running;
+    },
+  };
+}
+
 export interface MetadataReporterOptions extends MetadataProjectorOptions {
   /** Herdr executable (`WOOF_HERDR_BIN` or `herdr`). */
   bin: string;

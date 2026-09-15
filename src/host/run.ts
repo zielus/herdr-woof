@@ -19,7 +19,7 @@ import { loadWorkflowDefinition } from "../scheduler/loader.js";
 import { readSnapshot } from "../state/snapshot.js";
 import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
-import { createMetadataReporter } from "./metadata.js";
+import { createCoalescer, createMetadataReporter } from "./metadata.js";
 
 /**
  * Hosting one workflow run in this process (p4 §3.5, §3.7): resolve
@@ -285,16 +285,18 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
             runId,
             log,
           });
-    let reporting: Promise<void> = Promise.resolve();
-    const report = () => {
-      if (reporter === null) return;
-      reporting = reporting.then(async () => {
-        const snapshot = readSnapshot(runDir);
-        if (snapshot.ok) await reporter.report(snapshot.snapshot);
-      });
-    };
-    report();
-    reportTimer = reporter === null ? undefined : setInterval(report, Math.min(pollMs, 1000));
+    // At most one report is in flight; ticks meanwhile coalesce into one follow-up that reads the
+    // latest snapshot, so a slow or unavailable Herdr never builds a queue (PR #6).
+    const refresh =
+      reporter === null
+        ? null
+        : createCoalescer(async () => {
+            const snapshot = readSnapshot(runDir);
+            if (snapshot.ok) await reporter.report(snapshot.snapshot);
+          });
+    refresh?.request();
+    reportTimer =
+      refresh === null ? undefined : setInterval(() => refresh.request(), Math.min(pollMs, 1000));
     reportTimer?.unref();
 
     log(`run ${runId} in ${runDir}`);
@@ -318,7 +320,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     });
     if (reportTimer !== undefined) clearInterval(reportTimer);
     if (reporter !== null) {
-      await reporting;
+      // Bounded: the report in flight (each Herdr call is capped) and then the final one.
+      await refresh?.drain();
       const final = readSnapshot(runDir);
       if (final.ok) await reporter.finish(final.snapshot);
     }

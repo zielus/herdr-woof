@@ -334,6 +334,49 @@ console.log(JSON.stringify({ returned, outcome: JSON.parse(readFileSync(runDir +
   });
 });
 
+describe("metadata refresh coalescing (PR #6 run.ts:293)", () => {
+  it("runs one report at a time, folds a burst of requests into one follow-up each round and drains promptly", () => {
+    const result = runNode(
+      `const { createCoalescer } = await import(${JSON.stringify(distUrl("host/metadata.js"))});
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+let calls = 0;
+let active = 0;
+let maxActive = 0;
+const coalescer = createCoalescer(async () => {
+  calls += 1;
+  active += 1;
+  maxActive = Math.max(maxActive, active);
+  await sleep(200);
+  active -= 1;
+});
+const burstStart = performance.now();
+for (let i = 0; i < 500; i += 1) {
+  coalescer.request();
+  await sleep(1);
+}
+const burstMs = performance.now() - burstStart;
+const callsAtDrain = calls;
+const drainStart = performance.now();
+await coalescer.drain();
+const drainMs = performance.now() - drainStart;
+coalescer.request();
+await sleep(300);
+console.log(JSON.stringify({ calls, callsAtDrain, maxActive, burstMs, drainMs }));`,
+      [],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    expect(out["maxActive"]).toBe(1);
+    // 500 requests over the burst: one run per 200 ms task, plus the first and the final follow-up.
+    expect(out["calls"]).toBeLessThanOrEqual(Math.ceil(out["burstMs"] / 200) + 2);
+    expect(out["calls"]).toBeGreaterThanOrEqual(2);
+    // Drain waits for the run in flight only, and nothing runs after it.
+    expect(out["drainMs"]).toBeLessThanOrEqual(450);
+    expect(out["calls"]).toBe(out["callsAtDrain"]);
+  });
+});
+
 describe("metadata reporter against the fake herdr", () => {
   const REPORT = `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
 const { readSnapshot } = await import(${JSON.stringify(distUrl("state/snapshot.js"))});

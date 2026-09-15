@@ -369,6 +369,32 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(existsSync(runDir)).toBe(false);
   });
 
+  it("PR #6 (run.ts:293): with a slow Herdr and a 1 ms poll, the pane host's metadata reports stay bounded and it finalizes promptly", async () => {
+    const ws = workspace();
+    const scenario = JSON.parse(readFileSync(ws.scenario, "utf8")) as Json[];
+    for (const entry of scenario)
+      if (["report-metadata", "show"].includes(entry["match"][1] as string)) entry["hangMs"] = 1500;
+    writeFileSync(ws.scenario, JSON.stringify(scenario));
+    const runDir = join(ws.root, "run");
+    const args = startArgs(ws, runDir).map((arg, index, all) =>
+      all[index - 1] === "--poll-ms" ? "1" : arg,
+    );
+    const started = woofIn(ws, args);
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    const outcome = await waitForOutcome(runDir, 60_000);
+    expect(outcome).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    const terminated = records(runDir).find((record) => record["type"] === "run.terminated");
+    const exited = JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8")) as Json;
+    // After the run ends: at most the report in flight plus the final report and notification, each
+    // Herdr call 1.5 s, for the host pane and two agent panes.
+    const finalizingMs = Date.parse(exited["exitedAt"]) - Date.parse(terminated?.["ts"]);
+    expect(finalizingMs).toBeLessThan(15_000);
+    const reports = fakeCalls(ws).filter((argv) => argv[1] === "report-metadata");
+    const runMs = Date.parse(exited["exitedAt"]) - Date.parse(records(runDir)[0]?.["ts"]);
+    // One report round at a time: never more calls than 1.5 s rounds of three panes, plus the final.
+    expect(reports.length).toBeLessThanOrEqual(3 * (Math.ceil(runMs / 1500) + 1));
+  }, 90_000);
+
   it("PR #6 (run.ts:277): a signal between the pane host's claim and its own handlers still finalizes host_interrupted", async () => {
     const ws = workspace();
     const runDir = join(ws.root, "run");
