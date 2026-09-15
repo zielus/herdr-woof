@@ -1,9 +1,10 @@
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 
-import { OUTCOME_EXIT_CODES } from "../host/run.js";
+import { readJsonFile } from "../host/files.js";
+import { OUTCOME_EXIT_CODES, OUTCOME_FILE } from "../host/run.js";
 import { readRunStatus, type ReadRunStatusResult } from "../inspect/status.js";
 import { UsageError, milliseconds, parse } from "./common.js";
 
@@ -20,7 +21,9 @@ journal_corrupt, journal_replaced).
 With --wait (poll every --poll-ms, default 1000; --timeout-ms default 540000):
   0 completed, 4 failed, 5 exhausted, 6 cancelled (a recorded outcome always wins);
   7 still running when the timeout passes;
-  8 the owner is lost (confirmed by two probes at least two heartbeats apart);
+  8 the owner is gone without a recorded outcome: lost (confirmed by two probes
+    at least two heartbeats apart), or exited (a host interrupted before the run
+    recorded its end; its outcome.json, when present, is printed as hostOutcome);
   9 the run is blocked and needs the operator (unless --allow-blocked).
 The last line printed is always the status at return time.`;
 
@@ -74,6 +77,16 @@ export async function statusCommand(args: string[]): Promise<number> {
     if (status.attention.blocked !== null && values["allow-blocked"] !== true)
       return print(current, 9);
     const now = Date.now();
+    if (status.liveness.owner === "exited") {
+      // The host recorded its exit but the journal has no end: nothing will record one. Read once
+      // more first, so a host that exited just after its final journal write is not caught between.
+      const settled = read();
+      if (!settled.ok || settled.result !== null || settled.status.liveness.owner !== "exited") {
+        current = settled;
+        continue;
+      }
+      return print(settled, 8, readJsonFile(join(runDir, OUTCOME_FILE)));
+    }
     if (status.liveness.owner === "lost") {
       lostSince ??= now;
       const heartbeatMs = status.liveness.host?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
@@ -89,10 +102,15 @@ export async function statusCommand(args: string[]): Promise<number> {
   }
 }
 
-function print(current: ReadRunStatusResult, code: number): number {
+function print(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
   if (current.ok) {
     console.log(
-      JSON.stringify({ outcome: "status", status: current.status, result: current.result }),
+      JSON.stringify({
+        outcome: "status",
+        status: current.status,
+        result: current.result,
+        ...(hostOutcome !== undefined ? { hostOutcome } : {}),
+      }),
     );
     return code;
   }
