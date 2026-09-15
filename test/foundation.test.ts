@@ -79,6 +79,49 @@ console.log(JSON.stringify({
       expect(entry.types).not.toHaveProperty(internal);
     }
   });
+
+  it("PI-201: the package entry's probe has no claim-read test seam, at runtime or in its declarations", () => {
+    const dir = mkdtempSync(join(tmpdir(), "woof-pi201-"));
+    try {
+      writeFileSync(join(dir, "host.json"), "");
+      const script = `const { probeHost } = await import(${JSON.stringify(pathToFileURL(join(repoRoot, "dist", "index.js")).href)});
+let calls = 0;
+const probed = probeHost(process.argv[1], { onInvalidRead() { calls += 1; } });
+console.log(JSON.stringify({ probed, calls }));`;
+      const result = spawnSync("node", ["--input-type=module", "--eval", script, dir], {
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        probed: {
+          owner: "lost",
+          host: null,
+          problem: "host.json exists but is not a valid run host claim",
+        },
+        calls: 0,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const entryTypes = readFileSync(join(repoRoot, "dist", "index.d.ts"), "utf8");
+    expect(entryTypes).toContain('export { probeHost } from "./host/probe.js";');
+    expect(entryTypes).toMatch(
+      /export type \{[^}]*\bProbeOptions\b[^}]*\} from "\.\/host\/probe\.js";/,
+    );
+    expect(entryTypes).not.toContain("ClaimReadOptions");
+    expect(entryTypes).not.toContain("readHostClaim");
+    const probeTypes = readFileSync(join(repoRoot, "dist", "host", "probe.d.ts"), "utf8");
+    const publicOptions = /export interface ProbeOptions \{[^}]*\}/.exec(probeTypes)?.[0];
+    expect(publicOptions).toBeDefined();
+    expect(publicOptions).not.toContain("onInvalidRead");
+    expect(publicOptions?.match(/^\s+(\w+)\?:/gm)?.map((line) => line.trim())).toEqual([
+      "now?:",
+      "terminal?:",
+    ]);
+    expect(probeTypes).toMatch(
+      /declare function probeHost\(runDir: string, options\?: ProbeOptions\)/,
+    );
+  });
 });
 
 describe("herdr-woof/testing", () => {

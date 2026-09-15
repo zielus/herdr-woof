@@ -195,11 +195,12 @@ console.log(JSON.stringify([abandonHost(process.argv[1], "test launcher"), aband
     });
   });
 
-  it("H9 (PI-008, PI-105): a claim invalid at the first read is read again after a delay; a claim filled in between wins", () => {
-    // The read seam runs at the boundary between the first (empty) read and the delayed re-read,
-    // so the claim is filled exactly after one invalid read, never before it.
+  it("H9 (PI-008, PI-105, PI-201): a claim invalid at the first read is read again after a delay; a claim filled in between wins", () => {
+    // The internal read seam (readHostClaim, not the package entry) runs at the boundary between
+    // the first (empty) read and the delayed re-read, so the claim is filled exactly after one
+    // invalid read, never before it.
     const result = runNode(
-      `const { probeHost } = await import(${JSON.stringify(distUrl("host/probe.js"))});
+      `const { readHostClaim } = await import(${JSON.stringify(distUrl("host/probe.js"))});
 const { mkdirSync, writeFileSync } = await import("node:fs");
 const { hostname } = await import("node:os");
 const [root, pid] = [process.argv[1], Number(process.argv[2])];
@@ -211,7 +212,7 @@ for (const name of ["filled", "never"]) {
   writeFileSync(runDir + "/host.json", "");
   const reads = [];
   let filledAt = null;
-  const probed = probeHost(runDir, {
+  const claimed = readHostClaim(runDir, {
     onInvalidRead(problem, retry) {
       reads.push({ problem, retry, at: performance.now() });
       if (name === "filled" && retry === 1) {
@@ -221,7 +222,7 @@ for (const name of ["filled", "never"]) {
     },
   });
   const done = performance.now();
-  out[name] = { probed, retries: reads.map(({ problem, retry }) => ({ problem, retry })), waitedMs: done - (filledAt ?? reads[0]?.at ?? done) };
+  out[name] = { claimed, retries: reads.map(({ problem, retry }) => ({ problem, retry })), waitedMs: done - (filledAt ?? reads[0]?.at ?? done) };
 }
 console.log(JSON.stringify(out));`,
       [temp(), String(process.pid)],
@@ -233,10 +234,13 @@ console.log(JSON.stringify(out));`,
     expect(out["filled"]["retries"]).toEqual([{ problem, retry: 1 }]);
     // The re-read came after the retry delay, not straight after the fill.
     expect(out["filled"]["waitedMs"]).toBeGreaterThanOrEqual(45);
-    expect(out["filled"]["probed"]).toMatchObject({ owner: "alive", host: { state: "hosting" } });
+    expect(out["filled"]["claimed"]).toMatchObject({
+      kind: "valid",
+      host: { state: "hosting", pid: process.pid },
+    });
     expect(out["never"]["retries"]).toEqual([1, 2, 3].map((retry) => ({ problem, retry })));
     expect(out["never"]["waitedMs"]).toBeGreaterThanOrEqual(135);
-    expect(out["never"]["probed"]).toEqual({ owner: "lost", host: null, problem });
+    expect(out["never"]["claimed"]).toEqual({ kind: "invalid", problem });
   });
 
   it("PI-104: a release that throws is logged and retried once, and the first result stays authoritative", () => {

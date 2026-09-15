@@ -51,7 +51,11 @@ export interface ProbeOptions {
   now?: number;
   /** The run is terminated: a stale `hosting` claim reports exited, never lost. */
   terminal?: boolean;
-  /** Unstable test seam: called with the problem before each delayed re-read of an invalid claim. */
+}
+
+/** Internal claim-read options; not part of the package entry. */
+export interface ClaimReadOptions {
+  /** Test seam: called with the problem before each delayed re-read of an invalid claim. */
   onInvalidRead?: (problem: string, retry: number) => void;
 }
 
@@ -74,10 +78,7 @@ export interface HostProbe {
 }
 
 /** Reads the claim with the exit marker applied, re-reading an invalid one after short delays. */
-export function readHostClaim(
-  runDir: string,
-  options: Pick<ProbeOptions, "onInvalidRead"> = {},
-): HostClaim {
+export function readHostClaim(runDir: string, options: ClaimReadOptions = {}): HostClaim {
   let read = readClaimOnce(runDir);
   for (let retry = 1; read.retry && retry <= INVALID_RETRIES; retry += 1) {
     if (read.claim.kind === "invalid") options.onInvalidRead?.(read.claim.problem, retry);
@@ -241,7 +242,7 @@ export function parseHostExit(
 }
 
 export function probeHost(runDir: string, options: ProbeOptions = {}): HostProbe {
-  const claim = readHostClaim(runDir, options);
+  const claim = readHostClaim(runDir);
   if (claim.kind === "none") return { owner: "unhosted", host: null };
   if (claim.kind === "invalid") return { owner: "lost", host: null, problem: claim.problem };
   const owner = ownerOf(claim.host, options);
