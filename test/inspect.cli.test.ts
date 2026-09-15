@@ -615,7 +615,7 @@ describe("woof doctor --json", () => {
     const nodeBin = join(root, "node-bin");
     const home = join(root, "home");
     for (const dir of [bin, nodeBin, home]) mkdirSync(dir);
-    // Human mode resolves herdr and claude on PATH: this PATH has a hung claude and no herdr at all.
+    // Human mode resolves claude on PATH (a hung shim here) and herdr through WOOF_HERDR_BIN (missing here).
     writeFileSync(join(bin, "claude"), "#!/bin/sh\nexec sleep 60\n", { mode: 0o755 });
     symlinkSync(process.execPath, join(nodeBin, "node"));
     for (const dir of ["/usr/bin", "/bin"]) expect(existsSync(join(dir, "herdr")), dir).toBe(false);
@@ -631,6 +631,37 @@ describe("woof doctor --json", () => {
     expect(elapsed).toBeGreaterThanOrEqual(9_500);
     expect(elapsed).toBeLessThan(25_000);
   }, 60_000);
+
+  it("PR #6 (doctor.ts:43): human-mode doctor probes WOOF_HERDR_BIN, never a herdr from PATH", () => {
+    const root = tempDir("woof-doctor-bin-");
+    const bin = join(root, "bin");
+    const home = join(root, "home");
+    for (const dir of [bin, home]) mkdirSync(dir);
+    const guardLog = join(root, "guard.log");
+    // A herdr first on PATH that must never run, and the configured fake by absolute path.
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(guardLog)}\nexit 1\n`,
+      {
+        mode: 0o755,
+      },
+    );
+    writeFileSync(join(bin, "fake-herdr"), '#!/bin/sh\necho "fake herdr $1"\n', { mode: 0o755 });
+    writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
+    const result = woof(["doctor"], { env: doctorEnv(home, bin), timeoutMs: 30_000 });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("herdr status:\n  fake herdr status");
+    expect(result.stdout).toContain("claude --version:\n  9.9.9 (Claude Code)");
+    expect(existsSync(guardLog)).toBe(false);
+    // A configured executable that does not exist is reported as not found, not replaced by PATH.
+    const missing = woof(["doctor"], {
+      env: { ...doctorEnv(home, bin), WOOF_HERDR_BIN: join(root, "missing-herdr") },
+      timeoutMs: 30_000,
+    });
+    expect(missing.status).toBe(0);
+    expect(missing.stdout).toContain("herdr status: not found");
+    expect(existsSync(guardLog)).toBe(false);
+  });
 });
 
 describe("inspection is read-only", () => {

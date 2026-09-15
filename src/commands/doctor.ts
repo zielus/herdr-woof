@@ -40,8 +40,9 @@ export async function doctorCommand(args: string[]): Promise<number> {
   }
   if (values.json !== true) {
     console.log(`woof ${VERSION}`);
-    console.log(probe("herdr", ["status"]));
-    console.log(probe("claude", ["--version"]));
+    // The same Herdr executable as --json and every other command (WOOF_HERDR_BIN, else herdr).
+    console.log(probe("herdr", herdrBin(), ["status"]));
+    console.log(probe("claude", "claude", ["--version"]));
     return 0;
   }
   console.log(JSON.stringify(await doctorReport(resolve(values.repo ?? process.cwd()))));
@@ -101,9 +102,9 @@ function versionOf(command: string): {
   return { status: "available", version: result.stdout.trim().split("\n")[0] ?? null };
 }
 
-function probe(commandName: string, args: readonly string[]): string {
-  const label = `${commandName} ${args.join(" ")}`;
-  const result = spawnSync(commandName, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
+function probe(name: string, command: string, args: readonly string[]): string {
+  const label = `${name} ${args.join(" ")}`;
+  const result = spawnSync(command, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
 
   if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT") {
     return `${label}: not found`;
