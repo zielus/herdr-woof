@@ -7,7 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
-  watch,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -481,39 +481,43 @@ describe("inspection is read-only", () => {
     openAttemptOk(runDir);
     writeAliveHost(runDir);
 
-    const seen: string[] = [];
-    const watcher = watch(runDir, (_event, name) => {
-      if (name !== null) seen.push(String(name));
-    });
-    try {
-      // FSEvents may replay the setup's own lock (attempt open) shortly after the watch starts.
-      await delay(500);
-      seen.length = 0;
-      const env = {
-        PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
-        WOOF_HERDR_BIN: undefined,
-        HERDR_ENV: "1",
-        HERDR_PANE_ID: "w1:p1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
-      };
-      const results = await Promise.all([
-        woofAsync(["status", runDir], { env }),
-        woofAsync(["status", runDir, "--wait", "--timeout-ms", "400", "--poll-ms", "20"], { env }),
-        woofAsync(["runs", "--runs-dir", runsDir], { env }),
-        woofAsync(["events", runDir], { env }),
-        woofAsync(["events", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "400"], {
-          env,
-        }),
-        woofAsync(["config", "show", "--project", root], { env }),
-      ]);
-      expect(results.map((result) => result.status)).toEqual([0, 7, 0, 0, 7, 0]);
-      // Let the watcher deliver anything written in the last poll.
-      await delay(200);
-    } finally {
-      watcher.close();
-    }
-    expect(seen.filter((name) => name.includes("lock"))).toEqual([]);
-    expect(existsSync(join(runDir, "journal.lock"))).toBe(false);
+    // PI-006: no watcher. A sentinel holds journal.lock for the whole call: any command that tried
+    // to take the lock would meet O_EXCL and wait, time out or fail (journal_busy), changing its exit
+    // code, and a command that removed or replaced the lock would change the sentinel.
+    const lockPath = join(runDir, "journal.lock");
+    const sentinel = `woof-i8-sentinel ${Date.now()}\n`;
+    writeFileSync(lockPath, sentinel);
+    const before = statSync(lockPath);
+    const env = {
+      PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      WOOF_HERDR_BIN: undefined,
+      HERDR_ENV: "1",
+      HERDR_PANE_ID: "w1:p1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+    };
+    const results = await Promise.all([
+      woofAsync(["status", runDir], { env }),
+      woofAsync(["status", runDir, "--wait", "--timeout-ms", "400", "--poll-ms", "20"], { env }),
+      woofAsync(["runs", "--runs-dir", runsDir], { env }),
+      woofAsync(["events", runDir], { env }),
+      woofAsync(["events", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "400"], {
+        env,
+      }),
+      woofAsync(["config", "show", "--project", root], { env }),
+    ]);
+    expect(results.map((result) => result.status)).toEqual([0, 7, 0, 0, 7, 0]);
+    const after = statSync(lockPath);
+    expect(readFileSync(lockPath, "utf8")).toBe(sentinel);
+    expect([after.ino, after.size, after.mtimeMs]).toEqual([
+      before.ino,
+      before.size,
+      before.mtimeMs,
+    ]);
+    // The sentinel really blocks a lock taker: run cancel meets it and gives up.
+    const cancel = await woofAsync(["run", "cancel", runDir], { env, timeoutMs: 30_000 });
+    expect(cancel.status, cancel.stdout).toBe(3);
+    expect(cancel.json).toMatchObject({ outcome: "rejected", reason: "journal_busy" });
+    expect(readFileSync(lockPath, "utf8")).toBe(sentinel);
     expect(existsSync(log)).toBe(false);
   });
 });

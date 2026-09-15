@@ -312,10 +312,21 @@ describe("woof run start --host herdr-pane", () => {
       outcome: "run",
       result: { outcome: "completed", runId: "s1-run" },
     });
-    // outcome.json is the host's stdout line.
-    const hostStdout = readFileSync(join(ws.root, "host.log"), "utf8")
-      .split("\n")
-      .findLast((line) => line.startsWith("{"));
+    // outcome.json is the host's stdout line. LV-004: the redirected stdout can reach host.log after
+    // outcome.json exists, so the line is awaited (bounded) rather than read once.
+    let hostStdout: string | undefined;
+    await waitFor(
+      () => {
+        hostStdout = existsSync(join(ws.root, "host.log"))
+          ? readFileSync(join(ws.root, "host.log"), "utf8")
+              .split("\n")
+              .findLast((line) => line.startsWith("{"))
+          : undefined;
+        return hostStdout !== undefined;
+      },
+      "the host's result line in host.log",
+      15_000,
+    );
     expect(JSON.parse(hostStdout ?? "null")).toEqual(outcome);
     // The caller's wait returns the same result (plan §3.9 step 5).
     const waited = woofIn(ws, ["status", runDir, "--wait", "--poll-ms", "50"]);
@@ -383,6 +394,10 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
       () => records(runDir).some((record) => record["type"] === "request.dispatched"),
       "a dispatch",
     );
+    // PI-009: a journal record can be visible before its writer removes journal.lock. A kill inside
+    // that window leaves a stale lock (carry-over C1): run cancel then exits 3 journal_busy and the
+    // lock is removed by hand. This case kills a host that holds no lock.
+    await waitFor(() => !existsSync(join(runDir, "journal.lock")), "the journal lock to be free");
     const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
       "pid"
     ] as number;
