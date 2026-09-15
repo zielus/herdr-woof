@@ -3,11 +3,15 @@ import {
   accessSync,
   constants,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -15,7 +19,7 @@ import { join, relative } from "node:path";
 import { parse } from "smol-toml";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { cliPath, repoRoot } from "./helpers/process.js";
+import { cliPath, distUrl, repoRoot, runNode } from "./helpers/process.js";
 
 // Done criterion (d): the Herdr and Claude Code plugin manifests name only what
 // the checkout and the npm tarball actually provide (plan T8).
@@ -178,5 +182,100 @@ describe("Claude Code plugin", () => {
     expect(unknownCommands(skill, help)).toEqual([]);
     expect(skill).toMatch(/^---\nname: woof\ndescription: .+\n---\n/);
     expect(skill).not.toContain("not implemented");
+  });
+
+  /** The text of a `## ` section of run.md, up to the next `## ` heading. */
+  function section(text: string, heading: string): string {
+    const start = text.indexOf(`\n${heading}\n`);
+    expect(start, heading).not.toBe(-1);
+    const rest = text.slice(start + heading.length + 2);
+    const end = rest.search(/\n## /);
+    return end === -1 ? rest : rest.slice(0, end);
+  }
+
+  it("PI-005, LV-001, LV-002: run.md always applies the trust gate, states the verify shape and stops after a second rejection", () => {
+    const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
+    const trust = section(text, "## 3. Folder trust");
+    expect(trust).toContain("Always apply this gate");
+    expect(trust).not.toMatch(/^If `repo` differs/m);
+    expect(trust).toContain(
+      "trust.status` from the pre-flight JSON when `repo` is the working directory",
+    );
+    expect(trust).toContain("`untrusted` or `unknown`");
+    const input = section(text, "## 2. Build the workflow input");
+    expect(input).toContain("`command`, a non-empty array of strings");
+    expect(input).toContain("`timeoutMs`, a required integer number of milliseconds");
+    const start = section(text, "## 4. Start the run");
+    expect(start).toContain("fix every field the");
+    expect(start).not.toContain("fix only what");
+    expect(start).toContain("If the retry is");
+    expect(start).toContain("report that rejection and stop");
+    expect(start).toContain("interactive menu");
+  });
+
+  it("LV-001: the example input in run.md passes the built-in workflow's validateInput", () => {
+    const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
+    const block = /```json\n([\s\S]*?)\n```/.exec(text)?.[1];
+    expect(block).toBeDefined();
+    const example = JSON.parse(block ?? "null") as Record<string, unknown>;
+    expect(example["verify"]).toEqual({ command: ["node", "--test"], timeoutMs: 600000 });
+    const result = runNode(
+      `const { buildReviewWorkflow } = await import(${JSON.stringify(distUrl("workflows/build-review.js"))});
+console.log(JSON.stringify(buildReviewWorkflow.validateInput(JSON.parse(process.argv[1]))));`,
+      [JSON.stringify(example)],
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({ ok: true });
+  });
+
+  it("PI-010: the pre-flight runs doctor --json through dist/cli.js, else through woof on PATH", () => {
+    const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
+    const command = /^!`(.+)`$/m.exec(text)?.[1] ?? "";
+    // allowed-tools grants Bash(node:*): the expansion must start with node.
+    expect(command.startsWith("node ")).toBe(true);
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "woof-preflight-")));
+    try {
+      const [bin, home, repo, woofDir] = ["bin", "home", "repo", "woof-bin"].map((name) =>
+        join(root, name),
+      );
+      for (const dir of [bin, home, repo, woofDir] as string[]) mkdirSync(dir);
+      // PATH holds node and a fake Herdr only; the preflight never reaches the real herdr or claude.
+      symlinkSync(process.execPath, join(bin as string, "node"));
+      writeFileSync(join(bin as string, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", {
+        mode: 0o755,
+      });
+      writeFileSync(
+        join(woofDir as string, "woof"),
+        `#!/bin/sh\nexec node ${JSON.stringify(cliPath)} "$@"\n`,
+        { mode: 0o755 },
+      );
+      const preflight = (pluginRoot: string, extraPath: string) =>
+        spawnSync("/bin/sh", ["-c", command], {
+          cwd: repo,
+          encoding: "utf8",
+          env: {
+            HOME: home,
+            PATH: `${bin}:${extraPath}/usr/bin:/bin`,
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+            WOOF_HERDR_BIN: join(bin as string, "fake-herdr"),
+            GIT_CONFIG_GLOBAL: "/dev/null",
+          },
+          timeout: 30_000,
+        });
+      const doctorJson = { woof: { cli: cliPath }, trust: { dir: repo } };
+      // In a checkout or the installed package: dist/cli.js sits next to the plugin.
+      const fromDist = preflight(claudeRoot, "");
+      expect(JSON.parse(fromDist.stdout), fromDist.stderr).toMatchObject(doctorJson);
+      // A copied plugin directory without dist: woof on PATH answers with the same schema.
+      const copied = join(root, "cache", "plugin", "claude");
+      mkdirSync(copied, { recursive: true });
+      const fromPath = preflight(copied, `${woofDir}:`);
+      expect(JSON.parse(fromPath.stdout), fromPath.stderr).toMatchObject(doctorJson);
+      // Neither: a plain sentence, no JSON.
+      const neither = preflight(copied, "");
+      expect(neither.stdout).toContain("Woof is not built or installed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

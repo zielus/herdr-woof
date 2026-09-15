@@ -13,9 +13,10 @@ Task from the user: $ARGUMENTS
 
 ## 1. Pre-flight
 
-Woof diagnostics for this directory:
+Woof diagnostics for this directory, through `dist/cli.js` next to this plugin,
+else through `woof` on PATH:
 
-!`node "${CLAUDE_PLUGIN_ROOT}/../../dist/cli.js" doctor --json --repo "$PWD" 2>&1 || command -v woof`
+!`node -e "const fs=require('fs'),cp=require('child_process');const args=['doctor','--json','--repo',process.cwd()];const cli=process.argv[1];const r=fs.existsSync(cli)?cp.spawnSync(process.execPath,[cli,...args],{stdio:'inherit'}):cp.spawnSync('woof',args,{stdio:'inherit'});if(r.error)console.log('Woof is not built or installed: no '+cli+' and no woof'+' on PATH')" "${CLAUDE_PLUGIN_ROOT}/../../dist/cli.js" 2>&1`
 
 - If that printed a JSON object, call the CLI as `node <woof.node> <woof.cli>`
   (both values from the JSON) for every command below. This text writes that
@@ -30,30 +31,54 @@ Woof diagnostics for this directory:
 Write one JSON object:
 
 - `schemaVersion`: `1`
-- `repo`: the git top level of the working directory, unless the user named
-  another repository.
+- `repo`: the absolute git top level of the working directory, unless the user
+  named another repository.
 - `task.title`, `task.description` and a non-empty `task.acceptanceCriteria`
-  list, stated concretely from the user's request and this conversation.
-- `verify`: only when the user or the project names a verification command.
+  list of strings, stated concretely from the user's request and this
+  conversation.
+- `verify`: only when the user or the project names a verification command. It
+  is an object with exactly two fields: `command`, a non-empty array of strings
+  (the program and each argument separately, never one string), and
+  `timeoutMs`, a required integer number of milliseconds.
 - Omit `agents` unless the user asked for specific agent kinds or models; the
   Woof configuration supplies them.
 - Never add permission-bypass arguments on the user's behalf.
 
+A complete example (replace the values; drop `verify` when no command was
+named):
+
+```json
+{
+  "schemaVersion": 1,
+  "repo": "/absolute/path/to/the/repository",
+  "task": {
+    "title": "Implement slugify",
+    "description": "Add slugify(text) in src/slugify.mjs with node:test tests.",
+    "acceptanceCriteria": ["slugify lowercases its input", "tests pass with node --test"]
+  },
+  "verify": { "command": ["node", "--test"], "timeoutMs": 600000 }
+}
+```
+
 ## 3. Folder trust
 
-If `repo` differs from the working directory, run
-`WOOF doctor --json --repo <repo>`. When `trust.status` is `untrusted` or
-`unknown`, tell the user: "the operator must open `claude` in <repo> once and
-accept its folder-trust question; Woof never answers it". Continue only after
-the user confirms.
+Always apply this gate before starting, whatever the repository: use
+`trust.status` from the pre-flight JSON when `repo` is the working directory;
+otherwise run `WOOF doctor --json --repo <repo>` and use its `trust.status`.
+When `trust.status` is `untrusted` or `unknown`, tell the user: "the operator
+must open `claude` in <repo> once and accept its folder-trust question; Woof
+never answers it". Continue only after the user confirms.
 
 ## 4. Start the run
 
 Run `WOOF run start --project <repo> --input -` with the JSON on stdin through
 a heredoc.
 
-- Exit 2: report `reason`, `message` and `details` verbatim, fix only what the
-  details name, and retry at most once.
+- Exit 2: report `reason`, `message` and `details` verbatim, fix every field the
+  details name (all of them, in one change), and retry once. If the retry is
+  rejected too, report that rejection and stop. Do not ask a follow-up question
+  through an interactive menu instead: no run exists yet, and Herdr may show
+  this pane as done while the menu waits, so nobody watching the run sees it.
 - Exit 3: report the rejection and stop.
 - Exit 0: report `runId`, `runDir`, the host pane, each agent's kind and model
   with its configuration source, and any warnings.
