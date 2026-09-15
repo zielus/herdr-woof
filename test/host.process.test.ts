@@ -243,6 +243,36 @@ console.log(JSON.stringify(out));`,
     expect(out["never"]["claimed"]).toEqual({ kind: "invalid", problem });
   });
 
+  it("PR #6 (claim.ts:160): a claim whose fchmod fails reports host_claim_failed and closes the descriptor", () => {
+    const runDir = temp();
+    const result = runNode(
+      `const { createRequire, syncBuiltinESMExports } = await import("node:module");
+const fs = createRequire(import.meta.url)("node:fs");
+const opened = [];
+const openSync = fs.openSync;
+fs.openSync = (...args) => { const fd = openSync(...args); if (String(args[0]).endsWith("host.json")) opened.push(fd); return fd; };
+fs.fchmodSync = () => { const error = new Error("EPERM: operation not permitted, fchmod"); error.code = "EPERM"; throw error; };
+syncBuiltinESMExports();
+const { claimHost } = await import(${JSON.stringify(distUrl("host/claim.js"))});
+const claimed = claimHost(process.argv[1], { paneId: null, workspaceId: null });
+const closed = opened.map((fd) => { try { fs.fstatSync(fd); return false; } catch (error) { return error.code === "EBADF"; } });
+console.log(JSON.stringify({ claimed, opened: opened.length, closed }));`,
+      [runDir],
+      { timeoutMs: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.json).toEqual({
+      claimed: {
+        ok: false,
+        reason: "host_claim_failed",
+        message: expect.stringContaining("EPERM"),
+        host: null,
+      },
+      opened: 1,
+      closed: [true],
+    });
+  });
+
   it("PI-104: a release that throws is logged and retried once, and the first result stays authoritative", () => {
     const runDir = temp();
     const result = runNode(

@@ -155,8 +155,14 @@ function createExclusive(
   try {
     mkdirSync(runDir, { recursive: true });
     const fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
-    // The create mode is masked by the umask; the descriptor's mode is set exactly.
-    fchmodSync(fd, mode);
+    try {
+      // The create mode is masked by the umask; the descriptor's mode is set exactly.
+      fchmodSync(fd, mode);
+    } catch (error) {
+      // The descriptor is never handed out on failure: close it before reporting.
+      closeSync(fd);
+      throw error;
+    }
     return { ok: true, fd };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
