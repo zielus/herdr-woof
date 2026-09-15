@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -788,6 +789,45 @@ describe("woof config show: configuration matrix", () => {
       expect(Date.now() - started).toBeLessThan(10_000);
     }
     expect(existsSync(join(env.root, "never"))).toBe(false);
+  });
+
+  it("PR #6 (record.ts:71): an input agent whose role is constructor or toString records source input with no shadow", () => {
+    const env = setup();
+    const url = (module: string) =>
+      pathToFileURL(join(repoRoot, "dist", "config", `${module}.js`)).href;
+    const script = `const { resolveConfiguration } = await import(${JSON.stringify(url("resolve"))});
+const { recordConfiguration } = await import(${JSON.stringify(url("record"))});
+const [homeDir, repo] = process.argv.slice(1);
+const resolved = await resolveConfiguration({ projectDir: repo, homeDir });
+if (!resolved.ok) throw new Error(resolved.message);
+const out = {};
+for (const role of ["constructor", "toString"]) {
+  const admitted = {
+    provenance: { agents: { planner: { role, kind: "codex", model: null, args: [], source: "input", path: null } }, limits: {} },
+    repository: repo,
+    plan: { agents: [{ kind: "codex" }] },
+  };
+  const recorded = recordConfiguration(resolved.configuration, admitted, { homeDir });
+  out[role] = JSON.parse(JSON.stringify(recorded.agents.planner));
+}
+console.log(JSON.stringify(out));`;
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--eval", script, env.home, env.repo],
+      { encoding: "utf8", env: { ...process.env, HOME: env.home, GIT_CONFIG_GLOBAL: "/dev/null" } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const agents = JSON.parse(result.stdout.trim()) as Json;
+    for (const role of ["constructor", "toString"]) {
+      expect(agents[role], role).toEqual({
+        role,
+        value: { kind: "codex", model: null, args: [] },
+        source: "input",
+        path: null,
+        sha256: null,
+        shadowed: [],
+      });
+    }
   });
 
   it("rejects a --project that is not a directory", () => {

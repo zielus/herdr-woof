@@ -68,7 +68,10 @@ export function recordConfiguration(
   const agents: ResolvedConfiguration["agents"] = {};
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
     const value: RoleValue = { kind: agent.kind, model: agent.model, args: [...agent.args] };
-    const role = configuration.roles[agent.role];
+    // Own entries only: an unconfigured role named `constructor` must not find Object.prototype's.
+    const role = Object.hasOwn(configuration.roles, agent.role)
+      ? configuration.roles[agent.role]
+      : undefined;
     agents[agentId] =
       agent.source === "input"
         ? {
