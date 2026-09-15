@@ -1,8 +1,8 @@
 // Runtime module for `woof run build-review --runtime-module` CLI tests: a
 // scripted runtime whose workers submit through the real submission path.
-// WOOF_TEST_SCRIPT selects the behaviour ("happy", "always-fail", "hang");
+// WOOF_TEST_SCRIPT selects the behaviour ("happy", "always-fail", "hang", "slow");
 // WOOF_TEST_RUNTIME_LOG, when set, records every createRuntime call.
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -91,7 +91,12 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       return result;
     },
     async observe(handle, options) {
-      if (pending.has(handle.runtimeName)) {
+      // "slow" (p4): the first worker submission waits until WOOF_TEST_RELEASE exists.
+      const held =
+        mode === "slow" &&
+        counts.builder + counts.reviewer === 0 &&
+        !existsSync(process.env["WOOF_TEST_RELEASE"] ?? "");
+      if (pending.has(handle.runtimeName) && !held) {
         pending.delete(handle.runtimeName);
         await work(agentOf[handle.runtimeName]);
         if (!hang) runtime.advance(handle.runtimeName);

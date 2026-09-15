@@ -123,7 +123,9 @@ export function ownerOf(host: HostInfo, options: ProbeOptions = {}): HostOwner {
   const stale =
     !Number.isFinite(beat) || now - beat > LOST_AFTER_HEARTBEATS * (host.heartbeatMs ?? 0);
   const dead = host.hostname === hostname() && host.pid !== null && !processExists(host.pid);
-  if (!stale && !dead) return "alive";
+  // A host process that is gone without releasing its claim was lost, even on a terminated run.
+  if (dead) return "lost";
+  if (!stale) return "alive";
   return options.terminal === true ? "exited" : "lost";
 }
 

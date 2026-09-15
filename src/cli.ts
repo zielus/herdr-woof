@@ -1,37 +1,24 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import {
-  MAX_INPUT_BYTES,
-  OUTCOME_EXIT_CODES,
-  UsageError,
-  milliseconds,
-  parse,
-  readInputFile,
-  readStdin,
-  rejected,
-  required,
-} from "./commands/common.js";
+import { UsageError, parse, readStdin, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
-import { isId } from "./contracts/envelope.js";
+import {
+  RUN_BUILD_REVIEW_USAGE,
+  RUN_HOST_USAGE,
+  RUN_START_USAGE,
+  runBuildReviewCommand,
+  runHostCommand,
+  runStartCommand,
+} from "./commands/run.js";
 import { isInfraReason } from "./contracts/reasons.js";
-import type { RuntimeAdapter } from "./runtime/adapter.js";
-import { createHerdrCliRuntime } from "./runtime/herdr/adapter.js";
-import { admitWorkflow, openAdmittedRun } from "./scheduler/admission.js";
-import type { Action } from "./scheduler/core.js";
-import { validateWorkflowDefinition } from "./scheduler/definition.js";
-import { runWorkflow } from "./scheduler/driver.js";
-import { loadModuleDefault } from "./scheduler/loader.js";
 import { readSnapshot } from "./state/snapshot.js";
 import { terminateRun } from "./state/store.js";
 import { openAttempt } from "./submission/attempt.js";
 import { submitResult } from "./submission/submit.js";
 import { VERSION } from "./version.js";
-import { buildReviewWorkflow } from "./workflows/build-review.js";
 
 const SUBMIT_USAGE = `Usage: woof submit --envelope <path|-> [--run-dir <dir>]
 
@@ -57,33 +44,11 @@ the run directory has no journal or records (run_dir_invalid), the journal is
 corrupt (journal_corrupt), or its line 1 changed during each of three
 consecutive reads (journal_replaced).`;
 
-const RUN_BUILD_REVIEW_USAGE = `Usage: woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>]
-                             [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
-
-Runs the built-in build-review workflow in the foreground: build, verify (when
-the input names a command), review and repair until a review passes on the
-repaired tree or a limit ends the run. Agents start in Herdr panes next to this
-one (HERDR_ENV=1 and HERDR_PANE_ID are required). --run-dir must not hold a run.
---runtime-module loads a module whose default export createRuntime(context)
-returns a runtime adapter instead of Herdr (unstable, for tests). Progress goes
-to stderr; stdout gets one JSON line. Exits 0 completed, 4 failed, 5 exhausted,
-6 cancelled, 2 rejected before launch, 3 runtime or journal failure, 1 usage.`;
-
 const RUN_CANCEL_USAGE = `Usage: woof run cancel <run-dir> [--reason <text>]
 
 Records that the run in <run-dir> is cancelled. A scheduler still running it
 stops at its next tick; late submissions are refused. Prints one JSON line;
 exits 0 when recorded, 2 when the run is already terminated, 3 on journal failure.`;
-
-/** Every RuntimeAdapter method a `--runtime-module` factory result must provide. */
-const RUNTIME_METHODS = [
-  "openPane",
-  "startAgent",
-  "observe",
-  "waitFor",
-  "deliver",
-  "stop",
-] as const;
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -119,11 +84,13 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       if (args[0] === "open") return attemptOpenCommand(args.slice(1));
       throw new UsageError(`expected "attempt open"\n\n${ATTEMPT_OPEN_USAGE}`);
     case "run":
+      if (args[0] === "start") return runStartCommand(args.slice(1));
+      if (args[0] === "host") return runHostCommand(args.slice(1));
       if (args[0] === "show") return runShowCommand(args.slice(1));
       if (args[0] === "build-review") return runBuildReviewCommand(args.slice(1));
       if (args[0] === "cancel") return runCancelCommand(args.slice(1));
       throw new UsageError(
-        `expected "run show", "run build-review" or "run cancel"\n\n${RUN_SHOW_USAGE}\n\n${RUN_BUILD_REVIEW_USAGE}\n\n${RUN_CANCEL_USAGE}`,
+        `expected "run start", "run show", "run cancel" or "run build-review"\n\n${RUN_START_USAGE}\n\n${RUN_SHOW_USAGE}\n\n${RUN_CANCEL_USAGE}\n\n${RUN_BUILD_REVIEW_USAGE}\n\n${RUN_HOST_USAGE}`,
       );
     default:
       console.error(`woof: ${commandName} is not implemented in the SDK foundation`);
@@ -142,189 +109,16 @@ function printHelp(): void {
   console.log("  submit        Validate a result envelope and record it in the run journal");
   console.log("  run show      Print a JSON snapshot of a run journal (read-only)");
   console.log("");
+  console.log("Configuration:");
+  console.log("  config show   Print the effective configuration and where each value came from");
+  console.log("");
   console.log("Workflows (unstable):");
-  console.log("  run build-review  Run the build-review workflow with agents in Herdr panes");
-  console.log("  run cancel        Cancel a run recorded in a run directory");
-}
-
-async function runBuildReviewCommand(args: string[]): Promise<number> {
-  const { values } = parse(
-    () =>
-      parseArgs({
-        args,
-        strict: true,
-        allowPositionals: false,
-        options: {
-          input: { type: "string" },
-          "run-dir": { type: "string" },
-          "run-id": { type: "string" },
-          "poll-ms": { type: "string" },
-          "keep-panes": { type: "boolean" },
-          "runtime-module": { type: "string" },
-          help: { type: "boolean", short: "h" },
-        },
-      }),
-    RUN_BUILD_REVIEW_USAGE,
+  console.log(
+    "  run start         Start a workflow run hosted in a Herdr pane (or --host foreground)",
   );
-  if (values.help === true) {
-    console.log(RUN_BUILD_REVIEW_USAGE);
-    return 0;
-  }
-  const inputArg = required(values.input, "--input", RUN_BUILD_REVIEW_USAGE);
-  const runDir = resolve(required(values["run-dir"], "--run-dir", RUN_BUILD_REVIEW_USAGE));
-  const runId = values["run-id"] ?? defaultRunId();
-  if (!isId(runId))
-    throw new UsageError(`--run-id must be a valid id\n\n${RUN_BUILD_REVIEW_USAGE}`);
-  const pollMs =
-    // At least 1 ms: a zero poll would spin the scheduler (SDK callers may still pass 0).
-    values["poll-ms"] === undefined ? 1000 : milliseconds(values["poll-ms"], "--poll-ms", 1);
-
-  // Admission: nothing is launched and nothing is written until the run opens.
-  const definition = validateWorkflowDefinition(buildReviewWorkflow);
-  if (!definition.ok) {
-    return rejected(
-      "definition_invalid",
-      "the built-in definition is invalid",
-      definition.details,
-      2,
-    );
-  }
-  let raw: unknown;
-  try {
-    const bytes = inputArg === "-" ? await readStdin(MAX_INPUT_BYTES) : readInputFile(inputArg);
-    if (bytes.byteLength > MAX_INPUT_BYTES)
-      throw new Error(`input is larger than ${MAX_INPUT_BYTES} bytes`);
-    raw = JSON.parse(Buffer.from(bytes).toString("utf8"));
-  } catch (error) {
-    return rejected(
-      "input_invalid",
-      `cannot read the workflow input: ${(error as Error).message}`,
-      [],
-      2,
-    );
-  }
-  const admitted = await admitWorkflow({ definition: definition.definition, input: raw, runDir });
-  if (!admitted.ok) return rejected(admitted.reason, admitted.message, admitted.details, 2);
-
-  let runtime: RuntimeAdapter;
-  const runtimeModule = values["runtime-module"];
-  if (runtimeModule !== undefined) {
-    const loaded = await loadModuleDefault(runtimeModule);
-    if (!loaded.ok) return rejected("runtime_unavailable", loaded.message, [], 3);
-    if (typeof loaded.value !== "function") {
-      return rejected(
-        "runtime_unavailable",
-        `${loaded.path} has no default createRuntime function`,
-        [],
-        3,
-      );
-    }
-    try {
-      runtime = (await (
-        loaded.value as (context: unknown) => Promise<RuntimeAdapter> | RuntimeAdapter
-      )({
-        runDir,
-        runId,
-        plan: admitted.plan,
-        repo: admitted.repository,
-      })) as RuntimeAdapter;
-    } catch (error) {
-      return rejected(
-        "runtime_unavailable",
-        `createRuntime failed: ${(error as Error).message}`,
-        [],
-        3,
-      );
-    }
-    // The factory result must be a RuntimeAdapter before any run is opened.
-    const candidate = runtime as unknown as Record<string, unknown> | null;
-    const missing =
-      candidate === null || typeof candidate !== "object"
-        ? ["adapter", ...RUNTIME_METHODS]
-        : [
-            ...(candidate["adapter"] === "herdr" || candidate["adapter"] === "scripted"
-              ? []
-              : ['adapter ("herdr" | "scripted")']),
-            ...RUNTIME_METHODS.filter((name) => typeof candidate[name] !== "function"),
-          ];
-    if (missing.length > 0) {
-      return rejected(
-        "runtime_unavailable",
-        `${loaded.path} createRuntime returned no RuntimeAdapter (missing or invalid: ${missing.join(", ")})`,
-        [],
-        3,
-      );
-    }
-  } else {
-    const paneId = process.env["HERDR_PANE_ID"];
-    if (process.env["HERDR_ENV"] !== "1" || paneId === undefined || paneId === "") {
-      return rejected(
-        "runtime_unavailable",
-        "woof run build-review needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID) or --runtime-module",
-        [],
-        3,
-      );
-    }
-    runtime = createHerdrCliRuntime({ bin: "herdr" });
-  }
-
-  // The validated input the scheduler runs with is what input.json records.
-  const opened = await openAdmittedRun(admitted, { runDir, runId });
-  if (opened.outcome === "rejected") {
-    return rejected(
-      opened.reason,
-      opened.message,
-      opened.details,
-      isInfraReason(opened.reason) ? 3 : 2,
-    );
-  }
-
-  const controller = new AbortController();
-  let signals = 0;
-  const onSignal = () => {
-    signals += 1;
-    // A second signal exits at once without writing anything.
-    if (signals > 1) process.exit(130);
-    console.error("woof: cancelling the run (send the signal again to exit without recording)");
-    controller.abort();
-  };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
-  console.error(`woof: run ${runId} in ${runDir}`);
-  let lastWait = "";
-  const out = await runWorkflow({
-    runDir,
-    definition: definition.definition,
-    input: admitted.input,
-    repository: admitted.repository,
-    runtime,
-    submitCommand: [process.execPath, fileURLToPath(import.meta.url)],
-    signal: controller.signal,
-    pollMs,
-    keepPanes: values["keep-panes"] === true,
-    onAction: (action) => {
-      const line = describeAction(action);
-      if (action.type === "wait" && line === lastWait) return;
-      lastWait = action.type === "wait" ? line : "";
-      console.error(`woof: ${line}`);
-    },
-  });
-  process.off("SIGINT", onSignal);
-  process.off("SIGTERM", onSignal);
-  if (out.error !== null || out.result === null) {
-    console.log(
-      JSON.stringify({
-        outcome: "rejected",
-        reason: out.error?.reason ?? "engine_invariant",
-        message: out.error?.message ?? "the run ended without a result",
-        details: [],
-        result: out.result,
-      }),
-    );
-    return 3;
-  }
-  console.log(JSON.stringify({ outcome: "run", result: out.result }));
-  return OUTCOME_EXIT_CODES[out.result.outcome];
+  console.log("  run cancel        Cancel a run recorded in a run directory");
+  console.log("  run build-review  Run the build-review workflow in this process (compatibility)");
+  console.log("  run host          Host a launched run in this process (internal)");
 }
 
 async function runCancelCommand(args: string[]): Promise<number> {
@@ -356,36 +150,6 @@ async function runCancelCommand(args: string[]): Promise<number> {
   console.log(JSON.stringify(outcome));
   if (outcome.outcome === "recorded") return 0;
   return isInfraReason(outcome.reason) ? 3 : 2;
-}
-
-function describeAction(action: Action): string {
-  switch (action.type) {
-    case "wait":
-      return `waiting (${action.reason}${action.observe !== null ? `, ${action.observe}` : ""})`;
-    case "dispatch":
-      return `dispatch ${action.stageId} visit ${action.visit} attempt ${action.attempt} (${action.cause}) to ${action.agentId}`;
-    case "terminate":
-      return `terminate ${action.outcome}${action.limit !== undefined ? ` (${action.limit})` : ""}: ${action.reason}`;
-    case "record_gate":
-      return `gate ${action.gate.gate} ${action.gate.decision} (${action.gate.reason})`;
-    case "start_agent":
-    case "block":
-    case "unblock":
-      return `${action.type.replace("_", " ")} ${action.agentId}`;
-    case "run_check":
-      return `check ${action.gate}: ${action.argv.join(" ")}`;
-    case "compute_revision":
-      return `revision for ${action.gate}`;
-    case "reconcile":
-      return `reconcile ${action.stageId} attempt ${action.attempt}: ${action.resolution}`;
-    case "settle":
-      return "run ended";
-  }
-}
-
-function defaultRunId(): string {
-  const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace("T", "-").slice(0, 15);
-  return `br-${stamp}-${randomBytes(3).toString("hex")}`;
 }
 
 async function submitCommand(args: string[]): Promise<number> {

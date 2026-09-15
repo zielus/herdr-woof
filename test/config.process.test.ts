@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cliPath } from "./helpers/process.js";
+import { cliPath, repoRoot } from "./helpers/process.js";
 
 // §6(a) configuration matrix, `woof config show` rows: real `node dist/cli.js`
 // processes with a temporary HOME, temporary git repositories and no global git config.
@@ -68,6 +76,74 @@ function writeJson(path: string, value: unknown): string {
 const role = (value: Json) => ({ schemaVersion: 1, kind: "claude", model: null, ...value });
 
 function show(env: Env, args: string[], options: { cwd?: string; timeoutMs?: number } = {}) {
+  return runWoof(env, ["config", "show", ...args], {}, options);
+}
+
+const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
+let runCount = 0;
+
+function baseInput(env: Env, overrides: Json = {}): Json {
+  return {
+    schemaVersion: 1,
+    repo: env.repo,
+    task: {
+      title: "Change the fixture",
+      description: "Write src/change.txt.",
+      acceptanceCriteria: ["the file exists"],
+    },
+    ...overrides,
+  };
+}
+
+/** `woof run start --host foreground` with the scripted runtime into a fresh run directory. */
+function startForeground(
+  env: Env,
+  input: Json,
+  extraArgs: string[] = [],
+  extraEnv: Record<string, string> = {},
+) {
+  runCount += 1;
+  const runDir = join(env.root, `run-${runCount}`);
+  const inputPath = writeJson(join(env.root, `input-${runCount}.json`), input);
+  const out = runWoof(
+    env,
+    [
+      "run",
+      "start",
+      "--host",
+      "foreground",
+      "--input",
+      inputPath,
+      "--project",
+      env.repo,
+      "--run-dir",
+      runDir,
+      "--runtime-module",
+      runtimeModule,
+      "--poll-ms",
+      "2",
+      ...extraArgs,
+    ],
+    { WOOF_TEST_SCRIPT: "happy", ...extraEnv },
+    { timeoutMs: 60_000 },
+  );
+  return { ...out, runDir };
+}
+
+function runDirOf(out: { runDir: string }): string {
+  return out.runDir;
+}
+
+function recordedConfig(out: { runDir: string }): Json {
+  return JSON.parse(readFileSync(join(out.runDir, "config.json"), "utf8")) as Json;
+}
+
+function runWoof(
+  env: Env,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+  options: { cwd?: string; timeoutMs?: number } = {},
+) {
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: env.home,
@@ -75,7 +151,8 @@ function show(env: Env, args: string[], options: { cwd?: string; timeoutMs?: num
   };
   for (const key of ["HERDR_PANE_ID", "HERDR_ENV", "WOOF_RUN_DIR"])
     Reflect.deleteProperty(childEnv, key);
-  const result = spawnSync("node", [cliPath, "config", "show", ...args], {
+  Object.assign(childEnv, extraEnv);
+  const result = spawnSync("node", [cliPath, ...args], {
     cwd: options.cwd ?? env.root,
     env: childEnv,
     encoding: "utf8",
@@ -328,6 +405,164 @@ describe("woof config show: configuration matrix", () => {
       configuration: { workflow: null },
     });
   });
+
+  it("C8 (admission): a workflow role nobody defines is role_unresolved listing the searched paths", () => {
+    const env = setup();
+    const module = join(env.repo, ".woof", "workflows", "planner-role.mjs");
+    writeJson(
+      module,
+      readFileSync(join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"), "utf8"),
+    );
+    const out = startForeground(env, {}, ["--workflow", "planner-role"], {
+      WOOF_TEST_REPO: env.repo,
+    });
+    expect(out.status, out.stdout + out.stderr).toBe(2);
+    expect(out.json).toMatchObject({ reason: "role_unresolved" });
+    expect(out.json?.["message"]).toContain(join(env.repo, ".woof", "roles", "planner.json"));
+    expect(out.json?.["message"]).toContain(join(env.home, ".woof", "roles", "planner.json"));
+  });
+
+  it("C3: limits compose per key across input, project, user and built-in, recorded in config.json", () => {
+    const env = setup();
+    writeJson(join(env.home, ".woof", "woof.json"), {
+      schemaVersion: 1,
+      defaults: { limits: { maxRounds: 5 } },
+    });
+    const project = writeJson(join(env.repo, ".woof", "woof.json"), {
+      schemaVersion: 1,
+      defaults: { limits: { runTimeoutMs: 120_000 } },
+    });
+    const out = startForeground(env, baseInput(env, { limits: { maxAttemptsPerVisit: 1 } }));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const limits = recordedConfig(out)["settings"]["limits"];
+    expect(limits["maxRounds"]).toMatchObject({
+      value: 5,
+      source: "user",
+      path: join(env.home, ".woof", "woof.json"),
+    });
+    expect(limits["runTimeoutMs"]).toMatchObject({
+      value: 120_000,
+      source: "project",
+      path: project,
+    });
+    expect(limits["maxAttemptsPerVisit"]).toMatchObject({
+      value: 1,
+      source: "input",
+      shadowed: [{ source: "builtin", value: 2 }],
+    });
+    expect(limits["readinessWaitMs"]).toMatchObject({ value: 180_000, source: "builtin" });
+  }, 60_000);
+
+  it("C4: an input agent is recorded as source input, shadowing the project role", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ model: "sonnet" }),
+    );
+    const out = startForeground(
+      env,
+      baseInput(env, { agents: { builder: { kind: "claude", model: "opus", args: [] } } }),
+    );
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const builder = recordedConfig(out)["agents"]["builder"];
+    expect(builder).toMatchObject({ role: "builder", source: "input", value: { model: "opus" } });
+    expect(builder["shadowed"][0]).toMatchObject({
+      source: "project",
+      path,
+      value: { model: "sonnet" },
+    });
+  }, 60_000);
+
+  it("C5 (start): an invalid settings file stops run start before any pane is split", () => {
+    const env = setup();
+    writeJson(join(env.repo, ".woof", "woof.json"), { schemaVersion: 1, defaults: { limitz: {} } });
+    const log = join(env.root, "herdr.log");
+    const scenario = writeJson(join(env.root, "scenario.json"), []);
+    const out = runWoof(
+      env,
+      [
+        "run",
+        "start",
+        "--input",
+        writeJson(join(env.root, "input.json"), baseInput(env)),
+        "--project",
+        env.repo,
+      ],
+      {
+        HERDR_ENV: "1",
+        HERDR_PANE_ID: "w9:p1",
+        WOOF_HERDR_BIN: join(repoRoot, "test", "fixtures", "fake-herdr.mjs"),
+        FAKE_HERDR_LOG: log,
+        FAKE_HERDR_SCENARIO: scenario,
+      },
+    );
+    expect(out.status, out.stdout + out.stderr).toBe(2);
+    expect(out.json).toMatchObject({
+      reason: "config_invalid",
+      details: [{ pointer: "/defaults/limitz" }],
+    });
+    expect(existsSync(log)).toBe(false);
+  });
+
+  it("C7 (admission): a used role with an unsupported kind is rejected naming its file; an unused one only warns", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "codex" }),
+    );
+    const used = startForeground(env, baseInput(env));
+    expect(used.status, used.stdout).toBe(2);
+    expect(used.json).toMatchObject({ reason: "agent_kind_unsupported" });
+    expect(used.json?.["message"]).toContain(path);
+
+    const other = setup();
+    const planner = writeJson(
+      join(other.repo, ".woof", "roles", "planner.json"),
+      role({ kind: "codex" }),
+    );
+    const unused = startForeground(other, baseInput(other));
+    expect(unused.status, unused.stdout + unused.stderr).toBe(0);
+    expect(recordedConfig(unused)["warnings"]).toContainEqual({
+      code: "role_kind_unsupported",
+      message: expect.any(String),
+      path: planner,
+    });
+  }, 60_000);
+
+  it("C15: a run whose repository is not the --project is project_mismatch naming both", () => {
+    const env = setup();
+    const other = setup();
+    const out = startForeground(env, baseInput(other));
+    expect(out.status).toBe(2);
+    expect(out.json).toMatchObject({ reason: "project_mismatch" });
+    expect(out.json?.["message"]).toContain(env.repo);
+    expect(out.json?.["message"]).toContain(other.repo);
+  });
+
+  it("C19 (recorded): a permission bypass in a role runs as configured and config.json carries the warning", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ args: ["--dangerously-skip-permissions"] }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const recorded = recordedConfig(out);
+    expect(recorded["warnings"]).toContainEqual({
+      code: "permission_bypass_configured",
+      message: expect.any(String),
+      path,
+    });
+    // No Claude trust entry exists in the temporary HOME: the pre-flight warns, it never rejects.
+    expect(recorded["warnings"].map((warning: Json) => warning["code"])).toContain(
+      "claude_trust_unknown",
+    );
+    const plan = JSON.parse(
+      readFileSync(join(runDirOf(out), "journal.jsonl"), "utf8").split("\n")[0] as string,
+    ) as Json;
+    expect(plan["plan"]["agents"][0]["args"]).toContain("--dangerously-skip-permissions");
+    expect(plan["plan"]["agents"][1]["args"]).not.toContain("--dangerously-skip-permissions");
+  }, 60_000);
 
   it("rejects a --project that is not a directory", () => {
     const env = setup();
