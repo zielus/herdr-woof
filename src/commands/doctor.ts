@@ -71,11 +71,14 @@ export async function doctorCommand(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Bound on each probe of an external executable, so a hung `herdr` or `claude` cannot block doctor. */
+const PROBE_TIMEOUT_MS = 10_000;
+
 function versionOf(command: string): {
   status: "available" | "not_found" | "failed";
   version: string | null;
 } {
-  const result = spawnSync(command, ["--version"], { encoding: "utf8", timeout: 10_000 });
+  const result = spawnSync(command, ["--version"], { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
   if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT")
     return { status: "not_found", version: null };
   if (result.status !== 0) return { status: "failed", version: null };
@@ -84,7 +87,7 @@ function versionOf(command: string): {
 
 function probe(commandName: string, args: readonly string[]): string {
   const label = `${commandName} ${args.join(" ")}`;
-  const result = spawnSync(commandName, args, { encoding: "utf8" });
+  const result = spawnSync(commandName, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
 
   if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT") {
     return `${label}: not found`;

@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -463,6 +464,29 @@ describe("woof doctor --json", () => {
     writeFileSync(join(repo, ".woof", "woof.json"), "{");
     expect(doctor()["config"]).toMatchObject({ ok: false, reason: "config_invalid" });
   });
+
+  it("PR #6 (doctor.ts:87): human-mode doctor bounds a hung probe at 10 s and reports it failed", () => {
+    const root = tempDir("woof-doctor-hung-");
+    const bin = join(root, "bin");
+    const nodeBin = join(root, "node-bin");
+    const home = join(root, "home");
+    for (const dir of [bin, nodeBin, home]) mkdirSync(dir);
+    // Human mode resolves herdr and claude on PATH: this PATH has a hung claude and no herdr at all.
+    writeFileSync(join(bin, "claude"), "#!/bin/sh\nexec sleep 60\n", { mode: 0o755 });
+    symlinkSync(process.execPath, join(nodeBin, "node"));
+    for (const dir of ["/usr/bin", "/bin"]) expect(existsSync(join(dir, "herdr")), dir).toBe(false);
+    const started = Date.now();
+    const result = woof(["doctor"], {
+      env: { ...doctorEnv(home, bin), PATH: `${bin}:${nodeBin}:/usr/bin:/bin` },
+      timeoutMs: 40_000,
+    });
+    const elapsed = Date.now() - started;
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("herdr status: not found");
+    expect(result.stdout).toMatch(/^claude --version: failed \(/m);
+    expect(elapsed).toBeGreaterThanOrEqual(9_500);
+    expect(elapsed).toBeLessThan(25_000);
+  }, 60_000);
 });
 
 describe("inspection is read-only", () => {
