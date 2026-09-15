@@ -59,3 +59,25 @@ cancel` (`runWorkflow`, `admitWorkflow`, `buildReviewWorkflow`,
   `reconcileDelivery`). Configuration-driven role catalogs, a second
   built-in workflow, MCP, run hosting, crash resume and parallel scheduling
   remain out of scope. No version bump (`check:version` stays at 0.0.0).
+- Configuration, run hosting, inspection and functional plugins (p4):
+  `.woof`/`~/.woof` JSON configuration (`woof.json`, one role per file, one
+  workflow definition module per file) with project → user → built-in
+  precedence, per-field provenance and `woof config show`; `woof run start`
+  hosting one scheduler process per run in a Herdr pane, claimed exclusively
+  with a heartbeat (`woof run host`, `--host foreground`); the read-only
+  inspection CLI `woof status [--wait]`, `woof runs` and `woof events
+[--follow] [--stats]`; a functional Herdr plugin (`doctor`, `status`,
+  `start`, `cancel` actions, pane metadata and notifications) and Claude Code
+  plugin (`/woof:run`, with a read-only Claude folder-trust pre-flight); and
+  `openAdmittedRun` exported from the SDK. Changed public types:
+  `RunSnapshot.liveness.owner` widens to `"unhosted"|"alive"|"lost"|"exited"`
+  with a new `host`/`claimProblem`; `AdmissionReason` gains
+  `config_invalid`, `config_conflict`, `setting_scope_invalid`,
+  `role_invalid`, `role_unresolved`, `project_mismatch`,
+  `workflow_not_found`, and the loader's `definition_not_found|
+definition_syntax_unsupported|definition_load_failed`; `WorkflowDefinition`
+  gains an optional `limitDefaults`; build-review's `agents` and each role in
+  it are now optional. Configuration-driven role instructions/context files,
+  a second built-in workflow, MCP, crash resume/re-hosting a lost run, and
+  parallel scheduling remain out of scope. No version bump (`check:version`
+  stays at 0.0.0).

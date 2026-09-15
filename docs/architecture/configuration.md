@@ -21,7 +21,8 @@ defaults or a tested provider support matrix.
 
 The old loader already discovers project `.woof/` and user `~/.woof/` workflow
 directories. Preserve those conventions unless a concrete conflict appears.
-This proposed layout extends that precedent; it is not implemented here:
+This layout is implemented (p4); see "Implemented now (p4)" below for the
+exact schemas, discovery rules and precedence:
 
 ```text
 ~/.woof/
@@ -35,6 +36,9 @@ This proposed layout extends that precedent; it is not implemented here:
   roles/
   workflows/
 ```
+
+(`runs/` is a user-scope-only default: `woof.json`'s `runsDir` setting is
+refused in a project file.)
 
 Prefer whole-definition replacement for named roles and workflows. For scalar
 defaults, define field-level precedence explicitly. Avoid an implicit recursive
@@ -66,12 +70,120 @@ draft's automatic `bypassPermissions` default and automatic trust-dialog dismiss
 are not product requirements. Represent a permission block accurately and expose
 the required user action.
 
+## Implemented now (p4)
+
+Real shipped behavior for configuration files, discovery, resolution and
+recording — not design intent. Source: `src/config/{schema,read,discover,
+resolve,record,index}.ts`, `src/runtime/claude/trust.ts`, `woof config show`
+(`src/commands/config.ts`).
+
+- **Layout and schemas.** `<scope>/.woof/woof.json` (settings), one role per
+  file `<scope>/.woof/roles/<name>.json`, and one workflow definition module
+  per file `<scope>/.woof/workflows/<name>.{mjs,js,ts}` (stem = the name).
+  Scopes are project (`<project root>/.woof`) and user (`~/.woof`), plus a
+  built-in catalog (workflow `build-review`; roles `builder`/`reviewer`).
+  Every JSON file is an object with `schemaVersion: 1`, at most 64 KiB;
+  unknown keys are refused (`config_invalid`, naming the file and a JSON
+  pointer). `woof.json`'s `defaults` (all optional): `workflow` (an id),
+  `limits` (a partial `Limits`, each key its p3 bounds), `pollMs`
+  (1–3 600 000), `keepPanes`, `hostStartTimeoutMs` (1000–600 000), `runsDir`
+  (an absolute path, **user scope only** — a project `woof.json` setting it is
+  `setting_scope_invalid`). A role file: `kind` (required, non-empty), `model`
+  (required: a string or `null`), `args` (optional, default `[]`, must not set
+  `--model` or `--add-dir` in split or `=`-joined form — `role_invalid`),
+  `description` (optional, ≤ 500 characters). A malformed or unreadable file
+  in a scope that applies fails admission even when its role is unused.
+- **Discovery (D4).** The project root is `git rev-parse --show-toplevel` from
+  `--project` (default the working directory); only `<root>/.woof` is read. A
+  `.woof` found between the start directory and the root is ignored with
+  warning `nested_config_ignored`, naming it. A worktree reads its own
+  versioned `.woof` (git resolves its `.git` file). Not a git work tree: no
+  project scope. A project `.woof` whose real path equals `~/.woof` is read
+  once, as user scope. Tests pass `HOME`/`--project` as explicit options; no
+  test reads the operator's real configuration.
+- **Precedence (§3.3).** Roles and workflows are whole-definition replacement:
+  workflow input override → project `roles/<role>.json` → user
+  `roles/<role>.json` → built-in role, else `role_unresolved`; workflow name
+  `--workflow` → project/user `defaults.workflow` → `build-review`. Settings
+  follow a per-field table (flag → project → user → built-in default), and
+  each `limits.<key>` composes per key: input → project → user → the
+  workflow definition's own `limitDefaults[key]`. The losing layers for a
+  winning value are listed in `shadowed`, never merged into it.
+- **Provenance and `woof config show`.** `resolveConfiguration({projectDir,
+homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
+  `kind: "woof.config.resolved"`): `roots`, `files` (every file read, with its
+  sha256 and byte count), `workflow` (`Provenance<{name, version}>` — `version`
+  is `null` for a file workflow, since `config show` never imports a
+  non-built-in module), `roles` (every discovered/built-in role, each a
+  `Provenance<RoleValue>`), `agents` (empty in `config show`; per-plan agent
+  once a run is admitted), `settings` (`workflow`, a partial `limits` holding
+  only the keys configuration or a definition's own defaults set, `pollMs`,
+  `keepPanes`, `hostStartTimeoutMs`, `runsDir`, each a `Provenance<T>`),
+  `repository` (`null` in `config show`; the admitted repository on a run),
+  and `warnings`. Each `Provenance<T>` carries `value`, `source`
+  (`"flag"|"input"|"project"|"user"|"builtin"`), `path` (`null` for
+  flag/input/builtin), `sha256` and `shadowed`. `woof config show [--project
+  <dir>] [--workflow <name>]` prints `{"outcome":"config","configuration"}`
+  (exit 0) or `{"outcome":"rejected","reason","message","details",
+  "configuration"?}` (exit 2, with a partial configuration once the roots
+  resolved). It never imports a workflow module and takes no journal lock.
+- **Refusals.** `config_invalid` (unknown key, wrong type, unreadable/
+  oversized file), `config_conflict` (two files with one stem in one scope,
+  e.g. `build-review.ts` and `.mjs`, or a definition whose `name` differs from
+  its file stem), `setting_scope_invalid` (`runsDir` in a project file),
+  `role_invalid` (a role's `args` sets an engine-owned flag), `role_unresolved`
+  (admission only: no layer resolves a role the workflow uses),
+  `project_mismatch` (admission only: the input's repository is not the
+  resolved project root — the message names both paths and suggests
+  `--project <repository>`), `workflow_not_found`. An unsupported role `kind`
+  is only a warning (`role_kind_unsupported`) in `config show`, and fails
+  admission (`agent_kind_unsupported`) only for a role the workflow actually
+  resolves to.
+- **Built-in roles and permission visibility.** `builder`/`reviewer` default
+  to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
+  never adds a permission flag, so an interactive agent with no explicit
+  permission configuration stops at its own prompt and the run records
+  `run.blocked{reason:"startup_blocked"}`. Args that configure a permission
+  bypass (`--dangerously-skip-permissions`,
+  `--allow-dangerously-skip-permissions`, `--permission-mode
+bypassPermissions`, split or `=`-joined) are allowed but produce warning
+  `permission_bypass_configured`, naming the source, in `run start` output
+  and `config.json` — only for the agents actually admitted, once per role
+  file, and with no path when the workflow input itself set the bypass. A
+  role-file bypass an input agent's safe args replaced, or one on a role the
+  workflow does not use, is never reported in `config.json`/`run start`;
+  `config show` (which resolves every role, not just the ones a run admits)
+  still reports it against that role.
+- **Recording.** `openRun`/`openAdmittedRun` write `<runDir>/config.json`
+  (mode 0444) holding the resolved configuration completed with the admitted
+  `agents`, per-key `settings.limits` (including input overrides),
+  `repository`, and Claude-trust warnings; `run.opened` gains an optional
+  `config: {sha256, bytes}`, and the snapshot gains `config: {path, sha256,
+bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
+  file mid-run changes nothing about that run.
+- **Claude Code trust (D10, advisory only).** `claudeTrustStatus(dir,
+{homeDir})` reads `<home>/.claude.json` (16 MiB cap, regular files only,
+  never writes) and reports `trusted`, `untrusted`, or `unknown` (missing/
+  unreadable file, parse failure, no `projects` object). It never rejects a
+  run; `woof doctor --json` and `run start`'s `warnings[]` report it, and
+  `/woof:run` asks the user to resolve `untrusted`/`unknown` before
+  continuing. The engine's own `startup_blocked` stays the authority.
+- **Non-goals (unchanged from the plan).** Role instructions and context
+  files are not part of configuration — per-run `instructions` stays in the
+  input, and the role file schema reserves no such key. A per-run `.herdr/`
+  layer, TOML/YAML, and TypeScript config modules that execute at every
+  `config show` are not implemented, by design.
+
 ## Decisions still needed
 
-Choose root discovery for nested projects and worktrees, role serialization,
-configuration schema/versioning, run storage location, artifact retention, and
-per-run override rules during specification. Verify actual provider flags in the
-target environment rather than copying flags from historical planning notes.
+Artifact retention, a per-attempt result-wait limit (deferred: today's
+`runTimeoutMs` plus `woof status`'s per-attempt `dispatchedAt` make a stuck
+worker visible and boundable), and Woof-level ignore globs for the revision
+fingerprint (documented instead as a `.gitignore` requirement on verify
+outputs — see [initial workflows](../workflows/initial-workflows.md)) stay
+open. Root discovery, role serialization, the configuration schema/
+versioning, run storage location and per-run override rules are resolved by
+"Implemented now (p4)" above.
 
 See [project assessment](../research/project-assessment.md) for the inspected
 loader precedent and [acceptance criteria](../acceptance/v1.md) for precedence tests.

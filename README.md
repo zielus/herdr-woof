@@ -2,14 +2,17 @@
 
 Woof is the future orchestration SDK for coding agents running through Herdr.
 This repository provides a package boundary, build and packaging checks, a
-diagnostic CLI, truthful Herdr/Claude plugin placeholders, a first working
-slice of result handoff (a worker-callable `woof submit` CLI/SDK bridge
-backed by an append-only run journal), a p2 run-facts and snapshot layer
-(run plans, journaled agent assignment/dispatch/termination, derived
-snapshots and events, and a Herdr runtime adapter), and a p3 scheduler that
-runs the built-in `build-review` workflow end to end — see below. It does
-not run a second built-in workflow, delegate agents outside a workflow, host
-a run, or publish a stable `HerdrAgentsSDK` API yet.
+diagnostic CLI, a first working slice of result handoff (a worker-callable
+`woof submit` CLI/SDK bridge backed by an append-only run journal), a p2
+run-facts and snapshot layer (run plans, journaled agent
+assignment/dispatch/termination, derived snapshots and events, and a Herdr
+runtime adapter), a p3 scheduler that runs the built-in `build-review`
+workflow end to end, and a p4 product-integration layer: `.woof`/`~/.woof`
+configuration with provenance, `woof run start` hosting a run in a Herdr
+pane with claim/heartbeat liveness, a read-only inspection CLI, and
+functional Herdr and Claude Code plugins — see below. It does not run a
+second built-in workflow, delegate agents outside a workflow, resume a
+crashed run, or publish a stable `HerdrAgentsSDK` API yet.
 
 ## Requirements
 
@@ -29,24 +32,35 @@ bun run verify
 `bun run build` compiles the ESM package and declarations to `dist/`. The
 installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
 `bin/woof` is a Unix launcher for checkouts and the Herdr plugin action.
-Executable behavior today is diagnostic, plus the result-handoff prototype:
+Executable behavior today spans diagnostics, result handoff, workflow
+hosting, and read-only inspection:
 
 ```sh
 bin/woof --help
 bin/woof --version
-bin/woof doctor
+bin/woof doctor [--json] [--repo <dir>]
 bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 bin/woof submit --envelope <path|-> [--run-dir <dir>]
 bin/woof run show <run-dir> [--verify-artifacts]
+bin/woof config show [--project <dir>] [--workflow <name>]
+bin/woof run start [--workflow <name>] --input <path|-> [--project <dir>] \
+  [--host herdr-pane|foreground] [--poll-ms <n>] [--keep-panes]
+bin/woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked]
+bin/woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
+bin/woof events <run-dir> [--after <cursor>] [--follow] [--stats]
 bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
 bin/woof run cancel <run-dir> [--reason <text>]
+bin/woof herdr status|start|cancel
 ```
 
-`doctor` reports whether Herdr and Claude Code can be invoked; neither is
-required for the command to complete. Any other workflow-oriented command is
-rejected as not implemented.
+`doctor` reports whether Herdr and Claude Code can be invoked, and (with
+`--json`) the read-only Claude folder-trust status of a repository; neither
+Herdr nor Claude Code is required for the command to complete. See
+[Product integration (p4)](#product-integration-p4) below for `config show`,
+`run start`, the inspection commands and the plugins; any other
+workflow-oriented command is rejected as not implemented.
 
 The package smoke test packs the project, installs it into an isolated local
 consumer, imports its public entry point, and exercises the installed CLI.
@@ -209,19 +223,78 @@ See [domain model](docs/architecture/domain-model.md#implemented-now-p3),
 for the definition contract, the scheduler's decision rules, format repair,
 blocking/reconciliation, revision binding and the terminal `RunResult`.
 
-What still does not exist: `.woof`/`~/.woof` configuration or role catalogs
-(agents resolve from the CLI input object only), a second built-in workflow
-(`plan-build-review`, phase 5), an MCP adapter, run hosting (there is no
-daemon or live run owner — every store call, `submit` and the scheduler
-itself open the journal in process; a killed scheduler leaves a non-terminal
-run whose only resolution is `woof run cancel`), crash resume, and parallel
+What still does not exist: a second built-in workflow (`plan-build-review`,
+phase 5), an MCP adapter, crash resume or re-hosting a lost run, and parallel
 scheduling (one active request per agent, one sequential decision loop).
+`.woof`/`~/.woof` configuration and run hosting are implemented — see
+[Product integration (p4)](#product-integration-p4) below.
+
+## Product integration (p4)
+
+Configuration, run hosting, read-only inspection and both plugins now exist.
+`.woof/` (project) and `~/.woof/` (user) hold JSON settings, one role per
+file, and workflow definition modules, with documented precedence
+(project → user → built-in) and provenance on every resolved value:
+
+```sh
+mkdir -p .woof/roles
+cat > .woof/roles/builder.json <<'EOF'
+{"schemaVersion":1,"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]}
+EOF
+bin/woof config show
+# {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
+```
+
+`woof run start` resolves that configuration, launches a scheduler in a
+Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host
+foreground` to run in this process), and returns once the pane host has
+claimed and opened the run:
+
+```sh
+bin/woof run start --input input.json
+# {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…"},...}
+bin/woof status /abs --wait
+# polls until a terminal outcome (exit 0/4/5/6), a lost owner (exit 8),
+# a block needing the operator (exit 9), or --timeout-ms (exit 7)
+```
+
+The pane host claims the run exclusively (`host.json`, a heartbeat every
+2000 ms by default), so `woof status`/`woof runs` report the owner as
+`unhosted`, `alive`, `lost` or `exited` instead of the p3 constant
+`"unhosted"` — a killed host is reported `lost`, never silently as running,
+and its only resolution is still `woof run cancel <run-dir>` (no crash
+resume). `woof runs`, `woof events` and `woof config show` are read-only and
+never take the journal lock or contact Herdr.
+
+The Herdr plugin (`herdr-plugin.toml`) exposes `doctor`, `status`, `start`
+and `cancel` actions that target the invocation's focused project and
+project run state as pane metadata tokens. The Claude Code plugin
+(`plugin/claude/`) ships `/woof:run <task description>`, which resolves the
+CLI, applies the operator-trust precondition below, starts a run and waits
+for it with `woof status --wait`, reporting the structured result.
+
+**Operator-trust precondition.** Both `woof run build-review` and `woof run
+start` launch interactive `claude` agents in Herdr panes; an agent that has
+never been trusted in a target repository stops at its own folder-trust
+prompt and the run records `run.blocked{reason:"startup_blocked"}` rather
+than proceeding. Before starting a run against a repository, open `claude`
+there at least once and accept its trust question — Woof only reports this
+status (`woof doctor --json`, `run start`'s `warnings[]`, `/woof:run`'s
+pre-flight); it never answers the prompt or bypasses it.
+
+See [configuration](docs/architecture/configuration.md#implemented-now-p4),
+[domain model](docs/architecture/domain-model.md#implemented-now-p4),
+[observability](docs/architecture/observability.md#implemented-now-p4) and
+[plugins](docs/integrations/plugins.md) for the full contracts.
 
 ## Integrations and scope
 
-The Herdr plugin exposes only `doctor`. The Claude plugin explicitly declines
-workflow requests. MCP is deferred and is not a maintained integration in this
-repository.
+The Herdr plugin exposes `doctor`, `status`, `start` and `cancel` actions; the
+Claude Code plugin's `/woof:run` command starts and waits on a run. Neither
+ships tools, hooks, a background process or a transport adapter beyond what
+[Product integration (p4)](#product-integration-p4) and
+[plugins.md](docs/integrations/plugins.md) describe. MCP is deferred and is
+not a maintained integration in this repository.
 
 The [documentation index](docs/README.md) and [product brief](docs/product/brief.md)
 describe the intended product; they are not claims that those features exist.

@@ -196,7 +196,8 @@ records}`) is the proof of this by construction: it re-derives the
 
 - **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
   process to be reachable, so every snapshot says so explicitly rather than
-  claiming `"active"`. `liveness.runtime` stays `"not_observed"` in every
+  claiming `"active"`. (p4 widens this to a real run-owner probe — see
+  "Implemented now (p4)" below.) `liveness.runtime` stays `"not_observed"` in every
   derived snapshot; only an explicit, non-journaled overlay step
   (`overlayRuntime`) can report `"observed"`, and only when it actually laid
   an observation over at least one agent. `overlayRuntime` uses an
@@ -293,9 +294,87 @@ repository {path, revision}, counters, blocked, artifacts
 show`/`readEvents` project, so "an external observer agrees with the
   engine's state" holds by construction — there is no separate in-process
   state the scheduler consults instead.
-- **`liveness.owner` stays `"unhosted"` (unchanged).** The scheduler is a
-  foreground process, not a run owner: a killed scheduler leaves a
-  non-terminal run, and the only resolution is `woof run cancel <run-dir>`
-  (which records the termination a live scheduler would otherwise have
-  written) — there is still no daemon, liveness contract or crash-resume
+- **`liveness.owner` stays `"unhosted"` for a foreground scheduler
+  (unchanged).** `woof run build-review`/`--host foreground` run the
+  scheduler in this process: a killed one leaves a non-terminal run, and the
+  only resolution is `woof run cancel <run-dir>` (which records the
+  termination a live scheduler would otherwise have written). p4 adds a real
+  owner and liveness for `woof run start`'s pane-hosted runs — see
+  "Implemented now (p4)" below; there is still no daemon or crash-resume
   path.
+
+## Implemented now (p4)
+
+Real shipped behavior for run-host liveness and the inspection CLI — not
+design intent. Source: `src/host/{claim,probe,metadata}.ts`,
+`src/state/snapshot.ts`, `src/inspect/{status,runs}.ts`,
+`src/commands/{status,runs,events,config,doctor}.ts`.
+
+- **`liveness.owner` widens to `"unhosted" | "alive" | "lost" | "exited"`.**
+  `readSnapshot` probes `<runDir>/host.json` (the exclusive claim a run host
+  creates once and never rewrites, with a heartbeat that touches its mtime
+  every `heartbeatMs`, default 2000 ms) and `<runDir>/host-exit.json` (a
+  second, separately exclusive marker a clean exit creates, which the probe
+  applies first). No claim file and no marker is `"unhosted"`. A claim whose
+  recorded host is this machine and whose pid is gone, or whose heartbeat is
+  stale by more than 5× `heartbeatMs`, is `"lost"` (on a terminated run a
+  merely stale heartbeat is `"exited"` instead, never `"lost"`). `host-exit.
+json` is itself engine-owned: `woof run start` refuses `run_exists` for a
+  run directory that already holds one, its `pid` is a required positive
+  integer, and it counts only next to a `"hosting"` claim recorded by that
+  same pid — a marker with no claim, an invalid or non-regular marker, a pid
+  mismatch, or a marker next to an `"abandoned"` claim all fail closed as
+  `"lost"`, `host: null`, with `liveness.claimProblem` naming the problem,
+  never `"exited"`. A claim or marker path that exists but does not parse (a
+  torn write, a FIFO, a symlink) is re-read up to three times, 50 ms apart,
+  before it counts. `deriveSnapshot` (no I/O) still always reports
+  `"unhosted"`/`null`; only `readSnapshot`, which already does file I/O,
+  probes. `RunSnapshot.liveness` is `{owner, runtime, host: HostInfo | null,
+claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
+  `runtime: "observed"|"not_observed"`.
+- **`woof status <run-dir> [--wait]`** (`src/inspect/status.ts`,
+  `RunStatusView`) is the read-only wait primitive: `liveness`, the run's
+  `activeAttempts`, `lastGate`, `attention`, `counters`, `config: {sha256} |
+null` and `cursor`, plus `result` (`deriveRunResult`) once terminal.
+  Without `--wait`: exit 0, or 3 on `run_dir_invalid|journal_corrupt|
+journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
+  `--timeout-ms`, default 540 000 — one Bash call stays under its own
+  600 000 ms cap): a recorded terminal outcome always wins first (**0/4/5/6**
+  completed/failed/exhausted/cancelled); otherwise an unresolved
+  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise an owner
+  confirmed `lost` on two probes at least `2 × heartbeatMs` apart is **8**;
+  otherwise the timeout elapsing is **7**. The last line printed is always
+  the status at return time.
+- **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
+  (`src/inspect/runs.ts`) lists run directories under a runs directory
+  (`--runs-dir` → the user setting `defaults.runsDir` → `~/.woof/runs`;
+  project scope is refused for this setting): every non-terminal run plus the
+  20 most recent terminal runs by default, sorted by `openedAt` descending.
+  `--project` filters by the run's recorded `config.json` project root
+  (`realpath`); a p3 run with no `config.json` shows `project: null` and is
+  excluded by `--project`. A missing runs directory is `{"exists":false,
+"runs":[]}`, exit 0; an unreadable one exits 3. It takes no lock and loads
+  no workflow definition.
+- **`woof events <run-dir> … [--stats]`** streams the run's `RunEvent`s as
+  NDJSON, ending with `{"kind":"woof.events.end","cursor","terminal",
+"reason"}` (`0` end/terminated, `7` timeout, `2` resync_required, `3`
+  error, `130` SIGINT). `--stats` prints
+  `{"kind":"woof.events.stats","polls","maxProjectionMs","pollMs","method":
+"iterator step wall time beyond the poll interval"}` to stderr — an
+  estimate from the iterator's own step time, not a measurement taken inside
+  `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
+  its first real consumer). Live evidence on a completed build-review run:
+  `maxProjectionMs` 3.45 ms against a 250 ms poll — about 1.4%, well under
+  the 10% C4 threshold (`docs/research/product-integration-live-2.log`).
+- **`woof config show`** and **`woof doctor [--json]`** are read-only and
+  contact neither the journal nor Herdr; see
+  [configuration](configuration.md#implemented-now-p4).
+- **Metadata is a display-only projection, never a source.** The run host
+  reports pane metadata tokens and notifications (`herdr pane
+report-metadata`, `herdr notification show`); nothing in Woof reads a
+  token back, the journal stays authoritative, and a failed report is logged
+  to stderr and never affects the run. See
+  [plugins](../integrations/plugins.md#herdr-plugin).
+- **Still not covered:** crash resume or re-hosting a lost run (a `lost`
+  owner is reported and only ever cancelled), parallel scheduling, and a
+  second built-in workflow.

@@ -434,3 +434,67 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
   running elsewhere. Neither command is hosted: each is a foreground CLI
   process, and a killed scheduler leaves a non-terminal run whose only
   resolution is `woof run cancel`.
+
+## Implemented now (p4)
+
+Real shipped behavior for run hosting and the configuration admission adds —
+not design intent. Source: `src/host/{claim,probe,launch,run,files,
+metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
+`src/config/record.ts`.
+
+- **`woof run start` hosts one scheduler process per run in a Herdr pane
+  (D1).** The caller resolves configuration and pre-admits the input, writes
+  `<runDir>/launch.json` (exclusive, mode 0444) with the raw input and flags,
+  splits a sibling pane (`herdr pane split --current --direction right --cwd
+<project root> --no-focus`, or `--split-from <pane-id>` for the Herdr
+  `start` action, which has no pane of its own) and types `woof run host
+<run-dir>` into it. `woof run host` claims the run exclusively
+  (`claimHost`, `host.json`), re-validates and re-admits the launch request
+  authoritatively, records the resolved configuration, opens the run and
+  drives the workflow to the end, writing `<runDir>/outcome.json` (mode 0444,
+  the same line as its stdout) before releasing the claim. The launcher
+  returns once the host has claimed and opened the run, or has written a
+  rejection, within `hostStartTimeoutMs` (default 30 000 ms); otherwise
+  `abandonHost` claims the file itself (`state:"abandoned"`) so a late host
+  cannot start an unobserved run. `--host foreground` and `woof run
+build-review` claim and run the same host code in this process instead of
+  a pane. Any entry at `journal.jsonl` (even empty), `host.json`,
+  `host-exit.json` or `launch.json` in the target run directory makes `run
+start`/`run build-review` refuse `run_exists` before anything is written.
+- **Signals finalize the host exactly once, from the moment a claim
+  exists.** Before the run starts opening (`openAdmittedRun` is about to be
+  called), a first SIGINT/SIGTERM ends the host at once — synchronously in
+  the signal handler, not through the abort signal a pending module load or
+  runtime factory might never observe — with `host_interrupted` (launcher
+  exit 3): it records `outcome.json` for a pane host and `host-exit.json`
+  once the host holds a claim (a foreground host claims only once its
+  runtime exists, so a signal before that leaves no run files at all). Once
+  the run is opening, a first signal cancels it through the scheduler as
+  before and a second finalizes synchronously (exit code 130) and exits at
+  once, without waiting for the runtime to settle. The first result reached
+  is authoritative for `outcome.json`, the return value and any later
+  finalize call; writing the outcome and releasing the claim are separate
+  one-time steps, and a release that throws is logged and retried once more
+  on the way out rather than silently changing the result.
+- **Resolved configuration travels with the run (D6).** `admitWorkflow`
+  takes an optional `configuration` and fills any agent `resolveAgents(input)`
+  omits from `configuration.roles[role]` (else `role_unresolved`), and
+  composes each `Limits` key as input → project → user → the definition's own
+  `limitDefaults[key]` when present. `openAdmittedRun` — exported from the
+  SDK, so a caller that admits a run always opens it with the validated input
+  and resolved configuration together — writes `config.json` (mode 0444)
+  alongside `input.json`; `run.opened` gains an optional `config: {sha256,
+bytes}`, and the snapshot's `config` field mirrors it. Nothing after
+  admission reads `.woof/` again.
+- **New `AdmissionReason` values (p4):** `config_invalid`, `config_conflict`,
+  `setting_scope_invalid`, `role_invalid`, `role_unresolved`,
+  `project_mismatch`, `workflow_not_found`, plus the loader's
+  `definition_not_found|definition_syntax_unsupported|definition_load_failed`
+  — all exit 2, all before any pane opens.
+- **Herdr plugin actions drive the same launcher (`src/commands/herdr.ts`).**
+  `woof herdr start` resolves the target project from
+  `HERDR_PLUGIN_CONTEXT_JSON` (focused pane directory → workspace directory
+  → worktree checkout) and calls `launchInPane` directly, splitting from the
+  invocation's focused pane; `woof herdr cancel` cancels the project's one
+  non-terminal run, whatever its owner, and refuses when more than one is
+  active.
