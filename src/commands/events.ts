@@ -13,7 +13,8 @@ export const EVENTS_USAGE = `Usage: woof events <run-dir> [--after <cursor>] [--
 Prints the run's lifecycle events as NDJSON, one event per line, resuming after
 --after when given. Without --follow it prints the events recorded so far; with
 --follow it keeps polling (every --poll-ms, default 250) until the run
-terminates, --timeout-ms passes or SIGINT. The last line is always
+terminates, --timeout-ms passes or SIGINT; resumed with --after at a terminated
+run's last cursor it ends at once with "terminated". The last line is always
 {"kind":"woof.events.end","cursor","terminal","reason"}. --stats prints the
 polling statistics to stderr. Read-only: no Herdr.
 Exits 0 end or terminated, 7 timeout, 2 resync_required (the cursor cannot
@@ -101,6 +102,25 @@ export async function eventsCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  // A resume cursor already at the run's terminal record: no event can follow, so end now instead of
+  // waiting for the timeout (PR #6). The snapshot's cursor equal to the resume cursor proves no record
+  // was appended between the two lock-free reads.
+  if (values.after !== undefined) {
+    const read = readEvents(runDir, { after: values.after, limit: 1 });
+    if (read.ok && read.events.length === 0) {
+      const snapshot = readSnapshot(runDir);
+      if (
+        snapshot.ok &&
+        snapshot.snapshot.outcome !== null &&
+        snapshot.snapshot.cursor === read.cursor
+      ) {
+        end(read.cursor, true, "terminated");
+        if (values.stats === true) printStats(0, 0, pollMs);
+        return 0;
+      }
+    }
+  }
+
   const controller = new AbortController();
   let stopped: "timeout" | "signal" | undefined;
   const timer =
@@ -173,16 +193,18 @@ export async function eventsCommand(args: string[]): Promise<number> {
     await iterator.return(undefined);
   }
   end(cursor, terminal, reason);
-  if (values.stats === true) {
-    process.stderr.write(
-      `${JSON.stringify({
-        kind: "woof.events.stats",
-        polls,
-        maxProjectionMs: Math.round(maxProjectionMs * 100) / 100,
-        pollMs,
-        method: "iterator step wall time beyond the poll interval",
-      })}\n`,
-    );
-  }
+  if (values.stats === true) printStats(polls, maxProjectionMs, pollMs);
   return code;
+}
+
+function printStats(polls: number, maxProjectionMs: number, pollMs: number): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      kind: "woof.events.stats",
+      polls,
+      maxProjectionMs: Math.round(maxProjectionMs * 100) / 100,
+      pollMs,
+      method: "iterator step wall time beyond the poll interval",
+    })}\n`,
+  );
 }

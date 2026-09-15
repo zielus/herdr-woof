@@ -419,6 +419,60 @@ console.log(JSON.stringify(readEvents(process.argv[1], { limit: 10000 })));`,
     });
   });
 
+  it("PR #6 (events.ts:123): --follow --after a terminated run's last cursor ends at once with terminated", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    terminateRunOk(runDir, "cancelled");
+    const recorded = lines(woof(["events", runDir]).stdout);
+    const last = recorded.at(-1) as Json;
+    expect(last).toMatchObject({ terminal: true, reason: "end" });
+    const started = Date.now();
+    const resumed = woof(
+      [
+        "events",
+        runDir,
+        "--follow",
+        "--after",
+        last["cursor"],
+        "--poll-ms",
+        "20",
+        "--timeout-ms",
+        "5000",
+      ],
+      { timeoutMs: 20_000 },
+    );
+    expect(resumed.status, resumed.stdout + resumed.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(lines(resumed.stdout)).toEqual([
+      { kind: "woof.events.end", cursor: last["cursor"], terminal: true, reason: "terminated" },
+    ]);
+    // An earlier cursor still delivers the terminal event before the end line.
+    const first = recorded[0] as Json;
+    const earlier = woof(
+      [
+        "events",
+        runDir,
+        "--follow",
+        "--after",
+        first["cursor"],
+        "--poll-ms",
+        "20",
+        "--timeout-ms",
+        "5000",
+      ],
+      { timeoutMs: 20_000 },
+    );
+    expect(earlier.status, earlier.stdout).toBe(0);
+    const printed = lines(earlier.stdout);
+    expect(printed.at(-2)).toMatchObject({ type: "run.terminated" });
+    expect(printed.at(-1)).toEqual({
+      kind: "woof.events.end",
+      cursor: last["cursor"],
+      terminal: true,
+      reason: "terminated",
+    });
+  });
+
   it("I6: a foreign cursor exits 2 with resync_required; --follow exits 7 at its timeout", () => {
     const runDir = makeRunDir();
     const other = makeRunDir();
