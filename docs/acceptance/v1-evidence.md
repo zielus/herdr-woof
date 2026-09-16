@@ -22,7 +22,7 @@ mapping; `test/acceptance-matrix.test.ts` checks that mapping stays 1:1 with
 `v1.md`, and `test/acceptance-evidence.test.ts` checks that this file covers
 every row and every limit named below. `bun run acceptance:collect` re-derives
 `docs/acceptance/evidence/offline.json` from the same matrix against the
-committed logs below and the test suite; at this revision it reports 24/24
+committed logs below and the test suite; at `79a79cb` it reports 24/24
 rows backed, exit 0.
 
 Live evidence comes from five committed logs under `docs/research/`:

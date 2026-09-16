@@ -132,9 +132,9 @@ Herdr nor Claude Code is required for the command to complete.
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
-`bin/woof --help` also lists `run host`, marked internal: it hosts a launched run
-in its own process. A command `--help` does not list exits 1, reported as not
-implemented or as a usage error.
+`bin/woof --help` also lists `run host` (internal: hosts a launched run in this
+process). A command that `--help` does not list exits 1, as not implemented or as
+a usage error.
 
 ## Result handoff
 
