@@ -247,9 +247,10 @@ Real shipped behavior proving the authoring contract generalizes beyond
   verdicts may declare `artifactVerdictMarker: string` (at most 64
   characters, checked by `validateWorkflowDefinition`); `woof submit`'s check
   17b then requires the artifact's **first non-blank line only** to start
-  with that marker and, when it does, the rest of the line must equal the
-  envelope's verdict — a mismatch is rejected `verdict_artifact_mismatch`,
-  naming both. Both built-in `review` stages declare
+  with that marker and, when it does, the rest of the line, **trimmed**
+  (surrounding spaces and a trailing CR from a CRLF line ending are ignored),
+  must equal the envelope's verdict — a mismatch is rejected
+  `verdict_artifact_mismatch`, naming both. Both built-in `review` stages declare
   `REVIEW_VERDICT_MARKER = "Woof-Verdict:"` and ask for it in the request
   text. It is per stage (a stage with no marker checks nothing) and anchored
   to the first line **on purpose**: a reviewer quoting the required line

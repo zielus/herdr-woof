@@ -419,6 +419,63 @@ describe("the acceptance evidence document", () => {
       else if (!passed) problems.push(`${gate.row}: ${gate.log} has no GATE ${gate.id} PASS`);
     }
 
+    // Copilot pass 2: existence alone is not enough — a real, valid test or gate
+    // citation copied into the WRONG row's evidence cell (a "swapped row") would
+    // pass every check above unchanged. Compare each row's citations against
+    // that same row's `MATRIX` entry: every test/gate the matrix names for a row
+    // must be cited in that row's cell, and every citation in that row's cell
+    // must be one the matrix actually assigns to it.
+    const citationsByRow = new Map<string, EvidenceCitation[]>();
+    for (const citation of citations) {
+      if (!citationsByRow.has(citation.row)) citationsByRow.set(citation.row, []);
+      citationsByRow.get(citation.row)?.push(citation);
+    }
+    const gatesByRow = new Map<string, GateCitation[]>();
+    for (const gate of gates) {
+      if (!gatesByRow.has(gate.row)) gatesByRow.set(gate.row, []);
+      gatesByRow.get(gate.row)?.push(gate);
+    }
+    for (const entry of MATRIX) {
+      const docCitations = citationsByRow.get(entry.row) ?? [];
+      const docGates = gatesByRow.get(entry.row) ?? [];
+
+      for (const test of entry.tests) {
+        const cited = docCitations.some(
+          (citation) => citation.file === test.file && quoteMatchesName(citation.quote, test.name),
+        );
+        if (!cited) {
+          problems.push(
+            `${entry.id}: no citation in this row's evidence cell for ${test.file} ${JSON.stringify(test.name)}`,
+          );
+        }
+      }
+      for (const gate of entry.gates) {
+        const [log, id] = gate.split(":");
+        const cited = docGates.some((citation) => citation.log === log && citation.id === id);
+        if (!cited) {
+          problems.push(`${entry.id}: no citation in this row's evidence cell for gate ${gate}`);
+        }
+      }
+      for (const citation of docCitations) {
+        const belongs = entry.tests.some(
+          (test) => test.file === citation.file && quoteMatchesName(citation.quote, test.name),
+        );
+        if (!belongs) {
+          problems.push(
+            `${entry.id}: evidence cell cites ${citation.file} ${JSON.stringify(citation.quote)}, which is not one of this row's matrix tests (wrong row?)`,
+          );
+        }
+      }
+      for (const gateCitation of docGates) {
+        const belongs = entry.gates.includes(`${gateCitation.log}:${gateCitation.id}`);
+        if (!belongs) {
+          problems.push(
+            `${entry.id}: evidence cell cites ${gateCitation.log}:${gateCitation.id}, which is not one of this row's matrix gates (wrong row?)`,
+          );
+        }
+      }
+    }
+
     expect(problems).toEqual([]);
   });
 
@@ -465,8 +522,32 @@ describe("the acceptance evidence document", () => {
         "build-review-live.log has no GATE 99 PASS",
       );
 
+      // Copilot pass 2: a citation that is real and valid, but cited under the
+      // WRONG row, must also fail — existence alone (the two cases above) is
+      // not enough. `external-workflow-live.log:1` is the Reuse row's own
+      // citation; replacing it with `runtime-loss-live.log:L7` (a real,
+      // committed `GATE L7 PASS`, just not one of Reuse's matrix gates) leaves
+      // every existence check green while breaking the row-scoped comparison
+      // two ways: Reuse is now missing its own required gate, and it cites a
+      // gate that belongs to the Runtime loss/Cancellation rows instead.
+      const swappedRow = real.replace(
+        "`external-workflow-live.log:1`",
+        "`runtime-loss-live.log:L7`",
+      );
+      expect(swappedRow).not.toBe(real);
+      const swappedRowResult = runAgainst(swappedRow);
+      expect(swappedRowResult.status, swappedRowResult.stdout + swappedRowResult.stderr).not.toBe(
+        0,
+      );
+      expect(swappedRowResult.stdout + swappedRowResult.stderr).toContain(
+        "reuse: no citation in this row's evidence cell for gate external-workflow-live.log:1",
+      );
+      expect(swappedRowResult.stdout + swappedRowResult.stderr).toContain(
+        "reuse: evidence cell cites runtime-loss-live.log:L7, which is not one of this row's matrix gates (wrong row?)",
+      );
+
       // Control: the unmodified document, through the same child-process path,
-      // still passes — the two failures above are about the mutations, not
+      // still passes — the three failures above are about the mutations, not
       // about spawning vitest inside vitest.
       const controlResult = runAgainst(real);
       expect(controlResult.status, controlResult.stdout + controlResult.stderr).toBe(0);

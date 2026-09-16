@@ -35,21 +35,23 @@ behavior, not design intent. The exhaustive detail lives in
   top-level or artifact keys are rejected; the envelope file is capped at
   64 KiB.
 - **Reason codes and decision order.** `woof submit` runs a fixed, closed set
-  of 18 checks, plus a lettered check 7b, and returns the first one that
-  fails: run directory, journal lock (`journal_busy`), journal replay
-  (`journal_corrupt`), the run being opened (`run_dir_invalid` if not,
-  unjournaled), envelope readability, envelope schema, then run identity,
-  **the run not yet terminated (check 7b, `run_closed`)**, attempt existence,
-  owner, duplicate/conflict, staleness, verdict, artifact scope, artifact
-  existence, artifact content, artifact size (`artifact_too_large` above
-  32 MiB), artifact hash, and finally publish-and-record. `run_closed`
-  outranks an identical duplicate: a late resubmission of an
-  already-accepted attempt after termination is rejected as `run_closed`,
-  not returned as the prior receipt (lead decision) — the receipt itself
-  stays readable in the run's snapshot. `src/contracts/reasons.ts`
-  (`REJECTION_REASONS`) is the closed set, and the doc comment on
-  `submitResult` in `src/submission/submit.ts` is the authoritative
-  18-plus-7b order.
+  of checks and returns the first one that fails: run directory, journal lock
+  (`journal_busy`), journal replay (`journal_corrupt`), the run being opened
+  (`run_dir_invalid` if not, unjournaled), envelope readability, envelope
+  schema, then run identity, **the run not yet terminated (check 7b,
+  `run_closed`)**, attempt existence, owner, duplicate/conflict, staleness,
+  verdict, artifact scope, artifact existence, artifact content, artifact
+  size (`artifact_too_large` above 32 MiB), artifact hash, **an opt-in
+  artifact/envelope verdict agreement for a stage that declares one (check
+  17b, `verdict_artifact_mismatch` — p5, see "Implemented now (p5)" below)**,
+  and finally publish-and-record. `run_closed` outranks an identical
+  duplicate: a late resubmission of an already-accepted attempt after
+  termination is rejected as `run_closed`, not returned as the prior receipt
+  (lead decision) — the receipt itself stays readable in the run's snapshot.
+  `src/contracts/reasons.ts` (`REJECTION_REASONS`) is the closed set, and the
+  doc comment on `submitResult` in `src/submission/submit.ts` is the
+  authoritative order: 18 checks plus the always-applicable lettered check 7b,
+  and, only for a stage that opts in, check 17b between 17 and 18.
 - **The journal is the sole authority.** `<runDir>/journal.jsonl` is
   append-only; attempt and acceptance state is derived by replaying it. Reads
   fail closed: a torn line, an impossible state transition, or a journal or
@@ -220,9 +222,10 @@ submit` runs one additional check, positioned after check 17 (artifact hash
   bytes do not match its own digest is reported as the hash mismatch it is,
   never as a marker disagreement. The check reads the artifact's **first
   non-blank line only**: when that line starts with the declared marker, the
-  remainder must equal the envelope's `verdict`, or the submission is
-  rejected `verdict_artifact_mismatch`, naming the artifact's verdict and the
-  envelope's. A stage that declares no marker checks nothing (unchanged p1
+  remainder, **trimmed** (surrounding spaces and a trailing CR from a CRLF
+  line ending are ignored), must equal the envelope's `verdict`, or the
+  submission is rejected `verdict_artifact_mismatch`, naming the artifact's
+  verdict and the envelope's. A stage that declares no marker checks nothing (unchanged p1
   behavior); an artifact whose first non-blank line does not start with the
   marker is accepted unchanged; a marker-looking line further down the
   artifact is ignored, on purpose — a reviewer quoting the required line
