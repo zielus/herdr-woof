@@ -479,6 +479,30 @@ const SCENARIOS = {
       workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
     }),
 
+  // F-015: a foreign process submits the builder's ambiguous attempt under another agentId. Its
+  // owner_mismatch rejection names the attempt but is not the owner's: never delivery evidence.
+  "foreign-owner-mismatch": () =>
+    scenario({
+      verify: false,
+      limits: { deliveryTimeoutMs: 300 },
+      runtime: { builder: { onDeliver: "ambiguous:stalled" } },
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+      onObserve: async (_handle, context) => {
+        if (
+          context.agentId === "builder" &&
+          context.journal().some((record) => record.type === "request.dispatched") &&
+          once(context, "foreign")
+        ) {
+          await context.submit(
+            "reviewer",
+            { stageId: "build", visit: 1, attempt: 1 },
+            { note: "not mine" },
+          );
+        }
+      },
+    }),
+
   "run-timeout": () =>
     scenario({
       verify: false,

@@ -916,6 +916,55 @@ describe("decide: ambiguous delivery", () => {
     });
   });
 
+  it("never counts or quotes an owner_mismatch rejection as the owner's (F-015)", () => {
+    const idle = {
+      writer: runtime("writer", { last: observed("writer", "ready"), readyStreak: 5 }),
+    };
+    const foreign = {
+      ...rejected("owner_mismatch", {
+        runId: "run-1",
+        agentId: "intruder",
+        stageId: "draft",
+        visit: 1,
+        attempt: 1,
+      }),
+      message: "submission does not come from the attempt owner",
+    };
+    // Not delivery evidence: the ambiguous attempt still waits, then is abandoned at the deadline.
+    expect(act([...ambiguous(), foreign], { agents: idle, now: T0 + 3 + 1999 })).toEqual({
+      type: "wait",
+      reason: "delivery_unconfirmed",
+      observe: "writer",
+    });
+    expect(act([...ambiguous(), foreign], { agents: idle, now: T0 + 3 + 2000 })).toEqual({
+      ...reconcile,
+      resolution: "abandoned",
+      evidence: "no_evidence_before_deadline",
+    });
+    // Not quoted in a format repair of a delivered attempt; the owner's own rejection still is.
+    const own = {
+      ...rejected("artifact_missing", {
+        runId: "run-1",
+        agentId: "writer",
+        stageId: "draft",
+        visit: 1,
+        attempt: 1,
+      }),
+      message: "no artifact",
+    };
+    expect(
+      act([...ambiguous(), reconciled(4, "draft", "writer"), foreign, own], { agents: idle }),
+    ).toMatchObject({
+      type: "dispatch",
+      attempt: 2,
+      cause: "format_repair",
+      previous: {
+        attempt: 1,
+        rejections: [{ reason: "artifact_missing", message: "no artifact" }],
+      },
+    });
+  });
+
   it("exhausts deliveryTimeoutMs after an abandoned reconciliation and continues after a delivered one", () => {
     const idle = { writer: readyView("writer") };
     expect(

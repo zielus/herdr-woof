@@ -533,6 +533,32 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "8c. an owner_mismatch rejection naming an ambiguous attempt is not delivery evidence: the attempt is abandoned",
+    () => {
+      const report = runScenario("foreign-owner-mismatch");
+      const foreign = ofType(report, "submission.rejected");
+      expect(foreign).toEqual([
+        expect.objectContaining({
+          reason: "owner_mismatch",
+          identity: expect.objectContaining({ agentId: "reviewer", stageId: "build", attempt: 1 }),
+        }),
+      ]);
+      expect(ofType(report, "delivery.reconciled")).toEqual([
+        expect.objectContaining({
+          stageId: "build",
+          attempt: 1,
+          resolution: "abandoned",
+          evidence: "no_evidence_before_deadline",
+        }),
+      ]);
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "deliveryTimeoutMs" });
+      expect(attemptIn(report, "build", 1, 2)).toBeUndefined();
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "9. cancellation stops owned panes and a late result cannot resurrect the run",
     () => {
       const report = runScenario("cancel-abort");
