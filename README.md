@@ -497,6 +497,11 @@ consumer, imports its public entry point, and exercises the installed CLI.
 See [AGENTS.md](AGENTS.md) for development order, verification and Git
 practices, and [CHANGELOG.md](CHANGELOG.md) for release history.
 
+`bun run release:preflight` runs the release checks (versions, changelog,
+private strings, secrets, links, format, verify, pack) without publishing
+anything; see [.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)
+for the full release process.
+
 ## License
 
 [MIT](LICENSE) © 2026 Tomasz Chmielarz

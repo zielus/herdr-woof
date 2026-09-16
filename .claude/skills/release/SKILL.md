@@ -87,8 +87,9 @@ which path applies and does the manual publish themselves if (b) is needed.
 ## Related
 
 - `bun run release:preflight [--only <ids>] [--skip <ids>] [--strict]
-  [--tag <vX.Y.Z>]` — checks: `versions`, `changelog`, `private-strings`,
-  `secrets`, `links`, `format`, `verify`, `pack`, in that order.
+  [--tag <vX.Y.Z>] [--visibility public|private|auto]` — checks: `versions`,
+  `changelog`, `private-strings`, `secrets`, `links`, `format`, `verify`,
+  `pack`, in that order.
 - `bun run release:bump <x.y.z> [--date YYYY-MM-DD]`
 - `bun run release:notes [x.y.z] [--out <file>]`
 - `docs/decisions/architecture.md`'s Known limits (0.1.x) table for the
