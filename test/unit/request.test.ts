@@ -48,8 +48,11 @@ describe("the repair request states that the accepted review is canonical (LV-10
   const repairOf = (definition: Definition) =>
     definition.stages.find((stage) => stage.kind === "agent" && stage.stageId === "repair");
 
-  const rendered = (definition: Definition, enteredBy: Json) =>
-    (repairOf(definition)?.request as (ctx: Json) => { goal: string; instructions: string })({
+  const requestOf = (definition: Definition, enteredBy: Json) => {
+    const stage = repairOf(definition);
+    expect(stage?.request, "the definition has a repair stage with a request()").toBeDefined();
+    const request = stage?.request as (ctx: Json) => { goal: string; instructions: string };
+    return request({
       input: { task: { title: "t", description: "d", acceptanceCriteria: ["a"] } },
       runId: "run-7",
       history: { gates: [], latestAccepted: {} },
@@ -58,7 +61,10 @@ describe("the repair request states that the accepted review is canonical (LV-10
       attempt: 1,
       round: 1,
       enteredBy,
-    }).instructions;
+    });
+  };
+  const rendered = (definition: Definition, enteredBy: Json) =>
+    requestOf(definition, enteredBy).instructions;
 
   it("is the exact sentence, in both built-in definitions, however the repair was entered", () => {
     // A live builder declined a requirement it met only inside the review
@@ -81,17 +87,7 @@ describe("the repair request states that the accepted review is canonical (LV-10
 
   it("reaches the worker: the sentence survives into the rendered request text", () => {
     for (const [name, definition] of definitions) {
-      const stage = repairOf(definition) as { request: (ctx: Json) => Json };
-      const request = stage.request({
-        input: { task: { title: "t", description: "d", acceptanceCriteria: ["a"] } },
-        runId: "run-7",
-        history: { gates: [], latestAccepted: {} },
-        stageId: "repair",
-        visit: 1,
-        attempt: 1,
-        round: 1,
-        enteredBy: { kind: "stage", gate: "review" },
-      }) as { goal: string; instructions: string };
+      const request = requestOf(definition, { kind: "stage", gate: "review" });
       const out = renderRequest(input({ goal: request.goal, instructions: request.instructions }));
       expect(out.ok, name).toBe(true);
       expect(out.ok && out.text, name).toContain(reviewIsCanonical);
