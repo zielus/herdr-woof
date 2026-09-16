@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "kind": "woof.acceptance.offline",
-  "collectedAt": "2026-09-16T03:22:28.619Z",
-  "revision": "5e0236e6d06152222e6ff35f80dc05889841d4c2",
+  "collectedAt": "2026-09-16T20:45:50.935Z",
+  "revision": "79a79cbad4d8057db16da5532afc6abc093b54a1",
   "versions": {
     "node": "v26.7.0",
     "bun": "1.3.2",
     "git": "git version 2.51.2"
   },
   "tests": {
-    "total": 724,
+    "total": 731,
     "success": true,
-    "ran": 724
+    "ran": 731
   },
   "rows": [
     {
@@ -526,5 +526,9 @@
       "backed": true,
       "problems": []
     }
-  ]
+  ],
+  "format": {
+    "ok": true,
+    "problem": null
+  }
 }

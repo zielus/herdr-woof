@@ -1,43 +1,47 @@
 # Woof documentation
 
-Status: design baseline, 2026-09-14. These documents synthesize the
-[product conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4)
-and inspected project material. They describe what to build; they do not claim
-that the features exist or that proposed implementation details are approved.
+Status: 0.1.0, 2026-09-16, on a design baseline from 2026-09-14. These documents synthesize the
+September 2026 product design conversation and inspected project material. Only the "Implemented
+now" sections linked below describe implemented behavior. Every other section states requirements
+or proposals: it does not claim that the feature exists or that a proposed implementation detail
+is approved.
 
-A first working slice now exists: result handoff (envelope v1, `woof submit`,
-`woof attempt open`, and the run journal), a p2 run-facts contract (run
-plans, journaled agent assignment/dispatch/termination, derived run
-snapshots and events, a runtime adapter over the Herdr CLI, and `woof run
-show`), a p3 workflow-scheduling layer: a workflow definition contract and
-loader, the built-in `build-review` workflow (build → verify → review →
-repair, with format repair, revision binding and bounded blocking/
-reconciliation), and `woof run build-review`/`woof run cancel`, a p4
-product-integration layer: `.woof`/`~/.woof` configuration with provenance,
-`woof run start` hosting a run in a Herdr pane with claim/heartbeat liveness,
-the read-only inspection CLI (`status`, `runs`, `events`, `config show`), and
-functional Herdr and Claude Code plugins (`/woof:run`), and a p5 layer: a
-second built-in workflow (`plan-build-review`), project/user workflow
-discovery via `--workflow <name>`, an opt-in artifact/envelope verdict check,
-and acceptance evidence executed at revision
-`5e0236e6d06152222e6ff35f80dc05889841d4c2` — see
-[the acceptance evidence](acceptance/v1-evidence.md). See
-[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype)
-and [Communication and artifacts](architecture/communication.md#implemented-now-p5) (p5),
-[Domain model](architecture/domain-model.md#implemented-now-p2) (p2),
-[Domain model](architecture/domain-model.md#implemented-now-p3) (p3),
-[Domain model](architecture/domain-model.md#implemented-now-p4) (p4) and
-[Domain model](architecture/domain-model.md#implemented-now-p5) (p5),
-[Observability](architecture/observability.md#implemented-now-p2) (p2),
-[Observability](architecture/observability.md#implemented-now-p3) (p3) and
-[Observability](architecture/observability.md#implemented-now-p4) (p4),
-[Configuration](architecture/configuration.md#implemented-now-p4) (p4),
-[Workflow authoring](workflows/authoring.md#implemented-now-p3) (p3),
-[Workflow authoring](workflows/authoring.md#implemented-now-p4) (p4) and
-[Workflow authoring](workflows/authoring.md#implemented-now-p5) (p5), and
-[Initial workflows](workflows/initial-workflows.md#implemented-now-p3) (p3)
-and [Initial workflows](workflows/initial-workflows.md#implemented-now-p5)
-(p5) for what is real today versus still proposed.
+## What exists today
+
+The [acceptance evidence](acceptance/v1-evidence.md) states which revision each part of it was
+run against. Its live logs were recorded before two source fixes that are part of the 0.1.0 code
+merged to master as `b329cdc`.
+
+- **Result handoff** (p1): envelope v1, `woof submit`, `woof attempt open`, and the run journal.
+  See [Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype).
+- **Run facts and snapshots** (p2): run plans, journaled agent assignment/dispatch/termination,
+  derived run snapshots and events, a runtime adapter over the Herdr CLI, and `woof run show`. See
+  [Domain model](architecture/domain-model.md#implemented-now-p2) and
+  [Observability](architecture/observability.md#implemented-now-p2).
+- **Workflow scheduling** (p3): a workflow definition contract and loader, the built-in
+  `build-review` workflow (build → verify → review → repair, with format repair, revision binding
+  and bounded blocking/reconciliation), and `woof run build-review`/`woof run cancel`. See
+  [Domain model](architecture/domain-model.md#implemented-now-p3),
+  [Observability](architecture/observability.md#implemented-now-p3),
+  [Workflow authoring](workflows/authoring.md#implemented-now-p3) and
+  [Initial workflows](workflows/initial-workflows.md#implemented-now-p3).
+- **Product integration** (p4): `.woof`/`~/.woof` configuration with provenance, `woof run start`
+  hosting a run in a Herdr pane with claim/heartbeat liveness, the read-only inspection CLI
+  (`status`, `runs`, `events`, `config show`), and functional Herdr and Claude Code plugins
+  (`/woof:run`). See [Configuration](architecture/configuration.md#implemented-now-p4),
+  [Domain model](architecture/domain-model.md#implemented-now-p4),
+  [Observability](architecture/observability.md#implemented-now-p4) and
+  [Workflow authoring](workflows/authoring.md#implemented-now-p4).
+- **Plan-build-review and project workflows** (p5): a second built-in workflow
+  (`plan-build-review`), project/user workflow discovery via `--workflow <name>`, an opt-in
+  artifact/envelope verdict check, and acceptance evidence. See
+  [Communication and artifacts](architecture/communication.md#implemented-now-p5),
+  [Domain model](architecture/domain-model.md#implemented-now-p5),
+  [Workflow authoring](workflows/authoring.md#implemented-now-p5),
+  [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
+  [the acceptance evidence](acceptance/v1-evidence.md).
+
+## Reading order
 
 Read in this order:
 

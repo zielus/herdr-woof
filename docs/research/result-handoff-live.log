@@ -8,7 +8,7 @@ claude: 2.1.270 (Claude Code)
 node: v26.7.0
 bun: 1.3.2
 run id: live-handoff-20260914-081912
-run dir: /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
+run dir: ~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
 agent: handoff-worker-20260914-081912
 verifier pane: w8P:p4
 $ rm -rf dist && tsc --project tsconfig.build.json
@@ -18,11 +18,11 @@ build: ok
 worker pane: w8P:pJ
 
 == attempt
-{"outcome":"opened","attempt":{"runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"seq":2,"verdicts":["pass","fail"],"artifactDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1","paneId":"w8P:pJ"}}
+{"outcome":"opened","attempt":{"runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1,"seq":2,"verdicts":["pass","fail"],"artifactDir":"~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1","paneId":"w8P:pJ"}}
 
 == worker agent
-{"id":"cli:agent:start","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"idle","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":3,"state_change_seq":613,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Claude Code","terminal_title_stripped":"Claude Code","workspace_id":"w8P"},"argv":["claude","--permission-mode","auto","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912"],"type":"agent_started"}}
-{"id":"cli:agent:prompt","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"done","cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"/Users/zielu/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":4,"state_change_seq":616,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Rejection-order review report","terminal_title_stripped":"Rejection-order review report","workspace_id":"w8P"},"type":"agent_prompted"}}
+{"id":"cli:agent:start","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"idle","cwd":"~/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"~/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":3,"state_change_seq":613,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Claude Code","terminal_title_stripped":"Claude Code","workspace_id":"w8P"},"argv":["claude","--permission-mode","auto","--add-dir","~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912"],"type":"agent_started"}}
+{"id":"cli:agent:prompt","result":{"agent":{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"bb5778ad-e438-4540-8431-a8ffc7d1387c"},"agent_status":"done","cwd":"~/.herdr/worktrees/herdr-woof/feat-result-handoff","focused":false,"foreground_cwd":"~/.herdr/worktrees/herdr-woof/feat-result-handoff","interactive_ready":true,"name":"handoff-worker-20260914-081912","pane_id":"w8P:pJ","revision":4,"state_change_seq":616,"tab_id":"w8P:t1","terminal_id":"term_65b6b69aebd7f3c","terminal_title":"✳ Rejection-order review report","terminal_title_stripped":"Rejection-order review report","workspace_id":"w8P"},"type":"agent_prompted"}}
 
 == waiting for acceptance (the journal is the only proof)
 
@@ -62,7 +62,7 @@ PASS: worker's identical resubmission returned a duplicate receipt (1)
 {"schemaVersion":1,"seq":4,"ts":"2026-09-14T06:20:04.424Z","type":"submission.duplicate","receiptId":"rcpt-3-27f4e6b49931","acceptedSeq":3,"envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","paneId":"w8P:pJ"}
 {"schemaVersion":1,"seq":5,"ts":"2026-09-14T06:20:16.164Z","type":"submission.rejected","reason":"owner_mismatch","message":"submission does not come from the attempt owner","details":[{"field":"paneId","message":"attempt is bound to pane w8P:pJ, submitted from w8P:p4"}],"envelopeDigest":"27f4e6b499318d362c8c9325587f2aba01a95de7970273af2df013a8a61a5f04","identity":{"runId":"live-handoff-20260914-081912","agentId":"handoff-worker-20260914-081912","stageId":"report","visit":1,"attempt":1},"paneId":"w8P:p4"}
 
-== accepted artifact (/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/accepted/report/visit-1/attempt-1/report.md)
+== accepted artifact (~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912/accepted/report/visit-1/attempt-1/report.md)
 # Rejection-order review
 
 Source: `src/contracts/reasons.ts` (REJECTION_REASONS, 17 codes) checked against `src/submission/submit.ts` (`submitResult` and `decide`).
@@ -142,34 +142,34 @@ pass
 The implementation follows the doc-comment order of `submitResult` (steps 1–18): run directory and journal entry (1), lock (2), replay (3), opened run (4), envelope malformed/invalid reported under the lock (5–6), run (7), attempt (8), owner (9), closed attempt (10), stale (11), verdict (12), artifact checks (13–16), hash (17), publish and append (18). The envelope is parsed before the lock but its rejection is reported only after checks 2–4, exactly as the doc comment states. The internal order of checks 13–16 is delegated to `resolveArtifact` in `src/submission/artifact.ts` and is not visible from `submit.ts` alone; this review did not open that file.
 
 == worker pane (recent)
-claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
-➜  feat-result-handoff git:(feat/result-handoff) ✗ claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
+claude --permission-mode auto --add-dir ~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
+➜  feat-result-handoff git:(feat/result-handoff) ✗ claude --permission-mode auto --add-dir ~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-20260914-081912
  ▐▛███▛█   Claude Code v2.1.270
 ▝▜██████▀  Fable 5.1 with high effort · Claude Max
   ▝▝ ▝▝    ~/.herdr/worktrees/herdr-woof/feat-result-handoff
 
 
 ❯ You are worker handoff-worker-20260914-081912 for Woof run live-handoff-20260914-081912,
-  stage "report", visit 1, attempt 1. The run directory is /Users/zielu/.herdr-dev/runs/h
+  stage "report", visit 1, attempt 1. The run directory is ~/.herdr-dev/runs/h
   erdr-woof/p1-result-handoff/live/live-handoff-20260914-081912. Do this and nothing else:
 
   1. Read src/contracts/reasons.ts and src/submission/submit.ts in this repository.
-  2. Write a Markdown artifact to /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handof
+  2. Write a Markdown artifact to ~/.herdr-dev/runs/herdr-woof/p1-result-handof
   f/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1/report.md. Title
   it "# Rejection-order review" and give it one "## <reason_code>" section for every code
   in REJECTION_REASONS. Each section states the condition that triggers the code and the
   src/submission/submit.ts:<line> where it is checked. End with a "## Verdict" section
   stating pass if the implementation order matches the order in the doc comment of
   submitResult, otherwise fail with the discrepancy.
-  3. Compute its hash: shasum -a 256 /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-han
+  3. Compute its hash: shasum -a 256 ~/.herdr-dev/runs/herdr-woof/p1-result-han
   doff/live/live-handoff-20260914-081912/artifacts/report/visit-1/attempt-1/report.md
-  4. Write /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-202
+  4. Write ~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-202
   60914-081912/outbox/envelope.json containing one JSON object with schemaVersion 1, runId
   "live-handoff-20260914-081912", agentId "handoff-worker-20260914-081912", stageId
   "report", visit 1, attempt 1, status "completed", verdict set to your verdict ("pass" or
   "fail"), and artifact {"path": "artifacts/report/visit-1/attempt-1/report.md",
   "sha256": "<the hash>"}.
-  5. Run bin/woof submit --envelope /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-hand
+  5. Run bin/woof submit --envelope ~/.herdr-dev/runs/herdr-woof/p1-result-hand
   off/live/live-handoff-20260914-081912/outbox/envelope.json and show its JSON output. If
   it is rejected, fix only what the reason names and submit again, at most 3 times.
   6. Run the exact same submit command once more and show its output.
@@ -181,7 +181,7 @@ claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/
 
   Read 1 file (ctrl+o to expand)
 
-⏺ Bash(RUN=/Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-2026
+⏺ Bash(RUN=~/.herdr-dev/runs/herdr-woof/p1-result-handoff/live/live-handoff-2026
       0914-081912
       REPORT=$RUN/artifacts/report/visit-1/attempt-1/report.md…)
   ⎿  sha256: 3a4dcc5d2bd2539fcdf2b643bcb18f2aed1749b99e11cd3f37dff5a1da54870d
@@ -190,7 +190,7 @@ claude --permission-mode auto --add-dir /Users/zielu/.herdr-dev/runs/herdr-woof/
      … +34 lines (ctrl+o to expand)
   ⎿  Allowed by auto mode classifier
 
-⏺ Bash(bin/woof submit --envelope /Users/zielu/.herdr-dev/runs/herdr-woof/p1-result-handoff
+⏺ Bash(bin/woof submit --envelope ~/.herdr-dev/runs/herdr-woof/p1-result-handoff
       /live/live-handoff-20260914-081912/outbox/envelope.json; echo "exit: $?")
   ⎿  {
        "outcome": "duplicate",

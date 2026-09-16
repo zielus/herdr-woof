@@ -79,7 +79,7 @@ need evidence before implementation.
 
 ## Source
 
-The [conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4)
+The September 2026 product design conversation
 is the product source. Its final artifact correction takes precedence over the
 earlier suggestion that a review file is optional. See the
 [acceptance criteria](../acceptance/v1.md) for completion evidence.

@@ -6,7 +6,7 @@ Agents produce artifacts for substantive work. Structured envelopes describe
 the outcome and point to those artifacts. A review artifact is required and
 canonical; the builder receives that artifact rather than a rewritten summary of
 the findings. This follows the final correction in the
-[product conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4).
+September 2026 product design conversation.
 
 ```text
 caller → structured workflow input → Woof / HerdrAgentsSDK

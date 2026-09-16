@@ -1,8 +1,21 @@
 {
   "name": "herdr-woof",
   "version": "0.1.0",
-  "description": "SDK foundation for coordinating coding agents through Herdr.",
-  "private": true,
+  "description": "Orchestration SDK and CLI for coding agents running through Herdr.",
+  "keywords": [
+    "herdr",
+    "agents",
+    "orchestration",
+    "claude-code",
+    "workflow",
+    "sdk"
+  ],
+  "homepage": "https://github.com/zielus/herdr-woof#readme",
+  "bugs": {
+    "url": "https://github.com/zielus/herdr-woof/issues"
+  },
+  "license": "MIT",
+  "author": "Tomasz Chmielarz (https://github.com/zielus)",
   "type": "module",
   "repository": {
     "type": "git",
@@ -37,6 +50,9 @@
     "plugin/claude/",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "rm -rf dist && tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
