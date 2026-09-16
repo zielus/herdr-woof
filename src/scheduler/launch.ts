@@ -20,11 +20,15 @@ export function engineOwnedArgIndexes(args: readonly string[]): number[] {
   );
 }
 
+/**
+ * `runDir` is the run directory a workflow agent writes its result into; null for an agent started
+ * outside any run (`woof agent start`), which gets no `--add-dir`.
+ */
 export function launchArgs(agent: {
   kind: string;
   model: string | null;
   args: readonly string[];
-  runDir: string;
+  runDir: string | null;
 }): LaunchResult {
   switch (agent.kind) {
     case "claude":
@@ -32,8 +36,7 @@ export function launchArgs(agent: {
         ok: true,
         args: [
           ...(agent.model !== null ? ["--model", agent.model] : []),
-          "--add-dir",
-          agent.runDir,
+          ...(agent.runDir !== null ? ["--add-dir", agent.runDir] : []),
           ...agent.args,
         ],
       };

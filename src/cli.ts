@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { agentCommand } from "./commands/agent.js";
 import { UsageError, parse, readStdin, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -75,6 +76,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
     case "-V":
       console.log(VERSION);
       return 0;
+    case "agent":
+      return agentCommand(args);
     case "doctor":
       return doctorCommand(args);
     case "config":
@@ -133,6 +136,9 @@ function printHelp(): void {
   console.log("  run cancel        Cancel a run recorded in a run directory");
   console.log("  run build-review  Run the build-review workflow in this process (compatibility)");
   console.log("  run host          Host a launched run in this process (internal)");
+  console.log("");
+  console.log("Agents (unstable):");
+  console.log("  agent start       Start one agent from a role in a Herdr pane, outside any run");
   console.log("");
   console.log("Herdr plugin actions (unstable; project from HERDR_PLUGIN_CONTEXT_JSON):");
   console.log("  herdr status      Notify the focused project's active runs");
