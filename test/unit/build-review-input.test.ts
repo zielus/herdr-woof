@@ -75,6 +75,33 @@ describe("build-review input: the rendered request fits at admission", () => {
     };
     expect(fieldsOf(inputWith({ context }))).toEqual([]);
   });
+
+  it("computes the same bound after the helper moved to workflows/request-bound.ts (p5 T2)", () => {
+    // Pinned against the inline computation this extraction replaced, re-measured
+    // whenever the repair request text changes: the repair is the binding case for
+    // this bound, so LV-102's canonical-review sentence (276 bytes) moved it from
+    // 22 932 to 22 656. A blob of 22 656 bytes is the largest this input shape
+    // admits; 22 657 renders 32 769 bytes and is refused by one byte.
+    const blob = (size: number): Json => ({
+      schemaVersion: 1,
+      repo: "/repo",
+      task: {
+        title: "t",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        context: { blob: "x".repeat(size) },
+      },
+    });
+    expect(fieldsOf(blob(22_656))).toEqual([]);
+    const refused = fieldsOf(blob(22_657));
+    expect(refused).toEqual([
+      {
+        field: "task",
+        message:
+          "the largest rendered request for this input would be 32769 bytes; the limit is 32768",
+      },
+    ]);
+  });
 });
 
 describe("build-review input: agents and limits are per-run overrides (p4)", () => {

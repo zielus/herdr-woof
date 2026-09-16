@@ -1,0 +1,394 @@
+
+== Woof p5 live acceptance: plan-build-review ==
+date: 2026-09-16T02:33:40.457Z
+HERDR_ENV=1
+HERDR_PANE_ID=w8T:p3
+herdr --version: herdr 0.9.0
+claude --version: 2.1.273 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: 290d66def5861f22edba6ed03557641cdb0efa56
+woof worktree status --porcelain:
+(clean)
+precondition: the operator must have trusted /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo in Claude Code once (open `claude` there and answer its folder-trust question); Woof never does this.
+
+== fixture ==
+live root: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340
+repo (fixed, not re-initialized by this script): /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+run dir: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run
+nonce: 2acb74f4d410
+created under ~/.woof/runs: (none; --run-dir is used)
+configuration: {"outcome":"config","configuration":{"schemaVersion":1,"kind":"woof.config.resolved","resolvedAt":"2026-09-16T02:33:40.568Z","roots":{"project":{"root":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","dir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof","exists":true},"user":{"dir":"/Users/zielu/.woof","exists":true}},"files":[{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs","sha256":"0a1b4e17efcf98118cc7c155b48e0c425455a95b13ff50d21f90ae9414ff89d4","bytes":3128}],"workflow":{"value":{"name":"plan-build-review","version":"1"},"source":"builtin","path":null,"sha256":null,"shadowed":[]},"roles":{"builder":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]},"planner":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]},"reviewer":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]}},"agents":{},"settings":{"workflow":{"value":"plan-build-review","source":"flag","path":null,"sha256":null,"shadowed":[{"source":"builtin","path":null,"value":"build-review"}]},"pollMs":{"value":1000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"keepPanes":{"value":false,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"hostStartTimeoutMs":{"value":30000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"runsDir":{"value":"/Users/zielu/.woof/runs","source":"builtin","path":null,"sha256":null,"shadowed":[]},"limits":{"maxAttemptsPerVisit":{"value":2,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"maxVisitsPerStage":{"value":3,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"maxRounds":{"value":3,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"maxFormatRepairs":{"value":2,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"runTimeoutMs":{"value":7200000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"readinessWaitMs":{"value":180000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"blockedWaitMs":{"value":600000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"deliveryTimeoutMs":{"value":60000,"source":"builtin","path":null,"sha256":null,"shadowed":[]}}},"repository":null,"warnings":[]}}
+input (/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/input.json):
+{
+  "schemaVersion": 1,
+  "repo": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+  "task": {
+    "title": "Implement titleCase",
+    "description": "Implement `titleCase(text)` in `src/title-case.mjs`: each word's first letter uppercased, the rest lowercased, words separated by single spaces. Add tests in `test/title-case.test.mjs` using `node:test`.",
+    "acceptanceCriteria": [
+      "titleCase uppercases the first letter of every word",
+      "the rest of every word is lowercased",
+      "runs of whitespace collapse to one space, with no leading or trailing space",
+      "tests pass with `node --test`"
+    ]
+  },
+  "constraints": [
+    "Change only files under `src/` and `test/`.",
+    "Add no dependencies: `node:test` and the standard library only."
+  ],
+  "instructions": {
+    "reviewer": "Project convention (review checklist item): every module under `src/` must begin with the exact line `// woof-acceptance: 2acb74f4d410`. Treat a missing or different line as a blocking finding, and quote the exact required line in your review. Review against the task, the acceptance criteria and this checklist; do not invent other requirements."
+  },
+  "verify": {
+    "command": [
+      "node",
+      "--test"
+    ],
+    "timeoutMs": 120000
+  },
+  "limits": {
+    "maxAttemptsPerVisit": 2,
+    "maxVisitsPerStage": 3,
+    "maxRounds": 2,
+    "maxFormatRepairs": 2,
+    "runTimeoutMs": 3600000,
+    "readinessWaitMs": 180000,
+    "blockedWaitMs": 180000,
+    "deliveryTimeoutMs": 60000
+  }
+}
+
+
+== run ==
+command: /opt/homebrew/Cellar/node/26.7.0/bin/node /Users/zielu/.herdr/worktrees/herdr-woof/feat-plan-build-review/dist/cli.js run start --workflow plan-build-review --host foreground --project /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo --input /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/input.json --run-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run --run-id live-pbr-20260916-023340
+[cli] woof: run live-pbr-20260916-023340 in /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run
+[cli] woof: start agent planner
+[sample] 2026-09-16T02:33:45.660Z status=created rev=1 
+[cli] woof: waiting (awaiting_ready, planner)
+[cli] woof: dispatch plan visit 1 attempt 1 (initial) to planner
+[cli] woof: waiting (awaiting_result, planner)
+[sample] 2026-09-16T02:33:50.658Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:33:55.658Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:00.660Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:05.690Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:10.684Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:15.669Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:20.681Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:25.684Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:30.689Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:35.670Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:40.685Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:45.694Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:50.668Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[sample] 2026-09-16T02:34:55.700Z status=running rev=4 planner=herdr:working/attempt:plan.1.1
+[cli] woof: revision for plan
+[cli] woof: gate plan pass (planned)
+[cli] woof: start agent builder
+[sample] 2026-09-16T02:35:00.680Z status=running rev=6 planner=herdr:working/attempt:none
+[cli] woof: waiting (awaiting_ready, builder)
+[cli] woof: dispatch build visit 1 attempt 1 (initial) to builder
+[sample] 2026-09-16T02:35:05.678Z status=running rev=8 planner=herdr:done/attempt:none builder=herdr:idle/attempt:build.1.1
+[cli] woof: waiting (awaiting_result, builder)
+[sample] 2026-09-16T02:35:10.689Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:15.700Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:20.716Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:25.715Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:30.686Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:35.706Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:40.701Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:45.703Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:50.724Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:35:55.723Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:36:00.720Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[sample] 2026-09-16T02:36:05.722Z status=running rev=9 planner=herdr:done/attempt:none builder=herdr:working/attempt:build.1.1
+[cli] woof: revision for build
+[cli] woof: gate build pass (built)
+[cli] woof: check verify: node --test
+[cli] woof: gate verify pass (checks_passed)
+[cli] woof: start agent reviewer
+[sample] 2026-09-16T02:36:10.700Z status=running rev=12 planner=herdr:done/attempt:none builder=herdr:working/attempt:none
+[sample] 2026-09-16T02:36:15.710Z status=running rev=12 planner=herdr:done/attempt:none builder=herdr:done/attempt:none
+[cli] woof: waiting (awaiting_ready, reviewer)
+[cli] woof: dispatch review visit 1 attempt 1 (initial) to reviewer
+[cli] woof: waiting (awaiting_result, reviewer)
+[sample] 2026-09-16T02:36:20.730Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:25.730Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:30.728Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:35.724Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:40.733Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:45.729Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:50.721Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:36:55.737Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:37:00.745Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[sample] 2026-09-16T02:37:05.745Z status=running rev=15 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.1.1
+[cli] woof: revision for review
+[cli] woof: gate review reject (changes_requested)
+[cli] woof: waiting (awaiting_ready, builder)
+[sample] 2026-09-16T02:37:10.739Z status=running rev=17 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:none
+[cli] woof: dispatch repair visit 1 attempt 1 (initial) to builder
+[cli] woof: waiting (awaiting_result, builder)
+[sample] 2026-09-16T02:37:15.746Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:20.748Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:25.730Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:30.746Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:35.743Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:40.744Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:45.741Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:50.753Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:37:55.743Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:00.752Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:05.749Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:10.755Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:15.751Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:20.760Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:25.762Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:30.764Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:35.765Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:40.765Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:45.762Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[sample] 2026-09-16T02:38:50.765Z status=running rev=19 planner=herdr:done/attempt:none builder=herdr:working/attempt:repair.1.1 reviewer=herdr:done/attempt:none
+[cli] woof: revision for repair
+[cli] woof: gate repair pass (built)
+[cli] woof: check verify: node --test
+[cli] woof: gate verify pass (checks_passed)
+[cli] woof: waiting (awaiting_ready, reviewer)
+[cli] woof: dispatch review visit 2 attempt 1 (initial) to reviewer
+[cli] woof: waiting (awaiting_result, reviewer)
+[sample] 2026-09-16T02:38:55.766Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:working/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:00.832Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:05.783Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:10.798Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:15.800Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:20.804Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[sample] 2026-09-16T02:39:25.802Z status=running rev=24 planner=herdr:done/attempt:none builder=herdr:done/attempt:none reviewer=herdr:working/attempt:review.2.1
+[cli] woof: revision for review
+[cli] woof: gate review pass (approved)
+[cli] woof: run ended
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pJ not found"},"id":"cli:request"}
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pK not found"},"id":"cli:request"}
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pM not found"},"id":"cli:request"}
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pJ not found"},"id":"cli:request"}
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pK not found"},"id":"cli:request"}
+[cli] woof: metadata: herdr pane report-metadata failed: {"error":{"code":"pane_not_found","message":"pane w8T:pM not found"},"id":"cli:request"}
+
+== result ==
+cli exit code: 0
+stdout: {"outcome":"run","result":{"schemaVersion":1,"kind":"woof.run.result","runId":"live-pbr-20260916-023340","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","workflow":{"name":"plan-build-review","version":"1"},"outcome":"completed","reason":"approved","limit":null,"at":"2026-09-16T02:39:26.744Z","revision":27,"cursor":"v1.27.58b180a80e56","location":{"stageId":"review","visit":2,"attempt":1},"repository":{"path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"}},"counters":{"attemptsOpened":5,"visitsByStage":{"plan":1,"build":1,"review":2,"repair":1},"attemptsByVisit":{"plan/1":1,"build/1":1,"review/1":1,"repair/1":1,"review/2":1},"submissionsAccepted":5,"submissionsDuplicate":0,"submissionsRejected":0,"rejectionsByReason":{},"dispatches":{"started":5,"not_delivered":0,"ambiguous":0},"replacementsByAgent":{},"rounds":2,"gatesByDecision":{"pass":6,"reject":1},"gatesByGate":{"plan":1,"build":1,"verify":2,"review":2,"repair":1},"formatRepairsByVisit":{},"workRetriesByVisit":{},"blocks":0,"reconciliations":{"delivered":0,"abandoned":0}},"blocked":null,"artifacts":{"completion":{"stageId":"repair","visit":1,"attempt":1,"receiptId":"rcpt-20-c29ad8c9ffe2","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/repair/visit-1/attempt-1/completion.md","sha256":"b1ff548c3da16152034545890ce8b32131aa93472fac66494cd8ac09d1046028"},"review":{"stageId":"review","visit":2,"attempt":1,"receiptId":"rcpt-25-64e7a349a550","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/review/visit-2/attempt-1/review.md","sha256":"ac5ca4be70b2dbf91a02ca35ab7733c1bed30abd3a9de05756e8c5f2e77dd2be"},"verification":{"path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/checks/verify/repair-v1-a1/output.log","sha256":"a38719ac6a2845d5fa66faf01f38aad5e9e212ce5cb83a834aa78a7a952cb89f","bytes":783},"lastAcceptedByStage":{"plan":{"stageId":"plan","visit":1,"attempt":1,"receiptId":"rcpt-5-b489303b3229","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/plan/visit-1/attempt-1/plan.md","sha256":"02679d724b1e20915bc24623ba3eb9d5e580b6340d4207de7fc0b2ca642d9e4d"},"build":{"stageId":"build","visit":1,"attempt":1,"receiptId":"rcpt-10-d7c035547508","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/build/visit-1/attempt-1/completion.md","sha256":"aa4ea6ec27d1a1223768c3293bb72467ad7261f39cc58eddaef1d643df84bbcb"},"review":{"stageId":"review","visit":2,"attempt":1,"receiptId":"rcpt-25-64e7a349a550","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/review/visit-2/attempt-1/review.md","sha256":"ac5ca4be70b2dbf91a02ca35ab7733c1bed30abd3a9de05756e8c5f2e77dd2be"},"repair":{"stageId":"repair","visit":1,"attempt":1,"receiptId":"rcpt-20-c29ad8c9ffe2","acceptedPath":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/repair/visit-1/attempt-1/completion.md","sha256":"b1ff548c3da16152034545890ce8b32131aa93472fac66494cd8ac09d1046028"}}}}}
+
+== woof run show --verify-artifacts ==
+{"outcome":"snapshot","snapshot":{"schemaVersion":1,"kind":"woof.run.snapshot","runId":"live-pbr-20260916-023340","revision":27,"cursor":"v1.27.58b180a80e56","journal":{"records":27,"tailPending":false},"workflow":{"name":"plan-build-review","version":"1"},"input":{"path":"input.json","sha256":"2bcf8eb2cdb0cd4e41b698a05f84269c56e5e634e053f23c9d3052207b248c5d","bytes":1535},"config":{"path":"config.json","sha256":"3356b90bb4d1cc97b086536ef1193e9d4bec471e6594439dc702a0a1ed6065cf","bytes":8738},"status":"completed","openedAt":"2026-09-16T02:33:40.727Z","updatedAt":"2026-09-16T02:39:26.744Z","outcome":{"outcome":"completed","reason":"approved","limit":null,"at":"2026-09-16T02:39:26.744Z","seq":27},"limits":{"maxAttemptsPerVisit":2,"maxVisitsPerStage":3,"maxRounds":2,"maxFormatRepairs":2,"runTimeoutMs":3600000,"readinessWaitMs":180000,"blockedWaitMs":180000,"deliveryTimeoutMs":60000},"checks":["verify"],"counters":{"attemptsOpened":5,"visitsByStage":{"plan":1,"build":1,"review":2,"repair":1},"attemptsByVisit":{"plan/1":1,"build/1":1,"review/1":1,"repair/1":1,"review/2":1},"submissionsAccepted":5,"submissionsDuplicate":0,"submissionsRejected":0,"rejectionsByReason":{},"dispatches":{"started":5,"not_delivered":0,"ambiguous":0},"replacementsByAgent":{},"rounds":2,"gatesByDecision":{"pass":6,"reject":1},"gatesByGate":{"plan":1,"build":1,"verify":2,"review":2,"repair":1},"formatRepairsByVisit":{},"workRetriesByVisit":{},"blocks":0,"reconciliations":{"delivered":0,"abandoned":0}},"agents":[{"agentId":"planner","role":"planner","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"],"assignment":{"adapter":"herdr","runtimeName":"w-planner-27cee5","paneId":"w8T:pJ","terminalId":"term_65b907ec87a94a7","sessionId":"7d7dfbda-7310-49d5-968c-47af61718ccb","at":"2026-09-16T02:33:46.189Z"},"activeAttempt":null,"runtime":null},{"agentId":"builder","role":"builder","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"],"assignment":{"adapter":"herdr","runtimeName":"w-builder-18ff46","paneId":"w8T:pK","terminalId":"term_65b908371b10aa8","sessionId":"fbf5955a-6dde-4c8a-b9c2-c567c7be770b","at":"2026-09-16T02:35:04.405Z"},"activeAttempt":null,"runtime":null},{"agentId":"reviewer","role":"reviewer","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"],"assignment":{"adapter":"herdr","runtimeName":"w-reviewer-c6c066","paneId":"w8T:pM","terminalId":"term_65b9087b7091da9","sessionId":"6711dc58-96fe-4210-a6f0-f1cb5a068672","at":"2026-09-16T02:36:16.522Z"},"activeAttempt":null,"runtime":null}],"stages":[{"stageId":"plan","agentId":"planner","verdicts":[],"visits":[{"visit":1,"attempts":[{"attempt":1,"seq":3,"agentId":"planner","status":"accepted","cause":"initial","openedAt":"2026-09-16T02:33:47.257Z","paneId":"w8T:pJ","delivery":"started","dispatch":{"seq":4,"at":"2026-09-16T02:33:47.691Z","reason":"observed_working"},"request":{"path":"requests/plan/visit-1/attempt-1/request.md","sha256":"214c38ec3dcd4ed846fa9c993298d38fae64fafcb0d89e35efd55d3e17e03092","bytes":3375},"target":{"terminalId":"term_65b907ec87a94a7","sessionId":"7d7dfbda-7310-49d5-968c-47af61718ccb"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"a3612e81cc2852e13b967dbcf1b12246e726d420"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":5,"receiptId":"rcpt-5-b489303b3229","status":"completed","verdict":null,"artifact":{"path":"artifacts/plan/visit-1/attempt-1/plan.md","acceptedPath":"accepted/plan/visit-1/attempt-1/plan.md","sha256":"02679d724b1e20915bc24623ba3eb9d5e580b6340d4207de7fc0b2ca642d9e4d","bytes":4784},"at":"2026-09-16T02:34:57.889Z"}}]}]},{"stageId":"build","agentId":"builder","verdicts":[],"visits":[{"visit":1,"attempts":[{"attempt":1,"seq":8,"agentId":"builder","status":"accepted","cause":"initial","openedAt":"2026-09-16T02:35:05.506Z","paneId":"w8T:pK","delivery":"started","dispatch":{"seq":9,"at":"2026-09-16T02:35:06.154Z","reason":"observed_working"},"request":{"path":"requests/build/visit-1/attempt-1/request.md","sha256":"49b82b8ad08faeaf27737244da5efa67dfcd8e91b99a9df726e180fc54e45392","bytes":3690},"target":{"terminalId":"term_65b908371b10aa8","sessionId":"fbf5955a-6dde-4c8a-b9c2-c567c7be770b"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"a3612e81cc2852e13b967dbcf1b12246e726d420"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":10,"receiptId":"rcpt-10-d7c035547508","status":"completed","verdict":null,"artifact":{"path":"artifacts/build/visit-1/attempt-1/completion.md","acceptedPath":"accepted/build/visit-1/attempt-1/completion.md","sha256":"aa4ea6ec27d1a1223768c3293bb72467ad7261f39cc58eddaef1d643df84bbcb","bytes":1546},"at":"2026-09-16T02:36:09.467Z"}}]}]},{"stageId":"review","agentId":"reviewer","verdicts":["pass","fail"],"visits":[{"visit":1,"attempts":[{"attempt":1,"seq":14,"agentId":"reviewer","status":"accepted","cause":"initial","openedAt":"2026-09-16T02:36:17.606Z","paneId":"w8T:pM","delivery":"started","dispatch":{"seq":15,"at":"2026-09-16T02:36:18.046Z","reason":"observed_working"},"request":{"path":"requests/review/visit-1/attempt-1/request.md","sha256":"0768282eb5e98ce745132e3599ff1c085401c3dc9aaeb572bb8f6ad69608b647","bytes":4225},"target":{"terminalId":"term_65b9087b7091da9","sessionId":"6711dc58-96fe-4210-a6f0-f1cb5a068672"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":16,"receiptId":"rcpt-16-084c39ccf85a","status":"completed","verdict":"fail","artifact":{"path":"artifacts/review/visit-1/attempt-1/review.md","acceptedPath":"accepted/review/visit-1/attempt-1/review.md","sha256":"5cf55f43e67040012ec450e626fafd7f9b6a734ed944ab308ed444e33152bfb3","bytes":1903},"at":"2026-09-16T02:37:08.083Z"}}]},{"visit":2,"attempts":[{"attempt":1,"seq":23,"agentId":"reviewer","status":"accepted","cause":"initial","openedAt":"2026-09-16T02:38:54.645Z","paneId":"w8T:pM","delivery":"started","dispatch":{"seq":24,"at":"2026-09-16T02:38:55.084Z","reason":"observed_working"},"request":{"path":"requests/review/visit-2/attempt-1/request.md","sha256":"10594040b740ba550071867f7f480933e9776c4ebb0abd88434bee42509dd322","bytes":4227},"target":{"terminalId":"term_65b9087b7091da9","sessionId":"6711dc58-96fe-4210-a6f0-f1cb5a068672"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":25,"receiptId":"rcpt-25-64e7a349a550","status":"completed","verdict":"pass","artifact":{"path":"artifacts/review/visit-2/attempt-1/review.md","acceptedPath":"accepted/review/visit-2/attempt-1/review.md","sha256":"ac5ca4be70b2dbf91a02ca35ab7733c1bed30abd3a9de05756e8c5f2e77dd2be","bytes":1914},"at":"2026-09-16T02:39:26.428Z"}}]}]},{"stageId":"repair","agentId":"builder","verdicts":[],"visits":[{"visit":1,"attempts":[{"attempt":1,"seq":18,"agentId":"builder","status":"accepted","cause":"initial","openedAt":"2026-09-16T02:37:11.053Z","paneId":"w8T:pK","delivery":"started","dispatch":{"seq":19,"at":"2026-09-16T02:37:11.602Z","reason":"observed_working"},"request":{"path":"requests/repair/visit-1/attempt-1/request.md","sha256":"44834381a2285f5716515b12734314c9a08707acc88cb557ac6b36a16d4655d6","bytes":4572},"target":{"terminalId":"term_65b908371b10aa8","sessionId":"fbf5955a-6dde-4c8a-b9c2-c567c7be770b"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":20,"receiptId":"rcpt-20-c29ad8c9ffe2","status":"completed","verdict":null,"artifact":{"path":"artifacts/repair/visit-1/attempt-1/completion.md","acceptedPath":"accepted/repair/visit-1/attempt-1/completion.md","sha256":"b1ff548c3da16152034545890ce8b32131aa93472fac66494cd8ac09d1046028","bytes":2221},"at":"2026-09-16T02:38:52.175Z"}}]}]}],"gates":[{"seq":6,"at":"2026-09-16T02:34:58.931Z","gate":"plan","kind":"stage","subject":{"stageId":"plan","visit":1,"attempt":1,"acceptedSeq":5,"receiptId":"rcpt-5-b489303b3229"},"decision":"pass","reason":"planned","verdict":null,"round":0,"next":{"stageId":"build"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"a3612e81cc2852e13b967dbcf1b12246e726d420"},"reviewed":null,"check":null},{"seq":11,"at":"2026-09-16T02:36:10.430Z","gate":"build","kind":"stage","subject":{"stageId":"build","visit":1,"attempt":1,"acceptedSeq":10,"receiptId":"rcpt-10-d7c035547508"},"decision":"pass","reason":"built","verdict":null,"round":0,"next":{"stageId":"verify"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"reviewed":null,"check":null},{"seq":12,"at":"2026-09-16T02:36:10.586Z","gate":"verify","kind":"check","subject":{"stageId":"build","visit":1,"attempt":1,"acceptedSeq":10,"receiptId":"rcpt-10-d7c035547508"},"decision":"pass","reason":"checks_passed","verdict":null,"round":0,"next":{"stageId":"review"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"reviewed":null,"check":{"command":["node","--test"],"exitCode":0,"signal":null,"timedOut":false,"evidence":{"path":"checks/verify/build-v1-a1/output.log","sha256":"09ae57f958bc94cddb97705585a9d746ed9f63b57abcb2a214b0164d183a4058","bytes":782}}},{"seq":17,"at":"2026-09-16T02:37:08.973Z","gate":"review","kind":"stage","subject":{"stageId":"review","visit":1,"attempt":1,"acceptedSeq":16,"receiptId":"rcpt-16-084c39ccf85a"},"decision":"reject","reason":"changes_requested","verdict":"fail","round":1,"next":{"stageId":"repair"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"reviewed":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"50985266ea751b490f8d01679d89d7493c516638"},"check":null},{"seq":21,"at":"2026-09-16T02:38:52.410Z","gate":"repair","kind":"stage","subject":{"stageId":"repair","visit":1,"attempt":1,"acceptedSeq":20,"receiptId":"rcpt-20-c29ad8c9ffe2"},"decision":"pass","reason":"built","verdict":null,"round":1,"next":{"stageId":"verify"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"reviewed":null,"check":null},{"seq":22,"at":"2026-09-16T02:38:52.565Z","gate":"verify","kind":"check","subject":{"stageId":"repair","visit":1,"attempt":1,"acceptedSeq":20,"receiptId":"rcpt-20-c29ad8c9ffe2"},"decision":"pass","reason":"checks_passed","verdict":null,"round":1,"next":{"stageId":"review"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"reviewed":null,"check":{"command":["node","--test"],"exitCode":0,"signal":null,"timedOut":false,"evidence":{"path":"checks/verify/repair-v1-a1/output.log","sha256":"a38719ac6a2845d5fa66faf01f38aad5e9e212ce5cb83a834aa78a7a952cb89f","bytes":783}}},{"seq":26,"at":"2026-09-16T02:39:26.738Z","gate":"review","kind":"stage","subject":{"stageId":"review","visit":2,"attempt":1,"acceptedSeq":25,"receiptId":"rcpt-25-64e7a349a550"},"decision":"pass","reason":"approved","verdict":"pass","round":2,"next":{"outcome":"completed"},"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"reviewed":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"check":null}],"attention":{"ambiguousDeliveries":[],"blocked":null},"outputs":{"latestAcceptedByStage":{"plan":{"stageId":"plan","visit":1,"attempt":1,"receiptId":"rcpt-5-b489303b3229","acceptedPath":"accepted/plan/visit-1/attempt-1/plan.md"},"build":{"stageId":"build","visit":1,"attempt":1,"receiptId":"rcpt-10-d7c035547508","acceptedPath":"accepted/build/visit-1/attempt-1/completion.md"},"review":{"stageId":"review","visit":2,"attempt":1,"receiptId":"rcpt-25-64e7a349a550","acceptedPath":"accepted/review/visit-2/attempt-1/review.md"},"repair":{"stageId":"repair","visit":1,"attempt":1,"receiptId":"rcpt-20-c29ad8c9ffe2","acceptedPath":"accepted/repair/visit-1/attempt-1/completion.md"}}},"liveness":{"owner":"exited","runtime":"not_observed","host":{"state":"exited","pid":26498,"hostname":"MacBook-Pro-Zielu.local","paneId":"w8T:p3","workspaceId":"w8T","startedAt":"2026-09-16T02:33:40.710Z","heartbeatMs":2000,"heartbeatAt":"2026-09-16T02:39:27.022Z","exitedAt":"2026-09-16T02:39:28.530Z","exitCode":0}},"integrity":{"artifacts":{"checked":5,"altered":[]}}}}
+
+== event trace ==
+1 run.opened {}
+2 agent.assigned {"agentId":"planner"}
+3 attempt.opened {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+4 request.dispatched {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+5 submission.accepted {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+6 gate.recorded {"stageId":"plan","visit":1,"attempt":1}
+7 agent.assigned {"agentId":"builder"}
+8 attempt.opened {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+9 request.dispatched {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+10 submission.accepted {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+11 gate.recorded {"stageId":"build","visit":1,"attempt":1}
+12 gate.recorded {"stageId":"build","visit":1,"attempt":1}
+13 agent.assigned {"agentId":"reviewer"}
+14 attempt.opened {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+15 request.dispatched {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+16 submission.accepted {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+17 gate.recorded {"stageId":"review","visit":1,"attempt":1}
+18 attempt.opened {"agentId":"builder","stageId":"repair","visit":1,"attempt":1}
+19 request.dispatched {"agentId":"builder","stageId":"repair","visit":1,"attempt":1}
+20 submission.accepted {"agentId":"builder","stageId":"repair","visit":1,"attempt":1}
+21 gate.recorded {"stageId":"repair","visit":1,"attempt":1}
+22 gate.recorded {"stageId":"repair","visit":1,"attempt":1}
+23 attempt.opened {"agentId":"reviewer","stageId":"review","visit":2,"attempt":1}
+24 request.dispatched {"agentId":"reviewer","stageId":"review","visit":2,"attempt":1}
+25 submission.accepted {"agentId":"reviewer","stageId":"review","visit":2,"attempt":1}
+26 gate.recorded {"stageId":"review","visit":2,"attempt":1}
+27 run.terminated {}
+
+== requests ==
+plan/1/1 requests/plan/visit-1/attempt-1/request.md sha256 214c38ec3dcd4ed846fa9c993298d38fae64fafcb0d89e35efd55d3e17e03092 (file 214c38ec3dcd4ed846fa9c993298d38fae64fafcb0d89e35efd55d3e17e03092)
+build/1/1 requests/build/visit-1/attempt-1/request.md sha256 49b82b8ad08faeaf27737244da5efa67dfcd8e91b99a9df726e180fc54e45392 (file 49b82b8ad08faeaf27737244da5efa67dfcd8e91b99a9df726e180fc54e45392)
+review/1/1 requests/review/visit-1/attempt-1/request.md sha256 0768282eb5e98ce745132e3599ff1c085401c3dc9aaeb572bb8f6ad69608b647 (file 0768282eb5e98ce745132e3599ff1c085401c3dc9aaeb572bb8f6ad69608b647)
+repair/1/1 requests/repair/visit-1/attempt-1/request.md sha256 44834381a2285f5716515b12734314c9a08707acc88cb557ac6b36a16d4655d6 (file 44834381a2285f5716515b12734314c9a08707acc88cb557ac6b36a16d4655d6)
+review/2/1 requests/review/visit-2/attempt-1/request.md sha256 10594040b740ba550071867f7f480933e9776c4ebb0abd88434bee42509dd322 (file 10594040b740ba550071867f7f480933e9776c4ebb0abd88434bee42509dd322)
+
+== accepted plan ==
+--- plan 1.1 (/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/plan/visit-1/attempt-1/plan.md)
+# Implementation Plan: `titleCase`
+
+## Context
+
+Repo is a small ESM fixture (`package.json` has `"type": "module"`, no dependencies, no test runner config). There's a sibling implementation `src/slugify.mjs` (currently a stub throwing "not implemented") that shows the expected file shape: a single named export function per file, no imports. There is no existing `test/` directory. Node version isn't pinned in `package.json`; assume a Node version with built-in `node:test` and `node:assert` (Node 18+).
+
+## Files to create/change
+
+1. **`src/title-case.mjs`** (new file)
+   - Export a single named function: `export function titleCase(text) { ... }`.
+   - Implementation approach:
+     - Split `text` on runs of whitespace using a regex that also trims leading/trailing whitespace, e.g. `text.trim().split(/\s+/)`.
+       - Guard the empty-string case: `''.trim().split(/\s+/)` yields `['']`, not `[]`. Handle this explicitly (e.g. return `''` early if `text.trim() === ''`) so titleCase("") and titleCase("   ") return `""` rather than a stray uppercase artifact.
+     - For each word, lowercase the whole word first, then uppercase just the first character: `word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()`.
+       - Applying `.toLowerCase()` to the remainder (not skipping it) satisfies "the rest of every word is lowercased" even for inputs like `"HELLO"` or `"hELLO"`.
+     - Join the transformed words with a single space: `.join(' ')`.
+   - No dependencies beyond the standard library (`String.prototype` methods only — no imports needed).
+   - No other exports; don't add a default export unless the existing `slugify.mjs` pattern is checked again and shown otherwise (it isn't — it also uses a single named export, so mirror that).
+
+2. **`test/title-case.test.mjs`** (new file, new `test/` directory)
+   - Use `node:test` and `node:assert/strict` (or `node:assert`), importing `titleCase` from `../src/title-case.mjs`.
+   - Structure: one `test(...)` block per acceptance criterion, plus a couple of combined/edge cases. Suggested cases:
+     - `titleCase('hello world')` → `'Hello World'` (basic first-letter-uppercase, multi-word).
+     - `titleCase('HELLO WORLD')` → `'Hello World'` (rest of word lowercased even when input is all caps).
+     - `titleCase('hELLO wORLD')` → `'Hello World'` (mixed case normalized).
+     - `titleCase('hello   world')` (multiple internal spaces) → `'Hello World'` (whitespace run collapses to one space).
+     - `titleCase('  hello world  ')` (leading/trailing spaces) → `'Hello World'` (no leading/trailing space in output).
+     - `titleCase('hello\tworld\nfoo')` (tab/newline whitespace) → `'Hello World Foo'`, to confirm "runs of whitespace" isn't interpreted as literal-space-only (regex `\s+` covers this; only add this case if the acceptance text is read to include general whitespace — safe either way since `\s` is a superset of space).
+     - `titleCase('single')` → `'Single'` (one word, no separators).
+     - Optional edge case: `titleCase('')` → `''` (empty input, guards the split-on-empty-string trap noted above).
+   - Each `assert.strictEqual`/`assert.equal` compares the function's return value to the expected string exactly (verifies single-space separation and exact casing, not just a loose match).
+
+## Definition of done, mapped to acceptance criteria
+
+- **"titleCase uppercases the first letter of every word"** → done when every test case with multi-word input shows each word's first character capitalized in the asserted expected string, and the assertions pass.
+- **"the rest of every word is lowercased"** → done when the `'HELLO WORLD'` / `'hELLO wORLD'` mixed-case test cases pass, proving the implementation lowercases characters after index 0 rather than leaving original casing.
+- **"runs of whitespace collapse to one space, with no leading or trailing space"** → done when the multiple-internal-space and leading/trailing-space test cases both pass, and the returned string contains no double spaces and doesn't start/end with a space character (implicit in exact-string equality assertions).
+- **"tests pass with `node --test`"** → done when running `node --test` from the repo root (which auto-discovers `test/title-case.test.mjs` by Node's default test file naming convention `*.test.mjs`) exits 0 with all assertions green. Verify by actually running `node --test` after implementation, not just by inspection.
+
+## Constraints check
+
+- Only `src/title-case.mjs` and `test/title-case.test.mjs` are touched — no edits to `package.json`, `README.md`, or `src/slugify.mjs`.
+- No new dependencies: implementation uses only `String.prototype` methods and a regex literal; tests use only `node:test` and `node:assert` (both built into Node, not npm packages).
+
+
+== accepted reviews ==
+--- review 1.1 verdict fail (/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/review/visit-1/attempt-1/review.md)
+Woof-Verdict: fail
+
+# Review — titleCase (stage review, visit 1, attempt 1)
+
+## Blocking findings
+
+1. **Missing required module header line in `src/title-case.mjs`.**
+   Project convention (review checklist item) requires every module under `src/` to begin with the exact line:
+   `// woof-acceptance: 2acb74f4d410`
+   `src/title-case.mjs` currently begins with `export function titleCase(text) {` — the required line is absent entirely. This is a blocking finding per the checklist.
+
+## Non-blocking observations
+
+- `src/slugify.mjs` (pre-existing, unrelated to this change) also lacks the required header line and still throws `not implemented`. Not part of this task's acceptance criteria, but noted since the checklist is stated as applying to every module under `src/`.
+
+## Acceptance criteria — functional check
+
+Ran `node --test` from repo root: 9/9 tests pass, 0 failures.
+
+- ✅ Uppercases the first letter of every word (`titleCase("hello world")` → `"Hello World"`).
+- ✅ Lowercases the rest of every word, including all-caps input (`"HELLO WORLD"` → `"Hello World"`) and mixed case.
+- ✅ Runs of whitespace (spaces, tabs, newlines) collapse to a single space, with no leading/trailing space (`"  hello world  "` → `"Hello World"`, `"hello\tworld\nfoo"` → `"Hello World Foo"`).
+- ✅ Empty and whitespace-only input return `""` (handled via the early-return guard before `.split(/\s+/)`, which correctly avoids the `['']` trap).
+- ✅ `test/title-case.test.mjs` exists, uses `node:test`, and covers all of the above plus single-word input.
+- ✅ `node --test` passes cleanly (verified directly, matches the completion report's claim of 9/9 pass).
+
+The implementation and tests are functionally correct and match the acceptance criteria and completion report. The build is rejected solely for the missing `// woof-acceptance: 2acb74f4d410` header line in `src/title-case.mjs`.
+
+[verdict marker] review 1.1: first line "Woof-Verdict: fail"
+--- review 2.1 verdict pass (/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run/accepted/review/visit-2/attempt-1/review.md)
+Woof-Verdict: pass
+
+# Review — titleCase (stage review, visit 2, attempt 1)
+
+## Blocking findings
+
+None.
+
+## Checklist check
+
+Project convention requires every module under `src/` to begin with the exact line:
+`// woof-acceptance: 2acb74f4d410`
+
+`src/title-case.mjs` now begins with that exact line on line 1, immediately above the `export function titleCase(text) { ... }` declaration. This resolves the sole blocking finding from the prior review. Confirmed byte-exact match.
+
+## Acceptance criteria — functional check
+
+Ran `node --test` from repo root: 9/9 tests pass, 0 failures (unchanged from the prior visit — the repair was a comment-only addition and did not touch logic).
+
+- ✅ Uppercases the first letter of every word.
+- ✅ Lowercases the rest of every word, including all-caps and mixed-case input.
+- ✅ Runs of whitespace (spaces, tabs, newlines) collapse to a single space, with no leading/trailing space.
+- ✅ Empty and whitespace-only input return `""`.
+- ✅ `test/title-case.test.mjs` uses `node:test` and covers all criteria plus single-word input.
+- ✅ `node --test` passes cleanly.
+
+`git status --short` shows only `src/title-case.mjs` (modified) and `test/` (untracked) — no out-of-scope changes.
+
+## Note on the repair report's objection
+
+The repair completion report raises an objection that the `woof-acceptance` header convention isn't discoverable anywhere in the repo (plan, `.woof/roles`, `.woof/workflows/scribe.mjs`) and may be an out-of-band requirement. That's a valid process concern to flag upstream, but it does not change this review's scope: the checklist item was given directly in this review stage's project instructions, the required line is unambiguous, and the file now contains it exactly. No blocking finding remains.
+
+## Verdict
+
+Pass — all acceptance criteria are met, tests pass, and the required module header line is present exactly as specified.
+
+[verdict marker] review 2.1: first line "Woof-Verdict: pass"
+
+== repository ==
+src/title-case.mjs:
+// woof-acceptance: 2acb74f4d410
+export function titleCase(text) {
+  if (text.trim() === "") {
+    return "";
+  }
+  return text
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+git log --oneline:
+4752589 fixture
+git status --porcelain:
+?? src/title-case.mjs
+?? test/
+independent node --test: exit 0
+✔ collapses tab and newline whitespace to a single space (0.050291ms)
+✔ handles a single word with no separators (0.061333ms)
+✔ returns empty string for empty input (0.04525ms)
+✔ returns empty string for whitespace-only input (0.066833ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 60.503875
+independent revision: {"ok":true,"revision":{"head":"475258978b96b650472e3885d0bbb3266a01c9e6","tree":"fd1f82839cd58585216e68e7a9c5e36cd95e1f49"},"root":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo"}
+
+== gates ==
+GATE 1 PASS: CLI exit 0, completed, limit null, result equals deriveRunResult(run show) — exit 0, outcome completed, limit null, equal true
+GATE 2 PASS: journal replays; plan plan-build-review@1 with three claude/sonnet agents resolved from configuration — [{"agentId":"planner","role":"planner","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"]},{"agentId":"builder","role":"builder","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"]},{"agentId":"reviewer","role":"reviewer","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run","--permission-mode","auto"]}]
+GATE 3 PASS: exactly one agent.assigned per agent, three distinct panes — 3 assignments, panes ["w8T:pJ","w8T:pK","w8T:pM"]
+GATE 4 PASS: identity continuity: each of planner, builder and reviewer keeps one pane, terminal and session — planner ["w8T:pJ","term_65b907ec87a94a7","7d7dfbda-7310-49d5-968c-47af61718ccb"], builder ["w8T:pK","term_65b908371b10aa8","fbf5955a-6dde-4c8a-b9c2-c567c7be770b"], reviewer ["w8T:pM","term_65b9087b7091da9","6711dc58-96fe-4210-a6f0-f1cb5a068672"]
+GATE 5 PASS: first review is a completed fail that routes to repair and cites the nonce line — verdict fail, gate reject → {"stageId":"repair"}, cites line true
+GATE 6 PASS: every builder request carries the accepted plan by path, receipt and sha256 and never inlines it; repairs also carry the latest review; request hashes match — builder requests 2, plan carried true, reviews true, hashes true, plan line probed "Repo is a small ESM fixture (`package.json` has `\"type\": \"mo"
+GATE 7 PASS: last review passes on the exact repaired tree — round 2, reviewed fd1f82839cd58585216e68e7a9c5e36cd95e1f49, gate fd1f82839cd58585216e68e7a9c5e36cd95e1f49, builder fd1f82839cd58585216e68e7a9c5e36cd95e1f49, independent fd1f82839cd58585216e68e7a9c5e36cd95e1f49
+GATE 8 PASS: repository effects: nonce line, tests exist, node --test passes — first line "// woof-acceptance: 2acb74f4d410", node --test exit 0
+GATE 9 PASS: verify-artifacts clean, no block, no ambiguous or abandoned delivery — status completed, altered []
+GATE 10 PASS: observer agreement between Herdr samples and snapshots (grace 15000 ms after acceptance) — 69 samples, 0 disagreeing
+GATE 11 PASS: all three agents are gone after exit — ["gone","gone","gone"]
+script source grep for agent read, pane read, send-keys: no matches
+GATE 12 PASS: Woof worktree unchanged; script never reads panes or sends keys — worktree unchanged true
+GATE 13 PASS: log records versions, input, command, trace, locations and result — all recorded
+
+== human inspection (required) ==
+Read the accepted plan above: it must be a real, file-level plan for THIS task, not a restatement
+of the acceptance criteria. Read both reviews: review 1 must cite the missing nonce line and be a
+real review of the titleCase change; review 2 must state the checklist is satisfied. Confirm the
+repaired code is the builder's own change, and that the builder followed the plan it was given.
+Record in live/INDEX.md whether each review's first line was the Woof-Verdict marker (p5 D5).
+
+== summary ==
+13/13 gates passed
+run directory for operator cleanup: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/pbr-20260916-023340/run

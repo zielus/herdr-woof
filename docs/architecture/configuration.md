@@ -81,7 +81,11 @@ resolve,record,index}.ts`, `src/runtime/claude/trust.ts`, `woof config show`
   file `<scope>/.woof/roles/<name>.json`, and one workflow definition module
   per file `<scope>/.woof/workflows/<name>.{mjs,js,ts}` (stem = the name).
   Scopes are project (`<project root>/.woof`) and user (`~/.woof`), plus a
-  built-in catalog (workflow `build-review`; roles `builder`/`reviewer`).
+  built-in catalog: workflows `build-review` and `plan-build-review` (p5 D2 —
+  a name-keyed, null-prototype registry, so adding a built-in workflow adds
+  no branch to configuration resolution); roles `builder`/`reviewer`, plus
+  `planner` (p5), a third built-in role a bare `plan-build-review` input
+  resolves with no configuration at all.
   Every JSON file is an object with `schemaVersion: 1`, at most 64 KiB;
   unknown keys are refused (`config_invalid`, naming the file and a JSON
   pointer). `woof.json`'s `defaults` (all optional): `workflow` (an id),

@@ -31,6 +31,7 @@ console.log(JSON.stringify({
     expect(entry.marker).toBe(true);
     // Module namespace keys are ordered by code unit, not by declaration.
     const expected: Record<string, string> = {
+      BUILT_IN_WORKFLOWS: "object",
       DISPATCH_REASONS: "object",
       MAX_ARTIFACT_BYTES: "number",
       ObservationTracker: "function",
@@ -40,6 +41,8 @@ console.log(JSON.stringify({
       assignAgent: "function",
       blockRun: "function",
       buildReviewWorkflow: "object",
+      builtInWorkflow: "function",
+      builtInWorkflowNames: "function",
       claimHost: "function",
       claudeTrustStatus: "function",
       createHerdrCliRuntime: "function",
@@ -54,6 +57,7 @@ console.log(JSON.stringify({
       openAttempt: "function",
       openRun: "function",
       overlayRuntime: "function",
+      planBuildReviewWorkflow: "object",
       probeHost: "function",
       readEvents: "function",
       readJournal: "function",

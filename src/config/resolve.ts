@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { SUPPORTED_AGENT_KINDS } from "../scheduler/launch.js";
-import { BUILD_REVIEW_DEFAULT_LIMITS, buildReviewWorkflow } from "../workflows/build-review.js";
+import { BUILT_IN_WORKFLOWS } from "../workflows/catalog.js";
 import { discoverRoots, type ConfigWarning, type DiscoverOptions } from "./discover.js";
 import { loadScope, type ScopeContent } from "./read.js";
 import {
@@ -82,17 +82,23 @@ export const DEFAULT_HOST_START_TIMEOUT_MS = 30_000;
 
 /** Built-in roles: claude with no model and no arguments; the engine never adds a permission flag. */
 export function builtinCatalog(): BuiltinCatalog {
+  // Workflow names are user-controlled ids too: no prototype for `constructor` to come from.
+  // Every entry comes from the built-in catalog (p5 D2); nothing here names a workflow.
+  const workflows = Object.create(null) as BuiltinCatalog["workflows"];
+  for (const definition of Object.values(BUILT_IN_WORKFLOWS)) {
+    workflows[definition.name] = {
+      version: definition.version,
+      ...(definition.limitDefaults !== undefined
+        ? { limitDefaults: { ...definition.limitDefaults } }
+        : {}),
+    };
+  }
   return {
-    // Workflow names are user-controlled ids too: no prototype for `constructor` to come from.
-    workflows: Object.assign(Object.create(null) as BuiltinCatalog["workflows"], {
-      [buildReviewWorkflow.name]: {
-        version: buildReviewWorkflow.version,
-        limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
-      },
-    }),
+    workflows,
     // Role names are user-controlled ids: the dictionary has no prototype to inherit `constructor` from.
     roles: Object.assign(Object.create(null) as BuiltinCatalog["roles"], {
       builder: { kind: "claude", model: null, args: [] },
+      planner: { kind: "claude", model: null, args: [] },
       reviewer: { kind: "claude", model: null, args: [] },
     }),
   };

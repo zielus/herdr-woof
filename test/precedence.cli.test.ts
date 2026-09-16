@@ -11,6 +11,7 @@ import {
   journal,
   makeRunDir,
   openAttemptOk,
+  openAttemptWithMarker,
   readyAttempt,
   sha256,
   submit,
@@ -259,6 +260,47 @@ const cases: PrecedenceCase[] = [
     expected: "artifact_too_large",
     exit: 2,
     journal: { type: "submission.rejected", reason: "artifact_too_large" },
+  },
+  {
+    // p5 D5: check 17b runs after check 17, so a submission whose bytes do not
+    // match its own digest is reported as the hash mismatch it is, not as a
+    // verdict disagreement derived from bytes the envelope never described.
+    name: "a hash mismatch outranks a verdict marker mismatch",
+    arrange: () => {
+      const runDir = makeRunDir();
+      openAttemptWithMarker(runDir, "Woof-Verdict:");
+      writeArtifact(runDir, artifactRel(), "Woof-Verdict: fail\n\nA blocking finding.\n");
+      return {
+        runDir,
+        envelope: envelopeFor({
+          verdict: "pass",
+          artifact: { path: artifactRel(), sha256: sha256(CONTENT) },
+        }),
+      };
+    },
+    expected: "artifact_hash_mismatch",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "artifact_hash_mismatch" },
+  },
+  {
+    // With the digest right, the same artifact reaches 17b.
+    name: "a verdict marker mismatch is the last check before publication",
+    arrange: () => {
+      const runDir = makeRunDir();
+      openAttemptWithMarker(runDir, "Woof-Verdict:");
+      const content = "Woof-Verdict: fail\n\nA blocking finding.\n";
+      const sha = writeArtifact(runDir, artifactRel(), content);
+      return {
+        runDir,
+        envelope: envelopeFor({
+          verdict: "pass",
+          artifact: { path: artifactRel(), sha256: sha },
+        }),
+      };
+    },
+    expected: "verdict_artifact_mismatch",
+    exit: 2,
+    journal: { type: "submission.rejected", reason: "verdict_artifact_mismatch" },
   },
 ];
 

@@ -1,15 +1,21 @@
 ---
-description: Start a Woof build-review run in Herdr and report its structured outcome
-argument-hint: "<task description>"
+description: Start a Woof workflow run in Herdr and report its structured outcome
+argument-hint: "[--workflow <name>] <task description>"
 allowed-tools: Bash(node:*), Bash(woof:*), Read
 ---
 
-You delegate one build-review task to Woof. Woof runs a builder and a reviewer
-agent in Herdr panes next to this one and records every step in a run journal.
-You start the run, wait for it, and report its result. You do not do the task
-yourself.
+You delegate one task to Woof. Woof runs the workflow's agents in Herdr panes
+next to this one and records every step in a run journal. You start the run,
+wait for it, and report its result. You do not do the task yourself.
 
 Task from the user: $ARGUMENTS
+
+If `$ARGUMENTS` starts with `--workflow <name>`, that name is the workflow and
+the rest is the task; otherwise the workflow is the configured default. Built in:
+`build-review` (builder, reviewer) and `plan-build-review` (a planner ahead of
+them, whose plan every builder turn receives as an input). A project may define
+others in its `.woof/workflows/`; `WOOF config show --workflow <name>` says
+whether a name resolves and from where.
 
 ## 1. Pre-flight
 
@@ -36,6 +42,8 @@ Write one JSON object:
 - `task.title`, `task.description` and a non-empty `task.acceptanceCriteria`
   list of strings, stated concretely from the user's request and this
   conversation.
+- `constraints`, for `plan-build-review` only: a non-empty array of non-empty
+  strings the plan must respect, when the user named any. Omit it otherwise.
 - `verify`: only when the user or the project names a verification command. It
   is an object with exactly two fields: `command`, a non-empty array of strings
   (the program and each argument separately, never one string), and
@@ -43,6 +51,11 @@ Write one JSON object:
 - Omit `agents` unless the user asked for specific agent kinds or models; the
   Woof configuration supplies them.
 - Never add permission-bypass arguments on the user's behalf.
+
+Both built-in workflows take the shape below. A workflow that is neither takes
+whatever its own definition validates, which this command does not know: build
+the input from what the user gave you, start the run, and report exit 2's
+`details` verbatim rather than guessing at fields.
 
 A complete example (replace the values; drop `verify` when no command was
 named):
@@ -72,7 +85,7 @@ never answers it". Continue only after the user confirms.
 ## 4. Start the run
 
 Run `WOOF run start --project <repo> --input -` with the JSON on stdin through
-a heredoc.
+a heredoc, adding `--workflow <name>` when the user named a workflow.
 
 - Exit 2: report `reason`, `message` and `details` verbatim, fix every field the
   details name (all of them, in one change), and retry once. If the retry is
@@ -105,12 +118,18 @@ This step applies to every terminal exit code: 0, 4, 5 and 6. From `result`,
 report `outcome`, `reason`, `limit` and `counters.rounds`.
 
 The artifact references may be null. `artifacts.review` is null unless
-`outcome` is `completed`; `artifacts.completion` and `artifacts.verification`
-can be null for any outcome. Report `artifacts.review.acceptedPath`,
+`outcome` is `completed`, and stays null for a workflow that has no review stage
+even when it completed; `artifacts.completion` and `artifacts.verification` can
+be null for any outcome. Report `artifacts.review.acceptedPath`,
 `artifacts.completion.acceptedPath` and `artifacts.verification.path` only for
 a reference that is not null, and say "none" for a null one. Read the accepted
 review file and summarize its findings only when `artifacts.review` is not
 null.
+
+`artifacts.lastAcceptedByStage` holds every stage's latest accepted artifact by
+stage id, whatever the workflow's stages are called. Report its
+`acceptedPath`s for any stage the three named references do not already cover —
+that is where a plan, or an external workflow's own artifact, is found.
 
 Print the `result` JSON line in a fenced block. Claim success only when
 `outcome` is `completed`.

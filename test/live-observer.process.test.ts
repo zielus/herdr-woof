@@ -68,17 +68,15 @@ function verify4(): { samples: Json[]; records: Json[] } {
 describe("observerDisagreements (live gate 10)", () => {
   it("accepts the verify-4 samples, whose only disagreements fall within the grace window", () => {
     const { samples, records } = verify4();
-    expect(samples).toHaveLength(31);
+    expect(samples).toHaveLength(34);
     expect(records).toHaveLength(4);
     const strict = evaluate(samples, records, { graceMs: 0 });
     expect(strict["disagreements"]).toEqual([
-      expect.objectContaining({ at: "2026-09-14T23:52:13.742Z", agentId: "builder", kind: "soft" }),
       expect.objectContaining({
-        at: "2026-09-14T23:52:53.761Z",
+        at: "2026-09-16T02:30:57.187Z",
         agentId: "reviewer",
         kind: "soft",
       }),
-      expect.objectContaining({ at: "2026-09-14T23:53:28.762Z", agentId: "builder", kind: "soft" }),
     ]);
     for (const item of strict["disagreements"] as Json[])
       expect(item["sinceAcceptedMs"]).toBeLessThan(2000);

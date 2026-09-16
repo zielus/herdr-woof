@@ -46,6 +46,9 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
 
 const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
 
+/** Line feed: a UTF-8 multi-byte sequence never contains one, so splitting on it is safe. */
+const NEWLINE = 0x0a;
+
 /**
  * Validates a result envelope and its artifact, then records the outcome in the
  * run journal. The first failing check wins, in this order (pinned by
@@ -73,6 +76,7 @@ const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
  * 16. artifact size ≤ MAX_ARTIFACT_BYTES (32 MiB)      → artifact_too_large
  * 17. artifact sha256 matches the envelope             → artifact_hash_mismatch
  *     artifact size unchanged while it was read        → artifact_hash_mismatch
+ * 17b. artifact verdict marker agrees with the envelope → verdict_artifact_mismatch
  * 18. publish the accepted copy, append the record     → accepted / journal_write_failed
  *
  * The envelope is read and parsed before the lock is taken, but an envelope
@@ -84,6 +88,18 @@ const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
  * Check 16 is decided from the file's size before it is read, so only artifacts
  * within the cap reach check 15's content read; a whitespace-only file larger
  * than the cap is therefore `artifact_too_large`.
+ *
+ * Check 17b runs only when the attempt was opened with an `artifactVerdictMarker`
+ * (p5 D5: the stage opts in; nothing is checked otherwise). It reads the
+ * artifact's **first non-blank line only**: when that line starts with the
+ * marker, the rest of it must equal the envelope's verdict. An artifact whose
+ * first non-blank line does not start with the marker is accepted unchanged, and
+ * a marker-looking line further down is ignored — a reviewer quoting the required
+ * line inside an example writes it at the start of a line too, and scanning the
+ * whole artifact would reject that. The check runs after 17, so a submission
+ * whose bytes do not match its own digest is reported as the hash mismatch it is.
+ * A leading UTF-8 BOM on that line is stripped before the prefix test; leading
+ * spaces are not, because the contract is that the line starts with the marker.
  *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
@@ -331,6 +347,18 @@ function decide(
     ]);
   }
 
+  // 17b. Opt-in artifact/envelope verdict agreement, on the first non-blank line.
+  const mismatch = verdictMarkerMismatch(
+    attempt.opened.artifactVerdictMarker,
+    artifact.bytes,
+    envelope.verdict,
+  );
+  if (mismatch !== undefined) {
+    return reject("verdict_artifact_mismatch", mismatch.message, [
+      { field: "verdict", message: mismatch.detail },
+    ]);
+  }
+
   // 18. Publish the immutable accepted copy, then persist acceptance.
   const acceptedPath = acceptedPathFor(
     envelope.stageId,
@@ -380,6 +408,58 @@ function decide(
       "cannot journal the acceptance, so the unreferenced accepted copy was removed: ",
     );
   }
+}
+
+/**
+ * The artifact's first non-blank line against the envelope's verdict, for a
+ * stage that declared a marker. Returns undefined when the stage declared none,
+ * when the artifact has no non-blank line, when that line does not start with
+ * the marker, or when the two agree.
+ */
+/**
+ * The artifact's first non-blank line, whole. Lines are found in the loaded
+ * bytes and decoded one at a time until one is not blank, so the only bound is
+ * the artifact size cap check 16 already enforced — there is no separate prefix
+ * limit. A truncating prefix would both hide a disagreement behind enough
+ * leading blank lines and cut a legitimate marker line in half.
+ *
+ * A UTF-8 BOM is stripped before the line is returned: `trim()` already treats
+ * it as whitespace when deciding blankness, so leaving it on would make a
+ * BOM-prefixed marker "non-blank" yet fail `startsWith`, skipping the check
+ * entirely for anyone whose editor writes one. Leading spaces are NOT stripped:
+ * the contract is that the line starts with the marker.
+ */
+function firstNonBlankLine(bytes: Uint8Array): string | undefined {
+  const buffer = Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let start = 0;
+  while (start <= buffer.length) {
+    const found = buffer.indexOf(NEWLINE, start);
+    const end = found === -1 ? buffer.length : found;
+    const line = buffer.toString("utf8", start, end);
+    const text = line.startsWith("\uFEFF") ? line.slice(1) : line;
+    if (text.trim() !== "") return text;
+    if (found === -1) return undefined;
+    start = found + 1;
+  }
+  return undefined;
+}
+
+function verdictMarkerMismatch(
+  marker: string | undefined,
+  bytes: Uint8Array,
+  envelopeVerdict: string | null,
+): { message: string; detail: string } | undefined {
+  if (marker === undefined) return undefined;
+  const first = firstNonBlankLine(bytes);
+  if (first === undefined || !first.startsWith(marker)) return undefined;
+  const artifactVerdict = first.slice(marker.length).trim();
+  if (artifactVerdict === envelopeVerdict) return undefined;
+  return {
+    message: `the artifact's first line ${JSON.stringify(first.trim())} declares verdict ${JSON.stringify(artifactVerdict)}, but the envelope carries ${JSON.stringify(envelopeVerdict)}`,
+    detail: `the artifact says ${JSON.stringify(artifactVerdict)}; the envelope says ${JSON.stringify(envelopeVerdict)}`,
+  };
 }
 
 function journalRejection(

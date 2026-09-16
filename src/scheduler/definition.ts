@@ -1,4 +1,10 @@
-import { isId, isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
+import {
+  MAX_VERDICT_MARKER,
+  isId,
+  isPlainObject,
+  isVerdictMarker,
+  type RejectionDetail,
+} from "../contracts/envelope.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
 import {
   LIMIT_KEYS,
@@ -67,6 +73,17 @@ export interface AgentStage<Input = unknown> {
   onFailedStatus: "fail" | "retry";
   /** The gate receives the revision the attempt was dispatched against. */
   bindsRevision: boolean;
+  /**
+   * Opt-in artifact/envelope verdict agreement (p5 D5). A literal line prefix,
+   * e.g. `"Woof-Verdict:"`. When a stage declares one, `woof submit` reads the
+   * artifact's **first non-blank line only**: if that line starts with the
+   * prefix, the rest of it must equal the envelope's verdict, otherwise the
+   * submission is `verdict_artifact_mismatch`. An artifact whose first non-blank
+   * line does not start with the prefix is accepted unchanged, and a
+   * marker-looking line further down is ignored — a reviewer quoting the
+   * required line inside an example must not be rejected for it.
+   */
+  artifactVerdictMarker?: string;
   request(ctx: RequestContext<Input>): StageRequest;
   next(ctx: StageGateContext<Input>): Transition;
 }
@@ -242,6 +259,13 @@ export function validateWorkflowDefinition<Input = unknown>(
         }
         if (typeof stage["bindsRevision"] !== "boolean")
           fail(`${path}.bindsRevision`, "must be a boolean");
+        const marker = stage["artifactVerdictMarker"];
+        if (marker !== undefined && !isVerdictMarker(marker)) {
+          fail(
+            `${path}.artifactVerdictMarker`,
+            `must be a non-empty single-line string of at most ${MAX_VERDICT_MARKER} characters`,
+          );
+        }
         for (const field of ["request", "next"]) {
           if (typeof stage[field] !== "function") fail(`${path}.${field}`, "must be a function");
         }

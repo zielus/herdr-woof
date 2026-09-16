@@ -13,6 +13,7 @@ type Result = {
 
 let compose: (input: Json) => Result;
 let builtinCatalog: () => Json;
+let builtInWorkflowNames: () => string[];
 let validateSettingsFile: (value: unknown, file: Json) => Result;
 let validateRoleFile: (value: unknown, file: Json) => Result;
 
@@ -23,6 +24,9 @@ beforeAll(async () => {
   }>("config/resolve.js");
   compose = resolve.composeConfiguration;
   builtinCatalog = resolve.builtinCatalog;
+  ({ builtInWorkflowNames } = await loadDist<{ builtInWorkflowNames: typeof builtInWorkflowNames }>(
+    "workflows/catalog.js",
+  ));
   ({ validateSettingsFile, validateRoleFile } = await loadDist<{
     validateSettingsFile: typeof validateSettingsFile;
     validateRoleFile: typeof validateRoleFile;
@@ -111,6 +115,37 @@ describe("configuration composition", () => {
       source: "builtin",
       shadowed: [],
     });
+  });
+
+  it("serves every built-in workflow and role from the catalog, with no name in a branch (p5 D2)", () => {
+    const catalog = builtinCatalog() as {
+      workflows: Record<string, { version: string; limitDefaults?: Record<string, number> }>;
+      roles: Record<string, Json>;
+    };
+    // The catalog is the only source of workflow names: no branch in resolve.ts names one.
+    expect(Object.keys(catalog.workflows).toSorted()).toEqual(builtInWorkflowNames().toSorted());
+    expect(builtInWorkflowNames().toSorted()).toEqual(["build-review", "plan-build-review"]);
+    expect(Object.keys(catalog.roles).toSorted()).toEqual(["builder", "planner", "reviewer"]);
+    // Prototype-free: a workflow or role named after an Object.prototype key is simply absent.
+    expect(Object.getPrototypeOf(catalog.workflows)).toBe(null);
+    expect(Object.getPrototypeOf(catalog.roles)).toBe(null);
+    expect(Object.hasOwn(catalog.workflows, "constructor")).toBe(false);
+    expect(Object.hasOwn(catalog.roles, "toString")).toBe(false);
+    for (const entry of Object.values(catalog.workflows)) {
+      expect(entry.version).toBe("1");
+      expect(entry.limitDefaults?.["maxRounds"]).toBe(3);
+    }
+    for (const role of Object.values(catalog.roles)) {
+      expect(role).toEqual({ kind: "claude", model: null, args: [] });
+    }
+    // Every built-in workflow resolves with source "builtin" and no configuration at all.
+    for (const name of builtInWorkflowNames()) {
+      const configuration = resolved({ user: scope("user", { settings: { workflow: name } }) });
+      expect(configuration["workflow"], name).toMatchObject({
+        source: "builtin",
+        value: { name, version: "1" },
+      });
+    }
   });
 
   it("composes limits per key: project, then user, then the built-in definition's defaults", () => {

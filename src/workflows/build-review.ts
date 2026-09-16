@@ -1,22 +1,17 @@
 import { canonicalJson } from "../contracts/canonical-json.js";
 import { isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
-import { MAX_COUNT_LIMIT, MAX_DURATION_LIMIT_MS, type Limits } from "../domain/types.js";
-import {
-  agentStageOf,
-  type InputRef,
-  type RequestContext,
-  type RunHistory,
-  type StageGateContext,
-  type Transition,
-  type WorkflowDefinition,
+import { MAX_DURATION_LIMIT_MS, type Limits } from "../domain/types.js";
+import type {
+  InputRef,
+  RunHistory,
+  StageGateContext,
+  Transition,
+  WorkflowDefinition,
 } from "../scheduler/definition.js";
-import {
-  MAX_REQUEST_BYTES,
-  MAX_RUN_DIR_BYTES,
-  renderRequest,
-  type ResolvedInput,
-} from "../scheduler/request.js";
+import { MAX_REQUEST_BYTES } from "../scheduler/request.js";
+import { exactKeys, integerIn, limitsProblem, nonEmpty } from "./input.js";
+import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
 
 /**
  * Built-in `build-review` workflow (p3): build → verify (an engine-run check,
@@ -57,6 +52,17 @@ const MAX_TITLE = 200;
 
 const BUILDER_STAGES: ReadonlySet<string> = new Set(["build", "repair"]);
 
+/**
+ * The stages whose rendered request can be this workflow's largest: the review
+ * (task plus the completion report) and the repair entered by a review or by
+ * the verify check, each carrying every input its request names.
+ */
+const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
+  { stageId: "review", enteredBy: { kind: "stage", gate: "repair" } },
+  { stageId: "repair", enteredBy: { kind: "stage", gate: "review" } },
+  { stageId: "repair", enteredBy: { kind: "check", gate: "verify" } },
+];
+
 function validateInput(
   value: unknown,
 ): { ok: true; input: BuildReviewInput } | { ok: false; details: RejectionDetail[] } {
@@ -64,7 +70,7 @@ function validateInput(
   const fail = (field: string, message: string) => details.push({ field, message });
   if (!isPlainObject(value))
     return { ok: false, details: [{ field: "input", message: "must be an object" }] };
-  exact(
+  exactKeys(
     value,
     ["schemaVersion", "repo", "task", "instructions", "verify", "agents", "limits"],
     "",
@@ -78,7 +84,7 @@ function validateInput(
   if (!isPlainObject(task)) {
     fail("task", "must be an object");
   } else {
-    exact(task, ["title", "description", "acceptanceCriteria", "context"], "task.", fail);
+    exactKeys(task, ["title", "description", "acceptanceCriteria", "context"], "task.", fail);
     if (!nonEmpty(task["title"]) || task["title"].length > MAX_TITLE)
       fail("task.title", `must be a non-empty string of at most ${MAX_TITLE} characters`);
     if (!nonEmpty(task["description"])) fail("task.description", "must be a non-empty string");
@@ -97,7 +103,7 @@ function validateInput(
     if (!isPlainObject(instructions)) {
       fail("instructions", "must be an object");
     } else {
-      exact(instructions, ["builder", "reviewer"], "instructions.", fail);
+      exactKeys(instructions, ["builder", "reviewer"], "instructions.", fail);
       for (const role of ["builder", "reviewer"]) {
         if (instructions[role] !== undefined && !nonEmpty(instructions[role]))
           fail(`instructions.${role}`, "must be a non-empty string");
@@ -110,7 +116,7 @@ function validateInput(
     if (!isPlainObject(verify)) {
       fail("verify", "must be an object");
     } else {
-      exact(verify, ["command", "timeoutMs"], "verify.", fail);
+      exactKeys(verify, ["command", "timeoutMs"], "verify.", fail);
       const command = verify["command"];
       if (!Array.isArray(command) || command.length === 0 || !command.every(nonEmpty)) {
         fail("verify.command", "must be a non-empty array of non-empty strings");
@@ -124,7 +130,7 @@ function validateInput(
   if (agents !== undefined && !isPlainObject(agents)) {
     fail("agents", "must be an object with builder and/or reviewer");
   } else if (agents !== undefined) {
-    exact(agents, ["builder", "reviewer"], "agents.", fail);
+    exactKeys(agents, ["builder", "reviewer"], "agents.", fail);
     for (const role of ["builder", "reviewer"]) {
       const agent = agents[role];
       if (agent === undefined) continue;
@@ -132,7 +138,7 @@ function validateInput(
         fail(`agents.${role}`, "must be an object with kind, model and args");
         continue;
       }
-      exact(agent, ["kind", "model", "args"], `agents.${role}.`, fail);
+      exactKeys(agent, ["kind", "model", "args"], `agents.${role}.`, fail);
       if (!nonEmpty(agent["kind"])) fail(`agents.${role}.kind`, "must be a non-empty string");
       if (agent["model"] !== null && !nonEmpty(agent["model"]))
         fail(`agents.${role}.model`, "must be a non-empty string or null");
@@ -142,25 +148,7 @@ function validateInput(
     }
   }
 
-  const limits = value["limits"];
-  if (limits !== undefined) {
-    if (!isPlainObject(limits)) {
-      fail("limits", "must be an object");
-    } else {
-      exact(limits, Object.keys(BUILD_REVIEW_DEFAULT_LIMITS), "limits.", fail);
-      for (const [key, raw] of Object.entries(limits)) {
-        if (!(key in BUILD_REVIEW_DEFAULT_LIMITS)) continue;
-        const [min, max] =
-          key === "maxFormatRepairs"
-            ? [0, MAX_COUNT_LIMIT]
-            : key.endsWith("Ms")
-              ? [1, MAX_DURATION_LIMIT_MS]
-              : [1, MAX_COUNT_LIMIT];
-        if (!integerIn(raw, min, max))
-          fail(`limits.${key}`, `must be an integer between ${min} and ${max}`);
-      }
-    }
-  }
+  limitsProblem(value["limits"], BUILD_REVIEW_DEFAULT_LIMITS, fail);
 
   if (details.length === 0 && isPlainObject(task)) {
     const size = Buffer.byteLength(
@@ -172,7 +160,12 @@ function validateInput(
   }
   if (details.length === 0) {
     // The exact formatted request (pretty-printed context, fixed text, longest paths) must fit.
-    const largest = largestRequestBytes(value as unknown as BuildReviewInput);
+    const largest = largestRequestBytes(
+      buildReviewWorkflow,
+      value as unknown as BuildReviewInput,
+      REQUEST_BOUND_CASES,
+      { historyStageId: "repair" },
+    );
     if (largest > MAX_REQUEST_BYTES) {
       fail(
         "task",
@@ -194,6 +187,33 @@ function builderNext(ctx: StageGateContext<BuildReviewInput>): Transition {
     ? { decision: "pass", reason: "built", to: "verify" }
     : { decision: "pass", reason: "built", to: "review" };
 }
+
+/**
+ * Opt-in artifact/envelope verdict agreement (p5 D5). The reviewer is asked to
+ * make this the artifact's first line; `woof submit` checks it only when the
+ * first non-blank line actually starts with it, so a review that opens with
+ * prose is accepted unchanged and a quoted example further down is ignored.
+ */
+export const REVIEW_VERDICT_MARKER = "Woof-Verdict:";
+
+const VERDICT_LINE_INSTRUCTION = ` Make the first line of your artifact exactly \`${REVIEW_VERDICT_MARKER} pass\` or \`${REVIEW_VERDICT_MARKER} fail\`, matching the verdict in your envelope; a disagreement between the two is rejected.`;
+
+/**
+ * The accepted review is canonical for a repair (AGENTS.md: "A review artifact is
+ * canonical and required; downstream agents receive its accepted version
+ * directly"). Live acceptance found a builder treating a requirement it met only
+ * inside the review artifact as a possible prompt injection and declining it
+ * twice, which exhausted the run: the request never said whose word the review
+ * was. It does now (p5 repair LV-102).
+ *
+ * It is interpolated only into a repair the review stage entered — the same
+ * condition that puts the review in `inputs`. A repair the verify check entered
+ * carries no review reference at all (a first-visit check failure may precede
+ * every review), and telling that builder an artifact it was not given is
+ * canonical describes nothing it can read (p5 repair PB-101).
+ */
+export const REVIEW_IS_CANONICAL =
+  "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.";
 
 const COMPLETION_REPORT =
   "When you are done, write a short completion report as your artifact: what you changed (files), how you verified it, and anything left undone.";
@@ -262,6 +282,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       artifactFile: "review.md",
       onFailedStatus: "fail",
       bindsRevision: true,
+      artifactVerdictMarker: REVIEW_VERDICT_MARKER,
       request: (ctx) => {
         const builder = latestBuilderGate(ctx.history);
         const inputs: InputRef[] =
@@ -270,8 +291,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
             : [{ label: "completion report", from: { stageId: builder.subject.stageId } }];
         return {
           goal: "Review the current change in the repository against the task below.",
-          instructions:
-            'Inspect the repository (your working directory) and the completion report. Decide whether every acceptance criterion and project instruction holds. Write your review as your artifact with concrete findings. Submit verdict "fail" when any blocking finding remains, "pass" otherwise. A "fail" review is a completed review: use status "completed". Do not change repository files.',
+          instructions: `Inspect the repository (your working directory) and the completion report. Decide whether every acceptance criterion and project instruction holds. Write your review as your artifact with concrete findings. Submit verdict "fail" when any blocking finding remains, "pass" otherwise. A "fail" review is a completed review: use status "completed". Do not change repository files.${VERDICT_LINE_INSTRUCTION}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.reviewer !== undefined
@@ -307,7 +327,10 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       request: (ctx) => {
         const entered = ctx.enteredBy;
         const inputs: InputRef[] = [];
-        if (entered?.kind === "stage" && entered.gate === "review") {
+        // One condition for both: the review reaches this repair as an input, and
+        // only then does the request say the review is canonical (PB-101).
+        const enteredByReview = entered?.kind === "stage" && entered.gate === "review";
+        if (enteredByReview) {
           inputs.push({ label: "review", from: { stageId: "review" } });
         }
         if (entered?.kind === "check")
@@ -323,7 +346,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
             entered?.kind === "check"
               ? "Repair the change: the verification command failed."
               : "Repair the change: the review requested changes.",
-          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${COMPLETION_REPORT}`,
+          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied.${enteredByReview ? ` ${REVIEW_IS_CANONICAL}` : ""} ${COMPLETION_REPORT}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.builder !== undefined
@@ -343,112 +366,3 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
 };
 
 export default buildReviewWorkflow;
-
-function exact(
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  prefix: string,
-  fail: (field: string, message: string) => void,
-): void {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) fail(`${prefix}${key}`, "unknown field");
-  }
-}
-
-/** An absolute path of the admitted maximum run directory length, plus room for symlink resolution. */
-function longPath(char: string): string {
-  return `/${char.repeat(MAX_RUN_DIR_BYTES + 127)}`;
-}
-
-/**
- * Admission-time bound on the exact rendered request: renders the largest
- * requests this input can produce — the review, and the repair entered by a
- * review or by the verify check, each with every input its request names — with
- * a run directory and submit command at the admitted maximum length (plus room
- * for symlink resolution) and maximal counters, ids and digests.
- */
-function largestRequestBytes(input: BuildReviewInput): number {
-  const runDir = longPath("r");
-  const hex = "f".repeat(64);
-  const counter = MAX_COUNT_LIMIT;
-  const seq = Number.MAX_SAFE_INTEGER;
-  const receiptId = `rcpt-${seq}-${hex.slice(0, 12)}`;
-  type Entered = NonNullable<RequestContext<BuildReviewInput>["enteredBy"]>;
-  const builderGate = {
-    kind: "stage",
-    gate: "repair",
-    subject: { stageId: "repair", visit: counter, attempt: counter, acceptedSeq: seq, receiptId },
-    revision: { head: hex, tree: hex },
-  } as unknown as Entered;
-  const cases: Array<{ stageId: string; enteredBy: Entered }> = [
-    { stageId: "review", enteredBy: builderGate },
-    { stageId: "repair", enteredBy: { ...builderGate, gate: "review" } },
-    { stageId: "repair", enteredBy: { ...builderGate, kind: "check", gate: "verify" } as Entered },
-  ];
-  let largest = 0;
-  for (const { stageId, enteredBy } of cases) {
-    const stage = agentStageOf(buildReviewWorkflow, stageId);
-    if (stage === undefined) continue;
-    const request = stage.request({
-      input,
-      runId: "r".repeat(128),
-      history: { gates: [builderGate], latestAccepted: {} },
-      stageId,
-      visit: counter,
-      attempt: counter,
-      round: counter,
-      enteredBy,
-    });
-    const inputs: ResolvedInput[] = request.inputs.map((ref) => {
-      if ("checkId" in ref.from) {
-        return {
-          label: ref.label,
-          path: `${runDir}/checks/${ref.from.checkId}/repair-v${counter}-a${counter}/output.log`,
-          sha256: hex,
-          checkId: ref.from.checkId,
-        };
-      }
-      const source = agentStageOf(buildReviewWorkflow, ref.from.stageId);
-      return {
-        label: ref.label,
-        path: `${runDir}/accepted/${ref.from.stageId}/visit-${counter}/attempt-${counter}/${source?.artifactFile ?? "artifact"}`,
-        sha256: hex,
-        accepted: { stageId: ref.from.stageId, visit: counter, attempt: counter, receiptId },
-      };
-    });
-    const rendered = renderRequest({
-      runId: "r".repeat(128),
-      workflow: { name: buildReviewWorkflow.name, version: buildReviewWorkflow.version },
-      agentId: stage.agentId,
-      role: stage.agentId,
-      stageId,
-      visit: counter,
-      attempt: counter,
-      cause: "work_retry",
-      round: counter,
-      repository: input.repo,
-      revision: { head: hex, tree: hex },
-      runDir,
-      artifactFile: stage.artifactFile,
-      verdicts: stage.verdicts,
-      submitCommand: [longPath("n"), longPath("c")],
-      goal: request.goal,
-      instructions: request.instructions,
-      inputs,
-      ...(request.task !== undefined ? { task: request.task } : {}),
-      ...(request.roleInstructions !== undefined
-        ? { roleInstructions: request.roleInstructions }
-        : {}),
-    });
-    largest = Math.max(largest, rendered.bytes);
-  }
-  return largest;
-}
-
-function nonEmpty(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function integerIn(value: unknown, min: number, max: number): boolean {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
-}

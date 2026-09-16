@@ -1,0 +1,70 @@
+
+== Woof p5 live acceptance: runtime loss (L7) ==
+date: 2026-09-16T02:40:20.960Z
+HERDR_ENV=1
+HERDR_PANE_ID=w8T:p3
+herdr --version: herdr 0.9.0
+claude --version: 2.1.273 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: 290d66def5861f22edba6ed03557641cdb0efa56
+woof worktree status --porcelain:
+(clean)
+
+== fixture ==
+live root: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021
+repo (fixed, not re-initialized by this script): /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+run dir: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run
+input (/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/input.json):
+{
+  "schemaVersion": 1,
+  "repo": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+  "task": {
+    "title": "Implement reverseWords",
+    "description": "Implement `reverseWords(text)` in `src/reverse-words.mjs`: the words of `text` in reverse order, separated by single spaces.",
+    "acceptanceCriteria": [
+      "reverseWords reverses the order of the words"
+    ]
+  },
+  "limits": {
+    "maxAttemptsPerVisit": 1,
+    "maxVisitsPerStage": 1,
+    "maxRounds": 1,
+    "maxFormatRepairs": 1,
+    "runTimeoutMs": 1800000,
+    "readinessWaitMs": 180000,
+    "blockedWaitMs": 180000,
+    "deliveryTimeoutMs": 60000
+  }
+}
+
+
+== run ==
+command: /opt/homebrew/Cellar/node/26.7.0/bin/node /Users/zielu/.herdr/worktrees/herdr-woof/feat-plan-build-review/dist/cli.js run start --input /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/input.json --project /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo --run-dir /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run --run-id live-l7-20260916-024021 --host herdr-pane
+launcher exit 0
+launcher stdout: {"outcome":"started","runId":"live-l7-20260916-024021","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run","workflow":{"name":"build-review","version":"1"},"host":{"mode":"herdr-pane","paneId":"w8T:pN","pid":50727},"configuration":{"sha256":"043bacf7e6b7ef5c2d70ab367a83747ae55abd6659f3f2ec114db34ca8c468a0","agents":{"builder":{"kind":"claude","model":"sonnet","source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json"},"reviewer":{"kind":"claude","model":"sonnet","source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json"}},"warnings":[]},"next":{"status":["woof","status","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run","--wait"],"cancel":["woof","run","cancel","/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run"]}}
+[step] ok   1. run start --host herdr-pane reported a started run with a host pid — exit 0, outcome started, pane w8T:pN, pid 50727
+[step] ok   2. the host dispatched work before the kill (not an idle host) — journal records 4, types ["run.opened","agent.assigned","attempt.opened","request.dispatched"]
+[step] ok   3. journal.lock is absent, so the kill cannot orphan the lock
+
+== kill ==
+kill -9 50727: exit 0 
+ps -p 50727 after the kill: gone
+[step] ok   4. the host process was killed and is gone — pid 50727
+
+== observation after the loss ==
+woof status exit 0: {"outcome":"status","status":{"schemaVersion":1,"kind":"woof.run.status","runId":"live-l7-20260916-024021","runDir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run","workflow":{"name":"build-review","version":"1"},"status":"running","openedAt":"2026-09-16T02:40:22.865Z","updatedAt":"2026-09-16T02:40:29.660Z","liveness":{"owner":"lost","host":{"state":"hosting","pid":50727,"hostname":"MacBook-Pro-Zielu.local","paneId":"w8T:pN","workspaceId":"w8T","startedAt":"2026-09-16T02:40:22.778Z","heartbeatMs":2000,"heartbeatAt":"2026-09-16T02:40:28.791Z","exitedAt":null,"exitCode":null}},"activeAttempts":[{"agentId":"builder","stageId":"build","visit":1,"attempt":1,"dispatchedAt":"2026-09-16T02:40:29.660Z"}],"lastGate":null,"attention":{"ambiguousDeliveries":[],"blocked":null},"counters":{"attemptsOpened":1,"visitsByStage":{"build":1},"attemptsByVisit":{"build/1":1},"submissionsAccepted":0,"submissionsDuplicate":0,"submissionsRejected":0,"rejectionsByReason":{},"dispatches":{"started":1,"not_delivered":0,"ambiguous":0},"replacementsByAgent":{},"rounds":0,"gatesByDecision":{"pass":0,"reject":0},"gatesByGate":{},"formatRepairsByVisit":{},"workRetriesByVisit":{},"blocks":0,"reconciliations":{"delivered":0,"abandoned":0}},"config":{"sha256":"043bacf7e6b7ef5c2d70ab367a83747ae55abd6659f3f2ec114db34ca8c468a0"},"cursor":"v1.4.448a5b99c847"},"result":null}
+[step] ok   5a. woof status reports the owner as lost — owner lost
+woof status --wait exit 8
+[step] ok   5b. woof status --wait exits 8 (owner lost), not 7 (still running)
+woof run cancel exit 0: {"outcome":"recorded","record":{"schemaVersion":1,"seq":5,"ts":"2026-09-16T02:40:36.158Z","type":"run.terminated","outcome":"cancelled","reason":"L7 runtime-loss probe"},"revision":5}
+[step] ok   6. woof run cancel exits 0 and records the cancellation — exit 0, outcome recorded, journal run.terminated/cancelled
+[step] ok   7. a killed host left no host-exit.json — absent
+
+== gate ==
+script source grep for agent read, pane read, send-keys: no matches
+woof worktree unchanged: true
+GATE L7 PASS: runtime loss — the observer reports loss instead of claiming active work — 8/8 steps
+
+run directory for operator cleanup: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/l7-20260916-024021/run
+note: carry-over C1 (a stale journal.lock after a kill) is a separate documented limit; this probe waits for the lock to be absent before killing, so it never exercises it.

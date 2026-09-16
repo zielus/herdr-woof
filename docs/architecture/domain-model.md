@@ -591,3 +591,30 @@ run start`/`run build-review` — foreground or pane-hosted — reject
   invocation's focused pane; `woof herdr cancel` cancels the project's one
   non-terminal run, whatever its owner, and refuses when more than one is
   active.
+
+## Implemented now (p5)
+
+Real shipped behavior for the built-in catalog and the optional artifact
+verdict marker — not design intent. Source: `src/workflows/catalog.ts`,
+`src/journal/{records,record-fields}.ts`, `src/state/reducer.ts`.
+
+- **The built-in workflow catalog is a name-keyed, null-prototype registry
+  (D2).** `BUILT_IN_WORKFLOWS` (`src/workflows/catalog.ts`) holds both
+  `build-review` and `plan-build-review`; `builtInWorkflow(name)` and
+  `builtInWorkflowNames()` are the only readers, and both consult own keys
+  only (`Object.hasOwn`), so a workflow literally named `constructor` or
+  `toString` is `workflow_not_found` rather than resolving to an inherited
+  function. `builtinCatalog()` (`src/config/resolve.ts`) builds its
+  `roles`/`workflows` dictionaries the same way, from the same catalog — a
+  third built-in role, `planner`, needed no branch to add, and neither did
+  the second workflow.
+- **`attempt.opened.artifactVerdictMarker?` is additive.** The optional
+  marker a stage declares (p5 D5) is journaled on the `attempt.opened`
+  record and validated by `attemptOpenedProblem`'s exact-key check exactly
+  like every other optional field: present or absent, both are valid; an
+  unrelated extra key is still refused, so the key set stays exact.
+  `state/reducer.ts` stores the whole record on the accepted attempt
+  (`opened: record`), so `submit` reads the marker off the replayed attempt
+  with no further plumbing. `test/fixtures/p1-journal.jsonl` and
+  `p2-journal.jsonl`, written before this field existed, still replay clean
+  through `readJournal`.

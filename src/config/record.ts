@@ -1,7 +1,7 @@
 import { claudeTrustStatus } from "../runtime/claude/trust.js";
 import type { AdmissionConfiguration, AdmissionProvenance } from "../scheduler/admission.js";
 import type { WorkflowDefinition } from "../scheduler/definition.js";
-import { buildReviewWorkflow } from "../workflows/build-review.js";
+import { builtInWorkflow } from "../workflows/catalog.js";
 import type { ConfigWarning } from "./discover.js";
 import type { Provenance, ResolvedConfiguration } from "./resolve.js";
 import { configuresPermissionBypass, type LimitKey, type RoleValue } from "./schema.js";
@@ -14,9 +14,7 @@ import { configuresPermissionBypass, type LimitKey, type RoleValue } from "./sch
 
 /** The compiled built-in workflow definition of that name, if any. */
 export function builtinWorkflowDefinition(name: string): WorkflowDefinition<unknown> | undefined {
-  return name === buildReviewWorkflow.name
-    ? (buildReviewWorkflow as unknown as WorkflowDefinition<unknown>)
-    : undefined;
+  return builtInWorkflow(name);
 }
 
 export function admissionConfiguration(

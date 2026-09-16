@@ -2,8 +2,10 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import {
+  MAX_VERDICT_MARKER,
   isId,
   isPositiveInteger,
+  isVerdictMarker,
   type AttemptIdentity,
   type RejectionDetail,
 } from "../contracts/envelope.js";
@@ -30,6 +32,11 @@ export interface OpenAttemptInput extends AttemptIdentity {
   verdicts?: readonly string[];
   /** Herdr pane expected to submit, compared with the submitter's HERDR_PANE_ID. */
   paneId?: string;
+  /**
+   * Opt-in artifact verdict marker the stage declares (p5 D5). Journaled on the
+   * attempt so it reaches the worker's own `woof submit` process by replay.
+   */
+  artifactVerdictMarker?: string;
   lock?: LockOptions;
 }
 
@@ -39,6 +46,7 @@ export interface OpenedAttempt extends AttemptIdentity {
   /** Absolute output directory the worker must write its artifact into. */
   artifactDir: string;
   paneId?: string;
+  artifactVerdictMarker?: string;
 }
 
 export type OpenAttemptOutcome =
@@ -113,6 +121,9 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
           verdicts,
           artifactDir,
           ...(input.paneId !== undefined ? { paneId: input.paneId } : {}),
+          ...(input.artifactVerdictMarker !== undefined
+            ? { artifactVerdictMarker: input.artifactVerdictMarker }
+            : {}),
         };
         // A new journal is checked as if run.opened preceded the attempt.
         const refusal = refuseAppend(
@@ -164,6 +175,9 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
               verdicts,
               artifactDir: join(runDir, artifactDir),
               ...(input.paneId !== undefined ? { paneId: input.paneId } : {}),
+              ...(input.artifactVerdictMarker !== undefined
+                ? { artifactVerdictMarker: input.artifactVerdictMarker }
+                : {}),
             },
           };
         } catch (error) {
@@ -197,6 +211,11 @@ function validateInput(input: OpenAttemptInput): void {
   }
   if (input.paneId !== undefined && (typeof input.paneId !== "string" || input.paneId === "")) {
     problems.push("paneId must be a non-empty string");
+  }
+  if (input.artifactVerdictMarker !== undefined && !isVerdictMarker(input.artifactVerdictMarker)) {
+    problems.push(
+      `artifactVerdictMarker must be a non-empty single-line string of at most ${MAX_VERDICT_MARKER} characters`,
+    );
   }
   if (problems.length > 0) throw new TypeError(problems.join("; "));
 }

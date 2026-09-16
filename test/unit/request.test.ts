@@ -10,9 +10,19 @@ type Launch = (
   agent: Json,
 ) => { ok: true; args: string[] } | { ok: false; reason: string; message: string };
 
+type Definition = {
+  stages: Array<{
+    kind: string;
+    stageId?: string;
+    request?: (ctx: Json) => { goal: string; instructions: string };
+  }>;
+};
+
 let renderRequest: Render;
 let shellQuote: (value: string) => string;
 let launchArgs: Launch;
+let definitions: Array<[string, Definition]>;
+let reviewIsCanonical: string;
 
 beforeAll(async () => {
   ({ renderRequest, shellQuote } = await loadDist<{
@@ -20,6 +30,98 @@ beforeAll(async () => {
     shellQuote: typeof shellQuote;
   }>("scheduler/request.js"));
   ({ launchArgs } = await loadDist<{ launchArgs: Launch }>("scheduler/launch.js"));
+  const buildReview = await loadDist<{
+    buildReviewWorkflow: Definition;
+    REVIEW_IS_CANONICAL: string;
+  }>("workflows/build-review.js");
+  const planBuildReview = await loadDist<{ planBuildReviewWorkflow: Definition }>(
+    "workflows/plan-build-review.js",
+  );
+  reviewIsCanonical = buildReview.REVIEW_IS_CANONICAL;
+  definitions = [
+    ["build-review", buildReview.buildReviewWorkflow],
+    ["plan-build-review", planBuildReview.planBuildReviewWorkflow],
+  ];
+});
+
+describe("the repair request states that the accepted review is canonical (LV-102, PB-101)", () => {
+  const repairOf = (definition: Definition) =>
+    definition.stages.find((stage) => stage.kind === "agent" && stage.stageId === "repair");
+
+  const requestOf = (definition: Definition, enteredBy: Json | null) => {
+    const stage = repairOf(definition);
+    expect(stage?.request, "the definition has a repair stage with a request()").toBeDefined();
+    const request = stage?.request as (ctx: Json) => { goal: string; instructions: string };
+    return request({
+      input: { task: { title: "t", description: "d", acceptanceCriteria: ["a"] } },
+      runId: "run-7",
+      history: { gates: [], latestAccepted: {} },
+      stageId: "repair",
+      visit: 1,
+      attempt: 1,
+      round: 1,
+      enteredBy,
+    });
+  };
+  const rendered = (definition: Definition, enteredBy: Json | null) =>
+    requestOf(definition, enteredBy).instructions;
+  const labels = (definition: Definition, enteredBy: Json | null) =>
+    (
+      requestOf(definition, enteredBy) as unknown as { inputs: Array<{ label: string }> }
+    ).inputs.map((ref) => ref.label);
+
+  it("is the exact sentence, in both built-in definitions, for a repair the review entered", () => {
+    // A live builder declined a requirement it met only inside the review
+    // artifact, reading it as a possible prompt injection, and the run exhausted.
+    // The request never said whose word the review was; this is that sentence.
+    expect(reviewIsCanonical).toBe(
+      "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.",
+    );
+    for (const [name, definition] of definitions) {
+      const enteredBy = { kind: "stage", gate: "review" };
+      expect(rendered(definition, enteredBy), name).toContain(reviewIsCanonical);
+      // The sentence and the review input are the same condition.
+      expect(labels(definition, enteredBy), name).toContain("review");
+    }
+  });
+
+  it("says nothing about a review the check-entered repair was never given (PB-101)", () => {
+    // A verify failure can precede every review, so that repair carries no review
+    // reference at all. Telling its builder that "the accepted review artifact is
+    // canonical" would describe an artifact that is not in its inputs.
+    for (const [name, definition] of definitions) {
+      for (const enteredBy of [{ kind: "check", gate: "verify" }, null]) {
+        const where = `${name} entered by ${enteredBy === null ? "nothing" : enteredBy.gate}`;
+        expect(labels(definition, enteredBy), where).not.toContain("review");
+        expect(rendered(definition, enteredBy), where).not.toContain(reviewIsCanonical);
+        // Removing it leaves no double space behind.
+        expect(rendered(definition, enteredBy), where).not.toContain("  ");
+      }
+      // The check-entered repair keeps its own wording and its own evidence.
+      const checkEntered = requestOf(definition, { kind: "check", gate: "verify" });
+      expect(checkEntered.goal, name).toBe("Repair the change: the verification command failed.");
+      expect(labels(definition, { kind: "check", gate: "verify" }), name).toContain(
+        "verification output",
+      );
+    }
+  });
+
+  it("reaches the worker: the sentence survives into the rendered request text", () => {
+    for (const [name, definition] of definitions) {
+      const request = requestOf(definition, { kind: "stage", gate: "review" });
+      const out = renderRequest(input({ goal: request.goal, instructions: request.instructions }));
+      expect(out.ok, name).toBe(true);
+      expect(out.ok && out.text, name).toContain(reviewIsCanonical);
+      // It is in the section the worker is told to act on.
+      expect(out.ok && out.text.split("## What to do")[1], name).toContain(reviewIsCanonical);
+
+      // And the check-entered request renders without it.
+      const check = requestOf(definition, { kind: "check", gate: "verify" });
+      const checkOut = renderRequest(input({ goal: check.goal, instructions: check.instructions }));
+      expect(checkOut.ok, name).toBe(true);
+      expect(checkOut.ok && checkOut.text, name).not.toContain(reviewIsCanonical);
+    }
+  });
 });
 
 const TREE = "c".repeat(40);
@@ -192,6 +294,61 @@ Do not edit files under /runs/run-7 other than /runs/run-7/artifacts/build/visit
       "Journaled rejections for that attempt: none — no submission was recorded.",
     );
     expect(text({ attempt: 3, cause: "work_retry" })).toContain("attempt 3 · work retry · round 0");
+  });
+
+  it("bounds the quoted rejections so a format repair always fits (PR #7 request-bound.ts:112)", () => {
+    // Rejection messages come from a worker's own output, not from the admitted
+    // input, and the number of rejections for one attempt is unbounded. Before
+    // this, an input the admission bound accepted could later produce a
+    // format-repair request over the 32 KiB cap.
+    const rejections = (count: number, size: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        reason: `envelope_invalid_${index}`,
+        message: "x".repeat(size),
+      }));
+    for (const [count, size] of [
+      [1, 40 * 1024],
+      [2, 20 * 1024],
+      [50, 10 * 1024],
+      [500, 1024],
+    ] as Array<[number, number]>) {
+      const out = renderRequest(
+        input({
+          attempt: 2,
+          cause: "format_repair",
+          previous: { attempt: 1, rejections: rejections(count, size) },
+        }),
+      );
+      expect(out.ok, `${count} rejections of ${size} bytes`).toBe(true);
+      expect(out.bytes, `${count} rejections of ${size} bytes`).toBeLessThan(32 * 1024);
+    }
+
+    // What the worker is told when data was cut: the count of older rejections
+    // omitted, and a per-message truncation note naming both sizes.
+    const many = text({
+      attempt: 2,
+      cause: "format_repair",
+      previous: { attempt: 1, rejections: rejections(7, 9000) },
+    });
+    expect(many).toContain(
+      "Journaled rejections for that attempt (the 5 most recent of 7; 2 older omitted):",
+    );
+    expect(many).toContain("(message truncated: 9000 bytes, quoted 2048)");
+    // The most recent are the ones kept.
+    expect(many).toContain("envelope_invalid_6:");
+    expect(many).not.toContain("envelope_invalid_1:");
+
+    // A short message is quoted whole, with no note and no omission line.
+    const short = text({
+      attempt: 2,
+      cause: "format_repair",
+      previous: { attempt: 1, rejections: [{ reason: "artifact_empty", message: "it is empty" }] },
+    });
+    expect(short).toContain(
+      "Journaled rejections for that attempt:\n- artifact_empty: it is empty",
+    );
+    expect(short).not.toContain("truncated");
+    expect(short).not.toContain("older omitted");
   });
 
   it("refuses a request larger than 32 KiB", () => {

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-16
+
 ### Added
 
 - SDK foundation for Woof: a compiled Node ESM package entry point, a
@@ -92,3 +94,43 @@ definition_syntax_unsupported|definition_load_failed`; `WorkflowDefinition`
   a second built-in workflow, MCP, crash resume/re-hosting a lost run, and
   parallel scheduling remain out of scope. No version bump (`check:version`
   stays at 0.0.0).
+- A second built-in workflow, an external workflow proof, an opt-in artifact
+  verdict check, and acceptance evidence (p5): the built-in `plan-build-review`
+  workflow (`src/workflows/plan-build-review.ts`) adds a planner stage ahead
+  of the same build/verify/review/repair loop, with `plan.md` reaching every
+  builder and repair request as an accepted `InputRef` (never inlined) and no
+  re-planning or plan-approval gate in this version; the built-in workflow
+  catalog becomes a name-keyed, null-prototype registry
+  (`src/workflows/catalog.ts`, `BUILT_IN_WORKFLOWS`) and `planner` becomes a
+  third built-in role, so neither workflow needed a branch anywhere in
+  configuration resolution or the scheduler. `woof run start --workflow
+<name>` and `/woof:run --workflow <name>` resolve a project- or user-authored
+  workflow module from `.woof/workflows/`, with no engine change and no
+  import from Woof required; a discovered workflow is admitted once, in the
+  pane host, never pre-admitted by the launcher, proved live end to end by an
+  external `scribe` example workflow
+  (`docs/research/external-workflow-live.log`, 8/8 gates). An opt-in,
+  first-line-anchored artifact/envelope verdict check (`artifactVerdictMarker`
+  on an `AgentStage`, check 17b in `woof submit`) rejects
+  `verdict_artifact_mismatch` when a reviewer's declared marker line disagrees
+  with its own envelope verdict; both built-in `review` stages opt in. A
+  three-part acceptance runner (`scripts/acceptance/matrix.mjs`,
+  `scripts/acceptance/collect.mjs`/`bun run acceptance:collect`,
+  `docs/acceptance/v1-evidence.md`) ties every acceptance-matrix row to a
+  named test or a committed live-log gate, or to a written reason under
+  `v1-evidence.md`'s "Documented limits"; `docs/research/build-review-live.log`
+  is replaced with a fresh 13/13 run (the previously committed log recorded a
+  failing `GATE 10` and 12/13). **API note (carry-over C1):** `RunResult` and
+  snapshot per-key records (by stage id, role name, reason or workflow name)
+  are built with `Object.create(null)` and stay that way in this first
+  release — the shape is what keeps a key literally named `constructor` or
+  `toString` safe; a consumer that needs to `deepStrictEqual` an in-memory
+  result against a parsed one should compare both in JSON form
+  (`scripts/live/lib/observer.mjs`'s `jsonForm`), not assume a plain-object
+  prototype. MCP, crash resume/re-hosting a lost run, parallel scheduling, a
+  second agent kind, per-stage structural artifact schemas, and role
+  instructions/context files in configuration remain out of scope. This release
+  carries the version bump to `0.1.0` across `package.json`, `herdr-plugin.toml`
+  and the Claude Code plugin manifest: `0.1.0` is a version and a git tag on
+  this repository, not an npm publish (the package stays `"private": true`), and
+  the tag itself is created after the merge, not by this commit.

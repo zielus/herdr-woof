@@ -7,12 +7,15 @@ diagnostic CLI, a first working slice of result handoff (a worker-callable
 run-facts and snapshot layer (run plans, journaled agent
 assignment/dispatch/termination, derived snapshots and events, and a Herdr
 runtime adapter), a p3 scheduler that runs the built-in `build-review`
-workflow end to end, and a p4 product-integration layer: `.woof`/`~/.woof`
+workflow end to end, a p4 product-integration layer: `.woof`/`~/.woof`
 configuration with provenance, `woof run start` hosting a run in a Herdr
 pane with claim/heartbeat liveness, a read-only inspection CLI, and
-functional Herdr and Claude Code plugins — see below. It does not run a
-second built-in workflow, delegate agents outside a workflow, resume a
-crashed run, or publish a stable `HerdrAgentsSDK` API yet.
+functional Herdr and Claude Code plugins, and a p5 layer: a second built-in
+workflow (`plan-build-review`), project-authored workflows discovered from
+`.woof/workflows/`, and `--workflow <name>` on both `woof run start` and
+`/woof:run` — see below. It does not delegate agents outside a workflow,
+resume a crashed run, run parallel work within a run, or publish a stable
+`HerdrAgentsSDK` API yet.
 
 ## Requirements
 
@@ -223,11 +226,13 @@ See [domain model](docs/architecture/domain-model.md#implemented-now-p3),
 for the definition contract, the scheduler's decision rules, format repair,
 blocking/reconciliation, revision binding and the terminal `RunResult`.
 
-What still does not exist: a second built-in workflow (`plan-build-review`,
-phase 5), an MCP adapter, crash resume or re-hosting a lost run, and parallel
-scheduling (one active request per agent, one sequential decision loop).
-`.woof`/`~/.woof` configuration and run hosting are implemented — see
-[Product integration (p4)](#product-integration-p4) below.
+What still does not exist: an MCP adapter, crash resume or re-hosting a lost
+run, and parallel scheduling (one active request per agent, one sequential
+decision loop). `.woof`/`~/.woof` configuration and run hosting are
+implemented — see [Product integration (p4)](#product-integration-p4) below.
+A second built-in workflow and project-authored workflows are implemented —
+see [Plan-build-review and project workflows (p5)](#plan-build-review-and-project-workflows-p5)
+below.
 
 ## Product integration (p4)
 
@@ -287,6 +292,60 @@ See [configuration](docs/architecture/configuration.md#implemented-now-p4),
 [domain model](docs/architecture/domain-model.md#implemented-now-p4),
 [observability](docs/architecture/observability.md#implemented-now-p4) and
 [plugins](docs/integrations/plugins.md) for the full contracts.
+
+## Plan-build-review and project workflows (p5)
+
+A second built-in workflow, `plan-build-review`, adds a planner before the
+same build/verify/review/repair loop: plan → build → verify (optional) →
+review → repair, until a review passes on the exact repaired revision or a
+limit ends the run. The planner's `plan.md` reaches every builder and repair
+request as an accepted input, by path, receipt and sha256 — never inlined —
+exactly the way an accepted review already does. There is no re-planning (a
+failed review or check routes to `repair`, never back to `plan`) and no
+plan-approval gate in this version:
+
+```sh
+cat > input.json <<'EOF'
+{
+  "schemaVersion": 1,
+  "repo": "/abs/path/to/git/worktree",
+  "task": {
+    "title": "Implement titleCase",
+    "description": "Implement titleCase(text) in src/title-case.mjs.",
+    "acceptanceCriteria": ["capitalizes each word", "tests pass"]
+  },
+  "constraints": ["Keep the function pure; no repository files besides src/ and test/."],
+  "verify": { "command": ["node", "--test"], "timeoutMs": 120000 }
+}
+EOF
+bin/woof run start --workflow plan-build-review --input input.json
+```
+
+**Project and user workflows.** `--workflow <name>` (else `defaults.workflow`,
+else `build-review`) also resolves a definition module a project or the
+user has authored, at `<scope>/.woof/workflows/<name>.{mjs,js,ts}` — no
+import from Woof is required; every type in the contract is structural. A
+discovered workflow is not pre-admitted by the launcher: its module body runs
+exactly once, in the pane host, which writes any rejection to that run's
+`outcome.json` (the source of the reason and details); the launcher reads it
+and reports the same rejection as its own exit code — 2 for an admission
+rejection, 3 for an infrastructure reason (for example the host's own claim
+failing). `woof config
+show --workflow <name>` reports whether a name resolves and from where
+(`version: null` for a file, with `path`/`sha256` identifying it instead, since
+`config show` never imports a non-built-in module). `/woof:run` takes the same
+`--workflow <name>` as a leading `$ARGUMENTS` prefix.
+
+The engine required no per-workflow branch for any of this: the built-in
+catalog is a name-keyed registry (`src/workflows/catalog.ts`), and the same
+admission, scheduler and submission code serve every definition by its own
+declared shape. Live-verified: `docs/research/plan-build-review-live.log`
+(13/13 gates) and `docs/research/external-workflow-live.log` (8/8 gates, a
+`scribe` note-writing workflow run via `/woof:run --workflow scribe`). See
+[initial workflows](docs/workflows/initial-workflows.md#implemented-now-p5),
+[workflow authoring](docs/workflows/authoring.md#implemented-now-p5) and
+[the acceptance evidence](docs/acceptance/v1-evidence.md) for the full
+contracts and evidence.
 
 ## Integrations and scope
 

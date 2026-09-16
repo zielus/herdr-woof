@@ -679,6 +679,9 @@ export async function runWorkflow<Input>(
             visit: action.visit,
             attempt: action.attempt,
             verdicts: stage.verdicts,
+            ...(stage.artifactVerdictMarker !== undefined
+              ? { artifactVerdictMarker: stage.artifactVerdictMarker }
+              : {}),
             paneId: agent.assignment?.paneId as string,
             ...lockWithin(snapshot),
           }),

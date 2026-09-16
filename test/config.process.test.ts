@@ -405,6 +405,7 @@ describe("woof config show: configuration matrix", () => {
     expect(Object.keys(roles).toSorted()).toEqual([
       "builder",
       "constructor",
+      "planner",
       "reviewer",
       "toString",
     ]);
@@ -426,11 +427,11 @@ describe("woof config show: configuration matrix", () => {
 
     // A workflow whose role is an inherited key nobody defines is role_unresolved, never a throw.
     const module = readFileSync(
-      join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"),
+      join(repoRoot, "test", "fixtures", "workflows", "unresolved-role.mjs"),
       "utf8",
     )
-      .replace('name: "planner-role"', 'name: "proto-role"')
-      .replace('role: "planner"', 'role: "hasOwnProperty"');
+      .replace('name: "unresolved-role"', 'name: "proto-role"')
+      .replace('role: "auditor"', 'role: "hasOwnProperty"');
     writeJson(join(env.repo, ".woof", "workflows", "proto-role.mjs"), module);
     const unresolved = startForeground(env, {}, ["--workflow", "proto-role"], {
       WOOF_TEST_REPO: env.repo,
@@ -460,9 +461,9 @@ describe("woof config show: configuration matrix", () => {
     const path = writeJson(
       join(env.repo, ".woof", "workflows", "constructor.mjs"),
       readFileSync(
-        join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"),
+        join(repoRoot, "test", "fixtures", "workflows", "unresolved-role.mjs"),
         "utf8",
-      ).replace('name: "planner-role"', 'name: "constructor"'),
+      ).replace('name: "unresolved-role"', 'name: "constructor"'),
     );
     const own = show(env, ["--project", env.repo, "--workflow", "constructor"]);
     expect(own.status, own.stdout + own.stderr).toBe(0);
@@ -492,18 +493,18 @@ describe("woof config show: configuration matrix", () => {
 
   it("C8 (admission): a workflow role nobody defines is role_unresolved listing the searched paths", () => {
     const env = setup();
-    const module = join(env.repo, ".woof", "workflows", "planner-role.mjs");
+    const module = join(env.repo, ".woof", "workflows", "unresolved-role.mjs");
     writeJson(
       module,
-      readFileSync(join(repoRoot, "test", "fixtures", "workflows", "planner-role.mjs"), "utf8"),
+      readFileSync(join(repoRoot, "test", "fixtures", "workflows", "unresolved-role.mjs"), "utf8"),
     );
-    const out = startForeground(env, {}, ["--workflow", "planner-role"], {
+    const out = startForeground(env, {}, ["--workflow", "unresolved-role"], {
       WOOF_TEST_REPO: env.repo,
     });
     expect(out.status, out.stdout + out.stderr).toBe(2);
     expect(out.json).toMatchObject({ reason: "role_unresolved" });
-    expect(out.json?.["message"]).toContain(join(env.repo, ".woof", "roles", "planner.json"));
-    expect(out.json?.["message"]).toContain(join(env.home, ".woof", "roles", "planner.json"));
+    expect(out.json?.["message"]).toContain(join(env.repo, ".woof", "roles", "auditor.json"));
+    expect(out.json?.["message"]).toContain(join(env.home, ".woof", "roles", "auditor.json"));
   });
 
   it("C3: limits compose per key across input, project, user and built-in, recorded in config.json", () => {

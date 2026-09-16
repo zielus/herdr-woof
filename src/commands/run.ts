@@ -37,7 +37,10 @@ export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workfl
                       [--split-from <pane-id>] [--runtime-module <path>]
 
 Starts a workflow run. The workflow is --workflow, else the configured default,
-else build-review; configuration comes from <project>/.woof and ~/.woof (see
+else build-review. Built in: build-review (build, verify, review, repair) and
+plan-build-review (the same with a planner ahead of it, whose plan.md every
+builder turn receives as an input); a project or user .woof/workflows/<name>.mjs
+defines any other. Configuration comes from <project>/.woof and ~/.woof (see
 woof config show), and the run records what it resolved in config.json.
 --project defaults to the working directory; the input's repository must be
 that project's git top level. The run directory is --run-dir, else

@@ -416,9 +416,9 @@ console.log(JSON.stringify(admitted));`,
 
   it("refuses an agent no input, role file or built-in role defines as role_unresolved", () => {
     const { repo, runDir } = repoDir();
-    const planner = join(fixtures, "planner-role.mjs");
+    const unresolved = join(fixtures, "unresolved-role.mjs");
     const out = admitWith(
-      planner,
+      unresolved,
       {},
       {
         projectRoot: repo,
@@ -432,27 +432,27 @@ console.log(JSON.stringify(admitted));`,
     expect(out).toMatchObject({
       ok: false,
       reason: "role_unresolved",
-      details: [{ field: "agents.planner" }],
+      details: [{ field: "agents.auditor" }],
     });
-    expect(out["message"]).toContain(`${repo}/.woof/roles/planner.json`);
-    expect(out["message"]).toContain("/home/.woof/roles/planner.json");
+    expect(out["message"]).toContain(`${repo}/.woof/roles/auditor.json`);
+    expect(out["message"]).toContain("/home/.woof/roles/auditor.json");
     // Without configuration the omitted agent is refused the same way.
-    expect(admitWith(planner, {}, null, runDir, { WOOF_TEST_REPO: repo })).toMatchObject({
+    expect(admitWith(unresolved, {}, null, runDir, { WOOF_TEST_REPO: repo })).toMatchObject({
       ok: false,
       reason: "role_unresolved",
     });
-    // A configured planner role admits it.
+    // A configured auditor role admits it.
     const configured = admitWith(
-      planner,
+      unresolved,
       {},
       {
         roles: {
-          planner: {
+          auditor: {
             kind: "claude",
             model: null,
             args: [],
             source: "user",
-            path: "/home/.woof/roles/planner.json",
+            path: "/home/.woof/roles/auditor.json",
           },
         },
         limits: {},
@@ -462,7 +462,7 @@ console.log(JSON.stringify(admitted));`,
     );
     expect(configured).toMatchObject({
       ok: true,
-      provenance: { agents: { planner: { source: "user" } } },
+      provenance: { agents: { auditor: { source: "user" } } },
     });
   });
 
