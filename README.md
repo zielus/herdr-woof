@@ -174,8 +174,9 @@ exits 2 when the report lists any problem (`herdr_unavailable`,
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
 `bin/woof --help` also lists `run host` (internal: hosts a launched run in this
-process). A command that `--help` does not list exits 1, as not implemented or as
-a usage error.
+process). An unrecognized command prints `woof: unknown command "<name>"; see
+woof --help` to stderr and exits 1; a recognized command used incorrectly is a
+usage error, also exit 1.
 
 ## Result handoff
 
