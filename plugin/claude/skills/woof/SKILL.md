@@ -46,6 +46,9 @@ Call the CLI as `node <woof.node> <woof.cli>` using the paths from
 - `woof run cancel <run-dir>`: cancel a run.
 - `woof config show [--project <repo>]`: the effective configuration and where
   each value came from.
+- `woof doctor [--json] [--strict]`: Herdr/Claude Code availability, the
+  Claude folder-trust status and configuration validity; `--strict` exits 2
+  when any problem is reported.
 
 ## Configuration
 

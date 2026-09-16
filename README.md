@@ -142,7 +142,7 @@ hosting, and read-only inspection:
 ```sh
 bin/woof --help
 bin/woof --version
-bin/woof doctor [--json] [--repo <dir>]
+bin/woof doctor [--json] [--strict] [--repo <dir>]
 bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 bin/woof submit --envelope <path|-> [--run-dir <dir>]
@@ -165,8 +165,11 @@ bin/woof herdr status|start|cancel|doctor
 ```
 
 `doctor` reports whether Herdr and Claude Code can be invoked, and (with
-`--json`) the read-only Claude folder-trust status of a repository. Neither
-Herdr nor Claude Code is required for the command to complete.
+`--json`) the read-only Claude folder-trust status of a repository, resolved
+to that repository's git top level. Neither Herdr nor Claude Code is
+required for the command to complete. `doctor` exits 0 by default; `--strict`
+exits 2 when the report lists any problem (`herdr_unavailable`,
+`claude_unavailable`, `trust_untrusted`, `trust_unknown`, `config_invalid`).
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.

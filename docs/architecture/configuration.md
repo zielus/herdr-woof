@@ -190,12 +190,27 @@ bypassPermissions`, split or `=`-joined) are allowed but produce warning
 bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
   file mid-run changes nothing about that run.
 - **Claude Code trust (D10, advisory only).** `claudeTrustStatus(dir,
-{homeDir})` reads `<home>/.claude.json` (16 MiB cap, regular files only,
-  never writes) and reports `trusted`, `untrusted`, or `unknown` (missing/
-  unreadable file, parse failure, no `projects` object). It never rejects a
-  run; `woof doctor --json` and `run start`'s `warnings[]` report it, and
-  `/woof:run` asks the user to resolve `untrusted`/`unknown` before
-  continuing. The engine's own `startup_blocked` stays the authority.
+{homeDir})` reads `<home>/.claude.json` (16 MiB cap, a regular file opened
+  `lstat` + `O_NOFOLLOW` with a device/inode match, never writes) and reports
+  `trusted`, `untrusted`, or `unknown` (missing/unreadable/non-regular file,
+  parse failure, no `projects` object). A symlinked `~/.claude.json` reports
+  `unknown` rather than following it. It never rejects a run; `woof doctor
+[--json]` and `run start`'s `warnings[]` report it, and `/woof:run` asks the
+  user to resolve `untrusted`/`unknown` before continuing. The engine's own
+  `startup_blocked` stays the authority.
+- **`woof doctor`'s `trust.dir` is the git top level, exact-key.** `doctor`
+  resolves `--repo` (or the working directory) to the git top level of that
+  path — spelled as the ancestor of the given path that is that top level, so
+  a symlinked spelling is kept, while the real path is also tried as a key —
+  or that directory itself outside a git work tree. Trust is read for exactly
+  that key; an ancestor's trust and a subdirectory's own key never count
+  (D10's ancestor-trust rule is unchanged). Both `--json` and human-mode
+  output now render the same report from the same probes (`herdr`/`claude
+--version`); JSON gains an additive `problems: string[]` (`DoctorProblem` in
+  `src/commands/doctor.ts`, not in the package index), populated in order from
+  `herdr_unavailable`, `claude_unavailable`, `trust_untrusted`,
+  `trust_unknown`, `config_invalid`. `--strict` exits 2 when `problems` is
+  non-empty, in both modes; without it `doctor` still always exits 0.
 - **Non-goals (unchanged from the plan).** Role instructions and context
   files are not part of configuration — per-run `instructions` stays in the
   input, and the role file schema reserves no such key. A per-run `.herdr/`
