@@ -21,6 +21,14 @@ All notable changes to this project are documented here. The format follows
 - `woof agent start <role>`: starts one agent from a resolved role
   definition, in a new or existing Herdr pane, outside any workflow run — no
   run directory, no `--add-dir`, no journal.
+- Release tooling: `scripts/release/{preflight,bump,notes}.ts` and `bun run
+release:{preflight,bump,notes}`; `prepublishOnly: bun run build`; and
+  `.github/workflows/release.yml` (tag `v*` → verify → publish to npm via
+  trusted publishing/OIDC, no token in this repository). See
+  `.claude/skills/release/SKILL.md` for the process.
+- CI: a `test-macos` job (`macos-latest`, Node 22.18.0); every `uses:` in
+  `ci.yml` and `release.yml` is now pinned to a 40-hex commit SHA with a
+  version comment.
 
 ### Changed
 
