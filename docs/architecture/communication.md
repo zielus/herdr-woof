@@ -298,11 +298,12 @@ blind resends. [Herdr agent automation](https://herdr.dev/docs/agent-automation/
 p2 records this certainty directly: `request.dispatched.delivery` is
 `started | not_delivered | ambiguous`, each with its own closed `reason` set
 (`DISPATCH_REASONS` in `src/domain/types.ts`), so a timeout can never be
-recorded as provably not delivered. `not_delivered`'s reason set includes
-`precondition_failed` (a failed precondition read, or the delivery deadline
-expiring before the prompt could be sent): unlike its siblings, which end the
-run `failed`, this reason is retried as a new `work_retry` attempt, bounded
-by `maxAttemptsPerVisit`. See
+recorded as provably not delivered. Only `not_found` and `runtime_unavailable`
+end the run `failed`; every other `not_delivered` reason — `agent_busy`,
+`agent_blocked`, `invalid_request`, and `precondition_failed` (a failed
+precondition read, or the delivery deadline expiring before the prompt could
+be sent) — is retried as a new `work_retry` attempt, bounded by
+`maxAttemptsPerVisit`. See
 [domain model](domain-model.md#implemented-now-p2) for the full reason set
 and its behavior. At most one dispatch is recorded per
 attempt (`dispatch_exists`); there is no resend, so trying again is only

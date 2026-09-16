@@ -52,7 +52,7 @@ Call the CLI as `node <woof.node> <woof.cli>` using the paths from
 - `woof agent start <role> [--split right|down | --pane <pane-id>] [--name
 <agent-name>] [--project <dir>]`: starts one agent from a resolved role, in
   a new or existing Herdr pane, outside any run — no run directory, no
-  journal.
+  `--add-dir`, no journal.
 
 ## Configuration
 

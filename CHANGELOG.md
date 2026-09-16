@@ -46,6 +46,9 @@ release:{preflight,bump,notes}`; `prepublishOnly: bun run build`; and
   following it.
 - `woof doctor`'s human-mode output now renders the same report `--json`
   does, from the same probes, instead of running `herdr status` separately.
+- The Herdr plugin's `doctor` action notification title now names any
+  problems: `Woof: doctor` with none, `Woof: doctor (1 problem)` for one,
+  `Woof: doctor (N problems)` for N ≥ 2; the action still exits 0.
 - `herdr cancel` with no active run now exits 2 (previously 0); the JSON
   outcome and notification text are unchanged.
 - An unknown CLI command now prints `woof: unknown command "<name>"; see

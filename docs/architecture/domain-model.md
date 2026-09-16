@@ -163,15 +163,16 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   `request.dispatched` records the delivery certainty of the one dispatch
   attempt made for the attempt (`started | not_delivered | ambiguous`, each
   with its own closed `reason` set — every `not_delivered` reason means
-  nothing was sent, not proof a prompt went out). Most `not_delivered`
-  reasons (`not_found`, `agent_blocked`, `agent_busy`, `invalid_request`,
-  `runtime_unavailable`) end the run `failed`; `precondition_failed` — a
-  failed precondition read, or the delivery deadline expiring before the
-  prompt could be sent — is retried instead: the scheduler opens a new
-  attempt with cause `work_retry`, bounded by `maxAttemptsPerVisit` (ends
-  `exhausted{maxAttemptsPerVisit}`). A genuinely unreachable runtime (a
-  missing binary, `HERDR_ENV` unset, or an unreachable server) still reports
-  `runtime_unavailable`, and `not_found` still fails the run. **A 0.1.0
+  nothing was sent, not proof a prompt went out). Only two reasons end the
+  run `failed`: `not_found` (`failed{reason:"agent_gone: …"}`, a genuinely
+  unreachable runtime such as a missing binary, `HERDR_ENV` unset, or an
+  unreachable server) and `runtime_unavailable`
+  (`failed{reason:"runtime_unavailable: …"}`). Every other `not_delivered`
+  reason — `agent_busy`, `agent_blocked`, `invalid_request`, and
+  `precondition_failed` (a failed precondition read, or the delivery
+  deadline expiring before the prompt could be sent) — is retried instead:
+  the scheduler opens a new attempt with cause `work_retry`, bounded by
+  `maxAttemptsPerVisit` (ends `exhausted{maxAttemptsPerVisit}`). **A 0.1.0
   reader refuses a 0.1.1 journal containing `precondition_failed`**
   (cross-version journal reading is not promised). A second dispatch for the
   same attempt is refused (`dispatch_exists`). There is no resend: sending
