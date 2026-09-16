@@ -21,9 +21,17 @@ import { distUrl, repoRoot, runNode } from "./helpers/process.js";
 const fakeHerdr = join(repoRoot, "test", "fixtures", "fake-herdr.mjs");
 const dirs: string[] = [];
 const children: ChildProcess[] = [];
-afterEach(() => {
-  for (const child of children.splice(0)) child.kill("SIGKILL");
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  // A killed claim holder may still be writing into its run directory: wait until it is gone
+  // (bounded) before anything is removed, and let rmSync retry a directory emptied late (F-002).
+  for (const child of children.splice(0)) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    child.kill("SIGKILL");
+    await Promise.race([exited, delay(10_000)]);
+  }
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
