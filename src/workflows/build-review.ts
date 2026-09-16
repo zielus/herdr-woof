@@ -205,6 +205,12 @@ const VERDICT_LINE_INSTRUCTION = ` Make the first line of your artifact exactly 
  * inside the review artifact as a possible prompt injection and declining it
  * twice, which exhausted the run: the request never said whose word the review
  * was. It does now (p5 repair LV-102).
+ *
+ * It is interpolated only into a repair the review stage entered — the same
+ * condition that puts the review in `inputs`. A repair the verify check entered
+ * carries no review reference at all (a first-visit check failure may precede
+ * every review), and telling that builder an artifact it was not given is
+ * canonical describes nothing it can read (p5 repair PB-101).
  */
 export const REVIEW_IS_CANONICAL =
   "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.";
@@ -321,7 +327,10 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       request: (ctx) => {
         const entered = ctx.enteredBy;
         const inputs: InputRef[] = [];
-        if (entered?.kind === "stage" && entered.gate === "review") {
+        // One condition for both: the review reaches this repair as an input, and
+        // only then does the request say the review is canonical (PB-101).
+        const enteredByReview = entered?.kind === "stage" && entered.gate === "review";
+        if (enteredByReview) {
           inputs.push({ label: "review", from: { stageId: "review" } });
         }
         if (entered?.kind === "check")
@@ -337,7 +346,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
             entered?.kind === "check"
               ? "Repair the change: the verification command failed."
               : "Repair the change: the review requested changes.",
-          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${REVIEW_IS_CANONICAL} ${COMPLETION_REPORT}`,
+          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied.${enteredByReview ? ` ${REVIEW_IS_CANONICAL}` : ""} ${COMPLETION_REPORT}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.builder !== undefined

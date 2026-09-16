@@ -44,11 +44,11 @@ beforeAll(async () => {
   ];
 });
 
-describe("the repair request states that the accepted review is canonical (LV-102)", () => {
+describe("the repair request states that the accepted review is canonical (LV-102, PB-101)", () => {
   const repairOf = (definition: Definition) =>
     definition.stages.find((stage) => stage.kind === "agent" && stage.stageId === "repair");
 
-  const requestOf = (definition: Definition, enteredBy: Json) => {
+  const requestOf = (definition: Definition, enteredBy: Json | null) => {
     const stage = repairOf(definition);
     expect(stage?.request, "the definition has a repair stage with a request()").toBeDefined();
     const request = stage?.request as (ctx: Json) => { goal: string; instructions: string };
@@ -63,10 +63,14 @@ describe("the repair request states that the accepted review is canonical (LV-10
       enteredBy,
     });
   };
-  const rendered = (definition: Definition, enteredBy: Json) =>
+  const rendered = (definition: Definition, enteredBy: Json | null) =>
     requestOf(definition, enteredBy).instructions;
+  const labels = (definition: Definition, enteredBy: Json | null) =>
+    (
+      requestOf(definition, enteredBy) as unknown as { inputs: Array<{ label: string }> }
+    ).inputs.map((ref) => ref.label);
 
-  it("is the exact sentence, in both built-in definitions, however the repair was entered", () => {
+  it("is the exact sentence, in both built-in definitions, for a repair the review entered", () => {
     // A live builder declined a requirement it met only inside the review
     // artifact, reading it as a possible prompt injection, and the run exhausted.
     // The request never said whose word the review was; this is that sentence.
@@ -74,14 +78,31 @@ describe("the repair request states that the accepted review is canonical (LV-10
       "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.",
     );
     for (const [name, definition] of definitions) {
-      for (const enteredBy of [
-        { kind: "stage", gate: "review" },
-        { kind: "check", gate: "verify" },
-      ]) {
-        expect(rendered(definition, enteredBy), `${name} entered by ${enteredBy.gate}`).toContain(
-          reviewIsCanonical,
-        );
+      const enteredBy = { kind: "stage", gate: "review" };
+      expect(rendered(definition, enteredBy), name).toContain(reviewIsCanonical);
+      // The sentence and the review input are the same condition.
+      expect(labels(definition, enteredBy), name).toContain("review");
+    }
+  });
+
+  it("says nothing about a review the check-entered repair was never given (PB-101)", () => {
+    // A verify failure can precede every review, so that repair carries no review
+    // reference at all. Telling its builder that "the accepted review artifact is
+    // canonical" would describe an artifact that is not in its inputs.
+    for (const [name, definition] of definitions) {
+      for (const enteredBy of [{ kind: "check", gate: "verify" }, null]) {
+        const where = `${name} entered by ${enteredBy === null ? "nothing" : enteredBy.gate}`;
+        expect(labels(definition, enteredBy), where).not.toContain("review");
+        expect(rendered(definition, enteredBy), where).not.toContain(reviewIsCanonical);
+        // Removing it leaves no double space behind.
+        expect(rendered(definition, enteredBy), where).not.toContain("  ");
       }
+      // The check-entered repair keeps its own wording and its own evidence.
+      const checkEntered = requestOf(definition, { kind: "check", gate: "verify" });
+      expect(checkEntered.goal, name).toBe("Repair the change: the verification command failed.");
+      expect(labels(definition, { kind: "check", gate: "verify" }), name).toContain(
+        "verification output",
+      );
     }
   });
 
@@ -93,6 +114,12 @@ describe("the repair request states that the accepted review is canonical (LV-10
       expect(out.ok && out.text, name).toContain(reviewIsCanonical);
       // It is in the section the worker is told to act on.
       expect(out.ok && out.text.split("## What to do")[1], name).toContain(reviewIsCanonical);
+
+      // And the check-entered request renders without it.
+      const check = requestOf(definition, { kind: "check", gate: "verify" });
+      const checkOut = renderRequest(input({ goal: check.goal, instructions: check.instructions }));
+      expect(checkOut.ok, name).toBe(true);
+      expect(checkOut.ok && checkOut.text, name).not.toContain(reviewIsCanonical);
     }
   });
 });
