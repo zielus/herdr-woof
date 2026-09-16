@@ -18,6 +18,10 @@ It runs a workflow such as build → review → repair: it launches `claude` age
 validates the artifact each agent submits and hands the accepted artifact to the next agent. A run
 ends when a review passes on the exact repaired revision or a limit ends it.
 
+## Demo
+
+![Woof workflow demo](assets/woof-workflow-readme.gif)
+
 > **Status: 0.1.x, pre-release.**
 >
 > - The SDK and CLI surfaces are unstable until v1 (marked in `src/index.ts`).
@@ -27,6 +31,7 @@ ends when a review passes on the exact repaired revision or a limit ends it.
 
 ## Contents
 
+- [Demo](#demo)
 - [Requirements](#requirements)
 - [Trust model](#trust-model)
 - [Install](#install)
