@@ -3,7 +3,8 @@
 Status: required examples and recommended stage mappings. `build-review` is now
 an executable, built-in workflow definition, runnable via `woof run
 build-review` (p3; see "Implemented now (p3)" below). `plan-build-review` is
-still not an executable definition in the current checkout (phase 5).
+also now an executable, built-in workflow definition, runnable via `woof run
+start --workflow plan-build-review` (p5; see "Implemented now (p5)" below).
 
 ## Build-review
 
@@ -94,8 +95,6 @@ maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs:
   completed; `artifacts.completion` is the accepted build/repair submission
   the completing review was dispatched against; `artifacts.verification` is
   the latest check evidence, when a `verify` command was configured.
-- **`plan-build-review` is still not executable** — the phase 5 planner stage
-  described below has no definition module yet.
 
 ## Implemented now (p4)
 
@@ -136,6 +135,52 @@ This second workflow proves that the engine accepts a new agent, stage, artifact
 contract and transition without changes specific to the workflow's name. An
 optional plan-approval gate must declare its result, attention behavior and
 finite waiting policy.
+
+## Implemented now (p5)
+
+Real shipped behavior for the built-in `plan-build-review` definition — not
+design intent. Source: `src/workflows/plan-build-review.ts`.
+
+- **Executable via `woof run start --workflow plan-build-review --input <path|->`**
+  (also `--host foreground`/`herdr-pane`, like any other run). Input adds
+  `constraints?: string[]` (reaches the planner's request only) and an
+  `instructions.planner?` key to build-review's shape; `agents`/`limits` gain a
+  `planner` entry alongside `builder`/`reviewer`. `PLAN_BUILD_REVIEW_DEFAULT_LIMITS`
+  equals build-review's defaults unchanged (`maxAttemptsPerVisit: 2,
+maxVisitsPerStage: 3, maxRounds: 3, maxFormatRepairs: 2, runTimeoutMs: 7200000,
+readinessWaitMs: 180000, blockedWaitMs: 600000, deliveryTimeoutMs: 60000`): the
+  planner adds one stage visit, not a loop, so no bound needed raising to fit it.
+- **Stages and edges:** `plan` (planner, artifact `plan.md`) → `build` (builder,
+  artifact `completion.md`) → `verify` (an engine-run check, only when
+  `input.verify` is given) → `review` (reviewer, verdicts `pass`/`fail`, the
+  round stage, revision-binding) → `repair` (same builder) → back to `verify` or
+  `review`. There is **no re-planning**: a failed review or a failed check both
+  route to `repair`, never back to `plan` — re-planning would need a second
+  round counter and an answer to whether the old plan is still canonical, and
+  this version takes no position on either. There is also **no plan-approval
+  gate**: the plan reaches the builder unconditionally once written; adding an
+  approval step needs its own attention/waiting policy this version does not
+  define.
+- **The plan is an `InputRef` on every builder turn, not only the first.** The
+  accepted `plan.md` (`{label: "plan", from: {stageId: "plan"}}`) is the first
+  entry in every `build` and `repair` request's `inputs`, addressed by path,
+  receipt and sha256 and re-hashed before rendering — never inlined or
+  paraphrased. A repair entered by the review stage also carries the accepted
+  review as a second input, with the request stating the review is canonical
+  for that repair (see [authoring](authoring.md#implemented-now-p5)); a repair
+  entered by a failed `verify` check carries the verification output instead,
+  and — because that repair was never given a review to point to — the
+  request does not say any review is canonical for it.
+- **No engine change was needed.** `RunResult.artifacts` (`{completion, review,
+verification, lastAcceptedByStage}`) already carried `plan`, `build`, `repair`
+  and `review` for this workflow's own stage ids with no engine-side edit;
+  `validateWorkflowDefinition(planBuildReviewWorkflow)` is `ok` and the
+  scheduler's `decide()` grew no branch for it (`test/plan-build-review.cli.test.ts`).
+- **Live-verified.** `scripts/live/plan-build-review.mjs` runs the workflow
+  end to end against real `claude` agents through Herdr: `docs/research/plan-build-review-live.log`
+  records 13/13 gates passing, including gate 6 (the plan reaches every
+  builder request by reference, never inlined) and gate 10 (Herdr status and
+  an external observer agree with the SDK state, 0 disagreeing).
 
 ## Direct delegation and later research
 

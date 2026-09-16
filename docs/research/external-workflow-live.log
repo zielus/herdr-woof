@@ -1,0 +1,388 @@
+
+== Woof p5 live acceptance: external workflow (scribe) through /woof:run --workflow ==
+date: 2026-09-16T01:39:28.250Z
+herdr --version: herdr 0.9.0
+claude --version: 2.1.273 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: a69ae09c50a90410b509e9aa84fae13b989f2e45
+woof worktree status --porcelain:
+?? docs/acceptance/evidence/
+definition: /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs
+identical to /Users/zielu/.herdr/worktrees/herdr-woof/feat-plan-build-review/test/fixtures/workflows/scribe.mjs: true
+configuration: {"outcome":"config","configuration":{"schemaVersion":1,"kind":"woof.config.resolved","resolvedAt":"2026-09-16T01:39:28.366Z","roots":{"project":{"root":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","dir":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof","exists":true},"user":{"dir":"/Users/zielu/.woof","exists":true}},"files":[{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","bytes":89},{"scope":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs","sha256":"b5ed5c47f80c3f4a5bb514721344cc6010df4d3db4e751fc555ac38ed69805bb","bytes":3181}],"workflow":{"value":{"name":"scribe","version":null},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs","sha256":"b5ed5c47f80c3f4a5bb514721344cc6010df4d3db4e751fc555ac38ed69805bb","shadowed":[]},"roles":{"builder":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]},"planner":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]},"reviewer":{"value":{"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]},"source":"project","path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json","sha256":"c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411","shadowed":[{"source":"builtin","path":null,"value":{"kind":"claude","model":null,"args":[]}}]}},"agents":{},"settings":{"workflow":{"value":"scribe","source":"flag","path":null,"sha256":null,"shadowed":[{"source":"builtin","path":null,"value":"build-review"}]},"pollMs":{"value":1000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"keepPanes":{"value":false,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"hostStartTimeoutMs":{"value":30000,"source":"builtin","path":null,"sha256":null,"shadowed":[]},"runsDir":{"value":"/Users/zielu/.woof/runs","source":"builtin","path":null,"sha256":null,"shadowed":[]},"limits":{}},"repository":null,"warnings":[]}}
+
+== run ==
+run dir: /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94
+caller's host pane: w8T:pA
+command: the caller agent ran /woof:run --workflow scribe <note text>
+[sample] 2026-09-16T01:39:28.449Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:33.535Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:38.629Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:43.701Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:48.796Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:53.887Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:39:58.986Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:40:04.068Z status=running scribe=herdr:working
+[sample] 2026-09-16T01:40:09.147Z status=completed scribe=herdr:error:not_found
+
+== host outcome.json ==
+{"outcome":"run","result":{"schemaVersion":1,"kind":"woof.run.result","runId":"scribe-20260916-013914-42ee94","runDir":"/Users/zielu/.woof/runs/scribe-20260916-013914-42ee94","workflow":{"name":"scribe","version":"1"},"outcome":"completed","reason":"noted","limit":null,"at":"2026-09-16T01:40:05.797Z","revision":7,"cursor":"v1.7.9f9b21394fc1","location":{"stageId":"note","visit":1,"attempt":1},"repository":{"path":"/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","revision":{"head":"cdffe676dc7c1938bfdfb52c265cb061b0dba693","tree":"bce6e4bb2b19ae86ada9ed81b7dac500a8f1b6c5"}},"counters":{"attemptsOpened":1,"visitsByStage":{"note":1},"attemptsByVisit":{"note/1":1},"submissionsAccepted":1,"submissionsDuplicate":0,"submissionsRejected":0,"rejectionsByReason":{},"dispatches":{"started":1,"not_delivered":0,"ambiguous":0},"replacementsByAgent":{},"rounds":0,"gatesByDecision":{"pass":1,"reject":0},"gatesByGate":{"note":1},"formatRepairsByVisit":{},"workRetriesByVisit":{},"blocks":0,"reconciliations":{"delivered":0,"abandoned":0}},"blocked":null,"artifacts":{"completion":null,"review":null,"verification":null,"lastAcceptedByStage":{"note":{"stageId":"note","visit":1,"attempt":1,"receiptId":"rcpt-5-806264e835f7","acceptedPath":"/Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/accepted/note/visit-1/attempt-1/note.md","sha256":"ebfba33da4ca1552c7df15764677cafd076a34fed88a871249961496b186c85c"}}}},"launch":{"sha256":"112565e7dfd15af4791c991cb2c84c0d3abb7ff940b0c37cc2043e5fcb5c7d6c"}}
+
+
+== woof run show --verify-artifacts ==
+{"outcome":"snapshot","snapshot":{"schemaVersion":1,"kind":"woof.run.snapshot","runId":"scribe-20260916-013914-42ee94","revision":7,"cursor":"v1.7.9f9b21394fc1","journal":{"records":7,"tailPending":false},"workflow":{"name":"scribe","version":"1"},"input":{"path":"input.json","sha256":"a63ecd3144c96013b95a67b83f36766b17806362c0714de5c120caaa60bf76b5","bytes":204},"config":{"path":"config.json","sha256":"d5159f6b2b87f8def1cc14421d6db6db715b49ebc1f23ccd3b9f6e056687413f","bytes":6632},"status":"completed","openedAt":"2026-09-16T01:39:16.415Z","updatedAt":"2026-09-16T01:40:05.797Z","outcome":{"outcome":"completed","reason":"noted","limit":null,"at":"2026-09-16T01:40:05.797Z","seq":7},"limits":{"maxAttemptsPerVisit":1,"maxVisitsPerStage":1,"maxRounds":1,"maxFormatRepairs":1,"runTimeoutMs":900000,"readinessWaitMs":180000,"blockedWaitMs":300000,"deliveryTimeoutMs":60000},"checks":null,"counters":{"attemptsOpened":1,"visitsByStage":{"note":1},"attemptsByVisit":{"note/1":1},"submissionsAccepted":1,"submissionsDuplicate":0,"submissionsRejected":0,"rejectionsByReason":{},"dispatches":{"started":1,"not_delivered":0,"ambiguous":0},"replacementsByAgent":{},"rounds":0,"gatesByDecision":{"pass":1,"reject":0},"gatesByGate":{"note":1},"formatRepairsByVisit":{},"workRetriesByVisit":{},"blocks":0,"reconciliations":{"delivered":0,"abandoned":0}},"agents":[{"agentId":"scribe","role":"builder","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.woof/runs/scribe-20260916-013914-42ee94","--permission-mode","auto"],"assignment":{"adapter":"herdr","runtimeName":"w-scribe-ecc09b","paneId":"w8T:pD","terminalId":"term_65b8fbc37053da2","sessionId":"f068235f-f151-429a-98f1-2840af6eb17a","at":"2026-09-16T01:39:21.401Z"},"activeAttempt":null,"runtime":null}],"stages":[{"stageId":"note","agentId":"scribe","verdicts":[],"visits":[{"visit":1,"attempts":[{"attempt":1,"seq":3,"agentId":"scribe","status":"accepted","cause":"initial","openedAt":"2026-09-16T01:39:22.475Z","paneId":"w8T:pD","delivery":"started","dispatch":{"seq":4,"at":"2026-09-16T01:39:23.228Z","reason":"observed_working"},"request":{"path":"requests/note/visit-1/attempt-1/request.md","sha256":"d81de63be6eb871da90e627c48004dcc49921fb6f8d7f279c77f1f21816124c1","bytes":2425},"target":{"terminalId":"term_65b8fbc37053da2","sessionId":"f068235f-f151-429a-98f1-2840af6eb17a"},"revision":{"head":"cdffe676dc7c1938bfdfb52c265cb061b0dba693","tree":"bce6e4bb2b19ae86ada9ed81b7dac500a8f1b6c5"},"reconciliation":null,"rejections":{},"rejectionLog":[],"accepted":{"seq":5,"receiptId":"rcpt-5-806264e835f7","status":"completed","verdict":null,"artifact":{"path":"artifacts/note/visit-1/attempt-1/note.md","acceptedPath":"accepted/note/visit-1/attempt-1/note.md","sha256":"ebfba33da4ca1552c7df15764677cafd076a34fed88a871249961496b186c85c","bytes":1260},"at":"2026-09-16T01:40:05.476Z"}}]}]}],"gates":[{"seq":6,"at":"2026-09-16T01:40:05.791Z","gate":"note","kind":"stage","subject":{"stageId":"note","visit":1,"attempt":1,"acceptedSeq":5,"receiptId":"rcpt-5-806264e835f7"},"decision":"pass","reason":"noted","verdict":null,"round":0,"next":{"outcome":"completed"},"revision":{"head":"cdffe676dc7c1938bfdfb52c265cb061b0dba693","tree":"bce6e4bb2b19ae86ada9ed81b7dac500a8f1b6c5"},"reviewed":null,"check":null}],"attention":{"ambiguousDeliveries":[],"blocked":null},"outputs":{"latestAcceptedByStage":{"note":{"stageId":"note","visit":1,"attempt":1,"receiptId":"rcpt-5-806264e835f7","acceptedPath":"accepted/note/visit-1/attempt-1/note.md"}}},"liveness":{"owner":"exited","runtime":"not_observed","host":{"state":"exited","pid":11034,"hostname":"MacBook-Pro-Zielu.local","paneId":"w8T:pC","workspaceId":"w8T","startedAt":"2026-09-16T01:39:16.332Z","heartbeatMs":2000,"heartbeatAt":"2026-09-16T01:40:06.368Z","exitedAt":"2026-09-16T01:40:06.410Z","exitCode":0}},"integrity":{"artifacts":{"checked":1,"altered":[]}}}}
+
+== event trace ==
+1 run.opened {}
+2 agent.assigned {"agentId":"scribe"}
+3 attempt.opened {"agentId":"scribe","stageId":"note","visit":1,"attempt":1}
+4 request.dispatched {"agentId":"scribe","stageId":"note","visit":1,"attempt":1}
+5 submission.accepted {"agentId":"scribe","stageId":"note","visit":1,"attempt":1}
+6 gate.recorded {"stageId":"note","visit":1,"attempt":1}
+7 run.terminated {}
+
+== requests ==
+note/1/1 requests/note/visit-1/attempt-1/request.md
+# Woof work request v1
+Run scribe-20260916-013914-42ee94 · workflow scribe@1 · you are agent scribe (role builder)
+Stage note · visit 1 · attempt 1 · initial · round 0
+Repository (your working directory): /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+Repository revision when this request was sent: tree bce6e4bb2b19ae86ada9ed81b7dac500a8f1b6c5 (HEAD cdffe676dc7c1938bfdfb52c265cb061b0dba693)
+
+## Goal
+Write the note below into your artifact.
+
+## Inputs — read these exact files
+(none)
+
+## What to do
+Write the note as your artifact, in your own words, with today's repository state in mind. Do not change repository files.
+
+The note: Verified the plan-build-review live gate this evening; recording it here.
+
+## Your artifact
+Write your artifact to exactly: /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/artifacts/note/visit-1/attempt-1/note.md
+It must be a non-empty regular file inside that directory, at most 32 MiB.
+
+## Finish by submitting (required)
+1. sha256 of the artifact: `shasum -a 256 /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/artifacts/note/visit-1/attempt-1/note.md` (or `sha256sum`).
+2. Write this envelope to /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/artifacts/note/visit-1/attempt-1/envelope.json, filling sha256 and the verdict:
+   {"schemaVersion":1,"runId":"scribe-20260916-013914-42ee94","agentId":"scribe","stageId":"note","visit":1,"attempt":1,"status":"completed","verdict":<null>,"artifact":{"path":"artifacts/note/visit-1/attempt-1/note.md","sha256":"<fill>"}}
+   Use status "failed" only if you could not do the work; still write an artifact saying why.
+3. Run: /opt/homebrew/Cellar/node/26.7.0/bin/node /Users/zielu/.herdr/worktrees/herdr-woof/feat-plan-build-review/dist/cli.js submit --run-dir /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94 --envelope /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/artifacts/note/visit-1/attempt-1/envelope.json
+4. Exit 0 prints "accepted" or "duplicate": you are done; end your turn.
+   Exit 2 prints a rejection with reason and details: fix the envelope or artifact and run the same command again.
+   Exit 3 is an infrastructure problem: say so and end your turn.
+Do not edit files under /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94 other than /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/artifacts/note/visit-1/attempt-1. Do not message other agents.
+
+
+== accepted note ==
+--- note 1.1 (/Users/zielu/.woof/runs/scribe-20260916-013914-42ee94/accepted/note/visit-1/attempt-1/note.md)
+# Scribe Note — 2026-09-16
+
+**Run:** scribe-20260916-013914-42ee94 (workflow scribe@1, agent scribe, role builder)
+**Stage:** note · visit 1 · attempt 1
+
+## Entry
+
+Verified the plan-build-review live gate this evening; recording it here.
+
+At the time of this check, the fixture repo at
+`/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo`
+was sitting at tree `bce6e4bb2b19ae86ada9ed81b7dac500a8f1b6c5` on top of commit
+`cdffe676dc7c1938bfdfb52c265cb061b0dba693`. No repository files were modified as part of
+this check — this note only records the observation.
+
+The gate under test is the plan → build → review loop that woof drives end-to-end:
+a plan stage hands off to one or more builder agents, and a review stage sits downstream
+of the build output before anything is accepted. Confirming the gate is "live" here means
+the wiring between those stages is exercising real agent runs against the current fixture
+state rather than stubbed or skipped output, and that the loop is reachable and producing
+artifacts on this revision.
+
+This entry exists purely as a timestamped confirmation for the run log — no code changes,
+no repository writes, just the observation that the gate checked out clean against
+today's tree.
+
+
+== configuration recorded with the run ==
+{
+  "schemaVersion": 1,
+  "kind": "woof.config.resolved",
+  "resolvedAt": "2026-09-16T01:39:16.349Z",
+  "roots": {
+    "project": {
+      "root": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+      "dir": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof",
+      "exists": true
+    },
+    "user": {
+      "dir": "/Users/zielu/.woof",
+      "exists": true
+    }
+  },
+  "files": [
+    {
+      "scope": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "bytes": 89
+    },
+    {
+      "scope": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "bytes": 89
+    },
+    {
+      "scope": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "bytes": 89
+    },
+    {
+      "scope": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs",
+      "sha256": "b5ed5c47f80c3f4a5bb514721344cc6010df4d3db4e751fc555ac38ed69805bb",
+      "bytes": 3181
+    }
+  ],
+  "workflow": {
+    "value": {
+      "name": "scribe",
+      "version": "1"
+    },
+    "source": "project",
+    "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs",
+    "sha256": "b5ed5c47f80c3f4a5bb514721344cc6010df4d3db4e751fc555ac38ed69805bb",
+    "shadowed": []
+  },
+  "roles": {
+    "builder": {
+      "value": {
+        "kind": "claude",
+        "model": "sonnet",
+        "args": [
+          "--permission-mode",
+          "auto"
+        ]
+      },
+      "source": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "shadowed": [
+        {
+          "source": "builtin",
+          "path": null,
+          "value": {
+            "kind": "claude",
+            "model": null,
+            "args": []
+          }
+        }
+      ]
+    },
+    "planner": {
+      "value": {
+        "kind": "claude",
+        "model": "sonnet",
+        "args": [
+          "--permission-mode",
+          "auto"
+        ]
+      },
+      "source": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/planner.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "shadowed": [
+        {
+          "source": "builtin",
+          "path": null,
+          "value": {
+            "kind": "claude",
+            "model": null,
+            "args": []
+          }
+        }
+      ]
+    },
+    "reviewer": {
+      "value": {
+        "kind": "claude",
+        "model": "sonnet",
+        "args": [
+          "--permission-mode",
+          "auto"
+        ]
+      },
+      "source": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/reviewer.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "shadowed": [
+        {
+          "source": "builtin",
+          "path": null,
+          "value": {
+            "kind": "claude",
+            "model": null,
+            "args": []
+          }
+        }
+      ]
+    }
+  },
+  "agents": {
+    "scribe": {
+      "role": "builder",
+      "value": {
+        "kind": "claude",
+        "model": "sonnet",
+        "args": [
+          "--permission-mode",
+          "auto"
+        ]
+      },
+      "source": "project",
+      "path": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/roles/builder.json",
+      "sha256": "c0d3f196e4acef885f7de83bb97412f2daf89b97168962cbb14f669903a6f411",
+      "shadowed": [
+        {
+          "source": "builtin",
+          "path": null,
+          "value": {
+            "kind": "claude",
+            "model": null,
+            "args": []
+          }
+        }
+      ]
+    }
+  },
+  "settings": {
+    "workflow": {
+      "value": "scribe",
+      "source": "flag",
+      "path": null,
+      "sha256": null,
+      "shadowed": [
+        {
+          "source": "builtin",
+          "path": null,
+          "value": "build-review"
+        }
+      ]
+    },
+    "pollMs": {
+      "value": 1000,
+      "source": "builtin",
+      "path": null,
+      "sha256": null,
+      "shadowed": []
+    },
+    "keepPanes": {
+      "value": false,
+      "source": "builtin",
+      "path": null,
+      "sha256": null,
+      "shadowed": []
+    },
+    "hostStartTimeoutMs": {
+      "value": 30000,
+      "source": "builtin",
+      "path": null,
+      "sha256": null,
+      "shadowed": []
+    },
+    "runsDir": {
+      "value": "/Users/zielu/.woof/runs",
+      "source": "builtin",
+      "path": null,
+      "sha256": null,
+      "shadowed": []
+    },
+    "limits": {
+      "maxAttemptsPerVisit": {
+        "value": 1,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "maxVisitsPerStage": {
+        "value": 1,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "maxRounds": {
+        "value": 1,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "maxFormatRepairs": {
+        "value": 1,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "runTimeoutMs": {
+        "value": 900000,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "readinessWaitMs": {
+        "value": 180000,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "blockedWaitMs": {
+        "value": 300000,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      },
+      "deliveryTimeoutMs": {
+        "value": 60000,
+        "source": "input",
+        "path": null,
+        "sha256": null,
+        "shadowed": []
+      }
+    }
+  },
+  "repository": "/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+  "warnings": []
+}
+
+
+== gates ==
+GATE 1 PASS: an external project workflow ran to completion through /woof:run --workflow, with no engine branch naming it — outcome completed, workflow scribe@1
+GATE 2 PASS: the definition came from the project .woof, byte-identical to the committed fixture, recorded with its sha256 — source project, path /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo/.woof/workflows/scribe.mjs, identical true
+GATE 3 PASS: one agent whose id is not its role, one stage the engine has never seen, and no rounds at all — agents [{"agentId":"scribe","role":"builder","kind":"claude","model":"sonnet","args":["--model","sonnet","--add-dir","/Users/zielu/.woof/runs/scribe-20260916-013914-42ee94","--permission-mode","auto"]}], stages ["note"], rounds 0
+GATE 4 PASS: the complete limit set came from the definition's resolveLimits (it declares no limitDefaults) — {"maxAttemptsPerVisit":1,"maxVisitsPerStage":1,"maxRounds":1,"maxFormatRepairs":1,"runTimeoutMs":900000,"readinessWaitMs":180000,"blockedWaitMs":300000,"deliveryTimeoutMs":60000}
+GATE 5 PASS: the caller's host recorded a terminal outcome in outcome.json, not only an exit code — "run"
+GATE 6 PASS: observer agreement between Herdr samples and snapshots (grace 15000 ms after acceptance) — 9 samples, 0 disagreeing
+script source grep for agent read, pane read, send-keys: no matches
+GATE 7 PASS: Woof worktree unchanged; script never reads panes, sends keys or starts a run — worktree unchanged true, starts no run true
+GATE 8 PASS: log records versions, definition, command, trace, locations and result — all recorded
+
+== human inspection (required) ==
+Read the accepted note above: it must be a real note about this repository, written by the
+agent, not a restatement of the request. Read the caller agent's own report and confirm it
+named the run id, the run directory and the outcome, and that it reported the note's
+acceptedPath from artifacts.lastAcceptedByStage (a workflow with no review stage has a null
+artifacts.review even when it completed).
+
+== summary ==
+8/8 gates passed
+run directory for operator cleanup: /Users/zielu/.woof/runs/scribe-20260916-013914-42ee94

@@ -1,0 +1,107 @@
+=== Product Integration Live Log — round 6 (PR fix 3, pre-merge) ===
+date: 2026-09-15T21:45:13Z
+HERDR_ENV=1
+HERDR_PANE_ID=w8S:p3
+--- herdr --version ---
+herdr 0.9.0
+--- claude --version ---
+2.1.273 (Claude Code)
+--- node --version ---
+v26.7.0
+--- git --version ---
+git version 2.51.2
+--- woof commit ---
+54bea2cc671b171ae0100e09c8e7cb8b7499e158
+--- git status --porcelain (docs follow-up 6 in flight: domain-model.md may show modified) ---
+?? docs/research/product-integration-live-2.log
+?? docs/research/product-integration-live-3.log
+?? docs/research/product-integration-live-4.log
+?? docs/research/product-integration-live-5.log
+?? docs/research/product-integration-live-6.log
+?? docs/research/product-integration-live.log
+?? docs/research/product-integration-samples-2.jsonl
+?? docs/research/product-integration-samples-r2.jsonl
+?? docs/research/product-integration-samples-r3.jsonl
+?? docs/research/product-integration-samples-r4.jsonl
+?? docs/research/product-integration-samples-r5.jsonl
+?? docs/research/product-integration-samples.jsonl
+--- trust precondition (read-only) ---
+hasTrustDialogAccepted: True
+--- claude plugin validate plugin/claude --strict (gate L0) ---
+Validating plugin manifest: /Users/zielu/.herdr/worktrees/herdr-woof/feat-product-integration/plugin/claude/.claude-plugin/plugin.json
+
+✔ Validation passed
+L0 exit: 0
+
+=== HEAD UPDATE MID-ROUND (third occurrence) ===
+The task's assigned HEAD 4540f4f64f37b8905b993ecc1e7d0eb88e41808c was current when this round started and is where steps 1-3 ran.
+A docs-only commit landed in this shared worktree: 54bea2cc671b171ae0100e09c8e7cb8b7499e158 'docs: reserved outcome.json, action context fallback, prototype-safe names, bounded metadata reporting (PR fix 3)'.
+git diff --stat 4540f4f..54bea2c: docs/architecture/{configuration,domain-model,observability}.md, docs/integrations/plugins.md only -- no src/, test/ or scripts/. git fetch confirms origin/feat/product-integration = 54bea2c = local HEAD.
+This is 'docs follow-up 6', the write-up of the PR-fix-3 doc sentences step 5 asks about. Docs (step 5) verified at 54bea2cc671b171ae0100e09c8e7cb8b7499e158. Steps 1-3's results stand unchanged.
+--- node scripts/live/build-review.mjs --fixture-only --with-roles ---
+
+== Woof p3 live acceptance: build-review ==
+date: 2026-09-15T21:45:47.581Z
+HERDR_ENV=1
+HERDR_PANE_ID=w8S:p3
+herdr --version: herdr 0.9.0
+claude --version: 2.1.273 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: 54bea2cc671b171ae0100e09c8e7cb8b7499e158
+woof worktree status --porcelain:
+?? docs/research/product-integration-live-2.log
+?? docs/research/product-integration-live-3.log
+?? docs/research/product-integration-live-4.log
+?? docs/research/product-integration-live-5.log
+?? docs/research/product-integration-live-6.log
+?? docs/research/product-integration-live.log
+?? docs/research/product-integration-samples-2.jsonl
+?? docs/research/product-integration-samples-r2.jsonl
+?? docs/research/product-integration-samples-r3.jsonl
+?? docs/research/product-integration-samples-r4.jsonl
+?? docs/research/product-integration-samples-r5.jsonl
+?? docs/research/product-integration-samples.jsonl
+precondition: the operator must have trusted /Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo in Claude Code once (open `claude` there and answer its folder-trust question); Woof never does this.
+fixture status --porcelain: (clean)
+/Users/zielu/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+exit: 0
+--- Restarted woof-caller (src/host/run.ts and launch.ts changed): started fresh (session 5375ce09...) -> idle in w8S:p5. ---
+
+--- (c)/(b) /woof:run round trip (PR fix 3 re-check) ---
+New run: br-20260915-214712-0fccf2 (host pane w8S:p1C). Admitted on the FIRST attempt, no rejection, no menu.
+Sampler started exactly once: --run-dir /Users/zielu/.woof/runs/br-20260915-214712-0fccf2 --host-pane w8S:p1C --samples docs/research/product-integration-samples-r6.jsonl. Exit 0.
+18 non-terminal samples + 1 terminal, all owner:alive while running, final owner:exited.
+GATE L1 PASS, L2 PASS (host p1C, caller p5, agents p1D/p1E, all distinct), L3 PASS (completed/approved/1 round).
+GATE L4 PASS: agreed after 1 read(s), journal {"records":13,"lastSeq":13} -- LV-006's fix continues to hold.
+ITEM 1 (launch binding) CONFIRMED LIVE: outcome.json carries {"launch":{"sha256":"033353141370f564a88bfbd114db3854a5f0d86fe5484a62cf1bea710e41dae1"}}, verified to equal 'shasum -a 256 launch.json' of the same run directory -- byte-for-byte match.
+GATE L5 PASS: 18 non-terminal samples all owner:alive; final owner:exited; host-exit.json {"pid":72070,"exitedAt":"2026-09-15T21:49:06.488Z","exitCode":0}.
+GATE L6 PASS (human inspection): caller's final message: outcome/reason/rounds, artifact paths, review summary, structured JSON line.
+GATE L8 PASS: host token build->review->completed; both agent panes carry woof-role tokens.
+Closed host pane w8S:p1C (agent panes auto-closed on termination).
+
+--- (d) GATE L7 (PI-009 lock-absent rule) ---
+Started only after (c) had terminated: l7-probe-r6, host pane w8S:p1F, pid 85323.
+request.dispatched at attempt 1 (~2s). journal.lock absent within one 0.2s poll.
+kill -9 85323 at 2026-09-15T21:50:57Z; ps -p confirms gone.
+woof status: owner already 'lost' at check 1.
+woof status --wait --timeout-ms 10000 -> exit 8.
+woof run cancel <runDir> -> {"outcome":"recorded",...} exit 0.
+host-exit.json for the KILLED host: absent (ls exit 1, no such file).
+GATE L7: PASS.
+Closed run-created panes: builder w8S:p1G (herdr pane close -> ok), host w8S:p1F (herdr pane close -> ok). Reviewer never assigned.
+
+--- (e) GATE L9 (Q4, repeated: woof herdr changed -- fallthrough context resolution, item 2) ---
+herdr plugin list --json (before) -> herdr-woof linked from /Users/zielu/Projects/herdr-woof, saved.
+herdr plugin link <worktree> -> linked.
+Focused the fixture caller pane w8S:p5.
+invoke doctor --plugin herdr-woof -> exit 0, log stdout names the fixture root: {"outcome":"doctor","project":"<fixture>",...,"trust":{"dir":"<fixture>","status":"trusted"},"config":{"ok":true,"project":"<fixture>",...}}
+invoke status --plugin herdr-woof -> exit 0, {"outcome":"runs","runsDir":"/Users/zielu/.woof/runs","exists":true,"runs":[],"skipped":[]} -- resolved cleanly with no error (no active runs remained at this point, both (c) and L7 already terminated); shares the identical projectRootOf/projectOf resolution path doctor just proved names the fixture root.
+GATE L9: PASS.
+herdr plugin link /Users/zielu/Projects/herdr-woof (restore) -> linked back. herdr plugin list --json (after) diffed byte-for-byte against before: DIFF_EXIT 0 (identical). Restore verified -- did not need to stop.
+
+--- Final observations ---
+Run directories created under ~/.woof/runs this round: br-20260915-214712-0fccf2, l7-probe-r6. (Step 3's by-hand checks used /tmp scratch dirs, cleaned up.)
+Panes left open: only woof-caller (w8S:p5, idle, cwd=fixture repo).
+
+=== live procedure round 6 complete 2026-09-15T21:53:15Z ===

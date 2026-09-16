@@ -1,9 +1,10 @@
 # Authoring a workflow
 
 Status: authoring contract, plus an implemented definition contract and loader
-(p3). See "Implemented now (p3)" below for what a real definition module looks
-like and how it is validated and loaded; configuration-driven role/catalog
-discovery is still open.
+(p3), configuration-driven role/workflow discovery (p4), and a second built-in
+workflow plus an external, project-authored one proving the contract
+generalizes (p5). See "Implemented now (p3)", "Implemented now (p4)" and
+"Implemented now (p5)" below.
 
 A workflow defines how work progresses. Adding a new workflow should normally
 mean adding a definition, roles and artifact contracts, without adding a special
@@ -205,3 +206,69 @@ limitDefaults[key]`; without it (an external p3 definition with no
 side-effect.mjs` exists for exactly this case). `woof config show` never
   imports a non-built-in workflow module either: its `workflow.value.version`
   is `null` for a file, with `path`/`sha256` identifying it instead.
+
+## Implemented now (p5)
+
+Real shipped behavior proving the authoring contract generalizes beyond
+`build-review` — not design intent. Source: `test/fixtures/workflows/scribe.mjs`,
+`src/workflows/{plan-build-review,catalog}.ts`, `src/submission/submit.ts`.
+
+- **An external, project-authored workflow proves discovery end to end.**
+  `scribe` (`.woof/workflows/scribe.mjs`, committed into a project's own repo,
+  not shipped by Woof — it is not in the built-in catalog and not in
+  `package.json#files`) needs no import at all, from Woof or from `node:`:
+  every type in the contract is structural. It admits, runs and completes
+  through `woof run start --workflow scribe` from a plain project `.woof/`,
+  live-verified against a real `claude` agent through Herdr
+  (`docs/research/external-workflow-live.log`, 8/8 gates) and offline through
+  five real-process cases in `test/external-workflow.process.test.ts`.
+- **`roundStage: null` end to end.** `scribe` declares one stage and no round
+  at all; `requires: "round"` anywhere in such a definition is
+  `definition_contract_violated`, and the only gate that can end the run is
+  `note`'s own `pass` with `outcome: "completed"`. A definition author who
+  wants no review-repair cycle at all — a single-stage note, a synthesis
+  step — declares `roundStage: null` and never touches `requires`.
+  `plan-build-review` and `build-review` both declare a real `roundStage`
+  (`"review"`) for comparison.
+- **`resolveLimits` with no `limitDefaults` is still the p3 shape, and still
+  works.** `scribe` returns the complete `Limits` set from `resolveLimits`
+  itself and declares no `limitDefaults`; admission fills only the keys
+  configuration or a definition's own defaults set. This is the same shape
+  the original p3 `build-review` shipped with, before p4 added
+  `limitDefaults` as an optional convenience — a definition author may still
+  do all limit composition inside `resolveLimits` and skip `limitDefaults`
+  entirely.
+- **An agent id that is not its role, and a stage the engine has never
+  seen.** `scribe`'s one agent has `agentId: "scribe"`, `role: "builder"` —
+  identity and role are independent, exactly as the domain model states — and
+  its one stage, `note`, is a stage id no built-in workflow declares. Neither
+  needed an engine change.
+- **The optional `artifactVerdictMarker` (p5 D5).** An `AgentStage` with
+  verdicts may declare `artifactVerdictMarker: string` (at most 64
+  characters, checked by `validateWorkflowDefinition`); `woof submit`'s check
+  17b then requires the artifact's **first non-blank line only** to start
+  with that marker and, when it does, the rest of the line must equal the
+  envelope's verdict — a mismatch is rejected `verdict_artifact_mismatch`,
+  naming both. Both built-in `review` stages declare
+  `REVIEW_VERDICT_MARKER = "Woof-Verdict:"` and ask for it in the request
+  text. It is per stage (a stage with no marker checks nothing) and anchored
+  to the first line **on purpose**: a reviewer quoting the required line
+  inside an example elsewhere in its artifact writes it at the start of a
+  line too, and scanning the whole artifact for any matching line would
+  reject that quotation as a second, disagreeing marker. See
+  [communication](../architecture/communication.md#implemented-now-p5) for
+  the check's exact position and its BOM-stripping rule.
+- **State the artifact's authority in the request, not only in the
+  workflow's own documentation.** Live acceptance found a builder treating a
+  requirement it encountered only inside an upstream review artifact as a
+  possible prompt injection, and declining it twice — the run's own request
+  text never said whose word the review was, so the builder had no way to
+  tell an unverified claim from a project requirement (see
+  [v1-evidence.md](../acceptance/v1-evidence.md#documented-limits)'s
+  checklist-injection observation). Both built-in `repair` stages now say so
+  directly: a repair entered by the review stage is told the accepted review
+  is canonical for it, its blocking findings are project requirements, and an
+  objection belongs in `completion.md`, never left unaddressed. **A workflow
+  whose downstream stage must act on an upstream artifact should say so in
+  the request** — an agent cannot infer an artifact's authority from the
+  artifact itself, only from what the request tells it about that artifact.

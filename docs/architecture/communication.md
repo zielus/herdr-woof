@@ -110,10 +110,10 @@ open` and the run-facts store call it from inside their own locked
   timeout, naming the lock file and its recorded holder, until a person
   deletes it by hand.
 
-**Not implemented in p1:** the engine does not parse artifact-embedded
+**Not implemented in p1 or p3:** the engine does not parse artifact-embedded
 metadata or check it for agreement with the envelope's `verdict` (item 5 under
-"Acceptance of a result" below). This is still open in p3: the envelope stays
-v1, unchanged.
+"Acceptance of a result" below); the envelope stays v1, unchanged. **This is
+now implemented, opt-in, as of p5** — see "Implemented now (p5)" below.
 
 **Format repair is implemented (p3).** See
 [domain model](domain-model.md#implemented-now-p3) for the full rule (D5): when
@@ -206,6 +206,39 @@ Planner and researcher stages produce `plan.md` and `research.md`. A builder's
 main output is the repository change, accompanied by a small completion artifact
 that identifies the change and verification evidence. A claim that tests passed
 is not equivalent to recorded test evidence or an independent verification stage.
+
+## Implemented now (p5)
+
+Real shipped behavior for the optional artifact/envelope verdict agreement
+(D5) — not design intent. Source: `src/submission/submit.ts`,
+`src/scheduler/definition.ts`, `src/contracts/envelope.ts`.
+
+- **Check 17b, opt-in per stage.** An `AgentStage` with verdicts may declare
+  `artifactVerdictMarker: string` (at most 64 characters). When it does, `woof
+submit` runs one additional check, positioned after check 17 (artifact hash
+  agreement) and before check 18 (publish-and-record) — a submission whose
+  bytes do not match its own digest is reported as the hash mismatch it is,
+  never as a marker disagreement. The check reads the artifact's **first
+  non-blank line only**: when that line starts with the declared marker, the
+  remainder must equal the envelope's `verdict`, or the submission is
+  rejected `verdict_artifact_mismatch`, naming the artifact's verdict and the
+  envelope's. A stage that declares no marker checks nothing (unchanged p1
+  behavior); an artifact whose first non-blank line does not start with the
+  marker is accepted unchanged; a marker-looking line further down the
+  artifact is ignored, on purpose — a reviewer quoting the required line
+  inside an example writes it at the start of a line too, and scanning the
+  whole artifact would reject that quotation as a second, disagreeing marker.
+  A leading UTF-8 BOM on that first line is stripped before the prefix test;
+  leading spaces are not stripped, because the contract is that the line
+  _starts with_ the marker, not that it contains one.
+- **Additive at `schemaVersion: 1`.** The declared marker is journaled as an
+  optional field on the `attempt.opened` record (see
+  [domain model](domain-model.md#implemented-now-p5)); a journal with no such
+  field (every p1–p4 fixture) still replays clean.
+- **Both built-in `review` stages opt in.** `build-review` and
+  `plan-build-review` both declare `artifactVerdictMarker: "Woof-Verdict:"`
+  and ask the reviewer, in the request text, to make it the artifact's first
+  line, agreeing with the verdict in the envelope.
 
 ## Acceptance of a result
 

@@ -12,24 +12,32 @@ snapshots and events, a runtime adapter over the Herdr CLI, and `woof run
 show`), a p3 workflow-scheduling layer: a workflow definition contract and
 loader, the built-in `build-review` workflow (build → verify → review →
 repair, with format repair, revision binding and bounded blocking/
-reconciliation), and `woof run build-review`/`woof run cancel`, and a p4
+reconciliation), and `woof run build-review`/`woof run cancel`, a p4
 product-integration layer: `.woof`/`~/.woof` configuration with provenance,
 `woof run start` hosting a run in a Herdr pane with claim/heartbeat liveness,
 the read-only inspection CLI (`status`, `runs`, `events`, `config show`), and
-functional Herdr and Claude Code plugins (`/woof:run`). See
-[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype),
+functional Herdr and Claude Code plugins (`/woof:run`), and a p5 layer: a
+second built-in workflow (`plan-build-review`), project/user workflow
+discovery via `--workflow <name>`, an opt-in artifact/envelope verdict check,
+and acceptance evidence executed at revision
+`5e0236e6d06152222e6ff35f80dc05889841d4c2` — see
+[the acceptance evidence](acceptance/v1-evidence.md). See
+[Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype)
+and [Communication and artifacts](architecture/communication.md#implemented-now-p5) (p5),
 [Domain model](architecture/domain-model.md#implemented-now-p2) (p2),
-[Domain model](architecture/domain-model.md#implemented-now-p3) (p3) and
-[Domain model](architecture/domain-model.md#implemented-now-p4) (p4),
+[Domain model](architecture/domain-model.md#implemented-now-p3) (p3),
+[Domain model](architecture/domain-model.md#implemented-now-p4) (p4) and
+[Domain model](architecture/domain-model.md#implemented-now-p5) (p5),
 [Observability](architecture/observability.md#implemented-now-p2) (p2),
 [Observability](architecture/observability.md#implemented-now-p3) (p3) and
 [Observability](architecture/observability.md#implemented-now-p4) (p4),
 [Configuration](architecture/configuration.md#implemented-now-p4) (p4),
-[Workflow authoring](workflows/authoring.md#implemented-now-p3) (p3) and
-[Workflow authoring](workflows/authoring.md#implemented-now-p4) (p4), and
+[Workflow authoring](workflows/authoring.md#implemented-now-p3) (p3),
+[Workflow authoring](workflows/authoring.md#implemented-now-p4) (p4) and
+[Workflow authoring](workflows/authoring.md#implemented-now-p5) (p5), and
 [Initial workflows](workflows/initial-workflows.md#implemented-now-p3) (p3)
-and [Initial workflows](workflows/initial-workflows.md#implemented-now-p4)
-(p4) for what is real today versus still proposed.
+and [Initial workflows](workflows/initial-workflows.md#implemented-now-p5)
+(p5) for what is real today versus still proposed.
 
 Read in this order:
 
