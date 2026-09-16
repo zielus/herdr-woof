@@ -1,0 +1,16 @@
+:root{
+--text-xs:11px;--text-sm:12px;--text-base:13px;--text-md:14px;--text-lg:16px;--text-xl:20px;--text-2xl:26px;--text-3xl:34px;--text-4xl:48px;
+--leading-tight:1.2;--leading-snug:1.35;--leading-normal:1.5;--leading-mono:1.6;
+--weight-regular:400;--weight-medium:500;--weight-semibold:600;
+--tracking-tight:-0.01em;--tracking-normal:0;--tracking-wide:0.04em;
+/* semantic type styles (font shorthand: weight size/line-height family) */
+--type-display:var(--weight-medium) var(--text-4xl)/var(--leading-tight) var(--font-sans);
+--type-title:var(--weight-medium) var(--text-2xl)/var(--leading-tight) var(--font-sans);
+--type-heading:var(--weight-medium) var(--text-lg)/var(--leading-snug) var(--font-sans);
+--type-body:var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+--type-small:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);
+--type-label:var(--weight-medium) var(--text-xs)/1 var(--font-sans);
+--type-mono:var(--weight-regular) var(--text-base)/var(--leading-mono) var(--font-mono);
+--type-mono-sm:var(--weight-regular) var(--text-sm)/var(--leading-mono) var(--font-mono);
+--type-code-block:var(--weight-regular) var(--text-base)/var(--leading-mono) var(--font-mono);
+}

@@ -1,0 +1,10 @@
+/* Minimal base: consumers link styles.css and get these defaults. */
+html{background:var(--bg-app);color:var(--text-primary);font:var(--type-body);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{margin:0}
+::selection{background:var(--selection)}
+a{color:var(--accent-text);text-decoration:none;text-underline-offset:2px}
+a:hover{text-decoration:underline}
+code,kbd,pre,samp{font:var(--type-mono)}
+pre{margin:0}
+:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+*{box-sizing:border-box}

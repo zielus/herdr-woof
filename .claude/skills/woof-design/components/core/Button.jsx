@@ -1,0 +1,8 @@
+import React,{useState} from "react";
+import {Icon} from "./Icon.jsx";
+const V={primary:{bg:"var(--accent)",fg:"var(--on-accent)",bd:"var(--accent)",hov:"var(--accent-hover)",act:"var(--accent-active)"},secondary:{bg:"var(--bg-raised)",fg:"var(--text-primary)",bd:"var(--border-default)",hov:"var(--bg-hover)",act:"var(--bg-active)"},ghost:{bg:"transparent",fg:"var(--text-secondary)",bd:"transparent",hov:"var(--bg-hover)",act:"var(--bg-active)"},danger:{bg:"var(--state-fail-subtle)",fg:"var(--state-fail)",bd:"transparent",hov:"var(--state-fail-subtle)",act:"var(--state-fail-subtle)"}};
+export function Button({variant="secondary",size="md",icon,iconRight,disabled,loading,children,style,onClick,type="button",...rest}){
+  const [h,setH]=useState(false),[a,setA]=useState(false);const v=V[variant]||V.secondary;
+  const height=size==="lg"?"var(--control-height-lg)":size==="sm"?"24px":"var(--control-height)";
+  return <button type={type} disabled={disabled||loading} onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>{setH(false);setA(false)}} onMouseDown={()=>setA(true)} onMouseUp={()=>setA(false)} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,height,padding:size==="lg"?"0 16px":size==="sm"?"0 8px":"0 12px",borderRadius:"var(--radius-md)",border:"1px solid "+v.bd,background:a?v.act:h?v.hov:v.bg,color:v.fg,font:size==="lg"?"var(--type-body)":"var(--type-small)",fontWeight:500,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.45:1,transition:"background var(--duration-fast)",whiteSpace:"nowrap",...style}} {...rest}>{icon&&<Icon name={icon} size={size==="sm"?12:14}/>}{loading?"…":children}{iconRight&&<Icon name={iconRight} size={size==="sm"?12:14}/>}</button>;
+}

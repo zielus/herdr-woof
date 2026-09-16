@@ -1,0 +1,4 @@
+import React from "react";
+export function Switch({checked,onChange,label,disabled,style}){
+  return <label style={{display:"inline-flex",alignItems:"center",gap:8,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.45:1,font:"var(--type-small)",color:"var(--text-primary)",...style}}><input type="checkbox" role="switch" checked={checked} onChange={onChange} disabled={disabled} style={{position:"absolute",opacity:0,width:0,height:0}}/><span style={{width:28,height:16,borderRadius:999,background:checked?"var(--accent)":"var(--border-strong)",position:"relative",transition:"background var(--duration-base)"}}><span style={{position:"absolute",top:2,left:checked?14:2,width:12,height:12,borderRadius:"50%",background:checked?"var(--on-accent)":"var(--bg-surface)",transition:"left var(--duration-base) var(--ease-out)"}}/></span>{label}</label>;
+}

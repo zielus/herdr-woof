@@ -1,0 +1,6 @@
+/* Woof webfonts — Google Fonts substitutes (no brand font files were provided). */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Source+Code+Pro:wght@400;500;600&display=swap');
+:root{
+--font-sans:"Geist","Helvetica Neue",Helvetica,Arial,sans-serif;
+--font-mono:"Source Code Pro",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}

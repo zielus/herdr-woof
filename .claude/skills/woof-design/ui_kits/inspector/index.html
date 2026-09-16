@@ -1,0 +1,37 @@
+<!-- @dsCard group="Inspector" viewport="1280x800" name="Run inspector" subtitle="Runs list, stage timeline, agents, journal, artifacts — dark and light" -->
+<!-- @startingPoint section="Inspector" subtitle="Run inspector web UI" viewport="1280x800" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Woof — run inspector</title><link rel="icon" href="../../assets/brand/favicon.ico"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script><script src="data.js"></script>
+<style>html,body,#root{height:100%}</style></head><body><div id="root"></div>
+<script type="text/babel" src="Shell.jsx"></script><script type="text/babel" src="RunDetail.jsx"></script>
+<script type="text/babel">
+const {Tabs,Dialog,Button,Toast}=window.WoofDesignSystem_3b6aec;
+function App(){
+  const [theme,setTheme]=React.useState(localStorage.getItem("woof-theme")||"dark");
+  React.useEffect(()=>{document.documentElement.setAttribute("data-theme",theme);localStorage.setItem("woof-theme",theme)},[theme]);
+  const [runs,setRuns]=React.useState(window.WOOF_DATA.runs);
+  const [sel,setSel]=React.useState(runs[0].runId);const [filter,setFilter]=React.useState("");const [tab,setTab]=React.useState("overview");const [selAttempt,setSelAttempt]=React.useState(null);const [cancel,setCancel]=React.useState(false);const [toast,setToast]=React.useState(null);
+  const run=runs.find(r=>r.runId===sel);
+  const doCancel=()=>{setRuns(rs=>rs.map(r=>r.runId===run.runId?{...r,status:"cancelled",owner:"exited",blocked:null,agents:r.agents.map(a=>({...a,activity:"done",active:null})),result:{outcome:"cancelled",reason:"operator_cancel",limit:null,exit:6},events:[...r.events,{seq:r.events.length+1,ts:"2026-09-16T20:41:21.000Z",type:"run.terminated",subject:{},data:{outcome:"cancelled",reason:"operator_cancel",limit:null}}]}:r));setCancel(false);setToast({tone:"lost",title:"Run cancelled",detail:run.runId+" · run.terminated recorded · exit 6"});setTimeout(()=>setToast(null),4000)};
+  return <div style={{height:"100%",display:"flex",flexDirection:"column",background:"var(--bg-app)"}}>
+    <Header theme={theme} onTheme={()=>setTheme(t=>t==="dark"?"light":"dark")} run={run} onCancel={()=>setCancel(true)}/>
+    <div style={{flex:1,display:"flex",minHeight:0}}>
+      <RunsSidebar runs={runs} selected={sel} onSelect={id=>{setSel(id);setSelAttempt(null)}} filter={filter} setFilter={setFilter}/>
+      <main style={{flex:1,minWidth:0,overflow:"auto",padding:"16px 20px 32px",display:"grid",gap:16,alignContent:"start"}}>
+        <StatusBar run={run}/>
+        <Attention run={run}/>
+        <Tabs value={tab} onChange={setTab} tabs={[{id:"overview",label:"Overview"},{id:"journal",label:"Journal",count:run.events.length},{id:"artifacts",label:"Artifacts",count:run.artifacts.length}]}/>
+        {tab==="overview"&&<Overview run={run} selAttempt={selAttempt} setSelAttempt={setSelAttempt}/>}
+        {tab==="journal"&&<Journal key={run.runId} run={run}/>}
+        {tab==="artifacts"&&<Artifacts key={run.runId} run={run}/>}
+      </main>
+    </div>
+    <Dialog open={cancel} onClose={()=>setCancel(false)} title={"Cancel run "+run.runId+"?"} actions={<><Button onClick={()=>setCancel(false)}>Keep running</Button><Button variant="danger" onClick={doCancel}>Cancel run</Button></>}>Records <code>run.terminated{"{outcome:\"cancelled\"}"}</code> in the journal. A scheduler still running elsewhere stops on its own next tick. There is no crash resume; this is the only resolution for a <code>lost</code> owner.</Dialog>
+    {toast&&<div style={{position:"fixed",right:16,bottom:16,zIndex:"var(--z-toast)"}}><Toast tone={toast.tone==="lost"?"neutral":toast.tone} title={toast.title} detail={toast.detail} onDismiss={()=>setToast(null)}/></div>}
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script></body></html>
