@@ -35,8 +35,7 @@ All notable changes to this project are documented here. The format follows
   which also exits 3 with the distinct reason `journal_replaced` when the
   journal's line 1 changes on every one of three consecutive re-reads.
   Declared limits are validated and counted, not yet enforced; gate, block
-  and delivery-reconciliation records remain design-only (phase 3). No
-  version bump (`check:version` stays at 0.0.0).
+  and delivery-reconciliation records remain design-only (phase 3).
 - Scheduler and the built-in `build-review` workflow (p3): a workflow
   definition contract (`WorkflowDefinition`, `validateWorkflowDefinition`)
   and loader (`loadWorkflowDefinition`) for strip-only TypeScript or
@@ -60,7 +59,7 @@ cancel` (`runWorkflow`, `admitWorkflow`, `buildReviewWorkflow`,
   `deriveRunResult`, `recordGate`, `blockRun`, `unblockRun`,
   `reconcileDelivery`). Configuration-driven role catalogs, a second
   built-in workflow, MCP, run hosting, crash resume and parallel scheduling
-  remain out of scope. No version bump (`check:version` stays at 0.0.0).
+  remain out of scope.
 - Configuration, run hosting, inspection and functional plugins (p4):
   `.woof`/`~/.woof` JSON configuration (`woof.json`, one role per file, one
   workflow definition module per file) with project → user → built-in
@@ -92,8 +91,7 @@ definition_syntax_unsupported|definition_load_failed`; `WorkflowDefinition`
   gains an optional `limitDefaults`; build-review's `agents` and each role in
   it are now optional. Configuration-driven role instructions/context files,
   a second built-in workflow, MCP, crash resume/re-hosting a lost run, and
-  parallel scheduling remain out of scope. No version bump (`check:version`
-  stays at 0.0.0).
+  parallel scheduling remain out of scope.
 - A second built-in workflow, an external workflow proof, an opt-in artifact
   verdict check, and acceptance evidence (p5): the built-in `plan-build-review`
   workflow (`src/workflows/plan-build-review.ts`) adds a planner stage ahead
@@ -131,6 +129,10 @@ definition_syntax_unsupported|definition_load_failed`; `WorkflowDefinition`
   second agent kind, per-stage structural artifact schemas, and role
   instructions/context files in configuration remain out of scope. This release
   carries the version bump to `0.1.0` across `package.json`, `herdr-plugin.toml`
-  and the Claude Code plugin manifest: `0.1.0` is a version and a git tag on
-  this repository, not an npm publish (the package stays `"private": true`), and
-  the tag itself is created after the merge, not by this commit.
+  and the Claude Code plugin manifest. The `v0.1.0` tag and the npm publish are
+  the operator's steps after the merge.
+- Public release preparation: an MIT `LICENSE`, package metadata for npm
+  (`license`, `author`, `homepage`, `bugs`, `keywords`, `publishConfig`, and
+  `"private": true` removed), a README and documentation index rewritten for
+  first-time readers, and the committed live logs under `docs/research/`
+  redacted line-preserving (home directory prefix and host name).
