@@ -287,8 +287,11 @@ requiredAction, since, observed, attempt}`, reachable and non-null exactly
   recorded directly); `dispatch: {seq, at, reason}|null`; `request:
 {path, sha256, bytes}|null`; `target: {terminalId, sessionId}|null`;
   `revision: Revision|null` (the dispatch-time fingerprint); `reconciliation:
-{seq, resolution, evidence, at}|null`; `rejectionLog` (the journaled
-  rejections a format-repair request quotes); `accepted.seq`/`outcome.seq`
+{seq, resolution, evidence, at}|null`; `rejectionLog` (every rejection
+  journaled against the attempt, `owner_mismatch` included — the snapshot
+  shape is unchanged; a format-repair request quotes this list minus any
+  `owner_mismatch` entries, see
+  [domain model](domain-model.md#implemented-now-p3)); `accepted.seq`/`outcome.seq`
   for correlating a gate to the acceptance and termination it followed.
 - **New counters:** `rounds`, `gatesByDecision {pass, reject}`,
   `gatesByGate {id: n}`, `formatRepairsByVisit {"stage/visit": n}`,

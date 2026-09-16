@@ -310,7 +310,12 @@ requiredAction, observed, [stageId, visit, attempt]}` once; `requiredAction`
 - **Ambiguous delivery is reconciled only on evidence (D8).** After
   `request.dispatched{delivery:"ambiguous"}` the scheduler sends nothing
   further and waits until `dispatch.ts + deliveryTimeoutMs`: a
-  `submission.accepted`/identity-bearing `submission.rejected`, or a tracked
+  `submission.accepted`/identity-bearing `submission.rejected` (a named set,
+  `FOREIGN_REJECTION_REASONS = ["owner_mismatch"]` in `src/scheduler/core.ts`,
+  is excluded from this evidence even though those rejections carry an
+  identity — a foreign submitter's rejection is not proof the addressed agent
+  received anything, and the same set is excluded from a format-repair
+  request's quoted rejections), or a tracked
   observation of the same terminal (taken after the dispatch) showing
   `working`/`blocked`, records `delivery.reconciled
 {resolution:"delivered", evidence:"submission_recorded"|"observed_activity"}`
