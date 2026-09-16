@@ -64,7 +64,7 @@ to choose a filename or helper function.
 
 ## Sources
 
-The [conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4)
+The September 2026 product design conversation
 provides the direction and final artifact correction. The
 [project assessment](../research/project-assessment.md) identifies the stashed
 draft and scaffold branch as separate historical inputs.

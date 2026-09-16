@@ -1,7 +1,7 @@
 # Woof documentation
 
 Status: design baseline, 2026-09-14. These documents synthesize the
-[product conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4)
+September 2026 product design conversation
 and inspected project material. They describe what to build; they do not claim
 that the features exist or that proposed implementation details are approved.
 

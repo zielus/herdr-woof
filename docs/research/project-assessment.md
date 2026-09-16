@@ -78,6 +78,6 @@ operations. It supports using an adapter over the runtime; it does not establish
 that the proposed Woof hosting and recovery behavior already works.
 [Socket API](https://herdr.dev/docs/socket-api/).
 
-The [product conversation](https://chatgpt.com/c/6aa71569-4e7c-83ed-b6d6-03992919a7c4)
+The September 2026 product design conversation
 was read through the connected conversation tool, including all 13 turns and the
 final artifact correction. Later decisions take precedence over earlier options.
