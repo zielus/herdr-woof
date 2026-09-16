@@ -69,7 +69,7 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
       "scheduler/definition.js",
       "scheduler/loader.js",
       "scheduler/launch.js",
-      "workflows/build-review.js",
+      "workflows/catalog.js",
       "runtime/claude/trust.js",
     ],
   },

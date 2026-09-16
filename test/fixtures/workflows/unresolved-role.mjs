@@ -1,9 +1,9 @@
-// A workflow whose single agent uses role `planner`, which no built-in role defines and
+// A workflow whose single agent uses role `auditor`, which no built-in role defines and
 // whose input never names an agent: admission must fill it from configuration or refuse
 // it as role_unresolved. WOOF_TEST_REPO: the repository path `repository()` returns.
 export default {
   schemaVersion: 1,
-  name: "planner-role",
+  name: "unresolved-role",
   version: "1",
   validateInput: (value) => ({ ok: true, input: value }),
   repository: () => process.env.WOOF_TEST_REPO,
@@ -18,21 +18,21 @@ export default {
     blockedWaitMs: 10_000,
     deliveryTimeoutMs: 10_000,
   },
-  agents: [{ agentId: "planner", role: "planner" }],
-  start: "plan",
+  agents: [{ agentId: "auditor", role: "auditor" }],
+  start: "audit",
   roundStage: null,
   stages: [
     {
       kind: "agent",
-      stageId: "plan",
-      agentId: "planner",
+      stageId: "audit",
+      agentId: "auditor",
       verdicts: [],
-      artifactFile: "plan.md",
+      artifactFile: "audit.md",
       onFailedStatus: "fail",
       bindsRevision: false,
-      request: () => ({ goal: "Plan.", instructions: "Write a plan.", inputs: [] }),
-      next: () => ({ decision: "pass", reason: "planned", outcome: "completed" }),
+      request: () => ({ goal: "Audit.", instructions: "Write an audit.", inputs: [] }),
+      next: () => ({ decision: "pass", reason: "audited", outcome: "completed" }),
     },
   ],
-  edges: { plan: ["completed"] },
+  edges: { audit: ["completed"] },
 };
