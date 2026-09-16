@@ -326,8 +326,11 @@ else `build-review`) also resolves a definition module a project or the
 user has authored, at `<scope>/.woof/workflows/<name>.{mjs,js,ts}` — no
 import from Woof is required; every type in the contract is structural. A
 discovered workflow is not pre-admitted by the launcher: its module body runs
-exactly once, in the pane host, and an admission rejection surfaces through
-that run's `outcome.json` rather than the launcher's exit code. `woof config
+exactly once, in the pane host, which writes any rejection to that run's
+`outcome.json` (the source of the reason and details); the launcher reads it
+and reports the same rejection as its own exit code — 2 for an admission
+rejection, 3 for an infrastructure reason (for example the host's own claim
+failing). `woof config
 show --workflow <name>` reports whether a name resolves and from where
 (`version: null` for a file, with `path`/`sha256` identifying it instead, since
 `config show` never imports a non-built-in module). `/woof:run` takes the same
