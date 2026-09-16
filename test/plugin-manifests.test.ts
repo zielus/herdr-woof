@@ -26,6 +26,7 @@ import { cliPath, distUrl, repoRoot, runNode } from "./helpers/process.js";
 const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
   version: string;
   os: string[];
+  author: string;
 };
 const claudeRoot = join(repoRoot, "plugin", "claude");
 const npmCache = mkdtempSync(join(tmpdir(), "woof-manifest-npm-"));
@@ -129,6 +130,10 @@ describe("Claude Code plugin", () => {
       version: pkg.version,
       description: "Start and inspect Woof workflow runs in Herdr",
     });
+    // N4: the plugin names the same author as package.json ("Name (url)").
+    const author = manifest["author"] as { name: string; url: string };
+    expect(author).toEqual({ name: "Tomasz Chmielarz", url: "https://github.com/zielus" });
+    expect(pkg.author).toBe(`${author.name} (${author.url})`);
     expect(manifest).not.toHaveProperty("mcpServers");
     expect(manifest).not.toHaveProperty("hooks");
     for (const name of [".mcp.json", "hooks", "agents", "scripts", "bin"]) {

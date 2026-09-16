@@ -102,7 +102,7 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
         `expected "run start", "run show", "run cancel" or "run build-review"\n\n${RUN_START_USAGE}\n\n${RUN_SHOW_USAGE}\n\n${RUN_CANCEL_USAGE}\n\n${RUN_BUILD_REVIEW_USAGE}\n\n${RUN_HOST_USAGE}`,
       );
     default:
-      console.error(`woof: ${commandName} is not implemented in the SDK foundation`);
+      console.error(`woof: unknown command ${JSON.stringify(commandName)}; see woof --help`);
       return 1;
   }
 }

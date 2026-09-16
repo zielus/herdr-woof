@@ -494,7 +494,8 @@ describe("woof herdr actions", () => {
     expect(notifications(s).at(-1)).toEqual({ title: "Woof: cancelled a-only", body: single });
 
     const nothing = action(s, "cancel", { focused_pane_cwd: a });
-    expect(nothing.status).toBe(0);
+    // F-025: nothing to cancel is a refusal like run_ambiguous (intentional change from exit 0).
+    expect(nothing.status).toBe(2);
     expect(nothing.json).toMatchObject({ outcome: "rejected", reason: "no_active_run" });
     expect(notifications(s).at(-1)?.title).toBe("Woof: nothing to cancel");
 
