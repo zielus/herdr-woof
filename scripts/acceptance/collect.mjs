@@ -1,0 +1,169 @@
+#!/usr/bin/env node
+/**
+ * Acceptance collector (p5 D6). Runs the test suite once, reads the committed
+ * live logs, and reports whether every acceptance row is actually backed.
+ *
+ * It is deliberately **not** part of `bun run verify`: it needs the committed
+ * live logs, which only exist once the live gate has run. `verify` stays green
+ * at every checkpoint; this is the separate, final gate.
+ *
+ *   bun run acceptance:collect [--no-tests] [--out <path>]
+ *
+ * Exit 0 only when every non-`limit` row is backed by tests that ran and passed
+ * and by gates that are recorded PASS. Exit 1 names each unbacked row and why.
+ * Writes `docs/acceptance/evidence/offline.json`.
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { DISPOSITIONS, LIVE_LOGS, MATRIX } from "./matrix.mjs";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const args = process.argv.slice(2);
+const runTests = !args.includes("--no-tests");
+const outIndex = args.indexOf("--out");
+const outPath =
+  outIndex === -1
+    ? join(repoRoot, "docs", "acceptance", "evidence", "offline.json")
+    : resolve(args[outIndex + 1] ?? "");
+
+function run(command, argv) {
+  const result = spawnSync(command, argv, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
+function gitRevision() {
+  const result = run("git", ["rev-parse", "HEAD"]);
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function versionOf(command, argv) {
+  const result = run(command, argv);
+  return result.status === 0 ? result.stdout.trim().split("\n")[0] : null;
+}
+
+/** Every test the suite ran, keyed by JSON [repo-relative file, fullName]. */
+function testResults() {
+  if (!runTests) return null;
+  const build = run("bun", ["run", "build"]);
+  if (build.status !== 0) {
+    process.stderr.write(`${build.stdout}${build.stderr}`);
+    throw new Error(`bun run build exited ${build.status}`);
+  }
+  const result = run("bun", ["x", "vitest", "run", "--reporter=json"]);
+  const start = result.stdout.indexOf("{");
+  if (start === -1) {
+    process.stderr.write(`${result.stdout}${result.stderr}`);
+    throw new Error("vitest --reporter=json printed no JSON");
+  }
+  const report = JSON.parse(result.stdout.slice(start));
+  const statuses = new Map();
+  for (const file of report.testResults ?? []) {
+    const rel = relative(repoRoot, file.name);
+    for (const assertion of file.assertionResults ?? []) {
+      statuses.set(JSON.stringify([rel, assertion.fullName]), assertion.status);
+    }
+  }
+  return { statuses, total: report.numTotalTests ?? 0, success: report.success === true };
+}
+
+/** `GATE <id> PASS` ids per committed live log that exists. */
+function liveGates() {
+  const gates = new Map();
+  for (const log of LIVE_LOGS) {
+    const path = join(repoRoot, "docs", "research", log);
+    if (!existsSync(path)) continue;
+    const passed = new Set();
+    const failed = new Set();
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const match = /^GATE (\S+) (PASS|FAIL)\b/.exec(line);
+      if (match === null) continue;
+      (match[2] === "PASS" ? passed : failed).add(match[1]);
+    }
+    gates.set(log, { passed, failed });
+  }
+  return gates;
+}
+
+const tests = testResults();
+const gates = liveGates();
+const rows = [];
+
+for (const entry of MATRIX) {
+  const problems = [];
+  if (!DISPOSITIONS.includes(entry.disposition)) {
+    problems.push(`disposition ${JSON.stringify(entry.disposition)} is not in the vocabulary`);
+  }
+  if (entry.disposition === "limit") {
+    if (entry.note.trim() === "") problems.push("a limit row needs a note saying why");
+  } else if (entry.tests.length === 0 && entry.gates.length === 0) {
+    problems.push("no test and no gate backs this row");
+  }
+  for (const test of entry.tests) {
+    const status = tests?.statuses.get(JSON.stringify([test.file, test.name]));
+    if (tests === null) continue;
+    if (status === undefined) problems.push(`${test.file}: no test named ${test.name}`);
+    else if (status !== "passed") problems.push(`${test.file}: ${test.name} is ${status}`);
+  }
+  for (const gate of entry.gates) {
+    const [log, id] = gate.split(":");
+    const found = gates.get(log);
+    if (found === undefined) problems.push(`docs/research/${log} is not committed yet`);
+    else if (found.failed.has(id)) problems.push(`${log} records GATE ${id} FAIL`);
+    else if (!found.passed.has(id)) problems.push(`${log} has no GATE ${id} PASS`);
+  }
+  rows.push({
+    id: entry.id,
+    row: entry.row,
+    disposition: entry.disposition,
+    tests: entry.tests,
+    gates: entry.gates,
+    command: entry.command,
+    note: entry.note,
+    backed: problems.length === 0,
+    problems,
+  });
+}
+
+const report = {
+  schemaVersion: 1,
+  kind: "woof.acceptance.offline",
+  collectedAt: new Date().toISOString(),
+  revision: gitRevision(),
+  versions: {
+    node: process.version,
+    bun: versionOf("bun", ["--version"]),
+    git: versionOf("git", ["--version"]),
+  },
+  tests:
+    tests === null
+      ? null
+      : { total: tests.total, success: tests.success, ran: tests.statuses.size },
+  rows,
+};
+
+mkdirSync(dirname(outPath), { recursive: true });
+writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+
+const width = Math.max(...rows.map((row) => row.id.length));
+for (const row of rows) {
+  const mark = row.backed ? "ok  " : "MISS";
+  process.stdout.write(`${mark} ${row.id.padEnd(width)}  ${row.disposition}\n`);
+  for (const problem of row.problems) process.stdout.write(`       ${problem}\n`);
+}
+
+const unbacked = rows.filter((row) => !row.backed);
+process.stdout.write(
+  `\n${rows.length - unbacked.length}/${rows.length} rows backed; wrote ${relative(repoRoot, outPath)}\n`,
+);
+if (tests !== null && !tests.success) {
+  process.stdout.write("the test run itself was not green\n");
+}
+process.exitCode = unbacked.length === 0 && (tests === null || tests.success) ? 0 : 1;
