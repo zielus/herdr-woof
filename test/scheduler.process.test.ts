@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { repoRoot } from "./helpers/process.js";
 
@@ -35,6 +36,19 @@ interface Report {
   runDir: string;
   repo: string;
 }
+
+// The acceptance matrix's journal predicates (F-012): a test the matrix cites for a row asserts
+// the row's predicate on its own journal.
+type JournalPredicate = (journal: Report["journal"]) => boolean;
+let PREDICATES: {
+  "format-repair-corrected": JournalPredicate;
+  "format-repair-exhausted": JournalPredicate;
+};
+beforeAll(async () => {
+  ({ PREDICATES } = (await import(
+    pathToFileURL(join(repoRoot, "scripts", "acceptance", "matrix.mjs")).href
+  )) as { PREDICATES: typeof PREDICATES });
+});
 
 const cache = new Map<string, Report>();
 
@@ -245,9 +259,12 @@ describe("scheduler scenarios (scripted runtime, real processes)", () => {
         (request) => request.path === "requests/review/visit-1/attempt-2/request.md",
       );
       expect(repairRequest?.text).toContain("artifact_hash_mismatch");
+      // The acceptance matrix's Format repair row: invalid control data, then corrected.
+      expect(PREDICATES["format-repair-corrected"](report.journal)).toBe(true);
 
       const silent = runScenario("no-submission");
       expect(silent.result.outcome).toBe("completed");
+      expect(PREDICATES["format-repair-corrected"](silent.journal)).toBe(false);
       expect(
         gatesOf(silent).filter(
           (gate) => gate["subject"].stageId === "build" && gate["subject"].attempt === 1,
@@ -444,6 +461,44 @@ describe("scheduler bounds (each expired bound is exhausted with its limit)", ()
       ]);
       expect(report.calls.filter((call) => call.method === "deliver")).toHaveLength(1);
       expect(ofType(report, "attempt.opened")).toHaveLength(1);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "6i. maxFormatRepairs: a reviewer whose every envelope is schema-invalid is exhausted, and each format repair quotes envelope_invalid",
+    () => {
+      const report = runScenario("invalid-envelopes");
+      exhaustedBy(report, "maxFormatRepairs");
+      const reviews = ofType(report, "attempt.opened").filter(
+        (record) => record["stageId"] === "review",
+      );
+      expect(reviews).toHaveLength(3);
+      expect(
+        ofType(report, "submission.rejected").map((record) => [
+          record["reason"],
+          record["identity"]?.attempt,
+        ]),
+      ).toEqual([
+        ["envelope_invalid", 1],
+        ["envelope_invalid", 2],
+        ["envelope_invalid", 3],
+      ]);
+      for (const attempt of [2, 3]) {
+        expect(attemptIn(report, "review", 1, attempt)?.cause).toBe("format_repair");
+        const request = report.requests.find(
+          (item) => item.path === `requests/review/visit-1/attempt-${attempt}/request.md`,
+        );
+        expect(request?.text, `attempt ${attempt}`).toContain("envelope_invalid");
+        expect(request?.text, `attempt ${attempt}`).not.toContain("no submission was recorded");
+      }
+      expect(gatesOf(report).filter((gate) => gate["gate"] === "review")).toEqual([]);
+      // The acceptance matrix's Exhausted repair row, and not the corrected shape.
+      expect(PREDICATES["format-repair-exhausted"](report.journal)).toBe(true);
+      expect(PREDICATES["format-repair-corrected"](report.journal)).toBe(false);
+      expect(PREDICATES["format-repair-exhausted"](runScenario("max-format-repairs").journal)).toBe(
+        false,
+      );
     },
     SCENARIO_TIMEOUT,
   );

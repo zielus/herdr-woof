@@ -459,6 +459,16 @@ const SCENARIOS = {
       workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
     }),
 
+  // F-012/F-004: every reviewer envelope fails schema v1 while naming its own attempt.
+  "invalid-envelopes": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: () => ({ verdict: "pass", invalid: true }),
+      },
+    }),
+
   "max-attempts": () =>
     scenario({
       verify: false,
