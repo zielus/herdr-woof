@@ -49,8 +49,14 @@ release:{preflight,bump,notes}`; `prepublishOnly: bun run build`; and
 - The Herdr plugin's `doctor` action notification title now names any
   problems: `Woof: doctor` with none, `Woof: doctor (1 problem)` for one,
   `Woof: doctor (N problems)` for N ≥ 2; the action still exits 0.
-- `herdr cancel` with no active run now exits 2 (previously 0); the JSON
-  outcome and notification text are unchanged.
+- `herdr cancel` with no active run still exits 0, but now with
+  `{"outcome":"noop","reason":"no_active_run","message":"no active Woof run
+in <project>","details":[]}` (previously `outcome:"rejected"` for the same
+  case; notification text unchanged, "Woof: nothing to cancel") — Herdr's own
+  action log records any non-zero exit as a failure indistinguishable from a
+  crash, so a genuine no-op is now `noop`, not `rejected`. Several active runs
+  still refuse (exit 2) with `{"outcome":"rejected","reason":"run_ambiguous",…}`,
+  unchanged.
 - An unknown CLI command now prints `woof: unknown command "<name>"; see
 woof --help` to stderr (previously "... is not implemented in the SDK
   foundation"); still exit 1.

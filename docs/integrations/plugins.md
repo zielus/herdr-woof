@@ -71,9 +71,14 @@ herdr <action>` from the plugin's own checkout:
   blocking — is a notification and exit 2), hosted in a pane split from the
   invocation's focused pane (an action process has no `HERDR_PANE_ID` of its
   own).
-- **`cancel`** — cancels the project's one non-terminal run; refuses (exit 2)
-  when none or several are active, naming each `woof run cancel <run-dir>`
-  when there are several.
+- **`cancel`** — cancels the project's one non-terminal run. With none
+  active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
+"message":"no active Woof run in <project>","details":[]}` (notification
+  unchanged, "Woof: nothing to cancel") — Herdr's own action log records a
+  non-zero exit as a failure, indistinguishable from a crash, so a genuine
+  no-op must exit 0. With several active, refuses (exit 2) with
+  `{"outcome":"rejected","reason":"run_ambiguous",…}`, naming each
+  `woof run cancel <run-dir>`.
 
 Every action, including `doctor`, resolves its target project from
 `HERDR_PLUGIN_CONTEXT_JSON`, never from the action process's own working

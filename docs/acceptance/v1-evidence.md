@@ -6,13 +6,12 @@ contain `5e0236e` itself; it is kept here as a historical id, never as something
 source fixes landed on that branch after the live runs and are part of `b329cdc`: check 17b scans
 to the real first non-blank line (`src/submission/submit.ts`), and quoted rejections in a
 format-repair request are bounded (`src/scheduler/request.ts`, `src/workflows/request-bound.ts`).
-The live runs were not repeated after them. The offline half (`offline.json`) was last re-collected
-on the 0.1.0 code in PR #8 (merged as `ecac163`) at branch commit `79a79cb` on `feat/public-readiness`
-(also kept only as a historical id) — this stays the current collect as of this phase; `offline.json`'s
-`revision` field is the commit at collection time, which after a squash merge is always a branch
-commit, not the merge commit itself — expected behavior of the collector, not a defect. This phase
-will re-collect once its own changes are final; until then, this section names no later version.
-· Date: 2026-09-16
+The live runs were not repeated after them. The offline half (`offline.json`) was re-collected in
+this phase at commit `5c152f7` (24/24 rows backed, exit 0). The previous real collect was on the
+0.1.0 code in PR #8 (merged as `ecac163`) at branch commit `79a79cb` on `feat/public-readiness`;
+that id is now historical only. `offline.json`'s `revision` field is the commit at collection time,
+which after a squash merge is always a branch commit, not the merge commit itself — expected
+behavior of the collector, not a defect. · Date: 2026-09-16
 `bun run verify`: 718 tests green, run twice, at `5e0236e6d0…` (product code
 only); `test/acceptance-evidence.test.ts` itself then adds test cases on top of
 that revision, so the total moves with this file — reproduce it with `bun run
@@ -26,8 +25,8 @@ mapping; `test/acceptance-matrix.test.ts` checks that mapping stays 1:1 with
 `v1.md`, and `test/acceptance-evidence.test.ts` checks that this file covers
 every row and every limit named below. `bun run acceptance:collect` re-derives
 `docs/acceptance/evidence/offline.json` from the same matrix against the
-committed logs below and the test suite; at `79a79cb` it reports 24/24
-rows backed, exit 0.
+committed logs below and the test suite; at `5c152f7` (this phase) it reports
+24/24 rows backed, exit 0.
 
 Live evidence comes from five committed logs under `docs/research/`:
 `build-review-live.log` (round 2, replacing the p3/round-1 log per carry-over
