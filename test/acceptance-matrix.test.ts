@@ -105,36 +105,46 @@ describe("the acceptance matrix", () => {
     }
   });
 
-  it("names only tests that exist, by the full name vitest's JSON reporter emits", () => {
-    // The reporter's `fullName` is the describe titles and the it title joined
-    // by single spaces (checked against vitest 4.1.11's --reporter=json). A
-    // describe rename therefore unbacks every row naming a test inside it, and
-    // this assertion is what makes that loud instead of silent.
+  it("names only tests that exist, by the exact full name vitest's JSON reporter emits", () => {
+    // Keyed the way `collect.mjs` keys: the exact `fullName` vitest 4.1.11's
+    // --reporter=json emits, which is the enclosing describe titles and the it
+    // title joined by single spaces. Independent prefix/suffix literals were not
+    // enough — one literal in the file satisfied both sides at once, so a row
+    // could name a string that is no test and still pass verify (PB-002).
     const missing: string[] = [];
-    const sources = new Map<string, string>();
+    const names = new Map<string, Set<string>>();
     for (const entry of MATRIX) {
       for (const test of entry.tests) {
-        if (!sources.has(test.file)) {
-          sources.set(test.file, readFileSync(join(repoRoot, test.file), "utf8"));
+        if (!names.has(test.file)) {
+          names.set(test.file, fullNamesOf(readFileSync(join(repoRoot, test.file), "utf8")));
         }
-        const source = sources.get(test.file) as string;
-        // The full name is built from title literals in the file. Table-driven
-        // cases name themselves from a data literal rather than inline in it(),
-        // so every string literal in the file counts.
-        const literals = stringLiteralsOf(source).filter((literal) => literal !== "");
-        if (!literals.some((literal) => test.name.endsWith(literal))) {
-          missing.push(
-            `${entry.id}: ${test.file} has no title ending ${JSON.stringify(test.name)}`,
-          );
-        }
-        if (!literals.some((literal) => test.name.startsWith(literal))) {
-          missing.push(
-            `${entry.id}: ${test.file} has no describe title starting ${JSON.stringify(test.name)}`,
-          );
+        if (!(names.get(test.file) as Set<string>).has(test.name)) {
+          missing.push(`${entry.id}: ${test.file} has no test named ${JSON.stringify(test.name)}`);
         }
       }
     }
     expect(missing).toEqual([]);
+  });
+
+  it("composes full names the way vitest does, and rejects a name that is merely a literal", () => {
+    // The composer against the shapes it has to handle: inline titles inside a
+    // describe, and table-driven cases whose title is a data literal.
+    const inline = fullNamesOf(
+      readFileSync(join(repoRoot, "test", "artifact-verdict.process.test.ts"), "utf8"),
+    );
+    expect([...inline]).toContain(
+      "check 17b: an artifact verdict marker that disagrees with the envelope accepts the same artifact once the two agree",
+    );
+    // A bare string literal in that file is not a test name.
+    expect([...inline]).not.toContain("Woof-Verdict:");
+
+    const tableDriven = fullNamesOf(
+      readFileSync(join(repoRoot, "test", "precedence.cli.test.ts"), "utf8"),
+    );
+    expect([...tableDriven]).toContain(
+      "submitResult check precedence a verdict marker mismatch is the last check before publication",
+    );
+    expect([...tableDriven]).not.toContain("artifact_hash_mismatch");
   });
 
   it("names only live logs the collector knows, with a gate id", () => {
@@ -167,9 +177,140 @@ describe("the acceptance matrix", () => {
   });
 });
 
-/** Every plain string literal in a test source, with its escapes resolved. */
-function stringLiteralsOf(source: string): string[] {
-  return [...source.matchAll(/(["'])((?:\\.|(?!\1)[^\n])*)\1/g)].map((match) =>
-    (match[2] ?? "").replaceAll('\\"', '"').replaceAll("\\'", "'").replaceAll("\\\\", "\\"),
+const unescape = (text: string): string =>
+  text.replaceAll('\\"', '"').replaceAll("\\'", "'").replaceAll("\\\\", "\\");
+
+/**
+ * The source with every comment and string body blanked to spaces, so brace
+ * depth can be counted without a parser and every offset still lines up with the
+ * original. Only `{`/`}` outside strings and comments survive.
+ */
+function blanked(source: string): string {
+  const out = [...source];
+  const blank = (from: number, to: number) => {
+    for (let at = from; at < to && at < out.length; at += 1) {
+      if (out[at] !== "\n") out[at] = " ";
+    }
+  };
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "/" && source[index + 1] === "/") {
+      const end = source.indexOf("\n", index);
+      const stop = end === -1 ? source.length : end;
+      blank(index, stop);
+      index = stop;
+    } else if (char === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      blank(index, stop);
+      index = stop;
+    } else if (char === '"' || char === "'" || char === "`") {
+      let at = index + 1;
+      while (at < source.length && source[at] !== char) at += source[at] === "\\" ? 2 : 1;
+      blank(index + 1, at);
+      index = at + 1;
+    } else if (char === "/" && startsRegex(source, index)) {
+      // A regex literal can hold quotes and braces (`/["'`](a|b)/`); without
+      // skipping it, one stray backtick swallows the rest of the file.
+      let at = index + 1;
+      let inClass = false;
+      while (at < source.length) {
+        const here = source[at];
+        if (here === "\\") at += 2;
+        else if (here === "[") ((inClass = true), (at += 1));
+        else if (here === "]") ((inClass = false), (at += 1));
+        else if (here === "/" && !inClass) break;
+        else if (here === "\n") break;
+        else at += 1;
+      }
+      blank(index + 1, at);
+      index = at + 1;
+    } else {
+      index += 1;
+    }
+  }
+  return out.join("");
+}
+
+/**
+ * Whether the `/` at `index` opens a regex literal rather than a division: true
+ * when the previous non-whitespace character can only precede an expression.
+ */
+function startsRegex(source: string, index: number): boolean {
+  let at = index - 1;
+  while (at >= 0 && /\s/.test(source[at] as string)) at -= 1;
+  return at < 0 || "(,=:[!&|?{};+-*%~^".includes(source[at] as string);
+}
+
+/**
+ * Every `fullName` vitest would emit for a test source: the enclosing describe
+ * titles and the it title joined by single spaces. A table-driven `it(x.name, …)`
+ * has no literal title, so its enclosing prefix is paired with every `name:`
+ * string literal in the file — which is how `test/precedence.cli.test.ts` and
+ * `test/journal-integrity.process.test.ts` name their cases.
+ */
+function fullNamesOf(source: string): Set<string> {
+  const braces = blanked(source);
+  const depthAt = (index: number): number => {
+    let depth = 0;
+    for (let at = 0; at < index; at += 1) {
+      if (braces[at] === "{") depth += 1;
+      else if (braces[at] === "}") depth -= 1;
+    }
+    return depth;
+  };
+  const events: Array<{
+    kind: "describe" | "it";
+    title: string | null;
+    /** A template title's literal parts around its one interpolation. */
+    template: [string, string] | null;
+    index: number;
+  }> = [];
+  for (const match of source.matchAll(
+    /\b(describe|it)(?:\.\w+)?\(\s*(?:(["'])((?:\\.|(?!\2).)*)\2|`([^`]*)`|([A-Za-z_$][\w$.]*))/g,
+  )) {
+    const backticked = match[4];
+    // `it(`fails closed on ${case.name}`)`: the literal halves are fixed, the
+    // slot is filled from the file's case titles below.
+    const slot = backticked === undefined ? null : /^([^$]*)\$\{[^}]*\}([^$]*)$/.exec(backticked);
+    events.push({
+      kind: match[1] === "describe" ? "describe" : "it",
+      title:
+        match[3] !== undefined
+          ? unescape(match[3])
+          : backticked !== undefined && !backticked.includes("${")
+            ? backticked
+            : null,
+      template: slot === null ? null : [slot[1] ?? "", slot[2] ?? ""],
+      index: match.index,
+    });
+  }
+  const caseTitles = [...source.matchAll(/\bname:\s*(["'])((?:\\.|(?!\1).)*)\1/g)].map((match) =>
+    unescape(match[2] ?? ""),
   );
+
+  const names = new Set<string>();
+  const stack: Array<{ title: string; depth: number }> = [];
+  for (const event of events) {
+    const depth = depthAt(event.index);
+    while (stack.length > 0 && (stack.at(-1) as { depth: number }).depth >= depth) stack.pop();
+    const prefix = stack.map((item) => item.title);
+    if (event.kind === "describe") {
+      if (event.title !== null) stack.push({ title: event.title, depth });
+      continue;
+    }
+    if (event.title !== null) {
+      names.add([...prefix, event.title].join(" "));
+      continue;
+    }
+    // A title the call takes from data: every case title in the file is a
+    // candidate, either whole or inside the template's literal halves.
+    for (const title of caseTitles) {
+      const composed =
+        event.template === null ? title : `${event.template[0]}${title}${event.template[1]}`;
+      names.add([...prefix, composed].join(" "));
+    }
+  }
+  return names;
 }
