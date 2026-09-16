@@ -187,9 +187,13 @@ describe("the acceptance matrix", () => {
     const report = JSON.parse(readFileSync(out, "utf8")) as {
       kind: string;
       tests: unknown;
+      format: { ok: boolean; problem: string | null };
       rows: Array<{ id: string; backed: boolean; problems: string[] }>;
     };
     expect(report.kind).toBe("woof.acceptance.offline");
+    // The report records that its own formatting succeeded, so an unformatted
+    // report on disk is self-describing rather than silently different.
+    expect(report.format).toEqual({ ok: true, problem: null });
     expect(report.tests).toBeNull();
     expect(report.rows).toHaveLength(MATRIX.length);
     // PB-001: a gates-only pass never reports a test-backed row as backed.
@@ -197,6 +201,53 @@ describe("the acceptance matrix", () => {
       (row, index) => row.backed && (MATRIX[index]?.tests.length ?? 0) > 0,
     );
     expect(backedWithTests).toEqual([]);
+  }, 180_000);
+
+  it("fails when it cannot format its own report, instead of overwriting that status (PR #7 collect.mjs)", () => {
+    // A failed formatter used to set exitCode 1 and then have the final
+    // unconditional assignment overwrite it, so the collector could exit 0 having
+    // failed to produce the formatted evidence report it documents.
+    // WOOF_ACCEPTANCE_FORMATTER is the collector's test seam; the default is the
+    // repository's own Prettier and every other run here leaves it unset.
+    const out = join(mkdtempSync(join(tmpdir(), "woof-acceptance-")), "evidence", "offline.json");
+    const collected = spawnSync(
+      "node",
+      [join(repoRoot, "scripts", "acceptance", "collect.mjs"), "--no-tests", "--out", out],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 120_000,
+        env: { ...process.env, WOOF_ACCEPTANCE_FORMATTER: "node --eval process.exit(3)" },
+      },
+    );
+    expect(collected.status, collected.stdout + collected.stderr).not.toBe(0);
+    expect(collected.stderr).toContain("cannot format");
+    expect(collected.stderr).toContain("exit 3");
+
+    // The report on disk says so too, and names the command that failed.
+    const report = JSON.parse(readFileSync(out, "utf8")) as {
+      format: { ok: boolean; problem: string | null };
+    };
+    expect(report.format.ok).toBe(false);
+    expect(report.format.problem).toContain("cannot format");
+
+    // The success condition includes it: with everything else identical, a
+    // formatter that works reports ok.
+    const okOut = join(mkdtempSync(join(tmpdir(), "woof-acceptance-")), "evidence", "offline.json");
+    const ok = spawnSync(
+      "node",
+      [join(repoRoot, "scripts", "acceptance", "collect.mjs"), "--no-tests", "--out", okOut],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 120_000,
+        env: { ...process.env, WOOF_ACCEPTANCE_FORMATTER: "node --eval process.exit(0)" },
+      },
+    );
+    expect(ok.stderr, ok.stdout + ok.stderr).not.toContain("cannot format");
+    expect((JSON.parse(readFileSync(okOut, "utf8")) as { format: { ok: boolean } }).format.ok).toBe(
+      true,
+    );
   }, 180_000);
 
   it("the acceptance matrix names no MCP adapter anywhere in src/", () => {

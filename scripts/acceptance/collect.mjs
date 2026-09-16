@@ -163,19 +163,30 @@ const report = {
 };
 
 mkdirSync(dirname(outPath), { recursive: true });
-writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+const write = () => writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+write();
 // The report is committed, so it must satisfy `bun run format:check` like every
 // other file: `JSON.stringify(_, null, 2)` always expands short arrays, Prettier
 // collapses the ones that fit in printWidth. Rather than reimplement that rule,
 // the repo's own Prettier formats the file it just wrote — same binary, same
 // .prettierrc. A failure is reported, never silently shipped unformatted.
-const formatted = run("bun", ["x", "prettier", "--write", outPath]);
-if (formatted.status !== 0) {
-  process.stderr.write(
-    `cannot format ${outPath} with the repository's prettier: ${formatted.stderr || formatted.stdout}\n`,
-  );
-  process.exitCode = 1;
-}
+// WOOF_ACCEPTANCE_FORMATTER is a test seam: a whitespace-separated command the
+// report path is appended to. Unset (always, outside tests) it is the
+// repository's own Prettier.
+const formatter = (process.env["WOOF_ACCEPTANCE_FORMATTER"] ?? "bun x prettier --write").split(
+  /\s+/,
+);
+const formatted = run(formatter[0], [...formatter.slice(1), outPath]);
+const formatProblem =
+  formatted.status === 0
+    ? null
+    : `cannot format ${outPath} with ${formatter.join(" ")}: ${(formatted.stderr || formatted.stdout || `exit ${formatted.status}`).trim()}`;
+// The report says whether its own formatting succeeded, so an unformatted report
+// on disk is self-describing rather than silently different from a formatted one.
+report.format = { ok: formatProblem === null, problem: formatProblem };
+write();
+if (formatProblem !== null) process.stderr.write(`${formatProblem}\n`);
+else run(formatter[0], [...formatter.slice(1), outPath]);
 
 const width = Math.max(...rows.map((row) => row.id.length));
 for (const row of rows) {
@@ -191,4 +202,8 @@ process.stdout.write(
 if (tests !== null && !tests.success) {
   process.stdout.write("the test run itself was not green\n");
 }
-process.exitCode = unbacked.length === 0 && (tests === null || tests.success) ? 0 : 1;
+// The formatting result is part of the success condition, not a separate
+// exitCode written earlier and then overwritten here: a report this collector
+// could not format is not a report it produced successfully.
+process.exitCode =
+  unbacked.length === 0 && (tests === null || tests.success) && formatProblem === null ? 0 : 1;
