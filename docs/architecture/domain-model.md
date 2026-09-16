@@ -164,10 +164,11 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   attempt made for the attempt (`started | not_delivered | ambiguous`, each
   with its own closed `reason` set — every `not_delivered` reason means
   nothing was sent, not proof a prompt went out). Only two reasons end the
-  run `failed`: `not_found` (`failed{reason:"agent_gone: …"}`, a genuinely
-  unreachable runtime such as a missing binary, `HERDR_ENV` unset, or an
-  unreachable server) and `runtime_unavailable`
-  (`failed{reason:"runtime_unavailable: …"}`). Every other `not_delivered`
+  run `failed`: `not_found` (`failed{reason:"agent_gone: …"}`, the agent
+  itself is gone at dispatch) and `runtime_unavailable`
+  (`failed{reason:"runtime_unavailable: …"}`, a genuinely unreachable
+  runtime such as a missing binary, `HERDR_ENV` unset, or an unreachable
+  server). Every other `not_delivered`
   reason — `agent_busy`, `agent_blocked`, `invalid_request`, and
   `precondition_failed` (a failed precondition read, or the delivery
   deadline expiring before the prompt could be sent) — is retried instead:

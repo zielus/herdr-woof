@@ -52,7 +52,8 @@ Call the CLI as `node <woof.node> <woof.cli>` using the paths from
 - `woof agent start <role> [--split right|down | --pane <pane-id>] [--name
 <agent-name>] [--project <dir>]`: starts one agent from a resolved role, in
   a new or existing Herdr pane, outside any run — no run directory, no
-  `--add-dir`, no journal.
+  `--add-dir`, no journal. On a failed start after `--split`, it closes the
+  pane it split and reports whether that worked as `paneClosed`.
 
 ## Configuration
 

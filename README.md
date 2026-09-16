@@ -179,7 +179,8 @@ the launch flags. It opens in a new pane split from the caller's (`--split`,
 default `down`) or an existing one (`--pane`), named `--name` (default the
 role name). Prints `{"outcome":"started","role","roleSource","agent"}`. Exits
 0 started, 2 the role or configuration is refused, 3 Herdr is unavailable or
-the pane/agent start failed, 1 a usage error.
+the pane/agent start failed (a pane this command split is then closed, and
+`paneClosed` in the rejection says whether that worked), 1 a usage error.
 
 `doctor` reports whether Herdr and Claude Code can be invoked, and (with
 `--json`) the read-only Claude folder-trust status of a repository, resolved
