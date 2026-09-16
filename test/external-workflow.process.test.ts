@@ -27,6 +27,10 @@ import { cliPath, repoRoot } from "./helpers/process.js";
  * GIT_CONFIG_GLOBAL=/dev/null.
  */
 const fixture = join(repoRoot, "test", "fixtures", "workflows", "scribe.mjs");
+// A test-only wrapper around the same definition, under a different name: it
+// carries the module-evaluation hook so the shipped `scribe.mjs` has zero
+// imports (p5 repair PB-007).
+const onceFixture = join(repoRoot, "test", "fixtures", "workflows", "scribe-once.mjs");
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
 const dirs: string[] = [];
 afterEach(() => {
@@ -77,6 +81,7 @@ function setup(): Env {
   const target = join(repo, ".woof", "workflows", "scribe.mjs");
   mkdirSync(dirname(target), { recursive: true });
   copyFileSync(fixture, target);
+  copyFileSync(onceFixture, join(repo, ".woof", "workflows", "scribe-once.mjs"));
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "init");
   return { root, home, repo };
@@ -145,12 +150,11 @@ function startScribe(env: Env, input: Json, extraEnv: Record<string, string> = {
 describe("an external project workflow loads, admits and runs", () => {
   it("runs scribe end to end from the project .woof, with roundStage null and no limitDefaults", () => {
     const env = setup();
-    const sideEffect = join(env.root, "side-effect.log");
-    const out = startScribe(
-      env,
-      { schemaVersion: 1, repo: env.repo, note: "The fixture is unchanged." },
-      { WOOF_TEST_SIDE_EFFECT: sideEffect },
-    );
+    const out = startScribe(env, {
+      schemaVersion: 1,
+      repo: env.repo,
+      note: "The fixture is unchanged.",
+    });
     expect(out.status, out.stdout + out.stderr).toBe(0);
     expect(out.json).toMatchObject({
       outcome: "run",
@@ -191,12 +195,11 @@ describe("an external project workflow loads, admits and runs", () => {
     expect(
       records.filter((record) => record["type"] === "attempt.opened").map((r) => r["stageId"]),
     ).toEqual(["note"]);
+    // The accepted copy is the exact bytes the scripted worker wrote, not merely
+    // a non-empty file: the artifact reaches `accepted/` unchanged (PB-006).
     expect(
       readFileSync(join(out.runDir, "accepted", "note", "visit-1", "attempt-1", "note.md"), "utf8"),
-    ).not.toBe("");
-
-    // The module body ran exactly once, in the process that hosted the run.
-    expect(readFileSync(sideEffect, "utf8")).toBe("evaluated\n");
+    ).toBe("# note 1.1\n\nDone.\n");
 
     // The run is not in the built-in catalog: its recorded workflow is the project file.
     const config = JSON.parse(readFileSync(join(out.runDir, "config.json"), "utf8")) as {
@@ -209,6 +212,59 @@ describe("an external project workflow loads, admits and runs", () => {
       value: { name: "scribe", version: "1" },
     });
     expect(config.workflow.sha256).toMatch(/^[0-9a-f]{64}$/);
+  }, 60_000);
+
+  it("evaluates a discovered module's body exactly once, in the process that hosts the run", () => {
+    // The hook lives in the wrapper, not in `scribe.mjs`: the file the live
+    // fixture ships has zero imports, so this proof runs against a definition of
+    // the same shape under a different name (p5 repair PB-007).
+    const env = setup();
+    const sideEffect = join(env.root, "side-effect.log");
+    runCount += 1;
+    const runDir = join(env.root, `once-${runCount}`);
+    const inputPath = join(env.root, `once-input-${runCount}.json`);
+    writeFileSync(
+      inputPath,
+      JSON.stringify({ schemaVersion: 1, repo: env.repo, note: "Evaluated once." }),
+    );
+    const out = runWoof(
+      env,
+      [
+        "run",
+        "start",
+        "--workflow",
+        "scribe-once",
+        "--host",
+        "foreground",
+        "--project",
+        env.repo,
+        "--input",
+        inputPath,
+        "--run-dir",
+        runDir,
+        "--run-id",
+        `scribe-once-${runCount}`,
+        "--poll-ms",
+        "2",
+        "--runtime-module",
+        runtimeModule,
+      ],
+      { WOOF_TEST_SCRIPT: "happy", WOOF_TEST_SIDE_EFFECT: sideEffect },
+    );
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(out.json).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    // One line: the launcher never pre-admits a discovered workflow, so the module
+    // body runs in the host and nowhere else.
+    expect(readFileSync(sideEffect, "utf8")).toBe("evaluated\n");
+    // It really is the same definition, renamed only because the loader requires
+    // a definition's name to match its file stem.
+    const plan = (
+      JSON.parse(readFileSync(join(runDir, "journal.jsonl"), "utf8").split("\n")[0] as string) as {
+        plan: { workflow: Json; agents: Json[] };
+      }
+    ).plan;
+    expect(plan.workflow).toMatchObject({ name: "scribe-once", version: "1" });
+    expect(plan.agents).toMatchObject([{ agentId: "scribe", role: "builder" }]);
   }, 60_000);
 
   it("reports the project workflow in config show with version null, without importing it", () => {
@@ -292,5 +348,29 @@ describe("an external project workflow loads, admits and runs", () => {
     expect(readFileSync(join(env.repo, ".woof", "workflows", "scribe.mjs"), "utf8")).toBe(
       readFileSync(fixture, "utf8"),
     );
+  });
+
+  it("has the live fixture writer copy this exact file, and ship a definition with no imports", () => {
+    // The live copy is written by `scripts/live/build-review.mjs --with-roles`,
+    // which the offline suite cannot run (the fixture is the verifier's). Reading
+    // its source is what keeps the live path from drifting away from this fixture
+    // (p5 repair PB-005).
+    const script = readFileSync(join(repoRoot, "scripts", "live", "build-review.mjs"), "utf8");
+    const copy =
+      /copyFileSync\(\s*join\(([^)]*)\),\s*join\(([^)]*)\),\s*\);/.exec(script) ?? undefined;
+    expect(copy, "build-review.mjs must copy the fixture with copyFileSync").toBeDefined();
+    const source = (copy?.[1] ?? "").replaceAll(/\s+/g, " ");
+    const target = (copy?.[2] ?? "").replaceAll(/\s+/g, " ");
+    expect(source).toBe('woofRoot, "test", "fixtures", "workflows", "scribe.mjs"');
+    expect(target).toBe('repo, ".woof", "workflows", "scribe.mjs"');
+    // Nothing else writes that path: a second writer could silently win.
+    expect(script.match(/workflows", "scribe\.mjs"/g) ?? []).toHaveLength(2);
+    expect(script).not.toContain("scribe-once");
+
+    // The shipped definition has no imports at all (p5 repair PB-007): the live
+    // fixture gets this file verbatim, so a test hook here would ship with it.
+    const definition = readFileSync(fixture, "utf8");
+    expect(definition.split("\n").filter((line) => /^\s*import\b/.test(line))).toEqual([]);
+    expect(definition).not.toContain("WOOF_TEST_SIDE_EFFECT");
   });
 });

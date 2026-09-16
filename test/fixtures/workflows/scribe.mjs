@@ -4,14 +4,11 @@
 // `limitDefaults` (the p3 shape, where resolveLimits returns the complete set),
 // an agent id that is not its role name, and a stage the engine has never seen.
 //
-// A definition needs no Woof import: every type in the contract is structural.
-// WOOF_TEST_SIDE_EFFECT, when set, is appended to once per module evaluation, so
-// a test can prove the module body runs exactly once in the process that hosts
-// the run.
-import { appendFileSync } from "node:fs";
-
-const sideEffect = process.env["WOOF_TEST_SIDE_EFFECT"];
-if (sideEffect !== undefined) appendFileSync(sideEffect, "evaluated\n");
+// A definition needs no imports at all — not from Woof (every type in the
+// contract is structural) and not from node: either. This is the file the live
+// fixture ships verbatim, so it carries no test hook; the proof that a
+// discovered module's body runs exactly once lives in `scribe-once.mjs`, a
+// test-only wrapper around this same definition (p5 repair PB-007).
 
 function validateInput(value) {
   const details = [];
