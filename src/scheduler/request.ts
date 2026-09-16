@@ -14,6 +14,17 @@ export const MAX_REQUEST_BYTES = 32 * 1024;
 /** Longest run directory path admission accepts, in bytes; request size bounds assume it. */
 export const MAX_RUN_DIR_BYTES = 512;
 
+/**
+ * Quoted prior-rejection data is bounded, because it is the one part of a
+ * request that comes from a worker's own output rather than from the admitted
+ * input. A rejection message can quote an artifact or an envelope, and the
+ * number of rejections recorded for one attempt is not bounded either, so
+ * without these caps a format-repair request could exceed MAX_REQUEST_BYTES for
+ * an input admission already accepted (PR #7, request-bound.ts:112).
+ */
+export const MAX_REJECTION_MESSAGE_BYTES = 2 * 1024;
+export const MAX_QUOTED_REJECTIONS = 5;
+
 export interface ResolvedInput {
   label: string;
   /** Absolute path of the accepted copy or evidence file. */
@@ -90,9 +101,17 @@ export function renderRequest(input: RenderRequestInput): RenderRequestResult {
     if (rejections.length === 0) {
       lines.push("Journaled rejections for that attempt: none — no submission was recorded.");
     } else {
-      lines.push("Journaled rejections for that attempt:");
-      for (const rejection of rejections)
-        lines.push(`- ${rejection.reason}: ${oneLine(rejection.message)}`);
+      // The most recent rejections are the ones worth reading; older ones are
+      // counted, not quoted, so the block stays bounded however many there were.
+      const quoted = rejections.slice(-MAX_QUOTED_REJECTIONS);
+      const omitted = rejections.length - quoted.length;
+      lines.push(
+        omitted === 0
+          ? "Journaled rejections for that attempt:"
+          : `Journaled rejections for that attempt (the ${quoted.length} most recent of ${rejections.length}; ${omitted} older omitted):`,
+      );
+      for (const rejection of quoted)
+        lines.push(`- ${rejection.reason}: ${clamp(oneLine(rejection.message))}`);
     }
     lines.push(
       "Fix the output contract only. Do not redo the substantive work unless your artifact is missing.",
@@ -187,4 +206,16 @@ export function shellQuote(value: string): string {
 
 function oneLine(text: string): string {
   return text.replaceAll(/\s+/g, " ").trim();
+}
+
+/**
+ * A rejection message cut to MAX_REJECTION_MESSAGE_BYTES, with a note saying so.
+ * Decoding the truncated bytes replaces a split trailing character with U+FFFD
+ * rather than throwing, so any message is safe to quote.
+ */
+function clamp(text: string): string {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.byteLength <= MAX_REJECTION_MESSAGE_BYTES) return text;
+  const kept = bytes.subarray(0, MAX_REJECTION_MESSAGE_BYTES).toString("utf8");
+  return `${kept}… (message truncated: ${bytes.byteLength} bytes, quoted ${MAX_REJECTION_MESSAGE_BYTES})`;
 }

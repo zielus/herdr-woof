@@ -296,6 +296,61 @@ Do not edit files under /runs/run-7 other than /runs/run-7/artifacts/build/visit
     expect(text({ attempt: 3, cause: "work_retry" })).toContain("attempt 3 · work retry · round 0");
   });
 
+  it("bounds the quoted rejections so a format repair always fits (PR #7 request-bound.ts:112)", () => {
+    // Rejection messages come from a worker's own output, not from the admitted
+    // input, and the number of rejections for one attempt is unbounded. Before
+    // this, an input the admission bound accepted could later produce a
+    // format-repair request over the 32 KiB cap.
+    const rejections = (count: number, size: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        reason: `envelope_invalid_${index}`,
+        message: "x".repeat(size),
+      }));
+    for (const [count, size] of [
+      [1, 40 * 1024],
+      [2, 20 * 1024],
+      [50, 10 * 1024],
+      [500, 1024],
+    ] as Array<[number, number]>) {
+      const out = renderRequest(
+        input({
+          attempt: 2,
+          cause: "format_repair",
+          previous: { attempt: 1, rejections: rejections(count, size) },
+        }),
+      );
+      expect(out.ok, `${count} rejections of ${size} bytes`).toBe(true);
+      expect(out.bytes, `${count} rejections of ${size} bytes`).toBeLessThan(32 * 1024);
+    }
+
+    // What the worker is told when data was cut: the count of older rejections
+    // omitted, and a per-message truncation note naming both sizes.
+    const many = text({
+      attempt: 2,
+      cause: "format_repair",
+      previous: { attempt: 1, rejections: rejections(7, 9000) },
+    });
+    expect(many).toContain(
+      "Journaled rejections for that attempt (the 5 most recent of 7; 2 older omitted):",
+    );
+    expect(many).toContain("(message truncated: 9000 bytes, quoted 2048)");
+    // The most recent are the ones kept.
+    expect(many).toContain("envelope_invalid_6:");
+    expect(many).not.toContain("envelope_invalid_1:");
+
+    // A short message is quoted whole, with no note and no omission line.
+    const short = text({
+      attempt: 2,
+      cause: "format_repair",
+      previous: { attempt: 1, rejections: [{ reason: "artifact_empty", message: "it is empty" }] },
+    });
+    expect(short).toContain(
+      "Journaled rejections for that attempt:\n- artifact_empty: it is empty",
+    );
+    expect(short).not.toContain("truncated");
+    expect(short).not.toContain("older omitted");
+  });
+
   it("refuses a request larger than 32 KiB", () => {
     const result = renderRequest(
       input({

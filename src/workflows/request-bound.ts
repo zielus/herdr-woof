@@ -4,7 +4,13 @@ import {
   type RequestContext,
   type WorkflowDefinition,
 } from "../scheduler/definition.js";
-import { MAX_RUN_DIR_BYTES, renderRequest, type ResolvedInput } from "../scheduler/request.js";
+import {
+  MAX_QUOTED_REJECTIONS,
+  MAX_REJECTION_MESSAGE_BYTES,
+  MAX_RUN_DIR_BYTES,
+  renderRequest,
+  type ResolvedInput,
+} from "../scheduler/request.js";
 
 /**
  * Admission-time bound on the exact rendered request, shared by the built-in
@@ -124,7 +130,40 @@ export function largestRequestBytes<Input>(
         ? { roleInstructions: request.roleInstructions }
         : {}),
     });
-    largest = Math.max(largest, rendered.bytes);
+    // The same stage's format-repair request, which replaces the goal, task and
+    // inputs with the previous attempt's journaled rejections. Those messages come
+    // from a worker's own output, not from the admitted input, so the renderer
+    // caps them; this renders that cap's worst case so an input is never admitted
+    // whose format repair could then exceed MAX_REQUEST_BYTES (PR #7).
+    const repair = renderRequest({
+      runId: "r".repeat(128),
+      workflow: { name: definition.name, version: definition.version },
+      agentId: stage.agentId,
+      role: stage.agentId,
+      stageId: item.stageId,
+      visit: counter,
+      attempt: counter,
+      cause: "format_repair",
+      round: counter,
+      repository: definition.repository(input),
+      revision: { head: hex, tree: hex },
+      runDir,
+      artifactFile: stage.artifactFile,
+      verdicts: stage.verdicts,
+      submitCommand: [longPath("n"), longPath("c")],
+      goal: request.goal,
+      instructions: request.instructions,
+      inputs: [],
+      previous: {
+        attempt: counter,
+        rejections: Array.from({ length: MAX_QUOTED_REJECTIONS }, () => ({
+          reason: "r".repeat(64),
+          // One byte past the cap, so the truncation note is rendered too.
+          message: "m".repeat(MAX_REJECTION_MESSAGE_BYTES + 1),
+        })),
+      },
+    });
+    largest = Math.max(largest, rendered.bytes, repair.bytes);
   }
   return largest;
 }
