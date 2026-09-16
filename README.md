@@ -162,7 +162,19 @@ bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
 bin/woof run cancel <run-dir> [--reason <text>]
 bin/woof herdr status|start|cancel|doctor
+bin/woof agent start <role> [--split right|down | --pane <pane-id>] \
+  [--name <agent-name>] [--project <dir>]
 ```
+
+`agent start` starts one agent from a resolved role definition outside any
+workflow run: no run directory, no `--add-dir`, no journal. The role resolves
+the same way a run's does (project `.woof/roles/<role>.json` → user
+`~/.woof/roles/<role>.json` → a built-in role), and its `model`/`args` become
+the launch flags. It opens in a new pane split from the caller's (`--split`,
+default `down`) or an existing one (`--pane`), named `--name` (default the
+role name). Prints `{"outcome":"started","role","roleSource","agent"}`. Exits
+0 started, 2 the role or configuration is refused, 3 Herdr is unavailable or
+the pane/agent start failed, 1 a usage error.
 
 `doctor` reports whether Herdr and Claude Code can be invoked, and (with
 `--json`) the read-only Claude folder-trust status of a repository, resolved

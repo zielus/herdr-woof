@@ -49,6 +49,10 @@ Call the CLI as `node <woof.node> <woof.cli>` using the paths from
 - `woof doctor [--json] [--strict]`: Herdr/Claude Code availability, the
   Claude folder-trust status and configuration validity; `--strict` exits 2
   when any problem is reported.
+- `woof agent start <role> [--split right|down | --pane <pane-id>] [--name
+<agent-name>] [--project <dir>]`: starts one agent from a resolved role, in
+  a new or existing Herdr pane, outside any run — no run directory, no
+  journal.
 
 ## Configuration
 

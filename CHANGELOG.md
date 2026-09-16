@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
   (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
   `trust_unknown`/`config_invalid`); `--strict` exits 2 when it is
   non-empty, in both modes.
+- `woof agent start <role>`: starts one agent from a resolved role
+  definition, in a new or existing Herdr pane, outside any workflow run — no
+  run directory, no `--add-dir`, no journal.
 
 ### Changed
 
