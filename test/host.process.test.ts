@@ -334,6 +334,68 @@ console.log(JSON.stringify({ returned, outcome: JSON.parse(readFileSync(runDir +
   });
 });
 
+describe("p5 C3: the probe checks a hosting claim's fields, not only their presence", () => {
+  it("refuses a startedAt that is not a date, and defers to the heartbeat for a foreign hostname", () => {
+    const result = runNode(
+      `const { parseHostInfo, ownerOf } = await import(${JSON.stringify(distUrl("host/probe.js"))});
+const { hostname } = await import("node:os");
+const mtime = new Date("2026-09-16T00:00:00.000Z");
+const claim = (overrides) =>
+  JSON.stringify({
+    schemaVersion: 1,
+    kind: "woof.host",
+    state: "hosting",
+    pid: process.pid,
+    hostname: hostname(),
+    startedAt: "2026-09-16T00:00:00.000Z",
+    heartbeatMs: 1000,
+    ...overrides,
+  });
+const parsed = (overrides) => parseHostInfo(claim(overrides), mtime) ?? null;
+// A dead pid this machine owns; 2^22 - 1 is above every pid_max in practice.
+const deadPid = 4194303;
+const now = mtime.getTime();
+console.log(
+  JSON.stringify({
+    valid: parsed({}) !== null,
+    unparseable: parsed({ startedAt: "not a date" }),
+    empty: parsed({ startedAt: "" }),
+    numeric: parsed({ startedAt: 1758000000000 }),
+    // An exited claim carries no liveness fields, so the rule does not reach it.
+    exitedKeepsLooseStartedAt:
+      parseHostInfo(claim({ state: "exited", startedAt: "whenever" }), mtime) !== null,
+    // A claim from another machine: this machine's pid table says nothing about it,
+    // so freshness alone decides. Fresh → alive even though the pid is dead here.
+    foreignFresh: ownerOf(
+      { ...parsed({ hostname: "another-machine" }), pid: deadPid, heartbeatAt: mtime.toISOString() },
+      { now },
+    ),
+    foreignStale: ownerOf(
+      { ...parsed({ hostname: "another-machine" }), pid: deadPid, heartbeatAt: mtime.toISOString() },
+      { now: now + 60_000 },
+    ),
+    // The same claim on this machine with a dead pid is lost at once, fresh or not.
+    localDead: ownerOf(
+      { ...parsed({}), pid: deadPid, heartbeatAt: mtime.toISOString() },
+      { now },
+    ),
+  }),
+);`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    expect(out["valid"]).toBe(true);
+    // Presence and type are no longer enough: the value must be a date.
+    expect(out["unparseable"]).toBeNull();
+    expect(out["empty"]).toBeNull();
+    expect(out["numeric"]).toBeNull();
+    expect(out["exitedKeepsLooseStartedAt"]).toBe(true);
+    expect(out["foreignFresh"]).toBe("alive");
+    expect(out["foreignStale"]).toBe("lost");
+    expect(out["localDead"]).toBe("lost");
+  });
+});
+
 describe("metadata refresh coalescing (PR #6 run.ts:293)", () => {
   it("runs one report at a time, folds a burst of requests into one follow-up each round and drains promptly", () => {
     const result = runNode(

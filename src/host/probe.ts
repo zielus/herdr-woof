@@ -204,9 +204,15 @@ export function parseHostInfo(text: string, mtime: Date): HostInfo | undefined {
   const startedAt = stringOrNull(value["startedAt"]);
   // A hosting claim carries everything claimHost writes; without a pid or hostname nothing could
   // tell a dead host from a live one, so such a claim is invalid (lost), never alive.
+  // `startedAt` must also be a date anyone can read (p5 C3): a claim that merely has a string
+  // there says nothing about when hosting began, and presence alone is not the contract.
   if (
     state === "hosting" &&
-    (heartbeatMs === null || pid === null || claimedOn === null || startedAt === null)
+    (heartbeatMs === null ||
+      pid === null ||
+      claimedOn === null ||
+      startedAt === null ||
+      !Number.isFinite(Date.parse(startedAt)))
   )
     return undefined;
   return {
@@ -267,6 +273,9 @@ export function ownerOf(host: HostInfo, options: ProbeOptions = {}): HostOwner {
   const beat = host.heartbeatAt === null ? Number.NaN : Date.parse(host.heartbeatAt);
   const stale =
     !Number.isFinite(beat) || now - beat > LOST_AFTER_HEARTBEATS * (host.heartbeatMs ?? 0);
+  // A pid is only checkable on the machine that claimed: a claim from another host name keeps
+  // deferring to heartbeat freshness, because this machine's pid table says nothing about it
+  // (p5 C3 — asserted in test/host.process.test.ts, not merely implied).
   const dead = host.hostname === hostname() && host.pid !== null && !processExists(host.pid);
   // A host process that is gone without recording its exit was lost, even on a terminated run.
   if (dead) return "lost";

@@ -641,6 +641,54 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     }
   });
 
+  it("p5 C3 (launch.ts:200): herdr pane run failing after the host claimed reports the directory could not be closed", () => {
+    // The uncovered half of launch.ts:200. The pane's command started and claimed
+    // the run directory, and `pane run` still reported failure: the launcher
+    // cannot abandon a directory a live host owns, and says exactly that instead
+    // of claiming the run will never start.
+    const ws = workspace("w9:p2", false);
+    writeFileSync(
+      ws.scenario,
+      JSON.stringify([
+        {
+          match: ["pane", "split"],
+          stdout: JSON.stringify({ result: { pane: { pane_id: "w9:p2" } } }),
+        },
+        {
+          match: ["pane", "run"],
+          // The pane types and starts the command, then `pane run` reports failure.
+          spawn: {
+            commandIndex: 3,
+            env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p2", WOOF_TEST_SCRIPT: "hang" },
+            log: join(ws.root, "host.log"),
+          },
+          hangMs: 4000,
+          stderr: "run refused after the pane had started it\n",
+          exit: 1,
+        },
+        { match: ["pane", "report-metadata"], stdout: "{}" },
+        { match: ["notification", "show"], stdout: "{}" },
+      ]),
+    );
+    const runDir = join(ws.root, "run");
+    const result = woofIn(ws, startArgs(ws, runDir));
+
+    expect(result.status, result.stdout + result.stderr).toBe(3);
+    expect(result.json).toMatchObject({ outcome: "rejected", reason: "host_pane_failed" });
+    const message = String(result.json?.["message"]);
+    expect(message).toContain("run refused after the pane had started it");
+    expect(message).toContain("the run directory could not be closed (abandoned)");
+    expect(message).toContain("already claimed by a run host");
+    // The claim is the live host's, not an abandonment: the launcher wrote nothing over it.
+    expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
+      state: "hosting",
+    });
+    // The run really is running, which is why the directory could not be closed.
+    expect(woofIn(ws, ["run", "cancel", runDir, "--reason", "test cleanup"]).json).toMatchObject({
+      outcome: "recorded",
+    });
+  }, 60_000);
+
   it("S3: a host that never starts is abandoned within hostStartTimeoutMs, and a late host is refused", () => {
     const ws = workspace("w9:p2", false);
     const runDir = join(ws.root, "run");

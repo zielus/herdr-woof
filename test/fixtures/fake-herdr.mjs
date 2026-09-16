@@ -9,7 +9,9 @@
 // An entry may add `spawn: { commandIndex, env?, log? }` (p4): argv from
 // commandIndex on is joined with spaces and run with `sh -c`, detached, with the
 // extra env and stdio appended to `log` (default FAKE_HERDR_LOG + ".spawn"). It
-// stands in for `herdr pane run` typing a command into a fresh pane.
+// stands in for `herdr pane run` typing a command into a fresh pane. The spawn
+// happens before `hangMs` delays the reply, so an entry with both starts the
+// command and still reports failure.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, openSync, readFileSync } from "node:fs";
 
@@ -40,19 +42,24 @@ const respond = () => {
     );
     process.exit(1);
   }
-  if (entry.spawn !== undefined) {
-    const out = openSync(entry.spawn.log ?? `${logPath ?? "/dev/null"}.spawn`, "a");
-    const child = spawn("sh", ["-c", argv.slice(entry.spawn.commandIndex).join(" ")], {
-      detached: true,
-      stdio: ["ignore", out, out],
-      env: { ...process.env, ...entry.spawn.env },
-    });
-    child.unref();
-  }
   if (entry.stdout !== undefined) process.stdout.write(entry.stdout);
   if (entry.stderr !== undefined) process.stderr.write(entry.stderr);
   process.exitCode = entry.exit ?? 0;
 };
+
+// The spawn stands in for the pane typing the command, which happens as the pane
+// runs it — before this process reports anything. `hangMs` therefore delays only
+// the reply, so an entry with both spawns first and fails afterwards: a real pane
+// whose command started and whose `pane run` still reported failure.
+if (entry?.spawn !== undefined) {
+  const out = openSync(entry.spawn.log ?? `${logPath ?? "/dev/null"}.spawn`, "a");
+  const child = spawn("sh", ["-c", argv.slice(entry.spawn.commandIndex).join(" ")], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: { ...process.env, ...entry.spawn.env },
+  });
+  child.unref();
+}
 
 if (entry?.hangMs !== undefined) setTimeout(respond, entry.hangMs);
 else respond();
