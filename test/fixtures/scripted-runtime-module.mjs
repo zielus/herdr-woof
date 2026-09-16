@@ -14,7 +14,12 @@ const { submitResult } = await load("submission/submit.js");
 const { readSnapshot } = await load("state/snapshot.js");
 const { herdrRuntimeName } = await load("runtime/names.js");
 
-const ARTIFACTS = { build: "completion.md", repair: "completion.md", review: "review.md" };
+const ARTIFACTS = {
+  plan: "plan.md",
+  build: "completion.md",
+  repair: "completion.md",
+  review: "review.md",
+};
 
 export default function createRuntime({ runDir, runId, plan, repo }) {
   const log = process.env["WOOF_TEST_RUNTIME_LOG"];
@@ -22,11 +27,12 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
     appendFileSync(log, `${JSON.stringify({ runDir, runId, repo, agents: plan.agents })}\n`);
   }
   const mode = process.env["WOOF_TEST_SCRIPT"] ?? "happy";
-  const names = {
-    builder: herdrRuntimeName(runId, "builder"),
-    reviewer: herdrRuntimeName(runId, "reviewer"),
-  };
-  const agentOf = { [names.builder]: "builder", [names.reviewer]: "reviewer" };
+  // Every agent the plan declares, so the same fixture drives build-review and
+  // plan-build-review (whose planner is a third pane).
+  const names = Object.fromEntries(
+    plan.agents.map((agent) => [agent.agentId, herdrRuntimeName(runId, agent.agentId)]),
+  );
+  const agentOf = Object.fromEntries(Object.entries(names).map(([id, name]) => [name, id]));
   const hang = mode === "hang";
   const script = {
     timeline: [{ status: "idle", stateChangeSeq: 1 }],
@@ -38,9 +44,9 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
         ],
   };
   const runtime = createScriptedRuntime({
-    agents: { [names.builder]: script, [names.reviewer]: script },
+    agents: Object.fromEntries(Object.values(names).map((name) => [name, script])),
   });
-  const counts = { builder: 0, reviewer: 0 };
+  const counts = { planner: 0, builder: 0, reviewer: 0 };
   const pending = new Set();
 
   async function work(agentId) {
@@ -55,13 +61,16 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       writeFileSync(join(repo, "src", "change.txt"), `version ${counts.builder}\n`);
     }
     const verdict =
-      agentId === "builder"
+      agentId !== "reviewer"
         ? null
         : mode === "always-fail" || counts.reviewer === 1
           ? "fail"
           : "pass";
     const rel = `artifacts/${active.stageId}/visit-${active.visit}/attempt-${active.attempt}/${ARTIFACTS[active.stageId]}`;
-    const content = `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
+    const content =
+      active.stageId === "plan"
+        ? `# plan ${active.visit}.${active.attempt}\n\n1. Write src/change.txt.\n2. Done when the file exists.\n`
+        : `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
     writeFileSync(join(runDir, rel), content);
     await submitResult({
       runDir,
@@ -94,7 +103,7 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       // "slow" (p4): the first worker submission waits until WOOF_TEST_RELEASE exists.
       const held =
         mode === "slow" &&
-        counts.builder + counts.reviewer === 0 &&
+        counts.planner + counts.builder + counts.reviewer === 0 &&
         !existsSync(process.env["WOOF_TEST_RELEASE"] ?? "");
       if (pending.has(handle.runtimeName) && !held) {
         pending.delete(handle.runtimeName);

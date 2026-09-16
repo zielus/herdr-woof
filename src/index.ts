@@ -175,6 +175,8 @@ export type { RunWorkflowOptions, RunWorkflowResult } from "./scheduler/driver.j
 export type { Action, AgentRuntimeView } from "./scheduler/core.js";
 export { buildReviewWorkflow } from "./workflows/build-review.js";
 export type { BuildReviewInput } from "./workflows/build-review.js";
+export { planBuildReviewWorkflow } from "./workflows/plan-build-review.js";
+export type { PlanBuildReviewInput } from "./workflows/plan-build-review.js";
 export { BUILT_IN_WORKFLOWS, builtInWorkflow, builtInWorkflowNames } from "./workflows/catalog.js";
 
 export { discoverRoots } from "./config/discover.js";

@@ -14,28 +14,48 @@ import { exactKeys, integerIn, limitsProblem, nonEmpty } from "./input.js";
 import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
 
 /**
- * Built-in `build-review` workflow (p3): build → verify (an engine-run check,
- * only when the input names a command) → review → repair, until a review passes
- * on the exact repaired tree. The engine knows none of these names; they live
- * only here.
+ * Built-in `plan-build-review` workflow (p5): plan → build → verify (an
+ * engine-run check, only when the input names a command) → review → repair,
+ * until a review passes on the exact repaired tree.
+ *
+ * It exists to prove the p3 definition contract and the p4 configuration
+ * machinery generalize: a new agent, a new stage, a new artifact contract and a
+ * new transition, with no engine change. The planner's `plan.md` reaches the
+ * builder and every repair the way the review already reaches a repair — as a
+ * resolved input the engine addresses by path, receipt and sha256 and re-hashes
+ * before rendering, never as paraphrased prose.
+ *
+ * Deliberately not here (0.1.0): no plan-approval gate, and no re-planning — a
+ * failed review routes to `repair`, never back to `plan`. Re-planning needs a
+ * second round counter and an answer to whether the old plan is still canonical,
+ * and this version takes no position on either.
  */
 
-export interface BuildReviewInput {
+export interface PlanBuildReviewInput {
   schemaVersion: 1;
   /** Absolute path of the git work tree. */
   repo: string;
   task: { title: string; description: string; acceptanceCriteria: string[]; context?: unknown };
-  instructions?: { builder?: string; reviewer?: string };
+  /** Constraints the plan must respect; they reach the planner's request only. */
+  constraints?: string[];
+  instructions?: { planner?: string; builder?: string; reviewer?: string };
   verify?: { command: string[]; timeoutMs: number };
-  /** Per-run agent overrides; a role left out comes from configuration (p4). */
+  /** Per-run agent overrides; a role left out comes from configuration, then the built-in role. */
   agents?: Partial<
-    Record<"builder" | "reviewer", { kind: string; model: string | null; args: string[] }>
+    Record<
+      "planner" | "builder" | "reviewer",
+      { kind: string; model: string | null; args: string[] }
+    >
   >;
   /** Per-run limit overrides; other keys come from configuration, then the defaults below. */
   limits?: Partial<Limits>;
 }
 
-export const BUILD_REVIEW_DEFAULT_LIMITS: Required<Limits> = {
+/**
+ * build-review's values unchanged: the planner adds one stage visit, not a loop,
+ * so no bound needs raising to fit it.
+ */
+export const PLAN_BUILD_REVIEW_DEFAULT_LIMITS: Required<Limits> = {
   maxAttemptsPerVisit: 2,
   maxVisitsPerStage: 3,
   maxRounds: 3,
@@ -46,18 +66,23 @@ export const BUILD_REVIEW_DEFAULT_LIMITS: Required<Limits> = {
   deliveryTimeoutMs: 60_000,
 };
 
-/** Task, context and instructions together stay well under the 32 KiB request cap. */
+/** Task, constraints and instructions together stay well under the 32 KiB request cap. */
 const MAX_TASK_BYTES = 24 * 1024;
 const MAX_TITLE = 200;
 
+const ROLES = ["planner", "builder", "reviewer"] as const;
 const BUILDER_STAGES: ReadonlySet<string> = new Set(["build", "repair"]);
 
 /**
- * The stages whose rendered request can be this workflow's largest: the review
- * (task plus the completion report) and the repair entered by a review or by
- * the verify check, each carrying every input its request names.
+ * The stages whose rendered request can be this workflow's largest: the plan
+ * (task plus every constraint), the build (task plus the plan), the review, and
+ * the repair entered by a review or by the verify check — the repair carries the
+ * plan, the evidence that entered it and the previous completion report, which
+ * makes it strictly larger than build-review's.
  */
 const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
+  { stageId: "plan", enteredBy: null },
+  { stageId: "build", enteredBy: { kind: "stage", gate: "plan" } },
   { stageId: "review", enteredBy: { kind: "stage", gate: "repair" } },
   { stageId: "repair", enteredBy: { kind: "stage", gate: "review" } },
   { stageId: "repair", enteredBy: { kind: "check", gate: "verify" } },
@@ -65,14 +90,14 @@ const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
 
 function validateInput(
   value: unknown,
-): { ok: true; input: BuildReviewInput } | { ok: false; details: RejectionDetail[] } {
+): { ok: true; input: PlanBuildReviewInput } | { ok: false; details: RejectionDetail[] } {
   const details: RejectionDetail[] = [];
   const fail = (field: string, message: string) => details.push({ field, message });
   if (!isPlainObject(value))
     return { ok: false, details: [{ field: "input", message: "must be an object" }] };
   exactKeys(
     value,
-    ["schemaVersion", "repo", "task", "instructions", "verify", "agents", "limits"],
+    ["schemaVersion", "repo", "task", "constraints", "instructions", "verify", "agents", "limits"],
     "",
     fail,
   );
@@ -98,13 +123,19 @@ function validateInput(
     }
   }
 
+  const constraints = value["constraints"];
+  if (constraints !== undefined) {
+    if (!Array.isArray(constraints) || constraints.length === 0 || !constraints.every(nonEmpty))
+      fail("constraints", "must be a non-empty array of non-empty strings");
+  }
+
   const instructions = value["instructions"];
   if (instructions !== undefined) {
     if (!isPlainObject(instructions)) {
       fail("instructions", "must be an object");
     } else {
-      exactKeys(instructions, ["builder", "reviewer"], "instructions.", fail);
-      for (const role of ["builder", "reviewer"]) {
+      exactKeys(instructions, [...ROLES], "instructions.", fail);
+      for (const role of ROLES) {
         if (instructions[role] !== undefined && !nonEmpty(instructions[role]))
           fail(`instructions.${role}`, "must be a non-empty string");
       }
@@ -128,10 +159,10 @@ function validateInput(
 
   const agents = value["agents"];
   if (agents !== undefined && !isPlainObject(agents)) {
-    fail("agents", "must be an object with builder and/or reviewer");
+    fail("agents", "must be an object with planner, builder and/or reviewer");
   } else if (agents !== undefined) {
-    exactKeys(agents, ["builder", "reviewer"], "agents.", fail);
-    for (const role of ["builder", "reviewer"]) {
+    exactKeys(agents, [...ROLES], "agents.", fail);
+    for (const role of ROLES) {
       const agent = agents[role];
       if (agent === undefined) continue;
       if (!isPlainObject(agent)) {
@@ -148,21 +179,29 @@ function validateInput(
     }
   }
 
-  limitsProblem(value["limits"], BUILD_REVIEW_DEFAULT_LIMITS, fail);
+  limitsProblem(value["limits"], PLAN_BUILD_REVIEW_DEFAULT_LIMITS, fail);
 
   if (details.length === 0 && isPlainObject(task)) {
     const size = Buffer.byteLength(
-      canonicalJson({ task, instructions: instructions ?? null }),
+      canonicalJson({
+        task,
+        constraints: constraints ?? null,
+        instructions: instructions ?? null,
+      }),
       "utf8",
     );
-    if (size > MAX_TASK_BYTES)
-      fail("task", `task and instructions are ${size} bytes; the limit is ${MAX_TASK_BYTES}`);
+    if (size > MAX_TASK_BYTES) {
+      fail(
+        "task",
+        `task, constraints and instructions are ${size} bytes; the limit is ${MAX_TASK_BYTES}`,
+      );
+    }
   }
   if (details.length === 0) {
     // The exact formatted request (pretty-printed context, fixed text, longest paths) must fit.
     const largest = largestRequestBytes(
-      buildReviewWorkflow,
-      value as unknown as BuildReviewInput,
+      planBuildReviewWorkflow,
+      value as unknown as PlanBuildReviewInput,
       REQUEST_BOUND_CASES,
       { historyStageId: "repair" },
     );
@@ -174,7 +213,7 @@ function validateInput(
     }
   }
   if (details.length > 0) return { ok: false, details };
-  return { ok: true, input: structuredClone(value) as unknown as BuildReviewInput };
+  return { ok: true, input: structuredClone(value) as unknown as PlanBuildReviewInput };
 }
 
 /** The latest gate on a builder acceptance (build or repair). */
@@ -182,7 +221,7 @@ function latestBuilderGate(history: RunHistory) {
   return history.gates.findLast((gate) => gate.kind === "stage" && BUILDER_STAGES.has(gate.gate));
 }
 
-function builderNext(ctx: StageGateContext<BuildReviewInput>): Transition {
+function builderNext(ctx: StageGateContext<PlanBuildReviewInput>): Transition {
   return ctx.input.verify !== undefined
     ? { decision: "pass", reason: "built", to: "verify" }
     : { decision: "pass", reason: "built", to: "review" };
@@ -191,19 +230,26 @@ function builderNext(ctx: StageGateContext<BuildReviewInput>): Transition {
 const COMPLETION_REPORT =
   "When you are done, write a short completion report as your artifact: what you changed (files), how you verified it, and anything left undone.";
 
-export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
+/** The plan is the first input of every builder request, by path and digest. */
+const PLAN_INPUT: InputRef = { label: "plan", from: { stageId: "plan" } };
+
+const FOLLOW_THE_PLAN =
+  "Follow the plan: it is the accepted artifact listed first in your inputs. Read the file itself; nothing restates it for you. Where the plan is wrong or incomplete, do the right thing and say so in your completion report.";
+
+export const planBuildReviewWorkflow: WorkflowDefinition<PlanBuildReviewInput> = {
   schemaVersion: 1,
-  name: "build-review",
+  name: "plan-build-review",
   version: "1",
   validateInput,
   agents: [
+    { agentId: "planner", role: "planner" },
     { agentId: "builder", role: "builder" },
     { agentId: "reviewer", role: "reviewer" },
   ],
   // Only the roles the input names; admission fills the others from configured roles.
   resolveAgents: (input) => {
     const agents: Record<string, { kind: string; model: string | null; args: string[] }> = {};
-    for (const role of ["builder", "reviewer"] as const) {
+    for (const role of ROLES) {
       const agent = input.agents?.[role];
       if (agent !== undefined)
         agents[role] = { kind: agent.kind, model: agent.model, args: [...agent.args] };
@@ -211,11 +257,37 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
     return agents;
   },
   resolveLimits: (input) => ({ ...input.limits }),
-  limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
+  limitDefaults: { ...PLAN_BUILD_REVIEW_DEFAULT_LIMITS },
   repository: (input) => input.repo,
-  start: "build",
+  start: "plan",
   roundStage: "review",
   stages: [
+    {
+      kind: "agent",
+      stageId: "plan",
+      agentId: "planner",
+      verdicts: [],
+      artifactFile: "plan.md",
+      onFailedStatus: "fail",
+      bindsRevision: false,
+      request: (ctx) => {
+        const constraints = ctx.input.constraints ?? [];
+        const constraintLines =
+          constraints.length === 0
+            ? ""
+            : `\nRespect these constraints:\n${constraints.map((item) => `- ${item}`).join("\n")}`;
+        return {
+          goal: "Write the implementation plan for the task below.",
+          instructions: `Read the repository (your working directory) and write the plan as your artifact: concrete file-level steps another engineer can follow, and an explicit statement of what "done" means against every acceptance criterion. Do not change repository files — the planner reads, the builder writes.${constraintLines}`,
+          inputs: [],
+          task: ctx.input.task,
+          ...(ctx.input.instructions?.planner !== undefined
+            ? { roleInstructions: ctx.input.instructions.planner }
+            : {}),
+        };
+      },
+      next: () => ({ decision: "pass", reason: "planned", to: "build" }),
+    },
     {
       kind: "agent",
       stageId: "build",
@@ -225,9 +297,9 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       onFailedStatus: "fail",
       bindsRevision: false,
       request: (ctx) => ({
-        goal: "Implement the task below in the repository.",
-        instructions: `Make the change in the repository (your working directory) so that every acceptance criterion holds. ${COMPLETION_REPORT}`,
-        inputs: [],
+        goal: "Implement the plan below in the repository.",
+        instructions: `${FOLLOW_THE_PLAN} Make the change in the repository (your working directory) so that every acceptance criterion holds. ${COMPLETION_REPORT}`,
+        inputs: [PLAN_INPUT],
         task: ctx.input.task,
         ...(ctx.input.instructions?.builder !== undefined
           ? { roleInstructions: ctx.input.instructions.builder }
@@ -299,7 +371,8 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       bindsRevision: false,
       request: (ctx) => {
         const entered = ctx.enteredBy;
-        const inputs: InputRef[] = [];
+        // The plan stays first: it is canonical for every builder turn, not only the first.
+        const inputs: InputRef[] = [PLAN_INPUT];
         if (entered?.kind === "stage" && entered.gate === "review") {
           inputs.push({ label: "review", from: { stageId: "review" } });
         }
@@ -316,7 +389,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
             entered?.kind === "check"
               ? "Repair the change: the verification command failed."
               : "Repair the change: the review requested changes.",
-          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${COMPLETION_REPORT}`,
+          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${FOLLOW_THE_PLAN} ${COMPLETION_REPORT}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.builder !== undefined
@@ -328,6 +401,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
     },
   ],
   edges: {
+    plan: ["build"],
     build: ["verify", "review"],
     verify: ["review", "repair"],
     review: ["completed", "review", "repair"],
@@ -335,4 +409,4 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
   },
 };
 
-export default buildReviewWorkflow;
+export default planBuildReviewWorkflow;

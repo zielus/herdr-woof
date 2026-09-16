@@ -124,7 +124,7 @@ describe("configuration composition", () => {
     };
     // The catalog is the only source of workflow names: no branch in resolve.ts names one.
     expect(Object.keys(catalog.workflows).toSorted()).toEqual(builtInWorkflowNames().toSorted());
-    expect(builtInWorkflowNames().toSorted()).toEqual(["build-review"]);
+    expect(builtInWorkflowNames().toSorted()).toEqual(["build-review", "plan-build-review"]);
     expect(Object.keys(catalog.roles).toSorted()).toEqual(["builder", "planner", "reviewer"]);
     // Prototype-free: a workflow or role named after an Object.prototype key is simply absent.
     expect(Object.getPrototypeOf(catalog.workflows)).toBe(null);

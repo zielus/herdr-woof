@@ -22,8 +22,11 @@ import { MAX_RUN_DIR_BYTES, renderRequest, type ResolvedInput } from "../schedul
 /** A stage whose request is a candidate for the largest, and the gate that entered it. */
 export interface RequestBoundCase {
   stageId: string;
-  /** `gate` of the synthetic entering gate; a check gate when `kind` is "check". */
-  enteredBy: { kind: "stage" | "check"; gate: string };
+  /**
+   * The synthetic gate that entered the stage; a check gate when `kind` is
+   * "check", and null for the start stage's first visit.
+   */
+  enteredBy: { kind: "stage" | "check"; gate: string } | null;
 }
 
 /** An absolute path of the admitted maximum run directory length, plus room for symlink resolution. */
@@ -62,11 +65,14 @@ export function largestRequestBytes<Input>(
   for (const item of cases) {
     const stage = agentStageOf(definition, item.stageId);
     if (stage === undefined) continue;
-    const enteredBy = {
-      ...historyGate,
-      kind: item.enteredBy.kind,
-      gate: item.enteredBy.gate,
-    } as Entered;
+    const enteredBy =
+      item.enteredBy === null
+        ? null
+        : ({
+            ...historyGate,
+            kind: item.enteredBy.kind,
+            gate: item.enteredBy.gate,
+          } as Entered);
     const request = stage.request({
       input,
       runId: "r".repeat(128),

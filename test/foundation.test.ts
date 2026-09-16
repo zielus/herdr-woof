@@ -57,6 +57,7 @@ console.log(JSON.stringify({
       openAttempt: "function",
       openRun: "function",
       overlayRuntime: "function",
+      planBuildReviewWorkflow: "object",
       probeHost: "function",
       readEvents: "function",
       readJournal: "function",

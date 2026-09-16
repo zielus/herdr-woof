@@ -133,6 +133,8 @@ describe("module boundaries in dist", () => {
       "runtime/herdr/adapter.js",
       "scheduler/driver.js",
       "workflows/build-review.js",
+      "workflows/plan-build-review.js",
+      "workflows/catalog.js",
     ]) {
       expect(graph.has(module), module).toBe(true);
     }
@@ -218,7 +220,7 @@ describe("module boundaries in dist", () => {
     const found: string[] = [];
     for (const file of files(join(dist, "scheduler"), ".js")) {
       const source = readFileSync(file, "utf8");
-      for (const match of source.matchAll(/["'`](build|verify|review|repair)["'`]/g)) {
+      for (const match of source.matchAll(/["'`](plan|build|verify|review|repair)["'`]/g)) {
         found.push(`${relative(dist, file)}: ${match[0]}`);
       }
       if (source.includes("appendRecord")) found.push(`${relative(dist, file)}: appendRecord`);
