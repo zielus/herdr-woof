@@ -221,7 +221,7 @@ Real shipped behavior proving the authoring contract generalizes beyond
   through `woof run start --workflow scribe` from a plain project `.woof/`,
   live-verified against a real `claude` agent through Herdr
   (`docs/research/external-workflow-live.log`, 8/8 gates) and offline through
-  five real-process cases in `test/external-workflow.process.test.ts`.
+  seven real-process cases in `test/external-workflow.process.test.ts`.
 - **`roundStage: null` end to end.** `scribe` declares one stage and no round
   at all; `requires: "round"` anywhere in such a definition is
   `definition_contract_violated`, and the only gate that can end the run is
