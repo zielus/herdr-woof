@@ -250,6 +250,56 @@ describe("the acceptance matrix", () => {
     );
   }, 180_000);
 
+  it("counts the second formatter pass too, not only the first (PR #7 collect.mjs:189)", () => {
+    // Adding `format` to the report means writing the file again, which un-formats
+    // it, so it is formatted a second time. That second result used to be
+    // discarded: a formatter failing only on it left a report on disk claiming
+    // `format.ok: true` while the file was unformatted.
+    const formatter = join(repoRoot, "test", "fixtures", "counting-formatter.mjs");
+    const collect = (failOn: number) => {
+      const root = mkdtempSync(join(tmpdir(), "woof-acceptance-"));
+      const counter = join(root, "calls");
+      const out = join(root, "evidence", "offline.json");
+      const result = spawnSync(
+        "node",
+        [join(repoRoot, "scripts", "acceptance", "collect.mjs"), "--no-tests", "--out", out],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          timeout: 120_000,
+          env: {
+            ...process.env,
+            WOOF_ACCEPTANCE_FORMATTER: `node ${formatter} ${counter} ${failOn}`,
+          },
+        },
+      );
+      const report = JSON.parse(readFileSync(out, "utf8")) as {
+        format: { ok: boolean; problem: string | null };
+      };
+      return { result, report, calls: Number(readFileSync(counter, "utf8")) };
+    };
+
+    // Failing only on the second call must still be reported.
+    const second = collect(2);
+    expect(second.calls, "the collector runs the formatter twice").toBe(2);
+    expect(second.report.format.ok).toBe(false);
+    expect(second.report.format.problem).toContain("refusing call 2");
+    expect(second.result.stderr).toContain("cannot format");
+    expect(second.result.status).not.toBe(0);
+
+    // Failing on the first call short-circuits: there is no second attempt.
+    const first = collect(1);
+    expect(first.calls).toBe(1);
+    expect(first.report.format.ok).toBe(false);
+    expect(first.report.format.problem).toContain("refusing call 1");
+
+    // A formatter that never fails still reports success after both passes.
+    const none = collect(0);
+    expect(none.calls).toBe(2);
+    expect(none.report.format).toEqual({ ok: true, problem: null });
+    expect(none.result.stderr).not.toContain("cannot format");
+  }, 180_000);
+
   it("the acceptance matrix names no MCP adapter anywhere in src/", () => {
     // The Optional-adapters row cites this case: MCP is a documented non-goal,
     // and the shipped engine must not have grown one quietly.

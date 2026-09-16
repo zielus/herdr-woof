@@ -176,17 +176,30 @@ write();
 const formatter = (process.env["WOOF_ACCEPTANCE_FORMATTER"] ?? "bun x prettier --write").split(
   /\s+/,
 );
-const formatted = run(formatter[0], [...formatter.slice(1), outPath]);
-const formatProblem =
-  formatted.status === 0
+const formatOnce = () => {
+  const result = run(formatter[0], [...formatter.slice(1), outPath]);
+  return result.status === 0
     ? null
-    : `cannot format ${outPath} with ${formatter.join(" ")}: ${(formatted.stderr || formatted.stdout || `exit ${formatted.status}`).trim()}`;
+    : `cannot format ${outPath} with ${formatter.join(" ")}: ${(result.stderr || result.stdout || `exit ${result.status}`).trim()}`;
+};
+// Two passes, and **both** count. Adding `format` to the report means writing the
+// file again, which un-formats it, so it has to be formatted once more; the
+// second result used to be discarded, and a formatter that failed only then left
+// a report claiming `format.ok: true` on disk (PR #7, collect.mjs:189).
+const firstProblem = formatOnce();
 // The report says whether its own formatting succeeded, so an unformatted report
 // on disk is self-describing rather than silently different from a formatted one.
-report.format = { ok: formatProblem === null, problem: formatProblem };
+report.format = { ok: firstProblem === null, problem: firstProblem };
 write();
-if (formatProblem !== null) process.stderr.write(`${formatProblem}\n`);
-else run(formatter[0], [...formatter.slice(1), outPath]);
+const formatProblem = firstProblem ?? formatOnce();
+if (formatProblem !== null) {
+  // The file on disk must not claim a success it did not have. This last write
+  // leaves it unformatted, which is correct and which it now says: the collector
+  // is failing, and `format.problem` is the reason.
+  report.format = { ok: false, problem: formatProblem };
+  write();
+  process.stderr.write(`${formatProblem}\n`);
+}
 
 const width = Math.max(...rows.map((row) => row.id.length));
 for (const row of rows) {
