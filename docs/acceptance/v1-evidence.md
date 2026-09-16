@@ -29,6 +29,11 @@ round-1 L-BR finding and the fixture-ordering procedure defect, lives in the
 verifier's `live/INDEX.md` for this phase; this file states only what the
 committed logs and the test suite back.
 
+The public-readiness change (phase 6) redacted all seven committed logs under
+`docs/research/`: the home directory prefix became `~` and the host name became
+`<host>`. The edit is line-preserving, so every `log:line` citation below still
+holds; pane, terminal and session ids, timestamps and every gate verdict are unchanged.
+
 ## Required end-to-end flow
 
 | Requirement                                                                                                                                         | Evidence                                                                                                                                                                                                           | Command                                           | Observed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
