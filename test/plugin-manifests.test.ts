@@ -175,8 +175,8 @@ describe("Claude Code plugin", () => {
       }),
     );
     expect(fields).toEqual({
-      description: "Start a Woof build-review run in Herdr and report its structured outcome",
-      "argument-hint": '"<task description>"',
+      description: "Start a Woof workflow run in Herdr and report its structured outcome",
+      "argument-hint": '"[--workflow <name>] <task description>"',
       "allowed-tools": "Bash(node:*), Bash(woof:*), Read",
     });
     expect(body).not.toContain("bin/woof");
@@ -241,6 +241,30 @@ describe("Claude Code plugin", () => {
     expect(start).toContain("If the retry is");
     expect(start).toContain("report that rejection and stop");
     expect(start).toContain("interactive menu");
+  });
+
+  it("p5 T6: run.md and the skill name both built-in workflows and pass --workflow through", () => {
+    const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
+    const skill = readFileSync(join(claudeRoot, "skills", "woof", "SKILL.md"), "utf8");
+    for (const document of [text, skill]) {
+      expect(document).toContain("build-review");
+      expect(document).toContain("plan-build-review");
+      expect(document).toContain("--workflow");
+    }
+    // The flag reaches run start, and the optional prefix is stated for $ARGUMENTS.
+    expect(text).toContain("If `$ARGUMENTS` starts with `--workflow <name>`");
+    expect(section(text, "## 4. Start the run")).toContain(
+      "adding `--workflow <name>` when the user named a workflow",
+    );
+    // A workflow with no review stage completes with a null artifacts.review.
+    const report = section(text, "## 6. Report");
+    expect(report).toContain("stays null for a workflow that has no review stage");
+    expect(report).toContain("`artifacts.lastAcceptedByStage`");
+    // The built-in example still validates; a definition this command does not
+    // know is not guessed at.
+    expect(section(text, "## 2. Build the workflow input")).toContain(
+      "report exit 2's\n`details` verbatim rather than guessing at fields",
+    );
   });
 
   it("LV-001: the example input in run.md passes the built-in workflow's validateInput", () => {
