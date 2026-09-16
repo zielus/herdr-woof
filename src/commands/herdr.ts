@@ -199,8 +199,9 @@ async function refuseContext(refused: { reason: string; message: string }): Prom
 
 async function doctor(root: string): Promise<number> {
   const report = await doctorReport(root);
+  const count = report.problems.length;
   await notify(
-    "Woof: doctor",
+    count === 0 ? "Woof: doctor" : `Woof: doctor (${count} problem${count === 1 ? "" : "s"})`,
     [
       root,
       `herdr ${probeLine(report.herdr.status, report.herdr.version)}`,

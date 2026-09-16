@@ -89,7 +89,8 @@ function notADirectory(path: string): ConfigFailure {
   };
 }
 
-function gitTopLevel(dir: string, git: string): Promise<string | undefined> {
+/** `git rev-parse --show-toplevel` for `dir`, or undefined outside a work tree (or on any failure). */
+export function gitTopLevel(dir: string, git = "git"): Promise<string | undefined> {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
   for (const key of ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
     Reflect.deleteProperty(env, key);

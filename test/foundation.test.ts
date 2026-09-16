@@ -214,8 +214,8 @@ describe("woof CLI", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("woof");
-      expect(result.stdout).toContain("herdr status: not found");
-      expect(result.stdout).toContain("claude --version: not found");
+      expect(result.stdout).toMatch(/^herdr: not found$/m);
+      expect(result.stdout).toMatch(/^claude: not found$/m);
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }
@@ -234,8 +234,8 @@ describe("woof CLI", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("herdr status: failed");
-      expect(result.stdout).toContain("claude --version: failed");
+      expect(result.stdout).toMatch(/^herdr: failed$/m);
+      expect(result.stdout).toMatch(/^claude: failed$/m);
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }

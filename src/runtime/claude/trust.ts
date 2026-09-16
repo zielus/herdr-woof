@@ -2,10 +2,10 @@ import {
   closeSync,
   constants,
   fstatSync,
+  lstatSync,
   openSync,
   readSync,
   realpathSync,
-  statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -64,14 +64,21 @@ export function claudeTrustStatus(dir: string, options: { homeDir?: string } = {
   };
 }
 
+/**
+ * Reads a small regular file without following a symlink (F-023): the path is
+ * inspected with lstat, opened with O_NOFOLLOW, and the descriptor must be the
+ * same regular file (device and inode) that was inspected. Anything else reads
+ * as undefined, which the caller reports as `unknown`.
+ */
 function readSmallRegularFile(path: string): string | undefined {
   try {
-    const named = statSync(path);
+    const named = lstatSync(path);
     if (!named.isFile() || named.size > MAX_CLAUDE_JSON_BYTES) return undefined;
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const opened = fstatSync(fd);
       if (!opened.isFile() || opened.size > MAX_CLAUDE_JSON_BYTES) return undefined;
+      if (opened.dev !== named.dev || opened.ino !== named.ino) return undefined;
       const buffer = Buffer.alloc(opened.size);
       let length = 0;
       while (length < buffer.length) {

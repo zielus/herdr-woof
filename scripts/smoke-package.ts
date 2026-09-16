@@ -107,7 +107,7 @@ try {
     ...process.env,
     PATH: `${pathDir}:/usr/bin:/bin`,
   });
-  if (!doctor.includes("herdr status: not found")) {
+  if (!/^herdr: not found$/m.test(doctor)) {
     throw new Error(`installed woof doctor printed ${doctor}`);
   }
   submitRoundTrip(installedBin, consumer);
