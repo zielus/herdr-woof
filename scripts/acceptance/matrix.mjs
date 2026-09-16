@@ -506,7 +506,7 @@ export const MATRIX = [
 ];
 
 /** Rejections that name an attempt the submitter does not own; never the owner's (F-015). */
-const FOREIGN_REJECTIONS = ["owner_mismatch"];
+const FOREIGN_REJECTIONS = new Set(["owner_mismatch"]);
 
 const attemptKey = (record) => `${record.stageId}/${record.visit}/${record.attempt}`;
 
@@ -557,7 +557,7 @@ function attemptsOf(journal) {
       if (
         attempt !== undefined &&
         record.identity.agentId === attempt.agentId &&
-        !FOREIGN_REJECTIONS.includes(record.reason)
+        !FOREIGN_REJECTIONS.has(record.reason)
       ) {
         attempt.rejections.push(record.reason);
       }
