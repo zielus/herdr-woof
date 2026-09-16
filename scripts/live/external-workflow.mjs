@@ -77,14 +77,25 @@ function gate(id, title, pass, evidence) {
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Run directories under the configured runs directory, as a set. */
+/**
+ * Run directories under the configured runs directory, as a set. `woof runs`
+ * prints `{"outcome":"runs","runsDir","exists","runs":[{runId,runDir,…}],…}`
+ * (verified against `node dist/cli.js runs`), and its default listing always
+ * includes every run that has not ended. `--project` is deliberately NOT passed:
+ * it keeps only runs whose *recorded configuration* names that root, and a run
+ * that has just been created has not written config.json yet.
+ */
 function listRunDirs() {
-  const listed = woof("runs", "--project", fixtureRepo);
-  if (listed.status !== 0) return new Set();
+  const listed = woof("runs");
+  if (listed.status !== 0) {
+    log(`[watch] woof runs exited ${listed.status}: ${listed.stderr || listed.stdout}`);
+    return new Set();
+  }
   try {
     const parsed = JSON.parse(listed.stdout);
     return new Set((parsed.runs ?? []).map((item) => item.runDir));
   } catch {
+    log(`[watch] woof runs printed no JSON: ${listed.stdout.slice(0, 200)}`);
     return new Set();
   }
 }
@@ -130,6 +141,10 @@ if (runDir === null && !watch) {
 if (runDir === null) {
   const before = listRunDirs();
   log(`[watch] ${before.size} run directories before; waiting for a new one`);
+  // This diff only works if this script starts BEFORE the caller creates its run
+  // directory: a run that already exists is in `before` and never counts as new.
+  // Prefer --run-dir from the caller's own `started` output whenever you have it.
+  log("[watch] prefer --run-dir from the caller's started output; this diff must start first");
   const deadline = Date.now() + timeoutMs;
   while (runDir === null && Date.now() < deadline) {
     // oxlint-disable-next-line no-await-in-loop
