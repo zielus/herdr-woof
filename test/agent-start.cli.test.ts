@@ -464,4 +464,26 @@ describe("woof agent start <role>", () => {
     expect(calls(s).map((argv) => argv.slice(0, 2))).toEqual([["agent", "start"]]);
     expect(existsSync(s.guardLog)).toBe(false);
   });
+
+  it("R6: starts a role that configures a permission bypass, warns on stderr and adds nothing", () => {
+    const s = setup();
+    role(s.repo, "builder", {
+      kind: "claude",
+      model: null,
+      args: ["--dangerously-skip-permissions"],
+    });
+    const started = agentStart(s, ["builder"]);
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    expect(started.stderr).toContain(
+      "woof: warning: role builder configures a permission bypass in its args; Woof never adds one",
+    );
+    const start = calls(s).find((argv) => argv[0] === "agent" && argv[1] === "start") ?? [];
+    expect(start.slice(start.indexOf("--"))).toEqual(["--", "--dangerously-skip-permissions"]);
+    expect(calls(s).flat()).not.toContain("--add-dir");
+    expect(
+      calls(s)
+        .flat()
+        .filter((arg) => /permission/.test(arg)),
+    ).toEqual(["--dangerously-skip-permissions"]);
+  });
 });
