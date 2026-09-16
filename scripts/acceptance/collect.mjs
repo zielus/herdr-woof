@@ -12,6 +12,11 @@
  * Exit 0 only when every non-`limit` row is backed by tests that ran and passed
  * and by gates that are recorded PASS. Exit 1 names each unbacked row and why.
  * Writes `docs/acceptance/evidence/offline.json`.
+ *
+ * `--no-tests` is a gates-only pass for inspecting the live half quickly. It can
+ * never report a test-backed row as backed: a row whose evidence includes tests
+ * is `backed: false` with `tests not run (--no-tests)`, so the flag cannot turn
+ * an unverified row green.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -106,9 +111,14 @@ for (const entry of MATRIX) {
   } else if (entry.tests.length === 0 && entry.gates.length === 0) {
     problems.push("no test and no gate backs this row");
   }
-  for (const test of entry.tests) {
-    const status = tests?.statuses.get(JSON.stringify([test.file, test.name]));
-    if (tests === null) continue;
+  if (tests === null && entry.tests.length > 0) {
+    // --no-tests skips the suite, so a row whose evidence is tests has no
+    // evidence in this report. Saying `backed` here would let the flag turn an
+    // unverified row green, which is the one thing this collector exists to stop.
+    problems.push(`tests not run (--no-tests): ${entry.tests.length} named test(s) unverified`);
+  }
+  for (const test of tests === null ? [] : entry.tests) {
+    const status = tests.statuses.get(JSON.stringify([test.file, test.name]));
     if (status === undefined) problems.push(`${test.file}: no test named ${test.name}`);
     else if (status !== "passed") problems.push(`${test.file}: ${test.name} is ${status}`);
   }
