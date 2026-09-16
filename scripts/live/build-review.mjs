@@ -7,9 +7,11 @@
 //   node scripts/live/build-review.mjs --fixture-only [--with-roles]
 //
 // --fixture-only re-initializes the fixture repository, prints its path and
-// exits (p4 live check). --with-roles also writes `.woof/roles/builder.json`
-// and `reviewer.json` (claude, sonnet, `--permission-mode auto`) before the
-// fixture's single commit, so the tree is clean when a run starts.
+// exits (p4 live check). --with-roles also writes `.woof/roles/{builder,planner,
+// reviewer}.json` (claude, sonnet, `--permission-mode auto`) and the external
+// workflow `.woof/workflows/scribe.mjs` (p5, copied from
+// test/fixtures/workflows/scribe.mjs) before the fixture's single commit, so the
+// tree is clean when a run starts and the definition is tracked.
 //
 // It rebuilds the fixture repository at one fixed path, writes the input, runs
 // the real `woof run build-review` CLI with two Claude agents, samples `woof run
@@ -29,6 +31,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -168,9 +171,19 @@ if (withRoles) {
     model: "sonnet",
     args: ["--permission-mode", "auto"],
   };
-  for (const name of ["builder", "reviewer"]) {
+  // `planner` is plan-build-review's third role (p5).
+  for (const name of ["builder", "planner", "reviewer"]) {
     writeFileSync(join(repo, ".woof", "roles", `${name}.json`), `${JSON.stringify(role)}\n`);
   }
+  // The external workflow (p5 D4), copied from the committed fixture so the live
+  // and offline copies cannot drift, and committed here so it is part of the
+  // fixture's tree: an untracked file would move the work-tree fingerprint the
+  // moment it appeared and cause spurious revision_moved rounds.
+  mkdirSync(join(repo, ".woof", "workflows"), { recursive: true });
+  copyFileSync(
+    join(woofRoot, "test", "fixtures", "workflows", "scribe.mjs"),
+    join(repo, ".woof", "workflows", "scribe.mjs"),
+  );
 }
 gitAs("add", "-A");
 gitAs("commit", "-q", "-m", "fixture");
