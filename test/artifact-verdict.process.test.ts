@@ -209,6 +209,58 @@ describe("check 17b: an artifact verdict marker that disagrees with the envelope
     });
   }, 60_000);
 
+  it("compares the remainder of the line trimmed, which is the contract (PR #7 submit.ts:457)", () => {
+    // plan §2 D5: "the remainder of the line, trimmed, must equal the envelope's
+    // verdict". Trailing and repeated spaces around the verdict word are
+    // therefore agreement, not a malformed line, and CRLF is not a disagreement
+    // either — the carriage return is whitespace like any other. These cases make
+    // that explicit rather than leaving it to be read off `.trim()`.
+    const agreeing = [
+      ["a trailing space", `${MARKER} pass \n\nNothing blocking.\n`],
+      ["repeated spaces after the colon", `${MARKER}    pass\n\nNothing blocking.\n`],
+      ["a tab after the colon", `${MARKER}\tpass\n\nNothing blocking.\n`],
+      ["CRLF line endings", `${MARKER} pass\r\n\r\nNothing blocking.\r\n`],
+      ["trailing whitespace and CRLF", `${MARKER} pass  \r\n\r\nNothing blocking.\r\n`],
+    ] as const;
+    for (const [what, artifact] of agreeing) {
+      const run = arrange({ marker: MARKER, artifact, verdict: "pass" });
+      expect(submit(run.runDir, run.envelope), what).toMatchObject({
+        status: 0,
+        json: { outcome: "accepted" },
+      });
+    }
+
+    // The same shapes still catch a real disagreement: whitespace is ignored,
+    // the verdict word is not.
+    for (const [what, artifact] of agreeing) {
+      const run = arrange({
+        marker: MARKER,
+        artifact: artifact.replace("pass", "fail"),
+        verdict: "pass",
+      });
+      const result = submit(run.runDir, run.envelope);
+      expect(result, `${what}, disagreeing`).toMatchObject({
+        status: 2,
+        json: { reason: "verdict_artifact_mismatch" },
+      });
+      // The reported artifact verdict is the trimmed word, with no stray whitespace.
+      expect(result.json?.details, what).toEqual([
+        { field: "verdict", message: 'the artifact says "fail"; the envelope says "pass"' },
+      ]);
+    }
+
+    // A word that merely starts with the verdict is still a disagreement.
+    const nearly = arrange({
+      marker: MARKER,
+      artifact: `${MARKER} passed\n\nNothing blocking.\n`,
+      verdict: "pass",
+    });
+    expect(submit(nearly.runDir, nearly.envelope)).toMatchObject({
+      status: 2,
+      json: { reason: "verdict_artifact_mismatch" },
+    });
+  }, 60_000);
+
   it("skips leading blank lines to find the first line, and tolerates a null envelope verdict", () => {
     const rejected = arrange({
       marker: MARKER,
