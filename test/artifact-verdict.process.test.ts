@@ -168,6 +168,47 @@ describe("check 17b: an artifact verdict marker that disagrees with the envelope
     });
   });
 
+  it("finds the first non-blank line however far in it is, with no prefix cap (PR #7 submit.ts:432)", () => {
+    // The scan used to decode only the first 64 KiB of a 32 MiB-capped artifact.
+    // More leading blank content than that hid a disagreement entirely, and a
+    // marker line straddling the cap was truncated into a false mismatch.
+    const blanks = "\n".repeat(70_000);
+    const rejected = arrange({
+      marker: MARKER,
+      artifact: `${blanks}${MARKER} fail\n\nThe migration drops a column.\n`,
+      verdict: "pass",
+    });
+    const result = submit(rejected.runDir, rejected.envelope);
+    expect(result, result.stdout + result.stderr).toMatchObject({
+      status: 2,
+      json: { reason: "verdict_artifact_mismatch" },
+    });
+    expect(result.json?.message).toContain('"fail"');
+    expect(existsSync(acceptedCopy(rejected.runDir))).toBe(false);
+
+    // The same artifact agreeing is accepted, so the depth itself is never the failure.
+    const agreeing = arrange({
+      marker: MARKER,
+      artifact: `${blanks}${MARKER} fail\n\nThe migration drops a column.\n`,
+      verdict: "fail",
+    });
+    expect(submit(agreeing.runDir, agreeing.envelope)).toMatchObject({
+      status: 0,
+      json: { outcome: "accepted" },
+    });
+
+    // A marker line whose verdict text used to be cut in half by the old cap.
+    const straddling = arrange({
+      marker: MARKER,
+      artifact: `${"\n".repeat(64 * 1024 - 16)}${MARKER} pass\n\nNothing blocking.\n`,
+      verdict: "pass",
+    });
+    expect(submit(straddling.runDir, straddling.envelope)).toMatchObject({
+      status: 0,
+      json: { outcome: "accepted" },
+    });
+  }, 60_000);
+
   it("skips leading blank lines to find the first line, and tolerates a null envelope verdict", () => {
     const rejected = arrange({
       marker: MARKER,

@@ -46,12 +46,8 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
 
 const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
 
-/**
- * Bytes of the artifact check 17b decodes looking for the first non-blank line.
- * A first line further in than this is not a first line anyone writes, and
- * bounding the decode keeps a 32 MiB artifact from being decoded whole again.
- */
-const MAX_VERDICT_LINE_SCAN = 64 * 1024;
+/** Line feed: a UTF-8 multi-byte sequence never contains one, so splitting on it is safe. */
+const NEWLINE = 0x0a;
 
 /**
  * Validates a result envelope and its artifact, then records the outcome in the
@@ -420,25 +416,43 @@ function decide(
  * when the artifact has no non-blank line, when that line does not start with
  * the marker, or when the two agree.
  */
+/**
+ * The artifact's first non-blank line, whole. Lines are found in the loaded
+ * bytes and decoded one at a time until one is not blank, so the only bound is
+ * the artifact size cap check 16 already enforced — there is no separate prefix
+ * limit. A truncating prefix would both hide a disagreement behind enough
+ * leading blank lines and cut a legitimate marker line in half.
+ *
+ * A UTF-8 BOM is stripped before the line is returned: `trim()` already treats
+ * it as whitespace when deciding blankness, so leaving it on would make a
+ * BOM-prefixed marker "non-blank" yet fail `startsWith`, skipping the check
+ * entirely for anyone whose editor writes one. Leading spaces are NOT stripped:
+ * the contract is that the line starts with the marker.
+ */
+function firstNonBlankLine(bytes: Uint8Array): string | undefined {
+  const buffer = Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let start = 0;
+  while (start <= buffer.length) {
+    const found = buffer.indexOf(NEWLINE, start);
+    const end = found === -1 ? buffer.length : found;
+    const line = buffer.toString("utf8", start, end);
+    const text = line.startsWith("\uFEFF") ? line.slice(1) : line;
+    if (text.trim() !== "") return text;
+    if (found === -1) return undefined;
+    start = found + 1;
+  }
+  return undefined;
+}
+
 function verdictMarkerMismatch(
   marker: string | undefined,
   bytes: Uint8Array,
   envelopeVerdict: string | null,
 ): { message: string; detail: string } | undefined {
   if (marker === undefined) return undefined;
-  // Only the head of the artifact is decoded: the first non-blank line is not further in.
-  const head = Buffer.from(
-    bytes.subarray(0, Math.min(bytes.byteLength, MAX_VERDICT_LINE_SCAN)),
-  ).toString("utf8");
-  // A UTF-8 BOM is stripped before the prefix test: `trim()` already treats it as
-  // whitespace when picking the first non-blank line, so leaving it on the line
-  // would make a BOM-prefixed marker "non-blank" yet fail `startsWith`, skipping
-  // the check entirely for anyone whose editor writes one. Leading spaces are
-  // NOT stripped: the contract is that the line starts with the marker.
-  const first = head
-    .split("\n")
-    .map((line) => (line.startsWith("\uFEFF") ? line.slice(1) : line))
-    .find((line) => line.trim() !== "");
+  const first = firstNonBlankLine(bytes);
   if (first === undefined || !first.startsWith(marker)) return undefined;
   const artifactVerdict = first.slice(marker.length).trim();
   if (artifactVerdict === envelopeVerdict) return undefined;
