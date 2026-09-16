@@ -1,6 +1,6 @@
 {
   "name": "herdr-woof",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Orchestration SDK and CLI for coding agents running through Herdr.",
   "keywords": [
     "herdr",
