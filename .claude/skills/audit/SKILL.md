@@ -16,9 +16,10 @@ work).
 
 Fill in the placeholders before dispatching. Do not paste an absolute home
 path anywhere in the filled-in prompt — `bun run release:preflight`'s
-`private-strings` check fails on `/Users/`, `/home/…`, and similar patterns,
-and a prompt containing one would itself fail preflight if it ever landed in
-a committed file.
+`private-strings` check fails on macOS home paths, Linux home paths and
+similar patterns (see `scripts/release/lib/patterns.ts`), and a prompt
+containing one would itself fail preflight if it ever landed in a committed
+file.
 
 Placeholders:
 
