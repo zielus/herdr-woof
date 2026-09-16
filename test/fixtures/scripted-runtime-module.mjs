@@ -16,6 +16,7 @@ const { herdrRuntimeName } = await load("runtime/names.js");
 
 const ARTIFACTS = {
   plan: "plan.md",
+  note: "note.md",
   build: "completion.md",
   repair: "completion.md",
   review: "review.md",
