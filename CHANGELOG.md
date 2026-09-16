@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.1.0] - 2026-09-16
 
+This is the first release. The bullets below are cumulative notes from the phases that built it,
+in order; a later bullet supersedes an earlier "placeholder" or "out of scope" statement.
+
 ### Added
 
 - SDK foundation for Woof: a compiled Node ESM package entry point, a

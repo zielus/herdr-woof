@@ -11,7 +11,7 @@
 [![npm](https://img.shields.io/npm/v/herdr-woof)](https://www.npmjs.com/package/herdr-woof)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.18-brightgreen)](https://nodejs.org/en/download)
-[![Herdr](https://img.shields.io/badge/herdr-%3E%3D0.9-blueviolet)](https://herdr.dev)
+[![Herdr](https://img.shields.io/badge/herdr-%3E%3D0.9.0-blueviolet)](https://herdr.dev)
 
 Woof is an orchestration SDK and CLI for coding agents running through [Herdr](https://herdr.dev).
 It runs a workflow such as build → review → repair: it launches `claude` agents in Herdr panes,
@@ -70,11 +70,23 @@ installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
 
 Run inside a Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` set), against a
 repository you have already opened with `claude` once (see the
-[operator-trust precondition](#operator-trust-precondition)). Write `input.json`
-as shown in [Plan-build-review and project workflows](#plan-build-review-and-project-workflows),
-then:
+[operator-trust precondition](#operator-trust-precondition)). Replace
+`/abs/path/to/git/worktree` with that repository's top level:
 
 ```sh
+cat > input.json <<'EOF'
+{
+  "schemaVersion": 1,
+  "repo": "/abs/path/to/git/worktree",
+  "task": {
+    "title": "Implement titleCase",
+    "description": "Implement titleCase(text) in src/title-case.mjs.",
+    "acceptanceCriteria": ["capitalizes each word", "tests pass"]
+  },
+  "constraints": ["Keep the function pure; no repository files besides src/ and test/."],
+  "verify": { "command": ["node", "--test"], "timeoutMs": 120000 }
+}
+EOF
 bin/woof doctor --json --repo /abs/path/to/git/worktree
 bin/woof run start --workflow plan-build-review --input input.json \
   --project /abs/path/to/git/worktree
@@ -83,8 +95,11 @@ bin/woof status <run-dir> --wait
 
 `doctor --json` reports the repository's Claude folder-trust status. `--project`
 defaults to the working directory, and the input's `repo` must be that project's
-git top level. `run start` prints the run directory; `status --wait` polls it
-until the run needs you.
+git top level. `run start` prints the run directory. `status --wait` polls it and
+returns when the run ends (completed, failed, exhausted or cancelled), when it is
+blocked and needs you, when its host is gone without a recorded outcome, or when
+`--timeout-ms` passes. Each case has its own exit code, listed under
+[Configuration, hosting and inspection](#configuration-hosting-and-inspection).
 
 ## CLI
 
@@ -116,8 +131,10 @@ bin/woof herdr status|start|cancel|doctor
 Herdr nor Claude Code is required for the command to complete.
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
-for `config show`, `run start`, the inspection commands and the plugins. Any
-other workflow-oriented command is rejected as not implemented.
+for `config show`, `run start`, the inspection commands and the plugins.
+`bin/woof --help` also lists `run host`, marked internal: it hosts a launched run
+in its own process. A command `--help` does not list exits 1, reported as not
+implemented or as a usage error.
 
 ## Result handoff
 

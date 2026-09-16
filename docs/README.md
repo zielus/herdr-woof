@@ -1,14 +1,16 @@
 # Woof documentation
 
-Status: design baseline, 2026-09-14. These documents synthesize the September 2026 product design
-conversation and inspected project material. They describe what to build; they do not claim that
-the features exist or that proposed implementation details are approved.
+Status: 0.1.0, 2026-09-16, on a design baseline from 2026-09-14. These documents synthesize the
+September 2026 product design conversation and inspected project material. Only the "Implemented
+now" sections linked below describe implemented behavior. Every other section states requirements
+or proposals: it does not claim that the feature exists or that a proposed implementation detail
+is approved.
 
 ## What exists today
 
-The linked "Implemented now" sections say what is real today versus still proposed. The
-[acceptance evidence](acceptance/v1-evidence.md) was executed at revision
-`5e0236e6d06152222e6ff35f80dc05889841d4c2`.
+The [acceptance evidence](acceptance/v1-evidence.md) states which revision each part of it was
+run against. Its live logs were recorded before two source fixes that are part of the 0.1.0 code
+merged to master as `b329cdc`.
 
 - **Result handoff** (p1): envelope v1, `woof submit`, `woof attempt open`, and the run journal.
   See [Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype).

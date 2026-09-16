@@ -1,7 +1,14 @@
 # Woof v1 acceptance evidence
 
-Revision: `5e0236e6d06152222e6ff35f80dc05889841d4c2` (last product-code commit this
-evidence reflects) · Date: 2026-09-16
+Revision: the live evidence was recorded at `5e0236e6d06152222e6ff35f80dc05889841d4c2`, a
+commit on the `feat/plan-build-review` branch that was squash-merged to master as `b329cdc`
+(0.1.0). Master does not contain `5e0236e` itself; it is kept here as a historical id. Two source
+fixes landed on that branch after the live runs and are part of `b329cdc`: check 17b scans to the
+real first non-blank line (`src/submission/submit.ts`), and quoted rejections in a format-repair
+request are bounded (`src/scheduler/request.ts`, `src/workflows/request-bound.ts`). The live runs
+were not repeated after them. The offline half (`offline.json`) was re-collected on the 0.1.0 code
+in phase 6 at `79a79cb`, a commit on the `feat/public-readiness` branch; its recorded `revision`
+is likewise a historical id once that branch is squash-merged. · Date: 2026-09-16
 `bun run verify`: 718 tests green, run twice, at `5e0236e6d0…` (product code
 only); `test/acceptance-evidence.test.ts` itself then adds test cases on top of
 that revision, so the total moves with this file — reproduce it with `bun run
@@ -25,9 +32,10 @@ C5), `plan-build-review-live.log` (round 2), `external-workflow-live.log`
 `runtime-loss-live.log` (round 2, `scripts/live/runtime-loss.mjs`'s first real
 execution), and `product-integration-live.log` (the p4 round-6 log, carried
 forward per lead decision Q4). The full run-by-run narrative, including the
-round-1 L-BR finding and the fixture-ordering procedure defect, lives in the
-verifier's `live/INDEX.md` for this phase; this file states only what the
-committed logs and the test suite back.
+round-1 L-BR finding and the fixture-ordering procedure defect, lived in the
+verifier's `live/INDEX.md` in the phase's run directory, which is not part of
+this repository; this file states only what the committed logs and the test
+suite back.
 
 The public-readiness change (phase 6) redacted all seven committed logs under
 `docs/research/`: the home directory prefix became `~` and the host name became
@@ -187,7 +195,8 @@ context consumed by request construction.
 
 Not a limit; recorded because it shaped a shipped fix (LV-102) and is worth
 keeping visible. Verification round 1's L-BR run (`docs/research/` no longer
-holds that log; see `live/INDEX.md` §4 for the full record) gave the reviewer
+holds that log; its full record was in the verifier's `live/INDEX.md` §4,
+which is not part of this repository) gave the reviewer
 role a checklist requirement — every file under `src/` must start with an
 exact `// woof-acceptance: <nonce>` line — that the input never gave the
 builder or repair role directly. Review 1 correctly found the line missing
