@@ -23,6 +23,13 @@
 // once, at the start of the live gate. Running it here would destroy an
 // in-flight run on the shared fixture.
 //
+// FIXTURE RULE (p5 repair LV-101): `scripts/live/build-review.mjs` deletes and
+// re-initializes the shared fixture on **every** invocation, not only with
+// --fixture-only, and re-commits `.woof/roles/*` and `.woof/workflows/scribe.mjs`
+// every time (that writer is the default since LV-101; --no-roles opts out). This
+// script never re-initializes the fixture: it reads what is there and refuses to
+// start if the work tree is dirty or the configuration it needs is missing.
+//
 // Operator precondition: the fixed fixture path
 // ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo must have
 // been trusted in Claude Code once; Woof never answers a folder-trust question.

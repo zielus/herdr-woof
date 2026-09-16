@@ -367,6 +367,20 @@ describe("an external project workflow loads, admits and runs", () => {
     expect(script.match(/workflows", "scribe\.mjs"/g) ?? []).toHaveLength(2);
     expect(script).not.toContain("scribe-once");
 
+    // LV-101: every invocation of that script re-initializes the fixture, so the
+    // configuration writer must not be behind an opt-in flag — when it was, a
+    // plain run for L-BR deleted the roles and this definition, and the later
+    // live scripts could not start. The rule is stated at the top of each script.
+    expect(script).toContain('!process.argv.includes("--no-roles")');
+    expect(script).not.toContain('process.argv.includes("--with-roles")');
+    expect(script).toContain("FIXTURE RULE");
+    for (const sibling of ["plan-build-review.mjs", "external-workflow.mjs", "runtime-loss.mjs"]) {
+      const text = readFileSync(join(repoRoot, "scripts", "live", sibling), "utf8");
+      expect(text, sibling).toContain("FIXTURE RULE");
+      // None of them re-initializes the shared fixture; only build-review.mjs does.
+      expect(text, sibling).not.toContain("rmSync(repo");
+    }
+
     // The shipped definition has no imports at all (p5 repair PB-007): the live
     // fixture gets this file verbatim, so a test hook here would ship with it.
     const definition = readFileSync(fixture, "utf8");

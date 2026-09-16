@@ -21,6 +21,13 @@
 // so this script reads `outcome.json`, never only an exit code, or a rejection
 // would look like a hang.
 //
+// FIXTURE RULE (p5 repair LV-101): `scripts/live/build-review.mjs` deletes and
+// re-initializes the shared fixture on **every** invocation, not only with
+// --fixture-only, and re-commits `.woof/roles/*` and `.woof/workflows/scribe.mjs`
+// every time (that writer is the default since LV-101; --no-roles opts out). This
+// script never re-initializes the fixture: it reads what is there and refuses to
+// start if the work tree is dirty or the configuration it needs is missing.
+//
 // It never reads pane text and never sends keys. Exit 0 when every gate passes,
 // 1 when one fails, 4 when the journal holds run.blocked.
 import { spawnSync } from "node:child_process";
