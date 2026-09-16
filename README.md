@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zielus/herdr-woof/master/assets/brand/woof.svg">
-    <img alt="Woof logo" src="https://raw.githubusercontent.com/zielus/herdr-woof/master/assets/brand/woof-ink.svg" width="160">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/woof.svg">
+    <img alt="Woof logo" src="assets/brand/woof-ink.svg" width="160">
   </picture>
 </p>
 
