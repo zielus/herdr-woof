@@ -398,4 +398,70 @@ describe("woof agent start <role>", () => {
     expect(String(start.json?.["message"])).toContain("agent start failed");
     expect(existsSync(s.guardLog)).toBe(false);
   });
+
+  it("R3: closes the pane it split when agent start fails, and never a pane it was given", () => {
+    const s = setup();
+    const failedStart = {
+      match: ["agent", "start"],
+      stderr: `${JSON.stringify({ error: { code: "agent_name_taken", message: "taken" }, id: "x" })}\n`,
+      exit: 1,
+    };
+    const split = {
+      match: ["pane", "split"],
+      stdout: JSON.stringify({ id: "cli:pane", result: { pane: { pane_id: "w9:p7" } } }),
+    };
+    writeFileSync(
+      s.scenario,
+      JSON.stringify([
+        split,
+        failedStart,
+        { match: ["pane", "close"], stdout: JSON.stringify({ id: "cli:pane", result: {} }) },
+      ]),
+    );
+    const closed = agentStart(s, ["builder"]);
+    expect(closed.status, closed.stdout + closed.stderr).toBe(3);
+    expect(closed.json).toMatchObject({
+      outcome: "rejected",
+      reason: "agent_start_failed",
+      runtime: { code: "runtime_error", runtimeCode: "agent_name_taken" },
+      paneClosed: true,
+    });
+    expect(String(closed.json?.["message"])).toContain("the pane w9:p7 it split was closed");
+    expect(calls(s).map((argv) => argv.slice(0, 3))).toEqual([
+      ["pane", "split", "--current"],
+      ["agent", "start", "builder"],
+      ["pane", "close", "w9:p7"],
+    ]);
+
+    // A close that fails is reported, not hidden: the operator has a pane to close by hand.
+    rmSync(s.log);
+    writeFileSync(
+      s.scenario,
+      JSON.stringify([
+        split,
+        failedStart,
+        {
+          match: ["pane", "close"],
+          stderr: `${JSON.stringify({ error: { code: "server_exploded", message: "boom" }, id: "x" })}\n`,
+          exit: 1,
+        },
+      ]),
+    );
+    const leftOpen = agentStart(s, ["builder"]);
+    expect(leftOpen.status).toBe(3);
+    expect(leftOpen.json).toMatchObject({ reason: "agent_start_failed", paneClosed: false });
+    expect(String(leftOpen.json?.["message"])).toContain(
+      "the pane w9:p7 it split could not be closed",
+    );
+
+    // A pane named with --pane is the caller's: it is never closed.
+    rmSync(s.log);
+    writeFileSync(s.scenario, JSON.stringify([failedStart]));
+    const given = agentStart(s, ["builder", "--pane", "w9:p3"]);
+    expect(given.status).toBe(3);
+    expect(given.json).toMatchObject({ reason: "agent_start_failed" });
+    expect(given.json).not.toHaveProperty("paneClosed");
+    expect(calls(s).map((argv) => argv.slice(0, 2))).toEqual([["agent", "start"]]);
+    expect(existsSync(s.guardLog)).toBe(false);
+  });
 });

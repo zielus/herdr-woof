@@ -5,6 +5,8 @@ import { describeSource, resolveConfiguration } from "../config/resolve.js";
 import { isId } from "../contracts/envelope.js";
 import type { RuntimeError } from "../runtime/adapter.js";
 import { createHerdrCliRuntime } from "../runtime/herdr/adapter.js";
+import { execHerdr } from "../runtime/herdr/exec.js";
+import { parseHerdrOutput } from "../runtime/herdr/parse.js";
 import { isHerdrRuntimeName } from "../runtime/names.js";
 import { launchArgs } from "../scheduler/launch.js";
 import { UsageError, parse, rejected } from "./common.js";
@@ -29,10 +31,14 @@ started agent's pane, terminal, session and Herdr name. No journal is written.
 Exits 0 when started; 2 when the role or configuration is refused
 (role_unresolved, role_invalid, agent_kind_unsupported, config_invalid, ...);
 3 when Herdr is unavailable (herdr_unavailable) or the split or start fails
-(agent_start_failed); 1 on usage errors.`;
+(agent_start_failed; a pane this command split is then closed, and "paneClosed"
+says whether that worked); 1 on usage errors.`;
 
 /** Bound on `herdr agent start` (Herdr refuses 3000 ms or less) and on the pane split. */
 const AGENT_START_TIMEOUT_MS = 30_000;
+/** Bound on closing the split pane after a failed start, as the adapter bounds pane commands. */
+const PANE_CLOSE_TIMEOUT_MS = 10_000;
+const PANE_CLOSE_GRACE_MS = 2000;
 
 export async function agentCommand(args: string[]): Promise<number> {
   if (args[0] !== "start") throw new UsageError(`expected "agent start"\n\n${AGENT_START_USAGE}`);
@@ -134,7 +140,25 @@ export async function agentCommand(args: string[]): Promise<number> {
     args: launch.args,
     timeoutMs: AGENT_START_TIMEOUT_MS,
   });
-  if (!started.ok) return startFailed("agent start failed", started.error);
+  if (!started.ok) {
+    // A pane this command split holds no agent now: close it, so a retry does not pile up empty
+    // panes. A pane named with --pane is the caller's and stays open.
+    if (values.pane !== undefined) return startFailed("agent start failed", started.error);
+    const close = ["pane", "close", paneId];
+    const closed = parseHerdrOutput(
+      close,
+      await execHerdr(close, {
+        bin: herdrBin(),
+        env: process.env,
+        timeoutMs: PANE_CLOSE_TIMEOUT_MS,
+        graceMs: PANE_CLOSE_GRACE_MS,
+      }),
+    );
+    const cleanup = closed.ok
+      ? `; the pane ${paneId} it split was closed`
+      : `; the pane ${paneId} it split could not be closed (${closed.error.message}); close it with herdr pane close ${paneId}`;
+    return startFailed(`agent start failed`, started.error, cleanup, closed.ok);
+  }
   console.log(
     JSON.stringify({
       outcome: "started",
@@ -146,8 +170,14 @@ export async function agentCommand(args: string[]): Promise<number> {
   return 0;
 }
 
-function startFailed(what: string, error: RuntimeError): number {
-  return rejected("agent_start_failed", `${what}: ${error.message}`, [], 3, {
+function startFailed(
+  what: string,
+  error: RuntimeError,
+  cleanup = "",
+  paneClosed?: boolean,
+): number {
+  return rejected("agent_start_failed", `${what}: ${error.message}${cleanup}`, [], 3, {
     runtime: { code: error.code, runtimeCode: error.runtimeCode },
+    ...(paneClosed !== undefined ? { paneClosed } : {}),
   });
 }
