@@ -227,6 +227,16 @@ function builderNext(ctx: StageGateContext<PlanBuildReviewInput>): Transition {
     : { decision: "pass", reason: "built", to: "review" };
 }
 
+/**
+ * Opt-in artifact/envelope verdict agreement (p5 D5). The reviewer is asked to
+ * make this the artifact's first line; `woof submit` checks it only when the
+ * first non-blank line actually starts with it, so a review that opens with
+ * prose is accepted unchanged and a quoted example further down is ignored.
+ */
+export const REVIEW_VERDICT_MARKER = "Woof-Verdict:";
+
+const VERDICT_LINE_INSTRUCTION = ` Make the first line of your artifact exactly \`${REVIEW_VERDICT_MARKER} pass\` or \`${REVIEW_VERDICT_MARKER} fail\`, matching the verdict in your envelope; a disagreement between the two is rejected.`;
+
 const COMPLETION_REPORT =
   "When you are done, write a short completion report as your artifact: what you changed (files), how you verified it, and anything left undone.";
 
@@ -327,6 +337,7 @@ export const planBuildReviewWorkflow: WorkflowDefinition<PlanBuildReviewInput> =
       artifactFile: "review.md",
       onFailedStatus: "fail",
       bindsRevision: true,
+      artifactVerdictMarker: REVIEW_VERDICT_MARKER,
       request: (ctx) => {
         const builder = latestBuilderGate(ctx.history);
         const inputs: InputRef[] =
@@ -335,8 +346,7 @@ export const planBuildReviewWorkflow: WorkflowDefinition<PlanBuildReviewInput> =
             : [{ label: "completion report", from: { stageId: builder.subject.stageId } }];
         return {
           goal: "Review the current change in the repository against the task below.",
-          instructions:
-            'Inspect the repository (your working directory) and the completion report. Decide whether every acceptance criterion and project instruction holds. Write your review as your artifact with concrete findings. Submit verdict "fail" when any blocking finding remains, "pass" otherwise. A "fail" review is a completed review: use status "completed". Do not change repository files.',
+          instructions: `Inspect the repository (your working directory) and the completion report. Decide whether every acceptance criterion and project instruction holds. Write your review as your artifact with concrete findings. Submit verdict "fail" when any blocking finding remains, "pass" otherwise. A "fail" review is a completed review: use status "completed". Do not change repository files.${VERDICT_LINE_INSTRUCTION}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.reviewer !== undefined

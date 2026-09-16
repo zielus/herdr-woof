@@ -47,6 +47,13 @@ type Rejection = Extract<SubmitOutcome, { outcome: "rejected" }>;
 const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
 
 /**
+ * Bytes of the artifact check 17b decodes looking for the first non-blank line.
+ * A first line further in than this is not a first line anyone writes, and
+ * bounding the decode keeps a 32 MiB artifact from being decoded whole again.
+ */
+const MAX_VERDICT_LINE_SCAN = 64 * 1024;
+
+/**
  * Validates a result envelope and its artifact, then records the outcome in the
  * run journal. The first failing check wins, in this order (pinned by
  * test/precedence.cli.test.ts):
@@ -73,6 +80,7 @@ const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
  * 16. artifact size ≤ MAX_ARTIFACT_BYTES (32 MiB)      → artifact_too_large
  * 17. artifact sha256 matches the envelope             → artifact_hash_mismatch
  *     artifact size unchanged while it was read        → artifact_hash_mismatch
+ * 17b. artifact verdict marker agrees with the envelope → verdict_artifact_mismatch
  * 18. publish the accepted copy, append the record     → accepted / journal_write_failed
  *
  * The envelope is read and parsed before the lock is taken, but an envelope
@@ -84,6 +92,16 @@ const { O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = constants;
  * Check 16 is decided from the file's size before it is read, so only artifacts
  * within the cap reach check 15's content read; a whitespace-only file larger
  * than the cap is therefore `artifact_too_large`.
+ *
+ * Check 17b runs only when the attempt was opened with an `artifactVerdictMarker`
+ * (p5 D5: the stage opts in; nothing is checked otherwise). It reads the
+ * artifact's **first non-blank line only**: when that line starts with the
+ * marker, the rest of it must equal the envelope's verdict. An artifact whose
+ * first non-blank line does not start with the marker is accepted unchanged, and
+ * a marker-looking line further down is ignored — a reviewer quoting the required
+ * line inside an example writes it at the start of a line too, and scanning the
+ * whole artifact would reject that. The check runs after 17, so a submission
+ * whose bytes do not match its own digest is reported as the hash mismatch it is.
  *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
@@ -331,6 +349,18 @@ function decide(
     ]);
   }
 
+  // 17b. Opt-in artifact/envelope verdict agreement, on the first non-blank line.
+  const mismatch = verdictMarkerMismatch(
+    attempt.opened.artifactVerdictMarker,
+    artifact.bytes,
+    envelope.verdict,
+  );
+  if (mismatch !== undefined) {
+    return reject("verdict_artifact_mismatch", mismatch.message, [
+      { field: "verdict", message: mismatch.detail },
+    ]);
+  }
+
   // 18. Publish the immutable accepted copy, then persist acceptance.
   const acceptedPath = acceptedPathFor(
     envelope.stageId,
@@ -380,6 +410,32 @@ function decide(
       "cannot journal the acceptance, so the unreferenced accepted copy was removed: ",
     );
   }
+}
+
+/**
+ * The artifact's first non-blank line against the envelope's verdict, for a
+ * stage that declared a marker. Returns undefined when the stage declared none,
+ * when the artifact has no non-blank line, when that line does not start with
+ * the marker, or when the two agree.
+ */
+function verdictMarkerMismatch(
+  marker: string | undefined,
+  bytes: Uint8Array,
+  envelopeVerdict: string | null,
+): { message: string; detail: string } | undefined {
+  if (marker === undefined) return undefined;
+  // Only the head of the artifact is decoded: the first non-blank line is not further in.
+  const head = Buffer.from(
+    bytes.subarray(0, Math.min(bytes.byteLength, MAX_VERDICT_LINE_SCAN)),
+  ).toString("utf8");
+  const first = head.split("\n").find((line) => line.trim() !== "");
+  if (first === undefined || !first.startsWith(marker)) return undefined;
+  const artifactVerdict = first.slice(marker.length).trim();
+  if (artifactVerdict === envelopeVerdict) return undefined;
+  return {
+    message: `the artifact's first line ${JSON.stringify(first.trim())} declares verdict ${JSON.stringify(artifactVerdict)}, but the envelope carries ${JSON.stringify(envelopeVerdict)}`,
+    detail: `the artifact says ${JSON.stringify(artifactVerdict)}; the envelope says ${JSON.stringify(envelopeVerdict)}`,
+  };
 }
 
 function journalRejection(

@@ -188,6 +188,38 @@ export function openAttempt(runDir: string, spec: AttemptSpec = {}): ProcessResu
   return woof(args);
 }
 
+/**
+ * Opens an attempt declaring an artifact verdict marker (p5 D5), through the
+ * compiled `openAttempt` in a child process. `woof attempt open` has no flag for
+ * it: the marker is the scheduler's to pass, from the stage that declares it.
+ */
+export function openAttemptWithMarker(
+  runDir: string,
+  marker: string,
+  spec: AttemptSpec = {},
+): void {
+  const out = runSdk<{ outcome: string }>(
+    runDir,
+    `out = await openAttempt({ runDir, ...input });`,
+    {
+      runId: spec.run ?? "run-1",
+      agentId: spec.agent ?? "worker",
+      stageId: spec.stage ?? "report",
+      visit: spec.visit ?? 1,
+      attempt: spec.attempt ?? 1,
+      verdicts:
+        spec.verdicts === undefined
+          ? ["pass", "fail"]
+          : spec.verdicts === ""
+            ? []
+            : spec.verdicts.split(","),
+      artifactVerdictMarker: marker,
+      ...(spec.pane !== undefined ? { paneId: spec.pane } : {}),
+    },
+  );
+  if (out.outcome !== "opened") throw new Error(`openAttempt: ${JSON.stringify(out)}`);
+}
+
 /** Opens an attempt and fails loudly if the CLI does not report it opened. */
 export function openAttemptOk(runDir: string, spec: AttemptSpec = {}): ProcessResult {
   const result = openAttempt(runDir, spec);

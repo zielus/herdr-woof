@@ -9,6 +9,7 @@ import {
   type Receipt,
   type RejectionDetail,
   type SubmissionStatus,
+  isVerdictMarker,
 } from "../contracts/envelope.js";
 import { INFRA_REASONS, REJECTION_REASONS } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
@@ -78,6 +79,13 @@ export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
   /** Attempt output directory, relative to the run directory. */
   artifactDir: string;
   paneId?: string;
+  /**
+   * Opt-in artifact verdict marker the stage declared (p5 D5), journaled so it
+   * reaches the worker's own `woof submit` process by replay, exactly as
+   * `verdicts` does. Additive at schemaVersion 1: a record without it replays
+   * unchanged, and a stage that declares none never writes it.
+   */
+  artifactVerdictMarker?: string;
 }
 
 export interface SubmissionAcceptedRecord extends RecordBase, AttemptIdentity {
@@ -229,8 +237,11 @@ function planProblem(plan: unknown): string | undefined {
 
 function attemptOpenedProblem(value: Record<string, unknown>): string | undefined {
   const problem =
-    keysProblem(value, [...IDENTITY_KEYS, "verdicts", "artifactDir"], ["paneId"]) ??
-    identityProblem(value);
+    keysProblem(
+      value,
+      [...IDENTITY_KEYS, "verdicts", "artifactDir"],
+      ["paneId", "artifactVerdictMarker"],
+    ) ?? identityProblem(value);
   if (problem !== undefined) return problem;
   const verdicts = value["verdicts"];
   return (
@@ -247,6 +258,11 @@ function attemptOpenedProblem(value: Record<string, unknown>): string | undefine
           value["attempt"] as number,
         ),
       "artifactDir does not match the attempt identity",
+    ) ??
+    check(
+      value["artifactVerdictMarker"] === undefined ||
+        isVerdictMarker(value["artifactVerdictMarker"]),
+      "artifactVerdictMarker is not a non-empty single-line string of at most 64 characters",
     ) ??
     paneProblem(value)
   );

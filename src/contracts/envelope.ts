@@ -176,6 +176,23 @@ export function isId(value: unknown): value is string {
   return typeof value === "string" && value !== "." && value !== ".." && ID_PATTERN.test(value);
 }
 
+/** Longest artifact verdict marker a stage may declare (p5 D5). */
+export const MAX_VERDICT_MARKER = 64;
+
+/**
+ * An artifact verdict marker: a non-empty single-line string of at most
+ * `MAX_VERDICT_MARKER` characters, such as `"Woof-Verdict:"`. It is a line
+ * prefix, so a newline in it would make the contract unstatable.
+ */
+export function isVerdictMarker(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    value.length <= MAX_VERDICT_MARKER &&
+    !/[\n\r]/.test(value)
+  );
+}
+
 /**
  * A safe integer >= 1. Values beyond Number.MAX_SAFE_INTEGER are refused because
  * distinct JSON inputs (for example 9007199254740992 and 9007199254740993) parse

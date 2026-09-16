@@ -68,10 +68,15 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
           ? "fail"
           : "pass";
     const rel = `artifacts/${active.stageId}/visit-${active.visit}/attempt-${active.attempt}/${ARTIFACTS[active.stageId]}`;
+    // The reviewer leads with the opt-in verdict marker (p5 D5), so the happy path
+    // exercises check 17b agreeing rather than only its rejection.
+    const body = `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
     const content =
       active.stageId === "plan"
         ? `# plan ${active.visit}.${active.attempt}\n\n1. Write src/change.txt.\n2. Done when the file exists.\n`
-        : `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
+        : verdict === null
+          ? body
+          : `Woof-Verdict: ${verdict}\n\n${body}`;
     writeFileSync(join(runDir, rel), content);
     await submitResult({
       runDir,

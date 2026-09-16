@@ -25,6 +25,7 @@ import {
   ofType,
   openAttempt,
   openAttemptOk,
+  openAttemptWithMarker,
   readyAttempt,
   repoRoot,
   runNode,
@@ -659,6 +660,21 @@ describe("woof submit", () => {
     const lines = journal(runDir);
     expect(lines.at(-1)).toMatchObject({ type: "submission.rejected", reason: "run_closed" });
     expect(ofType(lines, "submission.accepted")).toHaveLength(0);
+  });
+
+  it("rejects an artifact whose declared verdict disagrees with the envelope (p5 D5)", () => {
+    const runDir = makeRunDir();
+    openAttemptWithMarker(runDir, "Woof-Verdict:");
+    const sha = writeArtifact(runDir, artifactRel(), "Woof-Verdict: fail\n\nBlocking.\n");
+    const result = submit(
+      runDir,
+      envelopeFor({ verdict: "pass", artifact: { path: artifactRel(), sha256: sha } }),
+    );
+
+    expectRejected(result, "verdict_artifact_mismatch");
+    expect(result.json?.message).toContain('"fail"');
+    expect(result.json?.message).toContain('"pass"');
+    expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
   });
 
   it("reaches every exported rejection reason", () => {
