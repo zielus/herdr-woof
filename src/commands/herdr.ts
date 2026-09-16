@@ -25,8 +25,8 @@ Each action shows a Herdr notification and prints one JSON line.
   status  the project's runs that have not ended; exits 0
   start   start the default workflow with <project>/.woof/start.json in a pane
           split from the focused pane; exits like woof run start
-  cancel  cancel the project's single active run; refuses (exit 2) when none or
-          several are active
+  cancel  cancel the project's single active run; exits 0 with outcome noop when
+          none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
           configuration (a configuration problem is reported, not refused); exits 0
 
@@ -157,8 +157,9 @@ async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
   if (run === undefined) {
     const message = `no active Woof run in ${project.root}`;
     await notify("Woof: nothing to cancel", message);
-    print({ outcome: "rejected", reason: "no_active_run", message, details: [] });
-    return 2;
+    // Nothing to do is not a failure: Herdr logs a non-zero action exit as "failed" (verify-1 L1).
+    print({ outcome: "noop", reason: "no_active_run", message, details: [] });
+    return 0;
   }
   if (others.length > 0) {
     const commands = runs.map((entry) => `woof run cancel ${entry.runDir}`);
