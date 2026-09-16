@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-16
+
 ### Added
 
 - SDK foundation for Woof: a compiled Node ESM package entry point, a
@@ -127,8 +129,8 @@ definition_syntax_unsupported|definition_load_failed`; `WorkflowDefinition`
   (`scripts/live/lib/observer.mjs`'s `jsonForm`), not assume a plain-object
   prototype. MCP, crash resume/re-hosting a lost run, parallel scheduling, a
   second agent kind, per-stage structural artifact schemas, and role
-  instructions/context files in configuration remain out of scope. No version
-  bump in this bullet (`check:version` stays at 0.0.0); the `0.1.0` version
-  bump and this section's eventual move under `## [0.1.0]` are a separate,
-  later commit — `0.1.0` is a version and a git tag on this repository, not an
-  npm publish (the package stays `"private": true`).
+  instructions/context files in configuration remain out of scope. This release
+  carries the version bump to `0.1.0` across `package.json`, `herdr-plugin.toml`
+  and the Claude Code plugin manifest: `0.1.0` is a version and a git tag on
+  this repository, not an npm publish (the package stays `"private": true`), and
+  the tag itself is created after the merge, not by this commit.
