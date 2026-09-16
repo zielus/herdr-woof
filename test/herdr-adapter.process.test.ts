@@ -296,6 +296,28 @@ describe("Herdr CLI adapter delivery certainty", () => {
     }
   });
 
+  it("reports a failed precondition read as not_delivered precondition_failed, never runtime_unavailable", () => {
+    const cases: Array<[Entry, string]> = [
+      [{ match: ["agent", "get"], hangMs: 10_000, stdout: "" }, "timeout"],
+      [{ match: ["agent", "get"], stdout: "garbage{" }, "protocol_error"],
+      [{ match: ["agent", "get"], ...error("server_exploded") }, "runtime_error"],
+    ];
+    for (const [read, underlying] of cases) {
+      const { out, log } = runAdapter([read], deliver(300), { herdrEnv: "1", graceMs: 100 });
+      expect(out, underlying).toMatchObject({
+        outcome: "not_delivered",
+        error: { code: "precondition_failed" },
+      });
+      const message = (out["error"] as { message: string }).message;
+      expect(message, underlying).toContain("precondition read failed");
+      expect(message, underlying).toContain("nothing was sent");
+      expect(
+        log.filter((args) => args[1] === "prompt"),
+        underlying,
+      ).toEqual([]);
+    }
+  }, 30_000);
+
   it("reports a gone agent as not_delivered without prompting", () => {
     const { out, log } = runAdapter(
       [
@@ -540,9 +562,11 @@ out = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude"
 out = { delivered: await runtime.deliver(handle, "x", { timeoutMs: 300 }), took: Date.now() - began };`,
       { herdrEnv: "1", graceMs: 100 },
     );
+    // F-003: a precondition read that ran out of time proves nothing was sent, not that the runtime
+    // is down (intentional expectation change from runtime_unavailable).
     expect(hungRead.out["delivered"]).toMatchObject({
       outcome: "not_delivered",
-      error: { code: "runtime_unavailable" },
+      error: { code: "precondition_failed" },
     });
     expect(hungRead.out["took"]).toBeLessThan(1000);
     expect(hungRead.log.filter((args) => args[1] === "prompt")).toEqual([]);

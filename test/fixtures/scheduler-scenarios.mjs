@@ -516,6 +516,14 @@ const SCENARIOS = {
       },
     }),
 
+  // F-003: the first dispatch's precondition read failed; nothing was sent, so the work is retried.
+  "precondition-retry": () =>
+    scenario({
+      verify: false,
+      runtime: { builder: { onDeliver: ["not_delivered:precondition_failed", "started"] } },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+    }),
+
   "ambiguous-delivered": () =>
     scenario({
       verify: false,

@@ -485,6 +485,29 @@ describe("decide: waiting for results, format repair and work retry", () => {
     });
   });
 
+  it("retries a failed precondition read as work, bounded by maxAttemptsPerVisit (F-003)", () => {
+    const precondition = [
+      opened(CORE_PLAN),
+      writerAssigned,
+      draftAttempt(),
+      dispatched("draft", "writer", 1, 1, "not_delivered", "precondition_failed"),
+    ];
+    expect(act(precondition, { agents: { writer: readyView("writer") } })).toMatchObject({
+      type: "dispatch",
+      attempt: 2,
+      cause: "work_retry",
+    });
+    const twice = [
+      ...precondition,
+      draftAttempt(2),
+      dispatched("draft", "writer", 1, 2, "not_delivered", "precondition_failed"),
+    ];
+    expect(act(twice, { agents: { writer: readyView("writer") } })).toMatchObject({
+      outcome: "exhausted",
+      limit: "maxAttemptsPerVisit",
+    });
+  });
+
   it("fails when the agent was not found or the runtime was unavailable at dispatch", () => {
     const gone = [
       opened(CORE_PLAN),

@@ -483,6 +483,8 @@ function decideRun<Input>(
       return terminate("failed", `agent_gone: agent ${agentId} was not found at dispatch`);
     if (attempt.dispatch.reason === "runtime_unavailable")
       return terminate("failed", "runtime_unavailable: the runtime was unavailable at dispatch");
+    // agent_busy, agent_blocked, invalid_request and precondition_failed proved nothing was
+    // sent: the work is retried, bounded by maxAttemptsPerVisit.
     return nextAttempt(
       view,
       limits,

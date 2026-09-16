@@ -513,6 +513,26 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "8b. a failed precondition read (not_delivered precondition_failed) is retried as work and the run completes",
+    () => {
+      const report = runScenario("precondition-retry");
+      expect(report.result.outcome).toBe("completed");
+      const builds = ofType(report, "request.dispatched").filter(
+        (record) => record["stageId"] === "build",
+      );
+      expect(
+        builds.map((record) => [record["attempt"], record["delivery"], record["reason"]]),
+      ).toEqual([
+        [1, "not_delivered", "precondition_failed"],
+        [2, "started", "observed_working"],
+      ]);
+      expect(attemptIn(report, "build", 1, 2)?.cause).toBe("work_retry");
+      expect(report.snapshot.counters["workRetriesByVisit"]).toEqual({ "build/1": 1 });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "9. cancellation stops owned panes and a late result cannot resurrect the run",
     () => {
       const report = runScenario("cancel-abort");
