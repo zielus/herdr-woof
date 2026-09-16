@@ -31,9 +31,10 @@ const BR = "build-review-live.log";
 const PBR = "plan-build-review-live.log";
 const EXT = "external-workflow-live.log";
 const PI = "product-integration-live.log";
+const LOSS = "runtime-loss-live.log";
 
 /** Live logs an entry may name; the collector reads these from docs/research/. */
-export const LIVE_LOGS = [BR, PBR, EXT, PI];
+export const LIVE_LOGS = [BR, PBR, EXT, PI, LOSS];
 
 const t = (file, name) => ({ file, name });
 
@@ -416,9 +417,9 @@ export const MATRIX = [
         "p5 C3: the probe checks a hosting claim's fields, not only their presence refuses a startedAt that is not a date, and defers to the heartbeat for a foreign hostname",
       ),
     ],
-    gates: [`${PI}:L7`],
-    command: "node scripts/live/product-integration.mjs",
-    note: "The stale journal lock after a kill is a separate documented limit (carry-over C1); this row needs only that the observer reports loss.",
+    gates: [`${LOSS}:L7`],
+    command: "node scripts/live/runtime-loss.mjs",
+    note: "`scripts/live/product-integration.mjs` prints `GATE L7 MANUAL` — a placeholder the collector correctly refuses to read as PASS, so nothing could ever close this row from a script's own output (p5 repair PB-003). `scripts/live/runtime-loss.mjs` performs the procedure and prints `GATE L7 PASS|FAIL`. The stale journal lock after a kill is a separate documented limit (carry-over C1): the probe waits for the lock to be absent before killing, so it never exercises it.",
   },
   {
     id: "configuration",
