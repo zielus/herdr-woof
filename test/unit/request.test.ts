@@ -10,9 +10,19 @@ type Launch = (
   agent: Json,
 ) => { ok: true; args: string[] } | { ok: false; reason: string; message: string };
 
+type Definition = {
+  stages: Array<{
+    kind: string;
+    stageId?: string;
+    request?: (ctx: Json) => { goal: string; instructions: string };
+  }>;
+};
+
 let renderRequest: Render;
 let shellQuote: (value: string) => string;
 let launchArgs: Launch;
+let definitions: Array<[string, Definition]>;
+let reviewIsCanonical: string;
 
 beforeAll(async () => {
   ({ renderRequest, shellQuote } = await loadDist<{
@@ -20,6 +30,75 @@ beforeAll(async () => {
     shellQuote: typeof shellQuote;
   }>("scheduler/request.js"));
   ({ launchArgs } = await loadDist<{ launchArgs: Launch }>("scheduler/launch.js"));
+  const buildReview = await loadDist<{
+    buildReviewWorkflow: Definition;
+    REVIEW_IS_CANONICAL: string;
+  }>("workflows/build-review.js");
+  const planBuildReview = await loadDist<{ planBuildReviewWorkflow: Definition }>(
+    "workflows/plan-build-review.js",
+  );
+  reviewIsCanonical = buildReview.REVIEW_IS_CANONICAL;
+  definitions = [
+    ["build-review", buildReview.buildReviewWorkflow],
+    ["plan-build-review", planBuildReview.planBuildReviewWorkflow],
+  ];
+});
+
+describe("the repair request states that the accepted review is canonical (LV-102)", () => {
+  const repairOf = (definition: Definition) =>
+    definition.stages.find((stage) => stage.kind === "agent" && stage.stageId === "repair");
+
+  const rendered = (definition: Definition, enteredBy: Json) =>
+    (repairOf(definition)?.request as (ctx: Json) => { goal: string; instructions: string })({
+      input: { task: { title: "t", description: "d", acceptanceCriteria: ["a"] } },
+      runId: "run-7",
+      history: { gates: [], latestAccepted: {} },
+      stageId: "repair",
+      visit: 1,
+      attempt: 1,
+      round: 1,
+      enteredBy,
+    }).instructions;
+
+  it("is the exact sentence, in both built-in definitions, however the repair was entered", () => {
+    // A live builder declined a requirement it met only inside the review
+    // artifact, reading it as a possible prompt injection, and the run exhausted.
+    // The request never said whose word the review was; this is that sentence.
+    expect(reviewIsCanonical).toBe(
+      "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.",
+    );
+    for (const [name, definition] of definitions) {
+      for (const enteredBy of [
+        { kind: "stage", gate: "review" },
+        { kind: "check", gate: "verify" },
+      ]) {
+        expect(rendered(definition, enteredBy), `${name} entered by ${enteredBy.gate}`).toContain(
+          reviewIsCanonical,
+        );
+      }
+    }
+  });
+
+  it("reaches the worker: the sentence survives into the rendered request text", () => {
+    for (const [name, definition] of definitions) {
+      const stage = repairOf(definition) as { request: (ctx: Json) => Json };
+      const request = stage.request({
+        input: { task: { title: "t", description: "d", acceptanceCriteria: ["a"] } },
+        runId: "run-7",
+        history: { gates: [], latestAccepted: {} },
+        stageId: "repair",
+        visit: 1,
+        attempt: 1,
+        round: 1,
+        enteredBy: { kind: "stage", gate: "review" },
+      }) as { goal: string; instructions: string };
+      const out = renderRequest(input({ goal: request.goal, instructions: request.instructions }));
+      expect(out.ok, name).toBe(true);
+      expect(out.ok && out.text, name).toContain(reviewIsCanonical);
+      // It is in the section the worker is told to act on.
+      expect(out.ok && out.text.split("## What to do")[1], name).toContain(reviewIsCanonical);
+    }
+  });
 });
 
 const TREE = "c".repeat(40);

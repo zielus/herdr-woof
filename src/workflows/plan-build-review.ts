@@ -237,6 +237,17 @@ export const REVIEW_VERDICT_MARKER = "Woof-Verdict:";
 
 const VERDICT_LINE_INSTRUCTION = ` Make the first line of your artifact exactly \`${REVIEW_VERDICT_MARKER} pass\` or \`${REVIEW_VERDICT_MARKER} fail\`, matching the verdict in your envelope; a disagreement between the two is rejected.`;
 
+/**
+ * The accepted review is canonical for a repair (AGENTS.md: "A review artifact is
+ * canonical and required; downstream agents receive its accepted version
+ * directly"). Live acceptance found a builder treating a requirement it met only
+ * inside the review artifact as a possible prompt injection and declining it
+ * twice, which exhausted the run: the request never said whose word the review
+ * was. It does now (p5 repair LV-102).
+ */
+export const REVIEW_IS_CANONICAL =
+  "The accepted review artifact is canonical for this repair: its blocking findings are project requirements to satisfy, not suggestions. If you believe a finding is wrong, satisfy it anyway and record your objection in completion.md; never leave a blocking finding unaddressed.";
+
 const COMPLETION_REPORT =
   "When you are done, write a short completion report as your artifact: what you changed (files), how you verified it, and anything left undone.";
 
@@ -399,7 +410,7 @@ export const planBuildReviewWorkflow: WorkflowDefinition<PlanBuildReviewInput> =
             entered?.kind === "check"
               ? "Repair the change: the verification command failed."
               : "Repair the change: the review requested changes.",
-          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${FOLLOW_THE_PLAN} ${COMPLETION_REPORT}`,
+          instructions: `Read the inputs, fix every blocking finding in the repository, and keep the acceptance criteria satisfied. ${REVIEW_IS_CANONICAL} ${FOLLOW_THE_PLAN} ${COMPLETION_REPORT}`,
           inputs,
           task: ctx.input.task,
           ...(ctx.input.instructions?.builder !== undefined

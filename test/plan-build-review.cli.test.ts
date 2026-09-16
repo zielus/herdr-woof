@@ -187,8 +187,10 @@ describe("plan-build-review: the definition itself", () => {
       ...base,
       task: { ...base.task, context: { blob: "x".repeat(size) } },
     });
-    expect(workflow.validateInput(blob(21_857))).toMatchObject({ ok: true });
-    const refused = workflow.validateInput(blob(21_858));
+    // Re-measured with LV-102's canonical-review sentence in the repair request
+    // (276 bytes), which moved this from 21 857: the repair is the binding case.
+    expect(workflow.validateInput(blob(21_581))).toMatchObject({ ok: true });
+    const refused = workflow.validateInput(blob(21_582));
     expect(refused.ok).toBe(false);
     expect(refused.details?.[0]).toMatchObject({ field: "task" });
     expect(JSON.stringify(refused.details)).toContain("32769 bytes; the limit is 32768");

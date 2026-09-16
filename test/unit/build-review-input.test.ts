@@ -77,9 +77,11 @@ describe("build-review input: the rendered request fits at admission", () => {
   });
 
   it("computes the same bound after the helper moved to workflows/request-bound.ts (p5 T2)", () => {
-    // Pinned against the inline computation this extraction replaced, measured on the
-    // pre-refactor build at fb50e3b: a context blob of 22 932 bytes is the largest this
-    // input shape admits, 22 933 renders 32 769 bytes and is refused by one byte.
+    // Pinned against the inline computation this extraction replaced, re-measured
+    // whenever the repair request text changes: the repair is the binding case for
+    // this bound, so LV-102's canonical-review sentence (276 bytes) moved it from
+    // 22 932 to 22 656. A blob of 22 656 bytes is the largest this input shape
+    // admits; 22 657 renders 32 769 bytes and is refused by one byte.
     const blob = (size: number): Json => ({
       schemaVersion: 1,
       repo: "/repo",
@@ -90,8 +92,8 @@ describe("build-review input: the rendered request fits at admission", () => {
         context: { blob: "x".repeat(size) },
       },
     });
-    expect(fieldsOf(blob(22_932))).toEqual([]);
-    const refused = fieldsOf(blob(22_933));
+    expect(fieldsOf(blob(22_656))).toEqual([]);
+    const refused = fieldsOf(blob(22_657));
     expect(refused).toEqual([
       {
         field: "task",
