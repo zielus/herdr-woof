@@ -130,6 +130,44 @@ describe("check 17b: an artifact verdict marker that disagrees with the envelope
     expect(Object.hasOwn(opened, "artifactVerdictMarker")).toBe(false);
   });
 
+  it("catches a BOM-prefixed marker line, and still makes no claim about a space-indented one (PB-004)", () => {
+    // `trim()` treats a UTF-8 BOM as whitespace when the first non-blank line is
+    // chosen, so a BOM-prefixed marker line reaches the prefix test and must not
+    // fall through it: an editor that writes a BOM would otherwise skip 17b.
+    const rejected = arrange({
+      marker: MARKER,
+      artifact: `\uFEFF${MARKER} fail\n\nThe migration drops a column.\n`,
+      verdict: "pass",
+    });
+    const result = submit(rejected.runDir, rejected.envelope);
+    expect(result).toMatchObject({ status: 2, json: { reason: "verdict_artifact_mismatch" } });
+    expect(result.json?.message).toContain('"fail"');
+    expect(existsSync(acceptedCopy(rejected.runDir))).toBe(false);
+
+    // The same bytes agreeing are accepted, so the BOM itself is never the failure.
+    const agreeing = arrange({
+      marker: MARKER,
+      artifact: `\uFEFF${MARKER} fail\n\nThe migration drops a column.\n`,
+      verdict: "fail",
+    });
+    expect(submit(agreeing.runDir, agreeing.envelope)).toMatchObject({
+      status: 0,
+      json: { outcome: "accepted" },
+    });
+
+    // A space-indented marker line does NOT start with the marker, so the stage's
+    // contract makes no claim about it and it is accepted (plan §2 D5).
+    const indented = arrange({
+      marker: MARKER,
+      artifact: `   ${MARKER} fail\n\nFindings.\n`,
+      verdict: "pass",
+    });
+    expect(submit(indented.runDir, indented.envelope)).toMatchObject({
+      status: 0,
+      json: { outcome: "accepted" },
+    });
+  });
+
   it("skips leading blank lines to find the first line, and tolerates a null envelope verdict", () => {
     const rejected = arrange({
       marker: MARKER,

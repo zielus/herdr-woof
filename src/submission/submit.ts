@@ -102,6 +102,8 @@ const MAX_VERDICT_LINE_SCAN = 64 * 1024;
  * line inside an example writes it at the start of a line too, and scanning the
  * whole artifact would reject that. The check runs after 17, so a submission
  * whose bytes do not match its own digest is reported as the hash mismatch it is.
+ * A leading UTF-8 BOM on that line is stripped before the prefix test; leading
+ * spaces are not, because the contract is that the line starts with the marker.
  *
  * Every rejection except run_dir_invalid, journal_busy, journal_corrupt and
  * journal_write_failed is appended to the journal before it is returned.
@@ -428,7 +430,15 @@ function verdictMarkerMismatch(
   const head = Buffer.from(
     bytes.subarray(0, Math.min(bytes.byteLength, MAX_VERDICT_LINE_SCAN)),
   ).toString("utf8");
-  const first = head.split("\n").find((line) => line.trim() !== "");
+  // A UTF-8 BOM is stripped before the prefix test: `trim()` already treats it as
+  // whitespace when picking the first non-blank line, so leaving it on the line
+  // would make a BOM-prefixed marker "non-blank" yet fail `startsWith`, skipping
+  // the check entirely for anyone whose editor writes one. Leading spaces are
+  // NOT stripped: the contract is that the line starts with the marker.
+  const first = head
+    .split("\n")
+    .map((line) => (line.startsWith("\uFEFF") ? line.slice(1) : line))
+    .find((line) => line.trim() !== "");
   if (first === undefined || !first.startsWith(marker)) return undefined;
   const artifactVerdict = first.slice(marker.length).trim();
   if (artifactVerdict === envelopeVerdict) return undefined;
