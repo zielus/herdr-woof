@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -160,6 +162,42 @@ describe("the acceptance matrix", () => {
       }
     }
   });
+
+  it("writes an offline report the repository's own Prettier accepts (LV-103)", () => {
+    // The report is committed, so an unformatted one breaks `bun run format:check`
+    // for anyone whose tree holds it. `--no-tests` runs neither the build nor the
+    // suite, so this is a fast real process, not vitest inside vitest.
+    const out = join(mkdtempSync(join(tmpdir(), "woof-acceptance-")), "evidence", "offline.json");
+    const collected = spawnSync(
+      "node",
+      [join(repoRoot, "scripts", "acceptance", "collect.mjs"), "--no-tests", "--out", out],
+      { cwd: repoRoot, encoding: "utf8", timeout: 120_000 },
+    );
+    expect(collected.stderr, collected.stdout).not.toContain("cannot format");
+    expect(existsSync(out), collected.stdout + collected.stderr).toBe(true);
+
+    const checked = spawnSync("bun", ["x", "prettier", "--check", out], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    expect(checked.status, checked.stdout + checked.stderr).toBe(0);
+
+    // It is still the report, not just well-formatted bytes.
+    const report = JSON.parse(readFileSync(out, "utf8")) as {
+      kind: string;
+      tests: unknown;
+      rows: Array<{ id: string; backed: boolean; problems: string[] }>;
+    };
+    expect(report.kind).toBe("woof.acceptance.offline");
+    expect(report.tests).toBeNull();
+    expect(report.rows).toHaveLength(MATRIX.length);
+    // PB-001: a gates-only pass never reports a test-backed row as backed.
+    const backedWithTests = report.rows.filter(
+      (row, index) => row.backed && (MATRIX[index]?.tests.length ?? 0) > 0,
+    );
+    expect(backedWithTests).toEqual([]);
+  }, 180_000);
 
   it("the acceptance matrix names no MCP adapter anywhere in src/", () => {
     // The Optional-adapters row cites this case: MCP is a documented non-goal,

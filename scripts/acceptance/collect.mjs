@@ -13,6 +13,9 @@
  * and by gates that are recorded PASS. Exit 1 names each unbacked row and why.
  * Writes `docs/acceptance/evidence/offline.json`.
  *
+ * The report it writes is formatted with the repository's own Prettier, so a tree
+ * that holds it still passes `bun run format:check`.
+ *
  * `--no-tests` is a gates-only pass for inspecting the live half quickly. It can
  * never report a test-backed row as backed: a row whose evidence includes tests
  * is `backed: false` with `tests not run (--no-tests)`, so the flag cannot turn
@@ -161,6 +164,18 @@ const report = {
 
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+// The report is committed, so it must satisfy `bun run format:check` like every
+// other file: `JSON.stringify(_, null, 2)` always expands short arrays, Prettier
+// collapses the ones that fit in printWidth. Rather than reimplement that rule,
+// the repo's own Prettier formats the file it just wrote — same binary, same
+// .prettierrc. A failure is reported, never silently shipped unformatted.
+const formatted = run("bun", ["x", "prettier", "--write", outPath]);
+if (formatted.status !== 0) {
+  process.stderr.write(
+    `cannot format ${outPath} with the repository's prettier: ${formatted.stderr || formatted.stdout}\n`,
+  );
+  process.exitCode = 1;
+}
 
 const width = Math.max(...rows.map((row) => row.id.length));
 for (const row of rows) {
