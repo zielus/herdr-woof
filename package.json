@@ -63,6 +63,7 @@
     "check:version": "bun run scripts/check-version.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "acceptance:collect": "node scripts/acceptance/collect.mjs",
+    "release:preflight": "bun run scripts/release/preflight.ts",
     "verify": "bun run typecheck && bun run lint && bun run format:check && bun run check:version && bun run test && bun run smoke:package"
   },
   "devDependencies": {
