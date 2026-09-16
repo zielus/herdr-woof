@@ -177,15 +177,13 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
         }
 
         if (preLock !== undefined || parsed === undefined) {
-          return journalRejection(
-            runDir,
-            records,
-            preLock ?? rejection("envelope_malformed", "envelope could not be read"),
-            {
-              ...(rawDigest !== undefined ? { envelopeDigest: rawDigest } : {}),
-              ...(paneId !== undefined ? { paneId } : {}),
-            },
-          );
+          const refused = preLock ?? rejection("envelope_malformed", "envelope could not be read");
+          const identity = rejectionIdentity(records, refused.reason, raw, paneId);
+          return journalRejection(runDir, records, refused, {
+            ...(rawDigest !== undefined ? { envelopeDigest: rawDigest } : {}),
+            ...(identity !== undefined ? { identity } : {}),
+            ...(paneId !== undefined ? { paneId } : {}),
+          });
         }
         return decide(runDir, records, parsed.envelope, parsed.digest, paneId);
       },
@@ -198,6 +196,84 @@ export async function submitResult(input: SubmitInput): Promise<SubmitOutcome> {
     );
   }
   return locked.ok ? locked.value : rejection(locked.reason, locked.message);
+}
+
+/**
+ * The attempt an envelope rejected before parsing belongs to, journaled only when it is
+ * owner-consistent (F-004), so the scheduler can quote the rejection in a format repair:
+ * - envelope_invalid: the envelope's own runId/agentId/stageId/visit/attempt, kept only when
+ *   that attempt exists in this run, is owned by that agent and no pane conflicts.
+ * - envelope_malformed from a pane: the single open, dispatched attempt opened on that pane.
+ * Anything else, or any doubt, journals no identity.
+ */
+function rejectionIdentity(
+  records: JournalRecord[],
+  reason: RejectionReason,
+  raw: string | Uint8Array | { error: string },
+  paneId: string | undefined,
+): AttemptIdentity | undefined {
+  const replayed = replay(records);
+  if (!replayed.ok) return undefined;
+  const state = replayed.state;
+  const runId = state.runId;
+  if (runId === undefined) return undefined;
+  if (reason === "envelope_invalid") {
+    const claimed = claimedIdentity(raw);
+    if (claimed === undefined || claimed.runId !== runId) return undefined;
+    const attempt = state.attempts.get(attemptKey(claimed.stageId, claimed.visit, claimed.attempt));
+    if (attempt === undefined || attempt.opened.agentId !== claimed.agentId) return undefined;
+    const bound = attempt.opened.paneId;
+    if (bound !== undefined && paneId !== undefined && bound !== paneId) return undefined;
+    return claimed;
+  }
+  if (reason === "envelope_malformed" && paneId !== undefined) {
+    const candidates = [...state.attempts.entries()].filter(
+      ([key, attempt]) =>
+        attempt.status === "open" && attempt.opened.paneId === paneId && state.dispatches.has(key),
+    );
+    if (candidates.length !== 1) return undefined;
+    const opened = (candidates[0] as (typeof candidates)[number])[1].opened;
+    return {
+      runId,
+      agentId: opened.agentId,
+      stageId: opened.stageId,
+      visit: opened.visit,
+      attempt: opened.attempt,
+    };
+  }
+  return undefined;
+}
+
+/** The identity fields an unparseable-as-v1 envelope names, when each is well-formed. */
+function claimedIdentity(
+  raw: string | Uint8Array | { error: string },
+): AttemptIdentity | undefined {
+  if (typeof raw === "object" && "error" in raw) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(typeof raw === "string" ? raw : Buffer.from(raw).toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const fields = value as Record<string, unknown>;
+  const text = (key: string) =>
+    typeof fields[key] === "string" && fields[key] !== "" ? (fields[key] as string) : undefined;
+  const count = (key: string) =>
+    Number.isSafeInteger(fields[key]) && (fields[key] as number) > 0
+      ? (fields[key] as number)
+      : undefined;
+  const [runId, agentId, stageId] = [text("runId"), text("agentId"), text("stageId")];
+  const [visit, attempt] = [count("visit"), count("attempt")];
+  if (
+    runId === undefined ||
+    agentId === undefined ||
+    stageId === undefined ||
+    visit === undefined ||
+    attempt === undefined
+  )
+    return undefined;
+  return { runId, agentId, stageId, visit, attempt };
 }
 
 /** Checks 7–18, run while holding the journal lock on an opened run. */

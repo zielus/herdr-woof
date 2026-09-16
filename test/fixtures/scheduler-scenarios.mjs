@@ -63,7 +63,7 @@ const journalOf = (runDir) =>
 
 /**
  * Options:
- * - workers.<agentId>(ctx) → { verdict, status, content, badSha, submit: false, edit(repo), twice, late: {attempt, verdict} }
+ * - workers.<agentId>(ctx) → { verdict, status, content, badSha, invalid, submit: false, edit(repo), twice, late: {attempt, verdict} }
  * - runtime.<agentId>: ScriptedAgent overrides
  * - idleAfterWork(agentId) → boolean (default true): advance the timeline after the worker acted
  * - skipObserves(agentId) → n: observes to let pass (advancing the timeline) before the worker acts
@@ -146,6 +146,8 @@ async function scenario(options) {
       status: plan.status ?? "completed",
       verdict: plan.verdict ?? null,
       artifact: { path: rel, sha256: plan.badSha === true ? "0".repeat(64) : sha256(content) },
+      // invalid: an envelope that fails schema v1 (an unknown field) but names its real attempt.
+      ...(plan.invalid === true ? { extra: true } : {}),
     };
     for (let round = 0; round < (plan.twice === true ? 2 : 1); round += 1) {
       const out = await submitResult({ runDir, envelopeRaw: JSON.stringify(envelope) });
@@ -376,6 +378,17 @@ const SCENARIOS = {
           count === 1
             ? { verdict: "pass", badSha: true }
             : { verdict: count === 2 ? "fail" : "pass" },
+      },
+    }),
+
+  // F-004: the reviewer's first envelope fails schema v1; the format repair quotes envelope_invalid.
+  "invalid-then-valid": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: ({ count }) =>
+          count === 1 ? { verdict: "pass", invalid: true } : { verdict: "pass" },
       },
     }),
 

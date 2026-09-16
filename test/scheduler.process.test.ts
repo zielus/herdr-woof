@@ -513,6 +513,27 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "3b. a schema-invalid envelope naming its own attempt is quoted in the format repair (F-004)",
+    () => {
+      const report = runScenario("invalid-then-valid");
+      expect(report.result.outcome).toBe("completed");
+      expect(ofType(report, "submission.rejected")).toEqual([
+        expect.objectContaining({
+          reason: "envelope_invalid",
+          identity: expect.objectContaining({ agentId: "reviewer", stageId: "review", attempt: 1 }),
+        }),
+      ]);
+      expect(attemptIn(report, "review", 1, 2)?.cause).toBe("format_repair");
+      const repair = report.requests.find(
+        (request) => request.path === "requests/review/visit-1/attempt-2/request.md",
+      );
+      expect(repair?.text).toContain("envelope_invalid");
+      expect(repair?.text).not.toContain("no submission was recorded");
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "8b. a failed precondition read (not_delivered precondition_failed) is retried as work and the run completes",
     () => {
       const report = runScenario("precondition-retry");
