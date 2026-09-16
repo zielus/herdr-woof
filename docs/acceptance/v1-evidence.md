@@ -1,14 +1,17 @@
 # Woof v1 acceptance evidence
 
-Revision: the live evidence was recorded at `5e0236e6d06152222e6ff35f80dc05889841d4c2`, a
-commit on the `feat/plan-build-review` branch that was squash-merged to master as `b329cdc`
-(0.1.0). Master does not contain `5e0236e` itself; it is kept here as a historical id. Two source
-fixes landed on that branch after the live runs and are part of `b329cdc`: check 17b scans to the
-real first non-blank line (`src/submission/submit.ts`), and quoted rejections in a format-repair
-request are bounded (`src/scheduler/request.ts`, `src/workflows/request-bound.ts`). The live runs
-were not repeated after them. The offline half (`offline.json`) was re-collected on the 0.1.0 code
-in phase 6 at `79a79cb`, a commit on the `feat/public-readiness` branch; its recorded `revision`
-is likewise a historical id once that branch is squash-merged. · Date: 2026-09-16
+Revision: the live evidence was recorded on the `feat/plan-build-review` branch at
+`5e0236e6d06152222e6ff35f80dc05889841d4c2`, merged as PR #7 (`b329cdc`, 0.1.0). Master does not
+contain `5e0236e` itself; it is kept here as a historical id, never as something to check out. Two
+source fixes landed on that branch after the live runs and are part of `b329cdc`: check 17b scans
+to the real first non-blank line (`src/submission/submit.ts`), and quoted rejections in a
+format-repair request are bounded (`src/scheduler/request.ts`, `src/workflows/request-bound.ts`).
+The live runs were not repeated after them. The offline half (`offline.json`) was re-collected on
+the 0.1.0 code in PR #8 (merged as `ecac163`) at branch commit `79a79cb` on `feat/public-readiness`
+(also kept only as a historical id), then re-collected again in this phase (0.1.1). `offline.json`'s
+`revision` field is the commit at collection time, which after a squash merge is always a branch
+commit, not the merge commit itself — expected behavior of the collector, not a defect. · Date:
+2026-09-16
 `bun run verify`: 718 tests green, run twice, at `5e0236e6d0…` (product code
 only); `test/acceptance-evidence.test.ts` itself then adds test cases on top of
 that revision, so the total moves with this file — reproduce it with `bun run

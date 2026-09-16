@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Docs
+
+- README: install split (npm vs checkout, the Herdr plugin is checkout-only),
+  a new Trust model section, the CLI block synced with `--help`, removed SDK
+  edge-case asides from Run snapshot (moved into domain-model.md and
+  observability.md), corrected status banner and "Integrations and scope"
+  wording.
+- `docs/README.md`: status and lead rewritten; the "planned checks, not test
+  results" line replaced with a pointer to `v1-evidence.md`.
+- `docs/architecture/observability.md` and `domain-model.md`: p2-only
+  statements (`liveness.owner` staying `"unhosted"`, "all fourteen
+  `ReducerReason` values") marked historical and superseded; an unreproducible
+  `--stats` timing number dropped.
+- `docs/acceptance/v1-evidence.md` and `docs/decisions/architecture.md`:
+  evidence now cited by PR and merge commit instead of branch SHAs, with the
+  branch SHAs kept only as historical ids; a new "Known limits (0.1.x)" table
+  for the design-level audit findings this release documents rather than
+  fixes.
+- `AGENTS.md`: the development-order note now says two production workflows
+  exist, rather than saying they are deferred.
+- `plugin/claude/skills/woof/SKILL.md`: exit-8 wording matches `woof status`'s
+  own usage text; workflow file extensions corrected to `.{mjs,js,ts}`.
+- New `.claude/skills/release/SKILL.md` and `.claude/skills/audit/SKILL.md`.
+
 ## [0.1.0] - 2026-09-16
 
 This is the first release. The bullets below are cumulative notes from the phases that built it,
