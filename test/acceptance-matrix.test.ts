@@ -217,12 +217,15 @@ function blanked(source: string): string {
       let inClass = false;
       while (at < source.length) {
         const here = source[at];
-        if (here === "\\") at += 2;
-        else if (here === "[") ((inClass = true), (at += 1));
-        else if (here === "]") ((inClass = false), (at += 1));
-        else if (here === "/" && !inClass) break;
-        else if (here === "\n") break;
-        else at += 1;
+        if (here === "\\") {
+          at += 2;
+          continue;
+        }
+        if (here === "/" && !inClass) break;
+        if (here === "\n") break;
+        if (here === "[") inClass = true;
+        else if (here === "]") inClass = false;
+        at += 1;
       }
       blank(index + 1, at);
       index = at + 1;
