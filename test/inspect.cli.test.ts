@@ -588,6 +588,7 @@ describe("woof doctor --json", () => {
       claude: { status: "available", version: "9.9.9 (Claude Code)" },
       trust: { dir: repo, status: "unknown" },
       config: { ok: true, project: repo, warnings: [] },
+      problems: ["trust_unknown"],
     });
 
     const claudeJson = join(home, ".claude.json");
@@ -609,6 +610,186 @@ describe("woof doctor --json", () => {
     expect(doctor()["config"]).toMatchObject({ ok: false, reason: "config_invalid" });
   });
 
+  /** A PATH holding node, the given shims and nothing else a probe could find. */
+  function probeBin(root: string): { bin: string; path: string } {
+    const bin = join(root, "bin");
+    const nodeBin = join(root, "node-bin");
+    for (const dir of [bin, nodeBin]) mkdirSync(dir, { recursive: true });
+    symlinkSync(process.execPath, join(nodeBin, "node"));
+    return { bin, path: `${bin}:${nodeBin}:/usr/bin:/bin` };
+  }
+
+  function gitInit(dir: string): void {
+    const git = spawnSync("git", ["init", "-q", dir], {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+    });
+    expect(git.status).toBe(0);
+  }
+
+  it("F-016: reads trust for the git top level of --repo by its exact key; an ancestor's trust never counts", () => {
+    const root = tempDir("woof-doctor-top-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    const sub = join(repo, "packages", "sub");
+    const plain = join(root, "plain");
+    for (const dir of [home, sub, plain]) mkdirSync(dir, { recursive: true });
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    const env = { ...doctorEnv(home, bin), PATH: path };
+    const trustOf = (dir: string) => {
+      const result = woof(["doctor", "--json", "--repo", dir], { env });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      return (result.json as Json)["trust"];
+    };
+    const claudeJson = join(home, ".claude.json");
+
+    writeFileSync(
+      claudeJson,
+      JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }),
+    );
+    expect(trustOf(sub)).toEqual({ dir: repo, status: "trusted" });
+    expect(trustOf(repo)).toEqual({ dir: repo, status: "trusted" });
+
+    // A trusted parent of the repository is not the repository (p4 D10).
+    writeFileSync(
+      claudeJson,
+      JSON.stringify({ projects: { [root]: { hasTrustDialogAccepted: true } } }),
+    );
+    expect(trustOf(sub)).toEqual({ dir: repo, status: "untrusted" });
+    // The sub directory's own key does not count either: the key is the top level.
+    writeFileSync(
+      claudeJson,
+      JSON.stringify({ projects: { [sub]: { hasTrustDialogAccepted: true } } }),
+    );
+    expect(trustOf(sub)).toEqual({ dir: repo, status: "untrusted" });
+
+    // Outside a work tree the directory itself is the key.
+    writeFileSync(
+      claudeJson,
+      JSON.stringify({ projects: { [plain]: { hasTrustDialogAccepted: true } } }),
+    );
+    expect(trustOf(plain)).toEqual({ dir: plain, status: "trusted" });
+  });
+
+  it("F-016: human and --json doctor run the same --version probes and report the same facts", () => {
+    const root = tempDir("woof-doctor-same-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    const argvLog = join(root, "herdr-argv.log");
+    writeFileSync(
+      join(bin, "fake-herdr"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(argvLog)}\necho herdr 0.0.0-fake\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
+    const env = { ...doctorEnv(home, bin), PATH: path };
+
+    const json = woof(["doctor", "--json", "--repo", repo], { env });
+    expect(json.status, json.stdout + json.stderr).toBe(0);
+    const human = woof(["doctor", "--repo", repo], { env });
+    expect(human.status, human.stdout + human.stderr).toBe(0);
+    expect(readFileSync(argvLog, "utf8")).toBe("--version\n--version\n");
+
+    const report = json.json as Json;
+    expect(report["problems"]).toEqual(["trust_unknown"]);
+    const out = human.stdout;
+    expect(out).toMatch(
+      new RegExp(`^woof ${report["woof"]["version"].replaceAll(".", "\\.")}$`, "m"),
+    );
+    expect(out).toContain(`  cli: ${report["woof"]["cli"]}`);
+    expect(out).toMatch(/^herdr: available \(herdr 0\.0\.0-fake\)$/m);
+    expect(out).toMatch(/^  env: HERDR_ENV is not 1$/m);
+    expect(out).toMatch(/^claude: available \(9\.9\.9 \(Claude Code\)\)$/m);
+    expect(out).toContain(`\ntrust: unknown (${repo})\n`);
+    expect(out).toContain(`\nconfig: ok (project ${repo})\n`);
+    expect(out).toMatch(/^problems: trust_unknown$/m);
+  });
+
+  it("F-016: --strict exits 2 when the report names a problem, in both modes; without it doctor exits 0", () => {
+    const root = tempDir("woof-doctor-strict-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }),
+    );
+    const env = { ...doctorEnv(home, bin), PATH: path };
+    const run = (...args: string[]) => woof(["doctor", "--repo", repo, ...args], { env });
+
+    // Claude Code is not installed.
+    const lenient = run("--json");
+    expect(lenient.status, lenient.stdout + lenient.stderr).toBe(0);
+    expect((lenient.json as Json)["problems"]).toEqual(["claude_unavailable"]);
+    const strictJson = run("--json", "--strict");
+    expect(strictJson.status, strictJson.stdout + strictJson.stderr).toBe(2);
+    expect((strictJson.json as Json)["problems"]).toEqual(["claude_unavailable"]);
+    const strictHuman = run("--strict");
+    expect(strictHuman.status, strictHuman.stdout + strictHuman.stderr).toBe(2);
+    expect(strictHuman.stdout).toMatch(/^problems: claude_unavailable$/m);
+    expect(run().status).toBe(0);
+
+    // Every problem id the report can name, at once: nothing installed, untrusted, bad config.
+    writeFileSync(join(home, ".claude.json"), JSON.stringify({ projects: {} }));
+    mkdirSync(join(repo, ".woof"));
+    writeFileSync(join(repo, ".woof", "woof.json"), "{");
+    const broken = woof(["doctor", "--json", "--strict", "--repo", repo], {
+      env: { ...env, WOOF_HERDR_BIN: join(root, "missing-herdr") },
+    });
+    expect(broken.status).toBe(2);
+    expect((broken.json as Json)["problems"]).toEqual([
+      "herdr_unavailable",
+      "claude_unavailable",
+      "trust_untrusted",
+      "config_invalid",
+    ]);
+
+    // Nothing wrong: --strict is exit 0 with an empty list.
+    rmSync(join(repo, ".woof"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }),
+    );
+    writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
+    const healthy = run("--json", "--strict");
+    expect(healthy.status, healthy.stdout + healthy.stderr).toBe(0);
+    expect((healthy.json as Json)["problems"]).toEqual([]);
+    const healthyHuman = run("--strict");
+    expect(healthyHuman.status).toBe(0);
+    expect(healthyHuman.stdout).toMatch(/^problems: none$/m);
+  });
+
+  it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {
+    const root = tempDir("woof-doctor-link-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    const elsewhere = join(root, "elsewhere");
+    for (const dir of [home, repo, elsewhere]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    const env = { ...doctorEnv(home, bin), PATH: path };
+    const trusting = join(elsewhere, "claude.json");
+    writeFileSync(
+      trusting,
+      JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }),
+    );
+
+    symlinkSync(trusting, join(home, ".claude.json"));
+    const linked = woof(["doctor", "--json", "--repo", repo], { env });
+    expect((linked.json as Json)["trust"]).toEqual({ dir: repo, status: "unknown" });
+
+    rmSync(join(home, ".claude.json"));
+    copyFileSync(trusting, join(home, ".claude.json"));
+    const regular = woof(["doctor", "--json", "--repo", repo], { env });
+    expect((regular.json as Json)["trust"]).toEqual({ dir: repo, status: "trusted" });
+  });
+
   it("PR #6 (doctor.ts:87): human-mode doctor bounds a hung probe at 10 s and reports it failed", () => {
     const root = tempDir("woof-doctor-hung-");
     const bin = join(root, "bin");
@@ -626,8 +807,9 @@ describe("woof doctor --json", () => {
     });
     const elapsed = Date.now() - started;
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain("herdr status: not found");
-    expect(result.stdout).toMatch(/^claude --version: failed \(/m);
+    // F-016: human mode renders the --json report, so both probes are `--version`.
+    expect(result.stdout).toMatch(/^herdr: not found$/m);
+    expect(result.stdout).toMatch(/^claude: failed$/m);
     expect(elapsed).toBeGreaterThanOrEqual(9_500);
     expect(elapsed).toBeLessThan(25_000);
   }, 60_000);
@@ -650,8 +832,8 @@ describe("woof doctor --json", () => {
     writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
     const result = woof(["doctor"], { env: doctorEnv(home, bin), timeoutMs: 30_000 });
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain("herdr status:\n  fake herdr status");
-    expect(result.stdout).toContain("claude --version:\n  9.9.9 (Claude Code)");
+    expect(result.stdout).toMatch(/^herdr: available \(fake herdr --version\)$/m);
+    expect(result.stdout).toMatch(/^claude: available \(9\.9\.9 \(Claude Code\)\)$/m);
     expect(existsSync(guardLog)).toBe(false);
     // A configured executable that does not exist is reported as not found, not replaced by PATH.
     const missing = woof(["doctor"], {
@@ -659,7 +841,7 @@ describe("woof doctor --json", () => {
       timeoutMs: 30_000,
     });
     expect(missing.status).toBe(0);
-    expect(missing.stdout).toContain("herdr status: not found");
+    expect(missing.stdout).toMatch(/^herdr: not found$/m);
     expect(existsSync(guardLog)).toBe(false);
   });
 });

@@ -12,12 +12,15 @@ reports the result. Every command and action below is a real, tested surface.
 
 `woof <command>`:
 
-- `--help`, `--version`, `doctor [--json] [--repo <dir>]` — `--json` reports
-  the CLI path, Herdr environment, Claude Code availability, the read-only
-  Claude folder-trust status of `--repo` (or the working directory), and
-  whether its configuration resolves. Each external probe (`herdr`,
-  `claude`), in either mode, is bounded at 10 s. Diagnostic only; always
-  exits 0.
+- `--help`, `--version`, `doctor [--json] [--strict] [--repo <dir>]` — both
+  modes report the same probes: the CLI path, Herdr environment, Claude Code
+  availability, the read-only Claude folder-trust status of the git top level
+  of `--repo` (or the working directory), and whether its configuration
+  resolves. Each external probe (`herdr`, `claude`), in either mode, is
+  bounded at 10 s. `--json` gains `problems: string[]`
+  (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
+  `trust_unknown`/`config_invalid`). Diagnostic only: exits 0, or 2 with
+  `--strict` when `problems` is non-empty.
 - Prototype result handoff (unstable): `attempt open`, `submit`, `run show
 <run-dir> [--verify-artifacts]` — see
   [communication.md](../architecture/communication.md#implemented-now-p1-prototype).
@@ -58,6 +61,9 @@ herdr <action>` from the plugin's own checkout:
   problem is reported, `config: {ok: false, reason, message}`, never
   refused). Notifies with the project root and one line each for herdr,
   claude, trust and config; prints `{"outcome":"doctor","project",…report}`.
+  The notification title is `Woof: doctor` with no problems, `Woof: doctor
+(1 problem)` for one, and `Woof: doctor (N problems)` for N ≥ 2; the action
+  still exits 0 either way.
 - **`status`** — notifies and prints the target project's non-terminal runs.
 - **`start`** — starts the project's default workflow with the input in
   `<project>/.woof/start.json` (a missing file, or one that is not a regular
@@ -65,8 +71,14 @@ herdr <action>` from the plugin's own checkout:
   blocking — is a notification and exit 2), hosted in a pane split from the
   invocation's focused pane (an action process has no `HERDR_PANE_ID` of its
   own).
-- **`cancel`** — cancels the project's one non-terminal run; two or more
-  active runs refuse (exit 2) and name each `woof run cancel <run-dir>`.
+- **`cancel`** — cancels the project's one non-terminal run. With none
+  active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
+"message":"no active Woof run in <project>","details":[]}` (notification
+  unchanged, "Woof: nothing to cancel") — Herdr's own action log records a
+  non-zero exit as a failure, indistinguishable from a crash, so a genuine
+  no-op must exit 0. With several active, refuses (exit 2) with
+  `{"outcome":"rejected","reason":"run_ambiguous",…}`, naming each
+  `woof run cancel <run-dir>`.
 
 Every action, including `doctor`, resolves its target project from
 `HERDR_PLUGIN_CONTEXT_JSON`, never from the action process's own working

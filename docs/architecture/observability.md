@@ -194,7 +194,8 @@ records}`) is the proof of this by construction: it re-derives the
   subscription racing a replacement — it ends with
   `resync_required/cursor_foreign` rather than waiting or retrying.
 
-- **`liveness.owner` is always `"unhosted"` in p2.** There is no run-owner
+- **`liveness.owner` is always `"unhosted"` in p2** (p2; superseded by p4,
+  see [Implemented now (p4)](#implemented-now-p4)). There is no run-owner
   process to be reachable, so every snapshot says so explicitly rather than
   claiming `"active"`. (p4 widens this to a real run-owner probe — see
   "Implemented now (p4)" below.) `liveness.runtime` stays `"not_observed"` in every
@@ -232,13 +233,34 @@ records}`) is the proof of this by construction: it re-derives the
   dropped-stale/dropped-duplicate counts. None of this is
   journaled, and none of it affects a derived snapshot.
 
+- **The Herdr CLI runtime adapter and its scripted test double enforce
+  narrow contracts.** `createHerdrCliRuntime`'s `inspect` runs only a
+  read-only allowlist — `agent list`, `agent get <target>`, `pane get <id>`,
+  `pane list` and `workspace list` — and refuses everything else as
+  `invalid_request` without spawning. Its `waitFor` returns `unsupported`
+  without spawning whenever the requested states include `gone` or `unknown`
+  (Herdr cannot wait for either). `stop` gives up the closed pane's ownership
+  immediately once `pane close` succeeds, before it even verifies the agent
+  is gone. Any exit-0 Herdr response is treated as `protocol_error`, not
+  success, unless it carries both a non-empty string request `id` and an
+  object `result`. `createScriptedRuntime`, the deterministic in-memory
+  double for the same contract shipped from the `herdr-woof/testing`
+  subpath (never the main entry), enforces its own edge cases: `advance`
+  throws a TypeError for a negative or non-integer step count, construction
+  throws a TypeError for an empty `afterDeliver` sequence (flat or nested),
+  and a scripted `started` delivery is checked like the Herdr adapter's own —
+  if the observation right after delivery is not `working` or `blocked`, the
+  outcome is downgraded to `ambiguous/protocol_error` (the call is still
+  logged as `sent`).
+
 - **Gate evaluation, blocking/unblocking and delivery reconciliation are
   implemented (p3).** See "Implemented now (p3)" below for the snapshot and
   event shapes. **Still not covered:** a cancellation request distinct from
   plain termination (`runWorkflow({signal})` and `woof run cancel` both
   produce the same `run.terminated{outcome:"cancelled"}`), and observation
   loss/owner liveness recovery (still needs a run owner, which does not
-  exist — every snapshot's `liveness.owner` stays `"unhosted"`).
+  exist — every snapshot's `liveness.owner` stays `"unhosted"` (p2;
+  superseded by p4, see [Implemented now (p4)](#implemented-now-p4))).
 
 ## Implemented now (p3)
 
@@ -265,8 +287,11 @@ requiredAction, since, observed, attempt}`, reachable and non-null exactly
   recorded directly); `dispatch: {seq, at, reason}|null`; `request:
 {path, sha256, bytes}|null`; `target: {terminalId, sessionId}|null`;
   `revision: Revision|null` (the dispatch-time fingerprint); `reconciliation:
-{seq, resolution, evidence, at}|null`; `rejectionLog` (the journaled
-  rejections a format-repair request quotes); `accepted.seq`/`outcome.seq`
+{seq, resolution, evidence, at}|null`; `rejectionLog` (every rejection
+  journaled against the attempt, `owner_mismatch` included — the snapshot
+  shape is unchanged; a format-repair request quotes this list minus any
+  `owner_mismatch` entries, see
+  [domain model](domain-model.md#implemented-now-p3)); `accepted.seq`/`outcome.seq`
   for correlating a gate to the acceptance and termination it followed.
 - **New counters:** `rounds`, `gatesByDecision {pass, reject}`,
   `gatesByGate {id: n}`, `formatRepairsByVisit {"stage/visit": n}`,
@@ -412,9 +437,7 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
 "iterator step wall time beyond the poll interval"}` to stderr — an
   estimate from the iterator's own step time, not a measurement taken inside
   `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
-  its first real consumer). Live evidence on a completed build-review run:
-  `maxProjectionMs` 3.45 ms against a 250 ms poll — about 1.4%, well under
-  the 10% C4 threshold (`docs/research/product-integration-live-2.log`).
+  its first real consumer).
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
 events`** and **`woof run show`** are read-only and never take the journal
   lock or contact Herdr; see

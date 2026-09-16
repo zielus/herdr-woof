@@ -433,15 +433,33 @@ describe("woof herdr actions", () => {
       trust: { dir: b, status: "untrusted" },
       config: { ok: true, project: b },
     });
+    expect(focused.json["problems"]).toEqual(["config_invalid"]);
+    expect(workspace.json["problems"]).toEqual(["trust_untrusted"]);
     const [first, second] = notifications(s);
     expect(notifications(s)).toHaveLength(2);
-    expect(first).toEqual({ title: "Woof: doctor", body: expect.stringContaining(a) });
+    // F-016: the title counts the report's problems; the action still exits 0 (a report, not a refusal).
+    expect(first).toEqual({ title: "Woof: doctor (1 problem)", body: expect.stringContaining(a) });
+    expect(second?.title).toBe("Woof: doctor (1 problem)");
     expect(first?.body).toContain("herdr available (herdr 0.0.0-fake)");
     expect(first?.body).toContain("trust trusted");
     expect(first?.body).toContain("config config_invalid");
     expect(second?.body).toContain("config ok");
     expect(calls(s).filter((argv) => argv[0] === "--version")).toHaveLength(2);
     expect(existsSync(s.guardLog)).toBe(false);
+
+    // Nothing wrong: the plain title. Two problems: the plural.
+    writeFileSync(
+      join(s.home, ".claude.json"),
+      JSON.stringify({ projects: { [b]: { hasTrustDialogAccepted: true } } }),
+    );
+    const healthy = action(s, "doctor", { worktree: { checkout_path: b }, workspace_cwd: b });
+    expect(healthy.status).toBe(0);
+    expect(healthy.json["problems"]).toEqual([]);
+    expect(notifications(s).at(-1)?.title).toBe("Woof: doctor");
+    const two = action(s, "doctor", { worktree: { checkout_path: a }, workspace_cwd: a });
+    expect(two.status).toBe(0);
+    expect(two.json["problems"]).toEqual(["trust_untrusted", "config_invalid"]);
+    expect(notifications(s).at(-1)?.title).toBe("Woof: doctor (2 problems)");
   });
 
   it("PR #6 (run.ts:414): start refuses a FIFO at .woof/start.json as input_invalid without blocking or splitting", () => {
@@ -476,8 +494,15 @@ describe("woof herdr actions", () => {
     expect(notifications(s).at(-1)).toEqual({ title: "Woof: cancelled a-only", body: single });
 
     const nothing = action(s, "cancel", { focused_pane_cwd: a });
-    expect(nothing.status).toBe(0);
-    expect(nothing.json).toMatchObject({ outcome: "rejected", reason: "no_active_run" });
+    // R2 (verify-1 L1): Herdr logs a non-zero action exit as "failed", like a crash, so nothing to
+    // cancel exits 0 with outcome noop; several active runs stay a refusal (exit 2).
+    expect(nothing.status, nothing.stdout + nothing.stderr).toBe(0);
+    expect(nothing.json).toEqual({
+      outcome: "noop",
+      reason: "no_active_run",
+      message: `no active Woof run in ${a}`,
+      details: [],
+    });
     expect(notifications(s).at(-1)?.title).toBe("Woof: nothing to cancel");
 
     const refused = action(s, "cancel", { focused_pane_cwd: b });

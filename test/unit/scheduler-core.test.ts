@@ -485,6 +485,29 @@ describe("decide: waiting for results, format repair and work retry", () => {
     });
   });
 
+  it("retries a failed precondition read as work, bounded by maxAttemptsPerVisit (F-003)", () => {
+    const precondition = [
+      opened(CORE_PLAN),
+      writerAssigned,
+      draftAttempt(),
+      dispatched("draft", "writer", 1, 1, "not_delivered", "precondition_failed"),
+    ];
+    expect(act(precondition, { agents: { writer: readyView("writer") } })).toMatchObject({
+      type: "dispatch",
+      attempt: 2,
+      cause: "work_retry",
+    });
+    const twice = [
+      ...precondition,
+      draftAttempt(2),
+      dispatched("draft", "writer", 1, 2, "not_delivered", "precondition_failed"),
+    ];
+    expect(act(twice, { agents: { writer: readyView("writer") } })).toMatchObject({
+      outcome: "exhausted",
+      limit: "maxAttemptsPerVisit",
+    });
+  });
+
   it("fails when the agent was not found or the runtime was unavailable at dispatch", () => {
     const gone = [
       opened(CORE_PLAN),
@@ -890,6 +913,55 @@ describe("decide: ambiguous delivery", () => {
       ...reconcile,
       resolution: "abandoned",
       evidence: "no_evidence_before_deadline",
+    });
+  });
+
+  it("never counts or quotes an owner_mismatch rejection as the owner's (F-015)", () => {
+    const idle = {
+      writer: runtime("writer", { last: observed("writer", "ready"), readyStreak: 5 }),
+    };
+    const foreign = {
+      ...rejected("owner_mismatch", {
+        runId: "run-1",
+        agentId: "intruder",
+        stageId: "draft",
+        visit: 1,
+        attempt: 1,
+      }),
+      message: "submission does not come from the attempt owner",
+    };
+    // Not delivery evidence: the ambiguous attempt still waits, then is abandoned at the deadline.
+    expect(act([...ambiguous(), foreign], { agents: idle, now: T0 + 3 + 1999 })).toEqual({
+      type: "wait",
+      reason: "delivery_unconfirmed",
+      observe: "writer",
+    });
+    expect(act([...ambiguous(), foreign], { agents: idle, now: T0 + 3 + 2000 })).toEqual({
+      ...reconcile,
+      resolution: "abandoned",
+      evidence: "no_evidence_before_deadline",
+    });
+    // Not quoted in a format repair of a delivered attempt; the owner's own rejection still is.
+    const own = {
+      ...rejected("artifact_missing", {
+        runId: "run-1",
+        agentId: "writer",
+        stageId: "draft",
+        visit: 1,
+        attempt: 1,
+      }),
+      message: "no artifact",
+    };
+    expect(
+      act([...ambiguous(), reconciled(4, "draft", "writer"), foreign, own], { agents: idle }),
+    ).toMatchObject({
+      type: "dispatch",
+      attempt: 2,
+      cause: "format_repair",
+      previous: {
+        attempt: 1,
+        rejections: [{ reason: "artifact_missing", message: "no artifact" }],
+      },
     });
   });
 

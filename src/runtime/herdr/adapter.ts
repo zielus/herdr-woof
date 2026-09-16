@@ -282,6 +282,9 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       const deadline = Date.now() + delivery.timeoutMs;
       // Precondition read: nothing is sent yet, so every failure here is not_delivered.
       // The read and the prompt are not atomic; a human typing in between is not detected.
+      // A read that already names a not-delivered code (a missing binary or server is
+      // runtime_unavailable) keeps it; a slow or garbled read is precondition_failed, which the
+      // scheduler retries as work instead of failing the run (F-003).
       const before = await observe(handle, { timeoutMs: delivery.timeoutMs });
       if (!before.ok) {
         const error = before.error;
@@ -291,8 +294,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
             ? { ...error, code: error.code }
             : {
                 ...error,
-                code: "runtime_unavailable",
-                message: `precondition read failed: ${error.message}`,
+                code: "precondition_failed",
+                message: `precondition read failed: ${error.message}; nothing was sent`,
               },
         };
       }
@@ -328,7 +331,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         return {
           outcome: "not_delivered",
           error: runtimeError(
-            "runtime_unavailable",
+            "precondition_failed",
             `no time left within ${delivery.timeoutMs} ms to prompt ${handle.runtimeName}; nothing was sent`,
           ),
         };

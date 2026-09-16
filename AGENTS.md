@@ -28,8 +28,9 @@ instructions to restore or port everything.
 4. Add production workflows such as build-review and plan-build-review after the
    SDK supports them. Build a TUI or Web UI later.
 
-Workflow execution belongs to the SDK even while production workflow definitions
-are deferred. Avoid designing the entire engine without exercising it. Follow
+Workflow execution belongs to the SDK; two production workflows
+(`build-review`, `plan-build-review`) exist, and further ones are added only
+after the SDK supports them. Avoid designing the entire engine without exercising it. Follow
 the current task's scope; a foundation task does not authorize building the SDK.
 
 ## Architectural rules

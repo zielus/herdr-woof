@@ -20,6 +20,11 @@
  *               committed `docs/research/*.log` as `GATE <id> PASS`.
  *   command     what a reader runs to see it for themselves
  *   note        why, when the row needs one; required for `limit`
+ *   predicate   optional id into PREDICATES: a pure check over a journal that
+ *               says what shape of run the row is about. At least one cited
+ *               test must assert it on its own journal
+ *               (`test/acceptance-matrix.test.ts`), so a row cannot cite a test
+ *               that merely passes near the topic (F-012).
  *
  * A `limit` row is backed by neither: it is a documented gap, and
  * `docs/acceptance/v1-evidence.md` must carry its reason.
@@ -200,10 +205,11 @@ export const MATRIX = [
     id: "format-repair",
     row: "Format repair",
     disposition: "process",
+    predicate: "format-repair-corrected",
     tests: [
       t(
         "test/scheduler.process.test.ts",
-        "scheduler bounds (each expired bound is exhausted with its limit) 6c. maxFormatRepairs: a worker that never submits gets one format repair",
+        "scheduler scenarios (scripted runtime, real processes) 3. gates only on validated control data: a rejected claim or no submission never gates",
       ),
     ],
     gates: [],
@@ -214,18 +220,15 @@ export const MATRIX = [
     id: "exhausted-repair",
     row: "Exhausted repair",
     disposition: "process",
+    predicate: "format-repair-exhausted",
     tests: [
       t(
         "test/scheduler.process.test.ts",
-        "scheduler bounds (each expired bound is exhausted with its limit) 6a. maxRounds: a reviewer that always fails gets two rounds and one repair visit",
-      ),
-      t(
-        "test/plan-build-review.cli.test.ts",
-        "plan-build-review: a full run on the scripted runtime exhausts maxRounds when the reviewer never passes, and never re-enters the plan stage",
+        "scheduler bounds (each expired bound is exhausted with its limit) 6i. maxFormatRepairs: a reviewer whose every envelope is schema-invalid is exhausted, and each format repair quotes envelope_invalid",
       ),
     ],
     gates: [],
-    command: "bun x vitest run test/scheduler.process.test.ts test/plan-build-review.cli.test.ts",
+    command: "bun x vitest run test/scheduler.process.test.ts",
     note: "",
   },
   {
@@ -501,3 +504,102 @@ export const MATRIX = [
     note: "The same evidence closes the first half of the decision record's Module/package-layout row: the engine imports no plugin or UI module, and the SDK runs a workflow with no Woof UI.",
   },
 ];
+
+/** Rejections that name an attempt the submitter does not own; never the owner's (F-015). */
+const FOREIGN_REJECTIONS = new Set(["owner_mismatch"]);
+
+const attemptKey = (record) => `${record.stageId}/${record.visit}/${record.attempt}`;
+
+/**
+ * The attempts of a journal with what the predicates need: agent, whether the
+ * previous attempt of the visit makes this one a format repair (the reducer's
+ * rule: that attempt was not accepted and its dispatch started, or was ambiguous
+ * and reconciled delivered), the owner's identity-bearing rejections, and
+ * acceptance. Pure: reads plain journal records, imports nothing.
+ */
+function attemptsOf(journal) {
+  const attempts = new Map();
+  const latestByStage = new Map();
+  const dispatches = new Map();
+  const reconciled = new Map();
+  for (const record of journal) {
+    if (record.type === "attempt.opened") {
+      const latest = latestByStage.get(record.stageId);
+      let cause = "initial";
+      if (latest !== undefined && latest.visit === record.visit) {
+        const dispatch = dispatches.get(attemptKey(latest));
+        cause =
+          latest.accepted !== true &&
+          dispatch !== undefined &&
+          (dispatch.delivery === "started" ||
+            (dispatch.delivery === "ambiguous" && reconciled.get(dispatch.seq) === "delivered"))
+            ? "format_repair"
+            : "work_retry";
+      }
+      const attempt = {
+        ...record,
+        cause,
+        previous: latest !== undefined && latest.visit === record.visit ? latest : null,
+        rejections: [],
+        accepted: false,
+      };
+      attempts.set(attemptKey(record), attempt);
+      latestByStage.set(record.stageId, attempt);
+    } else if (record.type === "request.dispatched") {
+      dispatches.set(attemptKey(record), record);
+    } else if (record.type === "delivery.reconciled") {
+      reconciled.set(record.dispatchSeq, record.resolution);
+    } else if (record.type === "submission.accepted") {
+      const attempt = attempts.get(attemptKey(record));
+      if (attempt !== undefined) attempt.accepted = true;
+    } else if (record.type === "submission.rejected" && record.identity !== undefined) {
+      const attempt = attempts.get(attemptKey(record.identity));
+      if (
+        attempt !== undefined &&
+        record.identity.agentId === attempt.agentId &&
+        !FOREIGN_REJECTIONS.has(record.reason)
+      ) {
+        attempt.rejections.push(record.reason);
+      }
+    }
+  }
+  return [...attempts.values()];
+}
+
+/**
+ * Journal predicates a matrix row names with `predicate` (F-012). Each takes the
+ * journal as an array of parsed records and returns a boolean.
+ */
+export const PREDICATES = {
+  /**
+   * Format repair: the worker submitted invalid control data, the rejection was
+   * journaled against its attempt, and the format-repair attempt that followed
+   * was accepted.
+   */
+  "format-repair-corrected": (journal) =>
+    attemptsOf(journal).some(
+      (attempt) =>
+        attempt.cause === "format_repair" &&
+        attempt.accepted &&
+        attempt.previous !== null &&
+        attempt.previous.rejections.length > 0,
+    ),
+  /**
+   * Exhausted repair: in one visit, at least two attempts each carry an owner's
+   * rejected submission, and the run ended exhausted on maxFormatRepairs.
+   */
+  "format-repair-exhausted": (journal) => {
+    const rejectedPerVisit = new Map();
+    for (const attempt of attemptsOf(journal)) {
+      if (attempt.rejections.length === 0) continue;
+      const visit = `${attempt.stageId}/${attempt.visit}`;
+      rejectedPerVisit.set(visit, (rejectedPerVisit.get(visit) ?? 0) + 1);
+    }
+    const terminated = journal.findLast((record) => record.type === "run.terminated");
+    return (
+      [...rejectedPerVisit.values()].some((count) => count >= 2) &&
+      terminated?.outcome === "exhausted" &&
+      terminated.limit === "maxFormatRepairs"
+    );
+  },
+};

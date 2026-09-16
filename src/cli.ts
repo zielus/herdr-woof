@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { agentCommand } from "./commands/agent.js";
 import { UsageError, parse, readStdin, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -75,6 +76,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
     case "-V":
       console.log(VERSION);
       return 0;
+    case "agent":
+      return agentCommand(args);
     case "doctor":
       return doctorCommand(args);
     case "config":
@@ -102,7 +105,7 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
         `expected "run start", "run show", "run cancel" or "run build-review"\n\n${RUN_START_USAGE}\n\n${RUN_SHOW_USAGE}\n\n${RUN_CANCEL_USAGE}\n\n${RUN_BUILD_REVIEW_USAGE}\n\n${RUN_HOST_USAGE}`,
       );
     default:
-      console.error(`woof: ${commandName} is not implemented in the SDK foundation`);
+      console.error(`woof: unknown command ${JSON.stringify(commandName)}; see woof --help`);
       return 1;
   }
 }
@@ -133,6 +136,9 @@ function printHelp(): void {
   console.log("  run cancel        Cancel a run recorded in a run directory");
   console.log("  run build-review  Run the build-review workflow in this process (compatibility)");
   console.log("  run host          Host a launched run in this process (internal)");
+  console.log("");
+  console.log("Agents (unstable):");
+  console.log("  agent start       Start one agent from a role in a Herdr pane, outside any run");
   console.log("");
   console.log("Herdr plugin actions (unstable; project from HERDR_PLUGIN_CONTEXT_JSON):");
   console.log("  herdr status      Notify the focused project's active runs");

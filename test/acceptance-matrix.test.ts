@@ -31,18 +31,27 @@ interface MatrixEntry {
   gates: string[];
   command: string;
   note: string;
+  predicate?: string;
 }
+
+type JournalPredicate = (journal: Array<Record<string, unknown>>) => boolean;
 
 let MATRIX: MatrixEntry[];
 let DISPOSITIONS: string[];
 let LIVE_LOGS: string[];
+let PREDICATES: Record<string, JournalPredicate>;
 
 const v1Path = join(repoRoot, "docs", "acceptance", "v1.md");
 
 beforeAll(async () => {
-  ({ MATRIX, DISPOSITIONS, LIVE_LOGS } = (await import(
+  ({ MATRIX, DISPOSITIONS, LIVE_LOGS, PREDICATES } = (await import(
     pathToFileURL(join(repoRoot, "scripts", "acceptance", "matrix.mjs")).href
-  )) as { MATRIX: MatrixEntry[]; DISPOSITIONS: string[]; LIVE_LOGS: string[] });
+  )) as {
+    MATRIX: MatrixEntry[];
+    DISPOSITIONS: string[];
+    LIVE_LOGS: string[];
+    PREDICATES: Record<string, JournalPredicate>;
+  });
 });
 
 /** The `## ` section of v1.md with this heading, up to the next `## `. */
@@ -147,6 +156,105 @@ describe("the acceptance matrix", () => {
       "submitResult check precedence a verdict marker mismatch is the last check before publication",
     );
     expect([...tableDriven]).not.toContain("artifact_hash_mismatch");
+  });
+
+  it("has every row predicate asserted inside a test the row cites (F-012)", () => {
+    // A row that names a predicate says what shape of run it is about. Citing a
+    // test is only evidence when that test checks the shape on its own journal:
+    // the cited `it` block must call PREDICATES["<id>"].
+    const unasserted: string[] = [];
+    for (const entry of MATRIX) {
+      if (entry.predicate === undefined) continue;
+      expect(Object.keys(PREDICATES), entry.id).toContain(entry.predicate);
+      const call = `PREDICATES[${JSON.stringify(entry.predicate)}]`;
+      const asserted = entry.tests.some((test) =>
+        (testsOf(readFileSync(join(repoRoot, test.file), "utf8")).get(test.name) ?? "").includes(
+          call,
+        ),
+      );
+      if (!asserted) unasserted.push(`${entry.id}: no cited test calls ${call}`);
+    }
+    expect(unasserted).toEqual([]);
+  });
+
+  it("accepts only its own journal shape with each predicate (F-012)", () => {
+    // Small synthetic journals: the fields the predicates read, nothing else.
+    const opened = (attempt: number) => ({
+      type: "attempt.opened",
+      agentId: "reviewer",
+      stageId: "review",
+      visit: 1,
+      attempt,
+    });
+    const started = (attempt: number, seq: number) => ({
+      type: "request.dispatched",
+      seq,
+      agentId: "reviewer",
+      stageId: "review",
+      visit: 1,
+      attempt,
+      delivery: "started",
+    });
+    const rejectedAs = (attempt: number, reason = "envelope_invalid", agentId = "reviewer") => ({
+      type: "submission.rejected",
+      reason,
+      identity: { runId: "run-1", agentId, stageId: "review", visit: 1, attempt },
+    });
+    const accepted = (attempt: number) => ({
+      type: "submission.accepted",
+      agentId: "reviewer",
+      stageId: "review",
+      visit: 1,
+      attempt,
+    });
+    const exhausted = { type: "run.terminated", outcome: "exhausted", limit: "maxFormatRepairs" };
+    const run = { type: "run.opened", runId: "run-1" };
+
+    const shapes: Record<string, Array<Record<string, unknown>>> = {
+      corrected: [
+        run,
+        opened(1),
+        started(1, 3),
+        rejectedAs(1),
+        opened(2),
+        started(2, 6),
+        accepted(2),
+      ],
+      exhaustedByInvalid: [
+        run,
+        opened(1),
+        started(1, 3),
+        rejectedAs(1),
+        opened(2),
+        started(2, 6),
+        rejectedAs(2),
+        exhausted,
+      ],
+      // 6c: a worker that never submits exhausts the same limit with no rejection.
+      neverSubmits: [run, opened(1), started(1, 3), opened(2), started(2, 5), exhausted],
+      // Foreign rejections are not the owner's.
+      foreignOnly: [
+        run,
+        opened(1),
+        started(1, 3),
+        rejectedAs(1, "owner_mismatch", "intruder"),
+        opened(2),
+        started(2, 6),
+        rejectedAs(2, "owner_mismatch", "reviewer"),
+        accepted(2),
+        exhausted,
+      ],
+    };
+    const accepts = (id: string) =>
+      Object.entries(shapes)
+        .filter(([, journal]) => (PREDICATES[id] as JournalPredicate)(journal))
+        .map(([name]) => name);
+    expect(Object.keys(PREDICATES).toSorted()).toEqual([
+      "format-repair-corrected",
+      "format-repair-exhausted",
+    ]);
+    expect(accepts("format-repair-corrected")).toEqual(["corrected"]);
+    expect(accepts("format-repair-exhausted")).toEqual(["exhaustedByInvalid"]);
   });
 
   it("names only live logs the collector knows, with a gate id", () => {
@@ -393,6 +501,30 @@ function startsRegex(source: string, index: number): boolean {
  * `test/journal-integrity.process.test.ts` name their cases.
  */
 function fullNamesOf(source: string): Set<string> {
+  return new Set(testsOf(source).keys());
+}
+
+/**
+ * The source of an `it` call from its opening to the brace that closes its
+ * callback body: the first `{` after the call opens the body, since titles are
+ * blanked and cannot contribute braces.
+ */
+function itBody(source: string, braces: string, index: number): string {
+  const open = braces.indexOf("{", index);
+  if (open === -1) return source.slice(index);
+  let depth = 0;
+  for (let at = open; at < braces.length; at += 1) {
+    if (braces[at] === "{") depth += 1;
+    else if (braces[at] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(index, at + 1);
+    }
+  }
+  return source.slice(index);
+}
+
+/** fullNamesOf, with each name's `it` source (see itBody). */
+function testsOf(source: string): Map<string, string> {
   const braces = blanked(source);
   const depthAt = (index: number): number => {
     let depth = 0;
@@ -432,7 +564,7 @@ function fullNamesOf(source: string): Set<string> {
     unescape(match[2] ?? ""),
   );
 
-  const names = new Set<string>();
+  const names = new Map<string, string>();
   const stack: Array<{ title: string; depth: number }> = [];
   for (const event of events) {
     const depth = depthAt(event.index);
@@ -442,8 +574,9 @@ function fullNamesOf(source: string): Set<string> {
       if (event.title !== null) stack.push({ title: event.title, depth });
       continue;
     }
+    const body = itBody(source, braces, event.index);
     if (event.title !== null) {
-      names.add([...prefix, event.title].join(" "));
+      names.set([...prefix, event.title].join(" "), body);
       continue;
     }
     // A title the call takes from data: every case title in the file is a
@@ -451,7 +584,7 @@ function fullNamesOf(source: string): Set<string> {
     for (const title of caseTitles) {
       const composed =
         event.template === null ? title : `${event.template[0]}${title}${event.template[1]}`;
-      names.add([...prefix, composed].join(" "));
+      names.set([...prefix, composed].join(" "), body);
     }
   }
   return names;

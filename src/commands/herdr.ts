@@ -25,7 +25,8 @@ Each action shows a Herdr notification and prints one JSON line.
   status  the project's runs that have not ended; exits 0
   start   start the default workflow with <project>/.woof/start.json in a pane
           split from the focused pane; exits like woof run start
-  cancel  cancel the project's single active run; refuses (exit 2) when several are active
+  cancel  cancel the project's single active run; exits 0 with outcome noop when
+          none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
           configuration (a configuration problem is reported, not refused); exits 0
 
@@ -156,7 +157,8 @@ async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
   if (run === undefined) {
     const message = `no active Woof run in ${project.root}`;
     await notify("Woof: nothing to cancel", message);
-    print({ outcome: "rejected", reason: "no_active_run", message, details: [] });
+    // Nothing to do is not a failure: Herdr logs a non-zero action exit as "failed" (verify-1 L1).
+    print({ outcome: "noop", reason: "no_active_run", message, details: [] });
     return 0;
   }
   if (others.length > 0) {
@@ -199,8 +201,9 @@ async function refuseContext(refused: { reason: string; message: string }): Prom
 
 async function doctor(root: string): Promise<number> {
   const report = await doctorReport(root);
+  const count = report.problems.length;
   await notify(
-    "Woof: doctor",
+    count === 0 ? "Woof: doctor" : `Woof: doctor (${count} problem${count === 1 ? "" : "s"})`,
     [
       root,
       `herdr ${probeLine(report.herdr.status, report.herdr.version)}`,

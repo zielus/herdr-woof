@@ -22,7 +22,7 @@ ends when a review passes on the exact repaired revision or a limit ends it.
 
 ![Woof workflow demo](assets/woof-workflow-readme.gif)
 
-> **Status: 0.1.0, pre-release.**
+> **Status: 0.1.x, pre-release.**
 >
 > - The SDK and CLI surfaces are unstable until v1 (marked in `src/index.ts`).
 > - macOS and Linux only. Workflows need Herdr 0.9 or newer and Claude Code.
@@ -33,6 +33,7 @@ ends when a review passes on the exact repaired revision or a limit ends it.
 
 - [Demo](#demo)
 - [Requirements](#requirements)
+- [Trust model](#trust-model)
 - [Install](#install)
 - [Quick start](#quick-start)
 - [CLI](#cli)
@@ -55,9 +56,40 @@ ends when a review passes on the exact repaired revision or a limit ends it.
 - Herdr 0.9.0 or newer (the Herdr plugin's `min_herdr_version`) and Claude Code
   to run workflows.
 
+## Trust model
+
+Woof runs code with the same privileges as running the repository's own
+tests, not less:
+
+- Project `.woof/` workflow modules, a caller's `--runtime-module`, and role
+  `args` all run with the operator's own privileges — the same trust as
+  running the repository's tests.
+- The `verify` check runs after the builder has already edited the tree.
+- Permission flags in role `args` (for example
+  `--dangerously-skip-permissions`) pass through with a warning; Woof itself
+  never adds one.
+- Workers receive `--add-dir <runDir>` on the run directory, so journal
+  integrity relies on workers not editing it.
+
+These are statements of the current design, not fixes pending. See
+[Known limits (0.1.x)](docs/decisions/architecture.md#known-limits-01x) in
+the decision record for the related design-level items this release does not
+address.
+
 ## Install
 
-Install from a checkout:
+**From npm** (after the first publish): `npm install -g herdr-woof`. Needs
+Node.js 22.18 or newer; no Bun. The package ships the CLI, the SDK and the
+Claude Code plugin, under `node_modules/herdr-woof/plugin/claude`. The Herdr
+plugin (`herdr-plugin.toml`, `bin/woof`) is checkout-only — it is not part of
+the npm tarball:
+
+```sh
+npm install -g herdr-woof
+woof doctor
+```
+
+**From a checkout** — needed for the Herdr plugin:
 
 ```sh
 git clone https://github.com/zielus/herdr-woof.git
@@ -69,7 +101,8 @@ bin/woof doctor
 
 `bun run build` compiles the ESM package and declarations to `dist/`. The
 installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
-`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action.
+`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action. Wire
+up the Herdr plugin from a checkout with `herdr plugin link .`.
 
 ## Quick start
 
@@ -114,32 +147,54 @@ hosting, and read-only inspection:
 ```sh
 bin/woof --help
 bin/woof --version
-bin/woof doctor [--json] [--repo <dir>]
+bin/woof doctor [--json] [--strict] [--repo <dir>]
 bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 bin/woof submit --envelope <path|-> [--run-dir <dir>]
 bin/woof run show <run-dir> [--verify-artifacts]
 bin/woof config show [--project <dir>] [--workflow <name>]
-bin/woof run start [--workflow <name>] --input <path|-> [--project <dir>] \
-  [--host herdr-pane|foreground] [--poll-ms <n>] [--keep-panes]
-bin/woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked]
+bin/woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
+  [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
+  [--host herdr-pane|foreground] [--poll-ms <n>] \
+  [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
+  [--split-from <pane-id>] [--runtime-module <path>]
+bin/woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
+  [--poll-ms <n>] [--verify-artifacts]
 bin/woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
-bin/woof events <run-dir> [--after <cursor>] [--follow] [--stats]
+bin/woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
+  [--poll-ms <n>] [--stats]
 bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
 bin/woof run cancel <run-dir> [--reason <text>]
 bin/woof herdr status|start|cancel|doctor
+bin/woof agent start <role> [--split right|down | --pane <pane-id>] \
+  [--name <agent-name>] [--project <dir>]
 ```
 
+`agent start` starts one agent from a resolved role definition outside any
+workflow run: no run directory, no `--add-dir`, no journal. The role resolves
+the same way a run's does (project `.woof/roles/<role>.json` → user
+`~/.woof/roles/<role>.json` → a built-in role), and its `model`/`args` become
+the launch flags. It opens in a new pane split from the caller's (`--split`,
+default `down`) or an existing one (`--pane`), named `--name` (default the
+role name). Prints `{"outcome":"started","role","roleSource","agent"}`. Exits
+0 started, 2 the role or configuration is refused, 3 Herdr is unavailable or
+the pane/agent start failed (a pane this command split is then closed, and
+`paneClosed` in the rejection says whether that worked), 1 a usage error.
+
 `doctor` reports whether Herdr and Claude Code can be invoked, and (with
-`--json`) the read-only Claude folder-trust status of a repository. Neither
-Herdr nor Claude Code is required for the command to complete.
+`--json`) the read-only Claude folder-trust status of a repository, resolved
+to that repository's git top level. Neither Herdr nor Claude Code is
+required for the command to complete. `doctor` exits 0 by default; `--strict`
+exits 2 when the report lists any problem (`herdr_unavailable`,
+`claude_unavailable`, `trust_untrusted`, `trust_unknown`, `config_invalid`).
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
 `bin/woof --help` also lists `run host` (internal: hosts a launched run in this
-process). A command that `--help` does not list exits 1, as not implemented or as
-a usage error.
+process). An unrecognized command prints `woof: unknown command "<name>"; see
+woof --help` to stderr and exits 1; a recognized command used incorrectly is a
+usage error, also exit 1.
 
 ## Result handoff
 
@@ -209,36 +264,17 @@ The SDK also exposes, all marked unstable in `src/index.ts`:
 
 - a run plan (`RunPlan`/`Limits`/`AgentSpec`/`StageSpec`, `validateRunPlan`);
 - the run-facts store (`openRun`, `assignAgent`, `recordDispatch`,
-  `terminateRun`). `assignAgent` throws a TypeError for a malformed
-  `terminalId`/`sessionId` rather than dropping it; only `null`/`undefined`
-  are omitted;
+  `terminateRun`);
 - snapshots and events (`readSnapshot`/`deriveSnapshot`,
   `readEvents`/`subscribeEvents`/`foldEvents`);
 - a runtime adapter contract (`RuntimeAdapter`/`createHerdrCliRuntime`/`herdrRuntimeName`,
   `ObservationTracker`/`watchAgent`, `overlayRuntime`).
 
 See [domain model](docs/architecture/domain-model.md#implemented-now-p2) and
-[observability](docs/architecture/observability.md#implemented-now-p2).
-
-`createHerdrCliRuntime`'s `inspect` runs only a read-only allowlist —
-`agent list`, `agent get <target>`, `pane get <id>`, `pane list` and
-`workspace list` — and refuses everything else as `invalid_request` without
-spawning. Its `waitFor` returns `unsupported` without spawning whenever the
-requested states include `gone` or `unknown` (Herdr cannot wait for either).
-`stop` gives up the closed pane's ownership immediately once `pane close`
-succeeds, before it even verifies the agent is gone. Any exit-0 Herdr response
-is treated as `protocol_error`, not success, unless it carries both a non-empty
-string request `id` and an object `result`.
-
-A deterministic in-memory double for the same runtime contract,
-`createScriptedRuntime`, ships from the `herdr-woof/testing` subpath for
-workflow-author tests; it is never exported from the main entry. Its
-`advance` throws a TypeError for a negative or non-integer step count, and
-construction throws a TypeError for an empty `afterDeliver` sequence (flat
-or nested). A scripted `started` delivery is also checked like the Herdr
-adapter's own: if the observation right after delivery is not `working` or
-`blocked`, the outcome is downgraded to `ambiguous/protocol_error` (the call
-is still logged as `sent`).
+[observability](docs/architecture/observability.md#implemented-now-p2) for
+the full contracts, including the runtime adapter's allowlisted inspection,
+`waitFor`/`stop`/`protocol_error` rules and the scripted test double's own
+edge cases.
 
 ## Build-review loop
 
@@ -452,7 +488,8 @@ and [plugins.md](docs/integrations/plugins.md) describe. MCP is deferred and is
 not a maintained integration in this repository.
 
 The [documentation index](docs/README.md) and [product brief](docs/product/brief.md)
-describe the intended product; they are not claims that those features exist.
+describe the intended product. Implemented behaviour is in the Implemented-now
+sections; the rest of docs/ is design and requirements.
 
 ## Development
 
@@ -465,6 +502,11 @@ The package smoke test packs the project, installs it into an isolated local
 consumer, imports its public entry point, and exercises the installed CLI.
 See [AGENTS.md](AGENTS.md) for development order, verification and Git
 practices, and [CHANGELOG.md](CHANGELOG.md) for release history.
+
+`bun run release:preflight` runs the release checks (versions, changelog,
+private strings, secrets, links, format, verify, pack) without publishing
+anything; see [.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)
+for the full release process.
 
 ## License
 

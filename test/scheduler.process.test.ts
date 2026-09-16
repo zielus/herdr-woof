@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { repoRoot } from "./helpers/process.js";
 
@@ -35,6 +36,19 @@ interface Report {
   runDir: string;
   repo: string;
 }
+
+// The acceptance matrix's journal predicates (F-012): a test the matrix cites for a row asserts
+// the row's predicate on its own journal.
+type JournalPredicate = (journal: Report["journal"]) => boolean;
+let PREDICATES: {
+  "format-repair-corrected": JournalPredicate;
+  "format-repair-exhausted": JournalPredicate;
+};
+beforeAll(async () => {
+  ({ PREDICATES } = (await import(
+    pathToFileURL(join(repoRoot, "scripts", "acceptance", "matrix.mjs")).href
+  )) as { PREDICATES: typeof PREDICATES });
+});
 
 const cache = new Map<string, Report>();
 
@@ -245,9 +259,12 @@ describe("scheduler scenarios (scripted runtime, real processes)", () => {
         (request) => request.path === "requests/review/visit-1/attempt-2/request.md",
       );
       expect(repairRequest?.text).toContain("artifact_hash_mismatch");
+      // The acceptance matrix's Format repair row: invalid control data, then corrected.
+      expect(PREDICATES["format-repair-corrected"](report.journal)).toBe(true);
 
       const silent = runScenario("no-submission");
       expect(silent.result.outcome).toBe("completed");
+      expect(PREDICATES["format-repair-corrected"](silent.journal)).toBe(false);
       expect(
         gatesOf(silent).filter(
           (gate) => gate["subject"].stageId === "build" && gate["subject"].attempt === 1,
@@ -449,6 +466,44 @@ describe("scheduler bounds (each expired bound is exhausted with its limit)", ()
   );
 
   it(
+    "6i. maxFormatRepairs: a reviewer whose every envelope is schema-invalid is exhausted, and each format repair quotes envelope_invalid",
+    () => {
+      const report = runScenario("invalid-envelopes");
+      exhaustedBy(report, "maxFormatRepairs");
+      const reviews = ofType(report, "attempt.opened").filter(
+        (record) => record["stageId"] === "review",
+      );
+      expect(reviews).toHaveLength(3);
+      expect(
+        ofType(report, "submission.rejected").map((record) => [
+          record["reason"],
+          record["identity"]?.attempt,
+        ]),
+      ).toEqual([
+        ["envelope_invalid", 1],
+        ["envelope_invalid", 2],
+        ["envelope_invalid", 3],
+      ]);
+      for (const attempt of [2, 3]) {
+        expect(attemptIn(report, "review", 1, attempt)?.cause).toBe("format_repair");
+        const request = report.requests.find(
+          (item) => item.path === `requests/review/visit-1/attempt-${attempt}/request.md`,
+        );
+        expect(request?.text, `attempt ${attempt}`).toContain("envelope_invalid");
+        expect(request?.text, `attempt ${attempt}`).not.toContain("no submission was recorded");
+      }
+      expect(gatesOf(report).filter((gate) => gate["gate"] === "review")).toEqual([]);
+      // The acceptance matrix's Exhausted repair row, and not the corrected shape.
+      expect(PREDICATES["format-repair-exhausted"](report.journal)).toBe(true);
+      expect(PREDICATES["format-repair-corrected"](report.journal)).toBe(false);
+      expect(PREDICATES["format-repair-exhausted"](runScenario("max-format-repairs").journal)).toBe(
+        false,
+      );
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "6h. runTimeoutMs: a worker that works forever ends the run at the run timeout",
     () => {
       const report = runScenario("run-timeout");
@@ -508,6 +563,73 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         ),
       ).toHaveLength(1);
       expect(report.snapshot.attention["ambiguousDeliveries"]).toEqual([]);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "3b. a schema-invalid envelope naming its own attempt is quoted in the format repair (F-004)",
+    () => {
+      const report = runScenario("invalid-then-valid");
+      expect(report.result.outcome).toBe("completed");
+      expect(ofType(report, "submission.rejected")).toEqual([
+        expect.objectContaining({
+          reason: "envelope_invalid",
+          identity: expect.objectContaining({ agentId: "reviewer", stageId: "review", attempt: 1 }),
+        }),
+      ]);
+      expect(attemptIn(report, "review", 1, 2)?.cause).toBe("format_repair");
+      const repair = report.requests.find(
+        (request) => request.path === "requests/review/visit-1/attempt-2/request.md",
+      );
+      expect(repair?.text).toContain("envelope_invalid");
+      expect(repair?.text).not.toContain("no submission was recorded");
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "8b. a failed precondition read (not_delivered precondition_failed) is retried as work and the run completes",
+    () => {
+      const report = runScenario("precondition-retry");
+      expect(report.result.outcome).toBe("completed");
+      const builds = ofType(report, "request.dispatched").filter(
+        (record) => record["stageId"] === "build",
+      );
+      expect(
+        builds.map((record) => [record["attempt"], record["delivery"], record["reason"]]),
+      ).toEqual([
+        [1, "not_delivered", "precondition_failed"],
+        [2, "started", "observed_working"],
+      ]);
+      expect(attemptIn(report, "build", 1, 2)?.cause).toBe("work_retry");
+      expect(report.snapshot.counters["workRetriesByVisit"]).toEqual({ "build/1": 1 });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "8c. an owner_mismatch rejection naming an ambiguous attempt is not delivery evidence: the attempt is abandoned",
+    () => {
+      const report = runScenario("foreign-owner-mismatch");
+      const foreign = ofType(report, "submission.rejected");
+      expect(foreign).toEqual([
+        expect.objectContaining({
+          reason: "owner_mismatch",
+          identity: expect.objectContaining({ agentId: "reviewer", stageId: "build", attempt: 1 }),
+        }),
+      ]);
+      expect(ofType(report, "delivery.reconciled")).toEqual([
+        expect.objectContaining({
+          stageId: "build",
+          attempt: 1,
+          resolution: "abandoned",
+          evidence: "no_evidence_before_deadline",
+        }),
+      ]);
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "exhausted", limit: "deliveryTimeoutMs" });
+      expect(attemptIn(report, "build", 1, 2)).toBeUndefined();
     },
     SCENARIO_TIMEOUT,
   );

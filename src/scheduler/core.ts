@@ -31,6 +31,17 @@ import {
  * the snapshot and asks again.
  */
 
+/**
+ * Rejection reasons journaled with the identity of an attempt the submitter does not own (F-015).
+ * They name the attempt but come from another agent or pane, so they are never evidence that the
+ * attempt's prompt was delivered and are never quoted back to the owner in a format repair.
+ */
+export const FOREIGN_REJECTION_REASONS: readonly string[] = ["owner_mismatch"];
+
+function ownRejections(attempt: SnapshotAttempt): SnapshotAttempt["rejectionLog"] {
+  return attempt.rejectionLog.filter((entry) => !FOREIGN_REJECTION_REASONS.includes(entry.reason));
+}
+
 /** In-memory runtime view of one agent, maintained by the driver. */
 export interface AgentRuntimeView {
   handle: AgentHandle | null;
@@ -377,7 +388,7 @@ function decideRun<Input>(
       attempt: attempt.attempt,
       dispatchSeq: attempt.dispatch.seq,
     };
-    if (attempt.accepted !== null || attempt.rejectionLog.length > 0) {
+    if (attempt.accepted !== null || ownRejections(attempt).length > 0) {
       return { ...base, resolution: "delivered", evidence: "submission_recorded" };
     }
     if (runtime?.activitySinceDispatch === true)
@@ -483,6 +494,8 @@ function decideRun<Input>(
       return terminate("failed", `agent_gone: agent ${agentId} was not found at dispatch`);
     if (attempt.dispatch.reason === "runtime_unavailable")
       return terminate("failed", "runtime_unavailable: the runtime was unavailable at dispatch");
+    // agent_busy, agent_blocked, invalid_request and precondition_failed proved nothing was
+    // sent: the work is retried, bounded by maxAttemptsPerVisit.
     return nextAttempt(
       view,
       limits,
@@ -553,7 +566,7 @@ function nextAttempt<Input>(
     cause === "format_repair"
       ? {
           attempt: previous.attempt,
-          rejections: previous.rejectionLog.map(({ reason, message }) => ({ reason, message })),
+          rejections: ownRejections(previous).map(({ reason, message }) => ({ reason, message })),
         }
       : null,
   );

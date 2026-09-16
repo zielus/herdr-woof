@@ -39,24 +39,55 @@ function processAlive(pid: number): boolean {
     return false;
   }
 }
+
+/**
+ * The host claim, or undefined while it is missing or still being written: claimHost creates
+ * host.json exclusively and writes it afterwards, so a read can see a partial file.
+ */
+function hostClaim(runDir: string): Json | undefined {
+  try {
+    const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as unknown;
+    return typeof host === "object" && host !== null ? (host as Json) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Waits until host.json parses with a numeric pid, and returns that pid. */
+async function waitForHostPid(runDir: string, timeoutMs = 30_000): Promise<number> {
+  let pid: number | undefined;
+  await waitFor(
+    () => {
+      const claimed = hostClaim(runDir)?.["pid"];
+      if (typeof claimed === "number") pid = claimed;
+      return pid !== undefined;
+    },
+    "the host to claim the run",
+    timeoutMs,
+  );
+  return pid as number;
+}
 const dirs: string[] = [];
 const runDirs: string[] = [];
-afterEach(() => {
-  // Detached hosts outlive a failed assertion: kill any that still hold a claim.
+afterEach(async () => {
+  // Detached hosts outlive a failed assertion: kill any that still hold a claim, and wait until
+  // every host process is gone before anything is removed. A dying host still writes into its run
+  // directory, and removing it underneath the writer fails with ENOTEMPTY (F-002).
   for (const runDir of runDirs.splice(0)) {
-    try {
-      const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
-      if (
-        host["state"] === "hosting" &&
-        !existsSync(join(runDir, "host-exit.json")) &&
-        typeof host["pid"] === "number"
-      )
-        process.kill(host["pid"], "SIGKILL");
-    } catch {
-      // No claim, or the host is already gone.
-    }
+    const host = hostClaim(runDir);
+    const pid = host?.["pid"];
+    if (typeof pid !== "number") continue;
+    if (
+      host?.["state"] === "hosting" &&
+      !existsSync(join(runDir, "host-exit.json")) &&
+      processAlive(pid)
+    )
+      process.kill(pid, "SIGKILL");
+    const deadline = Date.now() + 10_000;
+    while (processAlive(pid) && Date.now() < deadline) await delay(50);
   }
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
@@ -542,10 +573,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     const launched = new Promise<number | null>((resolve) =>
       launcher.on("close", (code) => resolve(code)),
     );
-    await waitFor(() => existsSync(join(runDir, "host.json")), "the host to claim the run");
-    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
-      "pid"
-    ] as number;
+    const pid = await waitForHostPid(runDir);
     process.kill(pid, "SIGINT");
     await waitFor(() => !processAlive(pid), "the host to exit", 15_000);
     expect(existsSync(join(runDir, "host-exit.json")), "host-exit.json").toBe(true);
@@ -719,9 +747,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     // that window leaves a stale lock (carry-over C1): run cancel then exits 3 journal_busy and the
     // lock is removed by hand. This case kills a host that holds no lock.
     await waitFor(() => !existsSync(join(runDir, "journal.lock")), "the journal lock to be free");
-    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
-      "pid"
-    ] as number;
+    const pid = await waitForHostPid(runDir);
     process.kill(pid, "SIGKILL");
     await waitFor(() => show(ws, runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
     const waitedLost = woofIn(ws, [
@@ -756,9 +782,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
       () => records(runDir).some((record) => record["type"] === "request.dispatched"),
       "a dispatch",
     );
-    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
-      "pid"
-    ] as number;
+    const pid = await waitForHostPid(runDir);
     process.kill(pid, "SIGINT");
     await delay(300);
     process.kill(pid, "SIGTERM");
@@ -812,9 +836,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
       () => records(runDir).some((record) => record["type"] === "request.dispatched"),
       "a dispatch",
     );
-    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
-      "pid"
-    ] as number;
+    const pid = await waitForHostPid(runDir);
     const forged = JSON.stringify({
       schemaVersion: 1,
       kind: "woof.host.exit",

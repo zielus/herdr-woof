@@ -120,11 +120,14 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
 
   A later `agent.assigned` for the same agent on a different pane is a
   **replacement** (counted in `counters.replacementsByAgent`), not a
-  refusal. With a plan present, `attempt.opened` also gains `stage_unknown`
+  refusal. The run-facts store's `assignAgent` throws a TypeError for a
+  malformed `terminalId`/`sessionId` rather than dropping it silently; only
+  `null`/`undefined` are omitted. With a plan present, `attempt.opened` also gains `stage_unknown`
   and `owner_mismatch`/`verdicts_mismatch` against the stage's declared
-  agent and verdict set (order-insensitive comparison). All fourteen
-  `ReducerReason` values are exercised in `test/unit/reducer.test.ts` and by
-  the seeded fold generator in `test/unit/events.test.ts`.
+  agent and verdict set (order-insensitive comparison). (p2) All
+  `ReducerReason` values at that time (fourteen) are exercised in
+  `test/unit/reducer.test.ts` and by the seeded fold generator in
+  `test/unit/events.test.ts`; the set grew in p3.
 
 - **Refusal vs. policy.** The reducer and the store record facts and refuse
   impossible states; neither decides what happens next. Reaching
@@ -159,10 +162,22 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
 - **One dispatch per attempt; retrying is a new attempt.**
   `request.dispatched` records the delivery certainty of the one dispatch
   attempt made for the attempt (`started | not_delivered | ambiguous`, each
-  with its own closed `reason` set — `not_delivered/not_found` and its
-  siblings are precondition failures where nothing was sent, not proof a
-  prompt went out); a second dispatch for the same attempt is
-  refused (`dispatch_exists`). There is no resend: sending the work again is
+  with its own closed `reason` set — every `not_delivered` reason means
+  nothing was sent, not proof a prompt went out). Only two reasons end the
+  run `failed`: `not_found` (`failed{reason:"agent_gone: …"}`, the agent
+  itself is gone at dispatch) and `runtime_unavailable`
+  (`failed{reason:"runtime_unavailable: …"}`, a genuinely unreachable
+  runtime such as a missing binary, `HERDR_ENV` unset, or an unreachable
+  server). Every other `not_delivered`
+  reason — `agent_busy`, `agent_blocked`, `invalid_request`, and
+  `precondition_failed` (a failed precondition read, or the delivery
+  deadline expiring before the prompt could be sent) — is retried instead:
+  the scheduler opens a new attempt with cause `work_retry`, bounded by
+  `maxAttemptsPerVisit` (ends `exhausted{maxAttemptsPerVisit}`). **A 0.1.0
+  reader refuses a 0.1.1 journal containing `precondition_failed`**
+  (cross-version journal reading is not promised). A second dispatch for the
+  same attempt is refused (`dispatch_exists`). There is no resend: sending
+  the work again is
   only expressible by opening a new, explicitly numbered attempt, which is
   journaled and visible, and p1's staleness rule keeps a late result from
   the old attempt from being accepted. An `ambiguous` dispatch whose attempt
@@ -297,7 +312,12 @@ requiredAction, observed, [stageId, visit, attempt]}` once; `requiredAction`
 - **Ambiguous delivery is reconciled only on evidence (D8).** After
   `request.dispatched{delivery:"ambiguous"}` the scheduler sends nothing
   further and waits until `dispatch.ts + deliveryTimeoutMs`: a
-  `submission.accepted`/identity-bearing `submission.rejected`, or a tracked
+  `submission.accepted`/identity-bearing `submission.rejected` (a named set,
+  `FOREIGN_REJECTION_REASONS = ["owner_mismatch"]` in `src/scheduler/core.ts`,
+  is excluded from this evidence even though those rejections carry an
+  identity — a foreign submitter's rejection is not proof the addressed agent
+  received anything, and the same set is excluded from a format-repair
+  request's quoted rejections), or a tracked
   observation of the same terminal (taken after the dispatch) showing
   `working`/`blocked`, records `delivery.reconciled
 {resolution:"delivered", evidence:"submission_recorded"|"observed_activity"}`

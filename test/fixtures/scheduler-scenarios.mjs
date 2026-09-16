@@ -63,7 +63,7 @@ const journalOf = (runDir) =>
 
 /**
  * Options:
- * - workers.<agentId>(ctx) → { verdict, status, content, badSha, submit: false, edit(repo), twice, late: {attempt, verdict} }
+ * - workers.<agentId>(ctx) → { verdict, status, content, badSha, invalid, submit: false, edit(repo), twice, late: {attempt, verdict} }
  * - runtime.<agentId>: ScriptedAgent overrides
  * - idleAfterWork(agentId) → boolean (default true): advance the timeline after the worker acted
  * - skipObserves(agentId) → n: observes to let pass (advancing the timeline) before the worker acts
@@ -146,6 +146,8 @@ async function scenario(options) {
       status: plan.status ?? "completed",
       verdict: plan.verdict ?? null,
       artifact: { path: rel, sha256: plan.badSha === true ? "0".repeat(64) : sha256(content) },
+      // invalid: an envelope that fails schema v1 (an unknown field) but names its real attempt.
+      ...(plan.invalid === true ? { extra: true } : {}),
     };
     for (let round = 0; round < (plan.twice === true ? 2 : 1); round += 1) {
       const out = await submitResult({ runDir, envelopeRaw: JSON.stringify(envelope) });
@@ -379,6 +381,17 @@ const SCENARIOS = {
       },
     }),
 
+  // F-004: the reviewer's first envelope fails schema v1; the format repair quotes envelope_invalid.
+  "invalid-then-valid": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: ({ count }) =>
+          count === 1 ? { verdict: "pass", invalid: true } : { verdict: "pass" },
+      },
+    }),
+
   "no-submission": () =>
     scenario({
       verify: false,
@@ -446,6 +459,16 @@ const SCENARIOS = {
       workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
     }),
 
+  // F-012/F-004: every reviewer envelope fails schema v1 while naming its own attempt.
+  "invalid-envelopes": () =>
+    scenario({
+      verify: false,
+      workers: {
+        builder: builderEdits,
+        reviewer: () => ({ verdict: "pass", invalid: true }),
+      },
+    }),
+
   "max-attempts": () =>
     scenario({
       verify: false,
@@ -477,6 +500,30 @@ const SCENARIOS = {
       runtime: { builder: { onDeliver: "ambiguous:stalled" } },
       idleAfterWork: () => false,
       workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  // F-015: a foreign process submits the builder's ambiguous attempt under another agentId. Its
+  // owner_mismatch rejection names the attempt but is not the owner's: never delivery evidence.
+  "foreign-owner-mismatch": () =>
+    scenario({
+      verify: false,
+      limits: { deliveryTimeoutMs: 300 },
+      runtime: { builder: { onDeliver: "ambiguous:stalled" } },
+      idleAfterWork: () => false,
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+      onObserve: async (_handle, context) => {
+        if (
+          context.agentId === "builder" &&
+          context.journal().some((record) => record.type === "request.dispatched") &&
+          once(context, "foreign")
+        ) {
+          await context.submit(
+            "reviewer",
+            { stageId: "build", visit: 1, attempt: 1 },
+            { note: "not mine" },
+          );
+        }
+      },
     }),
 
   "run-timeout": () =>
@@ -514,6 +561,14 @@ const SCENARIOS = {
           context.runtime.advance(handle.runtimeName);
         }
       },
+    }),
+
+  // F-003: the first dispatch's precondition read failed; nothing was sent, so the work is retried.
+  "precondition-retry": () =>
+    scenario({
+      verify: false,
+      runtime: { builder: { onDeliver: ["not_delivered:precondition_failed", "started"] } },
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
     }),
 
   "ambiguous-delivered": () =>

@@ -243,6 +243,92 @@ describe("woof submit", () => {
     }
   });
 
+  it("F-004: journals a schema-invalid envelope's identity only when it names a real attempt and its owner", () => {
+    const { runDir, envelope } = readyAttempt({ pane: "w1:p1" });
+    const invalid = { ...envelope, verdict: 7 };
+
+    expectRejected(submit(runDir, invalid), "envelope_invalid");
+    expectRejected(
+      submit(runDir, invalid, { env: { HERDR_PANE_ID: "w1:p1" } }),
+      "envelope_invalid",
+    );
+    // Not owner-consistent: another agent, another pane, an attempt never opened, another run.
+    expectRejected(submit(runDir, { ...invalid, agentId: "intruder" }), "envelope_invalid");
+    expectRejected(
+      submit(runDir, invalid, { env: { HERDR_PANE_ID: "w1:p2" } }),
+      "envelope_invalid",
+    );
+    expectRejected(submit(runDir, { ...invalid, attempt: 4 }), "envelope_invalid");
+    expectRejected(submit(runDir, { ...invalid, runId: "run-2" }), "envelope_invalid");
+    // Identity fields that are themselves invalid are never journaled.
+    expectRejected(submit(runDir, { ...invalid, visit: "1" }), "envelope_invalid");
+
+    const identities = ofType(journal(runDir), "submission.rejected").map(
+      (record) => record.identity,
+    );
+    const owned = { runId: "run-1", agentId: "worker", stageId: "report", visit: 1, attempt: 1 };
+    expect(identities).toEqual([
+      owned,
+      owned,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    // An identity-bearing rejection is visible on the attempt it names.
+    const snapshot = runNode(
+      `const { readSnapshot } = await import(${JSON.stringify(distIndexUrl)});
+const read = readSnapshot(process.argv[1]);
+console.log(JSON.stringify(read.snapshot.stages[0].visits[0].attempts[0].rejections));`,
+      [runDir],
+    );
+    expect(JSON.parse(snapshot.stdout)).toEqual({ envelope_invalid: 2 });
+  });
+
+  it("F-004: journals a malformed envelope's identity only for the single dispatched open attempt on the submitting pane", () => {
+    const runDir = makeRunDir();
+    openAttemptOk(runDir, { pane: "w1:p1" });
+    const assigned = runNode(
+      `const store = await import(${JSON.stringify(distIndexUrl)});
+const runDir = process.argv[1];
+const assign = await store.assignAgent({ runDir, agentId: "worker", runtime: { adapter: "scripted", runtimeName: "w-worker", paneId: "w1:p1" } });
+const dispatch = await store.recordDispatch({ runDir, agentId: "worker", stageId: "report", visit: 1, attempt: 1, delivery: "started", reason: "observed_working" });
+console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
+      [runDir],
+    );
+    expect(assigned.stdout.trim(), assigned.stderr).toBe('["recorded","recorded"]');
+
+    expectRejected(
+      submit(runDir, "not json", { env: { HERDR_PANE_ID: "w1:p1" } }),
+      "envelope_malformed",
+    );
+    // No pane, or a pane with no dispatched open attempt: nothing proves whose bytes these are.
+    expectRejected(submit(runDir, "not json"), "envelope_malformed");
+    expectRejected(
+      submit(runDir, "not json", { env: { HERDR_PANE_ID: "w1:p9" } }),
+      "envelope_malformed",
+    );
+
+    const identities = ofType(journal(runDir), "submission.rejected").map(
+      (record) => record.identity,
+    );
+    expect(identities).toEqual([
+      { runId: "run-1", agentId: "worker", stageId: "report", visit: 1, attempt: 1 },
+      undefined,
+      undefined,
+    ]);
+
+    // An attempt opened on the pane but never dispatched is not enough.
+    const undispatched = makeRunDir();
+    openAttemptOk(undispatched, { pane: "w1:p1" });
+    expectRejected(
+      submit(undispatched, "not json", { env: { HERDR_PANE_ID: "w1:p1" } }),
+      "envelope_malformed",
+    );
+    expect(ofType(journal(undispatched), "submission.rejected")[0]?.identity).toBeUndefined();
+  });
+
   it("rejects missing, empty and non-file artifacts", () => {
     const { runDir, envelope, sha } = readyAttempt();
     const at = (name: string) => artifactRel("report", 1, 1, name);

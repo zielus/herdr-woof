@@ -1,10 +1,7 @@
 # Woof documentation
 
-Status: 0.1.0, 2026-09-16, on a design baseline from 2026-09-14. These documents synthesize the
-September 2026 product design conversation and inspected project material. Only the "Implemented
-now" sections linked below describe implemented behavior. Every other section states requirements
-or proposals: it does not claim that the feature exists or that a proposed implementation detail
-is approved.
+Status: 0.1.x pre-release. The Implemented-now sections linked below describe shipped behaviour,
+backed by the acceptance evidence; other sections are design and requirements.
 
 ## What exists today
 
@@ -60,4 +57,5 @@ Read in this order:
 The product brief and the conversation's final corrections govern requirements.
 Other pages explain those requirements or explicitly label implementation
 recommendations. Code-shaped examples are contract illustrations, not a released
-API. Acceptance scenarios are planned checks, not test results.
+API. The acceptance matrix is evidenced in
+[v1-evidence.md](acceptance/v1-evidence.md).

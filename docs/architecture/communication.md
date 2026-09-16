@@ -103,6 +103,23 @@ open` and the run-facts store call it from inside their own locked
   environment, so this is a guard against misdirected or stale submissions,
   not an authentication mechanism. A run owner issuing per-attempt tokens is
   future work.
+- **A rejection carries `identity` only when it is owner-verified.**
+  `submission.rejected` always records the rejection reason and message;
+  `identity` (`runId, agentId, stageId, visit, attempt`), which lets it
+  attach to an attempt and count as delivery evidence, is journaled only for
+  a reason the check that produced it can itself verify. For `envelope_invalid`
+  (a schema failure) that means the envelope's own claimed identity, kept
+  only when the named attempt exists, its opened `agentId` matches, and no
+  pane conflicts with the submitter's; for `envelope_malformed` (bytes that
+  do not parse, or an unreadable file) it means the single open, dispatched,
+  unaccepted attempt whose pane matches the submitter's `HERDR_PANE_ID` —
+  with zero or several such attempts, no identity. Every other rejection
+  reason keeps its existing identity behavior. **`owner_mismatch` is the one
+  exception that is excluded on purpose**, even though it is
+  identity-bearing: see
+  [domain model](domain-model.md#implemented-now-p3) for the reconcile rule.
+  Without an identity-bearing rejection, a format-repair request quotes "none
+  — no submission was recorded"; with one, it quotes the rejection.
 - **In-process transport only.** `woof submit` opens and locks the journal
   itself, in the calling process. There is no daemon, socket, or live run
   owner to submit to; a future run owner would call the same `submitResult`
@@ -281,7 +298,14 @@ blind resends. [Herdr agent automation](https://herdr.dev/docs/agent-automation/
 p2 records this certainty directly: `request.dispatched.delivery` is
 `started | not_delivered | ambiguous`, each with its own closed `reason` set
 (`DISPATCH_REASONS` in `src/domain/types.ts`), so a timeout can never be
-recorded as provably not delivered. At most one dispatch is recorded per
+recorded as provably not delivered. Only `not_found` and `runtime_unavailable`
+end the run `failed`; every other `not_delivered` reason — `agent_busy`,
+`agent_blocked`, `invalid_request`, and `precondition_failed` (a failed
+precondition read, or the delivery deadline expiring before the prompt could
+be sent) — is retried as a new `work_retry` attempt, bounded by
+`maxAttemptsPerVisit`. See
+[domain model](domain-model.md#implemented-now-p2) for the full reason set
+and its behavior. At most one dispatch is recorded per
 attempt (`dispatch_exists`); there is no resend, so trying again is only
 expressible as a new, explicitly opened attempt. An `ambiguous` dispatch
 whose attempt is still open surfaces in
@@ -289,7 +313,10 @@ whose attempt is still open surfaces in
 superseded. **Reconciliation is implemented (p3, D8):** after an `ambiguous`
 dispatch the scheduler sends nothing further to that agent and waits for
 evidence — a `submission.accepted`/identity-bearing `submission.rejected` for
-the attempt, or a tracked observation of the same terminal taken after the
+the attempt (an `owner_mismatch` rejection never counts as this evidence,
+however identity-bearing it is — a foreign submitter is not proof the
+addressed agent received anything), or a tracked observation of the same
+terminal taken after the
 dispatch showing `working`/`blocked` — either of which records
 `delivery.reconciled{resolution:"delivered"}` and the attempt continues as if
 started; with neither before `deliveryTimeoutMs` elapses, it records

@@ -134,6 +134,7 @@ export const DISPATCH_REASONS = {
     "agent_busy",
     "invalid_request",
     "runtime_unavailable",
+    "precondition_failed",
   ],
   ambiguous: ["stalled", "timeout", "protocol_error", "runtime_error"],
 } as const satisfies Record<DispatchDelivery, readonly string[]>;

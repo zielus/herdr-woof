@@ -56,6 +56,11 @@ export type RuntimeErrorCode =
   | "agent_blocked"
   /** Adapter precondition: the agent is working. */
   | "agent_busy"
+  /**
+   * The delivery precondition could not be established (the read failed or timed out, or no
+   * time was left to prompt); nothing was sent. Retried as work, unlike runtime_unavailable.
+   */
+  | "precondition_failed"
   | "timeout"
   /** agent_prompt_stalled. */
   | "stalled"

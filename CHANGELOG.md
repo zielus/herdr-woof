@@ -6,6 +6,98 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-17
+
+### Added
+
+- Dispatch reason `precondition_failed` for `not_delivered`: a failed
+  delivery-precondition read, or the delivery deadline expiring before the
+  prompt could be sent, is now retried as work (`work_retry`, bounded by
+  `maxAttemptsPerVisit`) instead of failing the run. **A 0.1.0 reader refuses
+  a 0.1.1 journal that contains this reason** (cross-version journal reading
+  is not promised).
+- `woof doctor --json` gains `problems: string[]`
+  (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
+  `trust_unknown`/`config_invalid`); `--strict` exits 2 when it is
+  non-empty, in both modes.
+- `woof agent start <role>`: starts one agent from a resolved role
+  definition, in a new or existing Herdr pane, outside any workflow run — no
+  run directory, no `--add-dir`, no journal.
+- Release tooling: `scripts/release/{preflight,bump,notes}.ts` and `bun run
+release:{preflight,bump,notes}`; `prepublishOnly: bun run build`; and
+  `.github/workflows/release.yml` (tag `v*` → verify → publish to npm via
+  trusted publishing/OIDC, no token in this repository). See
+  `.claude/skills/release/SKILL.md` for the process.
+- CI: a `test-macos` job (`macos-latest`, Node 22.18.0); every `uses:` in
+  `ci.yml` and `release.yml` is now pinned to a 40-hex commit SHA with a
+  version comment.
+
+### Changed
+
+- `woof submit` now journals a best-effort, owner-verified `identity` for
+  `envelope_invalid`/`envelope_malformed` rejections when one can be
+  verified; a format-repair request quotes it instead of "none — no
+  submission was recorded".
+- `owner_mismatch` rejections no longer count as delivery evidence for an
+  ambiguous dispatch, and are no longer quoted in a format-repair request
+  (the rejection itself is still recorded and visible in the snapshot).
+- `woof doctor`'s trust check now resolves `--repo`/the working directory to
+  its git top level before reading the trust key (an ancestor's trust still
+  never counts); it now reads `~/.claude.json` with `lstat`/`O_NOFOLLOW` and
+  a device/inode match, reporting `unknown` for a symlink instead of
+  following it.
+- `woof doctor`'s human-mode output now renders the same report `--json`
+  does, from the same probes, instead of running `herdr status` separately.
+- The Herdr plugin's `doctor` action notification title now names any
+  problems: `Woof: doctor` with none, `Woof: doctor (1 problem)` for one,
+  `Woof: doctor (N problems)` for N ≥ 2; the action still exits 0.
+- `herdr cancel` with no active run still exits 0, but now with
+  `{"outcome":"noop","reason":"no_active_run","message":"no active Woof run
+in <project>","details":[]}` (previously `outcome:"rejected"` for the same
+  case; notification text unchanged, "Woof: nothing to cancel") — Herdr's own
+  action log records any non-zero exit as a failure indistinguishable from a
+  crash, so a genuine no-op is now `noop`, not `rejected`. Several active runs
+  still refuse (exit 2) with `{"outcome":"rejected","reason":"run_ambiguous",…}`,
+  unchanged.
+- An unknown CLI command now prints `woof: unknown command "<name>"; see
+woof --help` to stderr (previously "... is not implemented in the SDK
+  foundation"); still exit 1.
+- The Claude Code plugin manifest's author now matches `package.json`
+  (`Tomasz Chmielarz`, previously `zielu`).
+
+### Fixed
+
+- Two test races around a killed detached host and `host.json` reads
+  (`test/run-start.cli.test.ts`, `test/host.process.test.ts`): cleanup now
+  waits for the host process to exit before removing its directory, and
+  every `host.json` read in tests goes through a parse-checked reader. No
+  product-code change — the product's reader already retried a partial
+  claim.
+
+### Docs
+
+- README: install split (npm vs checkout, the Herdr plugin is checkout-only),
+  a new Trust model section, the CLI block synced with `--help`, removed SDK
+  edge-case asides from Run snapshot (moved into domain-model.md and
+  observability.md), corrected status banner and "Integrations and scope"
+  wording.
+- `docs/README.md`: status and lead rewritten; the "planned checks, not test
+  results" line replaced with a pointer to `v1-evidence.md`.
+- `docs/architecture/observability.md` and `domain-model.md`: p2-only
+  statements (`liveness.owner` staying `"unhosted"`, "all fourteen
+  `ReducerReason` values") marked historical and superseded; an unreproducible
+  `--stats` timing number dropped.
+- `docs/acceptance/v1-evidence.md` and `docs/decisions/architecture.md`:
+  evidence now cited by PR and merge commit instead of branch SHAs, with the
+  branch SHAs kept only as historical ids; a new "Known limits (0.1.x)" table
+  for the design-level audit findings this release documents rather than
+  fixes.
+- `AGENTS.md`: the development-order note now says two production workflows
+  exist, rather than saying they are deferred.
+- `plugin/claude/skills/woof/SKILL.md`: exit-8 wording matches `woof status`'s
+  own usage text; workflow file extensions corrected to `.{mjs,js,ts}`.
+- New `.claude/skills/release/SKILL.md` and `.claude/skills/audit/SKILL.md`.
+
 ## [0.1.0] - 2026-09-16
 
 This is the first release. The bullets below are cumulative notes from the phases that built it,

@@ -18,7 +18,7 @@ Two workflows are built in:
   review routes to a repair, never back to the planner, and there is no
   plan-approval gate.
 
-A project can define its own workflow in `<repo>/.woof/workflows/<name>.mjs`; it
+A project can define its own workflow in `<repo>/.woof/workflows/<name>.{mjs,js,ts}`; it
 runs through the same commands, and `woof config show --workflow <name>` says
 whether a name resolves and from where.
 
@@ -38,13 +38,22 @@ Call the CLI as `node <woof.node> <woof.cli>` using the paths from
   a run hosted in a new Herdr pane; prints `runId`, `runDir` and the host pane.
   The workflow is `--workflow`, else the configured default, else `build-review`.
 - `woof status <run-dir> [--wait]`: the run's status and owner liveness; with
-  `--wait`, exits 0/4/5/6 on an outcome, 7 on timeout, 8 when the owner is lost
-  and 9 when an agent is blocked.
+  `--wait`, exits 0/4/5/6 on an outcome, 7 on timeout, 8 when the owner is gone
+  without a recorded outcome (lost, or exited with no terminal record) and 9
+  when an agent is blocked.
 - `woof runs [--project <repo>]`: runs under the runs directory.
 - `woof events <run-dir> [--follow]`: lifecycle events as NDJSON.
 - `woof run cancel <run-dir>`: cancel a run.
 - `woof config show [--project <repo>]`: the effective configuration and where
   each value came from.
+- `woof doctor [--json] [--strict]`: Herdr/Claude Code availability, the
+  Claude folder-trust status and configuration validity; `--strict` exits 2
+  when any problem is reported.
+- `woof agent start <role> [--split right|down | --pane <pane-id>] [--name
+<agent-name>] [--project <dir>]`: starts one agent from a resolved role, in
+  a new or existing Herdr pane, outside any run — no run directory, no
+  `--add-dir`, no journal. On a failed start after `--split`, it closes the
+  pane it split and reports whether that worked as `paneClosed`.
 
 ## Configuration
 
@@ -54,8 +63,9 @@ JSON files in `~/.woof/` (user) and `<repo>/.woof/` (project; the project wins):
   timeout; `runsDir` is a user setting only.
 - `roles/<role>.json`: the agent for a role, for example
   `{"schemaVersion":1,"kind":"claude","model":"sonnet","args":[]}`.
-- `workflows/<name>.mjs`: a workflow definition module. A file here shadows a
-  built-in of the same name, and its `roundStage`, limits and stages are its own.
+- `workflows/<name>.{mjs,js,ts}`: a workflow definition module. A file here
+  shadows a built-in of the same name, and its `roundStage`, limits and stages
+  are its own.
 
 A run records the configuration it was started with in `config.json`; editing
 files later does not change a running run.

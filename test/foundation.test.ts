@@ -182,10 +182,22 @@ describe("woof CLI", () => {
   });
 
   it("rejects commands that do not exist", () => {
-    const result = runCli("frobnicate");
+    for (const name of ["frobnicate", "nosuch"]) {
+      const result = runCli(name);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("not implemented");
+      // F-025: an unknown command is named as unknown, not as unimplemented.
+      expect(result.status, name).toBe(1);
+      expect(result.stderr, name).toBe(`woof: unknown command "${name}"; see woof --help\n`);
+      expect(result.stdout, name).toBe("");
+    }
+  });
+
+  it("names every workflow module extension the loader accepts in run start --help", () => {
+    const result = runCli("run", "start", "--help");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(".woof/workflows/<name>.{mjs,js,ts}");
+    expect(result.stdout).not.toMatch(/<name>\.mjs\b/);
   });
 
   it("lists runs from a runs directory (an absent one lists nothing)", () => {
@@ -214,8 +226,8 @@ describe("woof CLI", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("woof");
-      expect(result.stdout).toContain("herdr status: not found");
-      expect(result.stdout).toContain("claude --version: not found");
+      expect(result.stdout).toMatch(/^herdr: not found$/m);
+      expect(result.stdout).toMatch(/^claude: not found$/m);
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }
@@ -234,8 +246,8 @@ describe("woof CLI", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("herdr status: failed");
-      expect(result.stdout).toContain("claude --version: failed");
+      expect(result.stdout).toMatch(/^herdr: failed$/m);
+      expect(result.stdout).toMatch(/^claude: failed$/m);
     } finally {
       rmSync(binDir, { force: true, recursive: true });
     }

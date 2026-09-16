@@ -1,6 +1,6 @@
 {
   "name": "herdr-woof",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Orchestration SDK and CLI for coding agents running through Herdr.",
   "keywords": [
     "herdr",
@@ -63,6 +63,10 @@
     "check:version": "bun run scripts/check-version.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "acceptance:collect": "node scripts/acceptance/collect.mjs",
+    "release:preflight": "bun run scripts/release/preflight.ts",
+    "release:bump": "bun run scripts/release/bump.ts",
+    "release:notes": "bun run scripts/release/notes.ts",
+    "prepublishOnly": "bun run build",
     "verify": "bun run typecheck && bun run lint && bun run format:check && bun run check:version && bun run test && bun run smoke:package"
   },
   "devDependencies": {

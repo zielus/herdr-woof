@@ -1,27 +1,21 @@
 #!/usr/bin/env bun
 /**
- * Version consistency gate: package.json is the single source of truth, its
- * version has to be semver, and the changelog has to carry a section for it
- * (or still be unreleased at 0.0.0).
+ * Version consistency gate: package.json, herdr-plugin.toml and the Claude Code
+ * plugin.json carry the same semver version, and the changelog has a dated,
+ * non-empty section for it (or it is still unreleased at 0.0.0). The logic is
+ * shared with `release:preflight` (scripts/release/lib/versions.ts).
  */
-import { readFile } from "node:fs/promises";
+import { repoRoot } from "./lib/metadata.js";
+import { checkVersions, VERSION_FILES } from "./release/lib/versions.js";
 
-import { changelogPath, readPackageVersion, repoRoot, SEMVER } from "./lib/metadata.js";
+const report = checkVersions(repoRoot, { changelog: true });
 
-const version = await readPackageVersion();
-const problems: string[] = [];
-
-if (!SEMVER.test(version)) problems.push(`package.json version is not semver: ${version}`);
-
-const changelog = await readFile(changelogPath, "utf8");
-if (version !== "0.0.0" && !changelog.includes(`## [${version}]`)) {
-  problems.push(`CHANGELOG.md has no \`## [${version}]\` section`);
-}
-
-if (problems.length > 0) {
+if (report.problems.length > 0) {
   console.error(`version check failed in ${repoRoot}:`);
-  for (const problem of problems) console.error(`  ${problem}`);
+  for (const problem of report.problems) console.error(`  ${problem}`);
   process.exit(1);
 }
 
-console.log(`version ok: ${version} (package.json, CHANGELOG.md)`);
+console.log(
+  `version ok: ${report.version} (${Object.values(VERSION_FILES).join(", ")}, CHANGELOG.md)`,
+);
