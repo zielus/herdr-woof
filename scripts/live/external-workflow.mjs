@@ -16,10 +16,16 @@
 //
 // The discovered-workflow launch path matters here: the launcher does NOT
 // pre-admit a workflow it finds in the project's `.woof/`. The module body runs
-// once, in the pane host. An admission rejection therefore lands in the run
-// directory's `outcome.json` and the host's pane line, not as launcher exit 2 —
-// so this script reads `outcome.json`, never only an exit code, or a rejection
-// would look like a hang.
+// once, in the pane host, so the host is what admits or rejects the input, and
+// the host writes its verdict to the run directory's `outcome.json`.
+//
+// The launcher does still surface that verdict: `launchInPane` reads the host's
+// `outcome.json` and returns exit 2 for a non-infrastructure rejection, exit 3
+// otherwise (src/host/launch.ts:251-264). `outcome.json` is the source of the
+// rejection's *details* — its reason, message and per-field details — which an
+// exit code cannot carry. This script also never sees that exit code: it samples
+// a run a separate caller agent started. So it reads `outcome.json` on every
+// pass; without that, a rejected run would look like a hang.
 //
 // FIXTURE RULE (p5 repair LV-101): `scripts/live/build-review.mjs` deletes and
 // re-initializes the shared fixture on **every** invocation, not only with
