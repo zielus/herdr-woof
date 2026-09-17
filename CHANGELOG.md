@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-17
+
 ### Fixed
 
 - `package.json` `bin` path is `dist/cli.js` without a leading `./`: npm 11
