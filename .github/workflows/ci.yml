@@ -119,7 +119,10 @@ jobs:
           fi
           changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
           printf '%s\n' "$changed"
-          changesets="$(grep -v -x '\.changeset/README\.md' <<<"$changed" | grep -E '^\.changeset/.*\.md$' || true)"
+          # Only added files directly in .changeset/ are changesets: Changesets ignores subdirectories,
+          # and a deleted or edited changeset adds nothing to release.
+          added="$(git diff --diff-filter=A --name-only "origin/${BASE_REF}...HEAD")"
+          changesets="$(grep -v -x '\.changeset/README\.md' <<<"$added" | grep -E '^\.changeset/[^/]+\.md$' || true)"
           if grep -q '^src/' <<<"$changed" && [ -z "$changesets" ]; then
             echo "::error::this PR changes src/ but adds no changeset; run bun run changeset"
             exit 1
