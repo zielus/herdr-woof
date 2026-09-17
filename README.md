@@ -78,7 +78,7 @@ address.
 
 ## Install
 
-**From npm** (after the first publish): `npm install -g herdr-woof`. Needs
+**From npm**: `npm install -g herdr-woof` gives you the `woof` command. Needs
 Node.js 22.18 or newer; no Bun. The package ships the CLI, the SDK and the
 Claude Code plugin, under `node_modules/herdr-woof/plugin/claude`. The Herdr
 plugin (`herdr-plugin.toml`, `bin/woof`) is checkout-only — it is not part of
@@ -101,8 +101,9 @@ bin/woof doctor
 
 `bun run build` compiles the ESM package and declarations to `dist/`. The
 installed `woof` bin is the compiled Node entry point (`dist/cli.js`);
-`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action. Wire
-up the Herdr plugin from a checkout with `herdr plugin link .`.
+`bin/woof` is a Unix launcher for checkouts and the Herdr plugin action; every
+`woof` command below works as `bin/woof` from a checkout. Wire up the Herdr
+plugin from a checkout with `herdr plugin link .`.
 
 ## Quick start
 
@@ -125,10 +126,10 @@ cat > input.json <<'EOF'
   "verify": { "command": ["node", "--test"], "timeoutMs": 120000 }
 }
 EOF
-bin/woof doctor --json --repo /abs/path/to/git/worktree
-bin/woof run start --workflow plan-build-review --input input.json \
+woof doctor --json --repo /abs/path/to/git/worktree
+woof run start --workflow plan-build-review --input input.json \
   --project /abs/path/to/git/worktree
-bin/woof status <run-dir> --wait
+woof status <run-dir> --wait
 ```
 
 `doctor --json` reports the repository's Claude folder-trust status. `--project`
@@ -145,29 +146,29 @@ Executable behavior today spans diagnostics, result handoff, workflow
 hosting, and read-only inspection:
 
 ```sh
-bin/woof --help
-bin/woof --version
-bin/woof doctor [--json] [--strict] [--repo <dir>]
-bin/woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
+woof --help
+woof --version
+woof doctor [--json] [--strict] [--repo <dir>]
+woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
-bin/woof submit --envelope <path|-> [--run-dir <dir>]
-bin/woof run show <run-dir> [--verify-artifacts]
-bin/woof config show [--project <dir>] [--workflow <name>]
-bin/woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
+woof submit --envelope <path|-> [--run-dir <dir>]
+woof run show <run-dir> [--verify-artifacts]
+woof config show [--project <dir>] [--workflow <name>]
+woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
   [--host herdr-pane|foreground] [--poll-ms <n>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
   [--split-from <pane-id>] [--runtime-module <path>]
-bin/woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
+woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
   [--poll-ms <n>] [--verify-artifacts]
-bin/woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
-bin/woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
+woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
+woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
   [--poll-ms <n>] [--stats]
-bin/woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
+woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
-bin/woof run cancel <run-dir> [--reason <text>]
-bin/woof herdr status|start|cancel|doctor
-bin/woof agent start <role> [--split right|down | --pane <pane-id>] \
+woof run cancel <run-dir> [--reason <text>]
+woof herdr status|start|cancel|doctor
+woof agent start <role> [--split right|down | --pane <pane-id>] \
   [--name <agent-name>] [--project <dir>]
 ```
 
@@ -191,7 +192,7 @@ exits 2 when the report lists any problem (`herdr_unavailable`,
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
-`bin/woof --help` also lists `run host` (internal: hosts a launched run in this
+`woof --help` also lists `run host` (internal: hosts a launched run in this
 process). An unrecognized command prints `woof: unknown command "<name>"; see
 woof --help` to stderr and exits 1; a recognized command used incorrectly is a
 usage error, also exit 1.
@@ -204,7 +205,7 @@ append-only run journal (`<runDir>/journal.jsonl`) and records the outcome:
 
 ```sh
 RUN_DIR=/tmp/woof-example
-bin/woof attempt open --run-dir "$RUN_DIR" --run demo-1 --agent worker-1 \
+woof attempt open --run-dir "$RUN_DIR" --run demo-1 --agent worker-1 \
   --stage report --visit 1 --attempt 1 --verdicts pass,fail
 # {"outcome":"opened","attempt":{...,"artifactDir":"<absolute path>"}}
 
@@ -225,7 +226,7 @@ cat > "$RUN_DIR/envelope.json" <<EOF
   "artifact": { "path": "artifacts/report/visit-1/attempt-1/report.md", "sha256": "$HASH" }
 }
 EOF
-bin/woof submit --run-dir "$RUN_DIR" --envelope "$RUN_DIR/envelope.json"
+woof submit --run-dir "$RUN_DIR" --envelope "$RUN_DIR/envelope.json"
 # {"outcome":"accepted","receipt":{...}}
 ```
 
@@ -248,9 +249,9 @@ agents, per-stage attempts and outcomes, counters, and any ambiguous
 deliveries still open — without touching Herdr or taking the journal lock:
 
 ```sh
-bin/woof run show "$RUN_DIR"
+woof run show "$RUN_DIR"
 # {"outcome":"snapshot","snapshot":{...}}
-bin/woof run show "$RUN_DIR" --verify-artifacts
+woof run show "$RUN_DIR" --verify-artifacts
 # re-hashes every accepted copy; snapshot.integrity.artifacts reports {checked, altered}
 ```
 
@@ -312,7 +313,7 @@ cat > input.json <<'EOF'
   }
 }
 EOF
-bin/woof run build-review --input input.json --run-dir /tmp/woof-run
+woof run build-review --input input.json --run-dir /tmp/woof-run
 # {"outcome":"run","result":{"outcome":"completed","limit":null,...}}
 ```
 
@@ -368,7 +369,7 @@ mkdir -p .woof/roles
 cat > .woof/roles/builder.json <<'EOF'
 {"schemaVersion":1,"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]}
 EOF
-bin/woof config show
+woof config show
 # {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
 ```
 
@@ -378,9 +379,9 @@ foreground` to run in this process), and returns once the pane host has
 claimed and opened the run:
 
 ```sh
-bin/woof run start --input input.json
+woof run start --input input.json
 # {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…"},...}
-bin/woof status /abs --wait
+woof status /abs --wait
 # polls until a terminal outcome (exit 0/4/5/6), the owner gone without a
 # recorded outcome -- lost, or exited without a terminal record (exit 8) --
 # a block needing the operator (exit 9), or --timeout-ms (exit 7)
@@ -443,7 +444,7 @@ cat > input.json <<'EOF'
   "verify": { "command": ["node", "--test"], "timeoutMs": 120000 }
 }
 EOF
-bin/woof run start --workflow plan-build-review --input input.json
+woof run start --workflow plan-build-review --input input.json
 ```
 
 ### Project and user workflows
