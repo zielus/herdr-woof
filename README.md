@@ -158,16 +158,18 @@ woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
   [--host herdr-pane|foreground] [--poll-ms <n>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
-  [--split-from <pane-id>] [--runtime-module <path>]
+  [--split-from <pane-id>] [--runtime-module <path>] [--watch]
 woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
-  [--poll-ms <n>] [--verify-artifacts]
+  [--poll-ms <n>] [--verify-artifacts] [--pretty]
 woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
 woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
-  [--poll-ms <n>] [--stats]
+  [--poll-ms <n>] [--stats] [--pretty]
+woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] \
+  [--timeout-ms <n>]
 woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
 woof run cancel <run-dir> [--reason <text>]
-woof herdr status|start|cancel|doctor
+woof herdr status|start|cancel|doctor|watch
 woof agent start <role> [--split right|down | --pane <pane-id>] \
   [--name <agent-name>] [--project <dir>]
 ```
@@ -391,13 +393,34 @@ The pane host claims the run exclusively (`host.json`, a heartbeat every
 2000 ms by default), so `woof status`/`woof runs` report the owner as
 `unhosted`, `alive`, `lost` or `exited`. A killed host is reported `lost`,
 never silently as running, and its only resolution is still
-`woof run cancel <run-dir>` (no crash resume). `woof runs`, `woof events` and
-`woof config show` are read-only and never take the journal lock or contact
-Herdr.
+`woof run cancel <run-dir>` (no crash resume). `woof runs`, `woof events`,
+`woof watch` and `woof config show` are read-only and never take the journal
+lock or contact Herdr.
 
-The Herdr plugin (`herdr-plugin.toml`) exposes `doctor`, `status`, `start`
-and `cancel` actions that target the invocation's focused project and
-project run state as pane metadata tokens. The Claude Code plugin
+To follow or debug a run in a terminal, `woof watch` prints a short header
+(run, workflow, current stage, host owner, each agent with role, kind, model
+and pane) and one readable line per journal event: local time, `#seq`, type,
+subject and a summary. `--follow` keeps reading until the run's terminal
+record, with the exit codes of `woof events --follow`; `woof events --pretty`
+prints the same output, and `woof status <run-dir> --pretty` prints only the
+header instead of JSON. Colors appear only when stdout is a terminal and
+`NO_COLOR` is unset. `woof run start --watch` opens that view in a pane below
+the run host; the pane stays open after the run so its last lines remain
+readable, unless `--no-keep-panes` is given (refused, exit 2, with `--host
+foreground` or outside Herdr):
+
+```sh
+woof run start --input input.json --watch
+woof watch /abs --follow
+# run      br-…  build-review@1  running
+# …
+# 16:33:00 #6 gate.recorded        build v1 a1  stage build pass (built) round 0 -> verify
+```
+
+The Herdr plugin (`herdr-plugin.toml`) exposes `doctor`, `status`, `start`,
+`cancel` and `watch` actions that target the invocation's focused project and
+project run state as pane metadata tokens; `watch` opens a plugin pane running
+`woof watch --follow` for the project's single active run. The Claude Code plugin
 (`plugin/claude/`) ships `/woof:run <task description>`, which resolves the
 CLI, applies the operator-trust precondition below, starts a run and waits
 for it with `woof status --wait`, reporting the structured result.
