@@ -31,7 +31,8 @@ const dirs: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(() => {
   for (const child of children.splice(0)) child.kill("SIGKILL");
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, unknown>;
@@ -57,6 +58,8 @@ function workspace(): {
         "user.email=test@example.invalid",
         "-c",
         "commit.gpgsign=false",
+        "-c",
+        "maintenance.auto=false",
         ...args,
       ],
       {

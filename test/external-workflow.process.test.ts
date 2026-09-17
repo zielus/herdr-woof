@@ -34,7 +34,8 @@ const onceFixture = join(repoRoot, "test", "fixtures", "workflows", "scribe-once
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
 const dirs: string[] = [];
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, unknown>;
@@ -55,6 +56,8 @@ function git(cwd: string, ...args: string[]) {
       "user.email=test@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } },

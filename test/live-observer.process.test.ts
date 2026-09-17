@@ -243,6 +243,8 @@ console.log(JSON.stringify({ ...out, reads: next, slept }));`,
               "user.email=test@example.invalid",
               "-c",
               "commit.gpgsign=false",
+              "-c",
+              "maintenance.auto=false",
               ...args,
             ],
             {
@@ -316,7 +318,7 @@ console.log(JSON.stringify({ ...out, nullPrototype: Object.getPrototypeOf(derive
         mismatches: [],
       });
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 90_000);
 });

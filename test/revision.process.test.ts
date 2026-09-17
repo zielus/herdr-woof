@@ -10,7 +10,8 @@ import { distUrl, runNode } from "./helpers/process.js";
 // Revision fingerprinting runs real git in child processes against temporary repositories.
 const dirs: string[] = [];
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 interface RevisionOut {
@@ -31,6 +32,8 @@ function git(repo: string, ...args: string[]): string {
       "user.email=test@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     { cwd: repo, encoding: "utf8" },
