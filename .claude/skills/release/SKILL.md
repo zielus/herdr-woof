@@ -14,9 +14,18 @@ is merging the PR "chore: version packages".
 
 ## Steps
 
-1. **Check what is pending.**
-   `bun x changeset status` lists the changesets on `master` and the version
-   they add up to. Nothing pending means there is nothing to release.
+1. **Check what is pending, from an up-to-date `master` checkout.**
+   `git checkout master && git pull && bun x changeset status --verbose`.
+   `changeset status` compares the checkout with the base branch (`master`), so
+   only its output on `master` describes the release. With pending changesets
+   it exits 0 and prints them under `Packages to be bumped:`, for example
+   `- patch` / `- herdr-woof -> 0.1.3` / `- .changeset/<name>.md`. With none,
+   `Packages to be bumped:` is empty: there is nothing to release. On a feature
+   branch that changes the package without adding a changeset it prints "Some
+   packages have been changed but no changesets were found" and exits 1; that
+   is about the branch, not the release. On a branch,
+   `bun x changeset status --since master --verbose` shows only the changesets
+   that branch adds.
 2. **Preflight (non-strict), optional.**
    `bun run release:preflight` — warnings and skips are fine here (for example
    `secrets: skip` when `gitleaks` is not installed locally).
