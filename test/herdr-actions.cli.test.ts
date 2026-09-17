@@ -233,7 +233,7 @@ function statusOf(runDir: string): string {
 describe("woof herdr actions", () => {
   it("A1: without a project context each action notifies and exits 2", () => {
     const s = setup();
-    for (const name of ["status", "start", "cancel", "doctor"]) {
+    for (const name of ["status", "start", "cancel", "doctor", "watch"]) {
       const result = action(s, name, undefined);
       expect(result.status, result.stdout + result.stderr).toBe(2);
       expect(result.json).toMatchObject({ outcome: "rejected", reason: "project_context_missing" });
@@ -246,6 +246,7 @@ describe("woof herdr actions", () => {
         title: "Woof: no project context",
         body: expect.stringContaining("HERDR_PLUGIN_CONTEXT_JSON"),
       },
+      { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
@@ -516,6 +517,95 @@ describe("woof herdr actions", () => {
     expect(refusal?.body).toContain(b1);
     expect(refusal?.body).toContain(b2);
     expect([statusOf(b1), statusOf(b2)]).toEqual(["created", "created"]);
+    expect(existsSync(s.guardLog)).toBe(false);
+  });
+
+  it("A6: watch opens a plugin pane following the single active run; none is a noop, several a refusal", () => {
+    const s = setup();
+    /** Adds entries ahead of setup()'s scenario. */
+    const script = (...entries: Json[]) =>
+      writeFileSync(
+        s.scenario,
+        JSON.stringify([...entries, ...(JSON.parse(readFileSync(s.scenario, "utf8")) as Json[])]),
+      );
+    const [a, b] = [s.repo("repo-a"), s.repo("repo-b")];
+    const pluginCalls = () => calls(s).filter((argv) => argv[0] === "plugin");
+
+    const nothing = action(s, "watch", { focused_pane_cwd: a });
+    expect(nothing.status, nothing.stdout + nothing.stderr).toBe(0);
+    expect(nothing.json).toEqual({
+      outcome: "noop",
+      reason: "no_active_run",
+      message: `no active Woof run in ${a}`,
+      details: [],
+    });
+    expect(notifications(s).at(-1)).toEqual({
+      title: "Woof: nothing to watch",
+      body: `no active Woof run in ${a}`,
+    });
+
+    const [b1, b2] = [openRun(s, "b-one", b), openRun(s, "b-two", b)];
+    const refused = action(s, "watch", { focused_pane_cwd: b });
+    expect(refused.status, refused.stdout).toBe(2);
+    expect(refused.json).toMatchObject({ outcome: "rejected", reason: "run_ambiguous" });
+    expect(refused.json["details"].map((detail: Json) => detail["message"]).toSorted()).toEqual(
+      [`woof watch ${b1}`, `woof watch ${b2}`].toSorted(),
+    );
+    expect(notifications(s).at(-1)?.title).toBe("Woof: 2 active runs, none watched");
+    expect(pluginCalls()).toEqual([]);
+
+    // Herdr 0.9 reports the opened pane as result.plugin_pane.pane.
+    script({
+      match: ["plugin", "pane", "open"],
+      call: 1,
+      stdout: JSON.stringify({
+        result: { plugin_pane: { entrypoint: "watch", pane: { pane_id: "w5:p9" } } },
+      }),
+    });
+    const single = openRun(s, "a-only", a);
+    const watched = action(s, "watch", { focused_pane_id: "w5:p3", focused_pane_cwd: a });
+    expect(watched.status, watched.stdout + watched.stderr).toBe(0);
+    expect(watched.json).toEqual({
+      outcome: "watching",
+      runId: "a-only",
+      runDir: single,
+      paneId: "w5:p9",
+    });
+    expect(pluginCalls()).toEqual([
+      [
+        "plugin",
+        "pane",
+        "open",
+        "--plugin",
+        "herdr-woof",
+        "--entrypoint",
+        "watch",
+        "--placement",
+        "split",
+        "--target-pane",
+        "w5:p3",
+        "--direction",
+        "right",
+        "--env",
+        `WOOF_RUN_DIR=${single}`,
+        "--no-focus",
+      ],
+    ]);
+    expect(notifications(s).at(-1)).toEqual({ title: "Woof: watching a-only", body: single });
+    // Watching never changes the run.
+    expect(statusOf(single)).toBe("created");
+
+    script({ match: ["plugin", "pane", "open"], call: 2, exit: 1, stderr: "no such plugin\n" });
+    const failed = action(s, "watch", { focused_pane_cwd: a });
+    expect(failed.status, failed.stdout).toBe(3);
+    expect(failed.json).toEqual({
+      outcome: "rejected",
+      reason: "watch_pane_failed",
+      message: "herdr plugin pane open failed: no such plugin",
+      details: [],
+    });
+    expect(pluginCalls().at(-1)).not.toContain("--target-pane");
+    expect(notifications(s).at(-1)?.title).toBe("Woof: rejected (watch_pane_failed)");
     expect(existsSync(s.guardLog)).toBe(false);
   });
 });
