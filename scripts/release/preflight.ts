@@ -10,7 +10,7 @@ import { delimiter, join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { repoRoot } from "../lib/metadata.js";
-import { changelogSection, releaseSectionProblem } from "./lib/changelog.js";
+import { releaseSectionProblem } from "./lib/changelog.js";
 import {
   classifyLink,
   isAbsoluteRef,
@@ -135,20 +135,7 @@ function changelogCheck(version: string | null): CheckResult {
   const text = readFileSync(join(repoRoot, "CHANGELOG.md"), "utf8");
   const problem = releaseSectionProblem(text, version);
   if (problem !== undefined) return result("changelog", "fail", problem);
-  const unreleased = changelogSection(text, "Unreleased");
-  if (unreleased !== undefined && unreleased.body !== "") {
-    return result(
-      "changelog",
-      "warn",
-      `## [${version}] is present, but [Unreleased] has entries not released`,
-      lines(unreleased.body).slice(0, 10),
-    );
-  }
-  return result(
-    "changelog",
-    "pass",
-    `## [${version}] is dated and has entries; [Unreleased] is empty`,
-  );
+  return result("changelog", "pass", `CHANGELOG.md has a non-empty section for ${version}`);
 }
 
 function privateStringsCheck(): CheckResult {

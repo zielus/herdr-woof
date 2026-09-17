@@ -1,17 +1,14 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[SemVer](https://semver.org/).
+## Releases up to 0.1.2
 
-## [Unreleased]
-
-### Added
-
-- `CONTRIBUTING.md` and `docs/decisions/release-process.md`: PR-only master,
-  changelog gate, serial verify, phase merge rules, and the tag-to-npm release
-  path; a `changelog` CI job fails a PR that changes `src/` without a
-  `CHANGELOG.md` entry.
+All notable changes to this project are documented in this file, and the
+project uses [SemVer](https://semver.org/). Release sections from 0.1.3 on sit
+above this heading: [Changesets](https://changesets.dev) generates them from the
+`.changeset/*.md` files each pull request adds. The releases below follow
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This note is a heading
+of its own so Changesets inserts new releases above it (it only recognises
+`## x.y.z` headings, not `## [x.y.z] - date`).
 
 ## [0.1.2] - 2026-09-17
 
