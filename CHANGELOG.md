@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `CONTRIBUTING.md` and `docs/decisions/release-process.md`: PR-only master,
+  changelog gate, serial verify, phase merge rules, and the tag-to-npm release
+  path; a `changelog` CI job fails a PR that changes `src/` without a
+  `CHANGELOG.md` entry.
+
 ## [0.1.2] - 2026-09-17
 
 ### Fixed

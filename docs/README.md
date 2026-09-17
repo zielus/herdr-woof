@@ -64,8 +64,9 @@ Read in this order:
 7. [Plugin surfaces](integrations/plugins.md): the CLI, the Herdr plugin (`doctor`/`status`/`start`/`cancel`), and the Claude Code plugin (`/woof:run`); MCP is deferred.
 8. [Workflow authoring](workflows/authoring.md) and [initial workflows](workflows/initial-workflows.md).
 9. [Decision record](decisions/architecture.md): settled direction, superseded ideas, and open choices.
-10. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.
-11. [Acceptance criteria](acceptance/v1.md): evidence required before calling v1 complete.
+10. [Release process](decisions/release-process.md): versioning, the changelog gate, tag-triggered publish.
+11. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.
+12. [Acceptance criteria](acceptance/v1.md): evidence required before calling v1 complete.
 
 The product brief and the conversation's final corrections govern requirements.
 Other pages explain those requirements or explicitly label implementation
