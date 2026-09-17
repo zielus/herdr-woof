@@ -10,6 +10,7 @@ import { isId, isPlainObject } from "../contracts/envelope.js";
 import { claimHost } from "../host/claim.js";
 import { entryExists, writeExclusiveFile } from "../host/files.js";
 import { LAUNCH_FILE, launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
+import { openWatchPane } from "../host/watch-pane.js";
 import {
   OUTCOME_FILE,
   hostWorkflow,
@@ -34,7 +35,7 @@ import {
 export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workflow <name>] [--project <dir>] [--run-id <id>]
                       [--run-dir <dir> | --runs-dir <dir>] [--host herdr-pane|foreground]
                       [--poll-ms <n>] [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>]
-                      [--split-from <pane-id>] [--runtime-module <path>]
+                      [--split-from <pane-id>] [--runtime-module <path>] [--watch]
 
 Starts a workflow run. The workflow is --workflow, else the configured default,
 else build-review. Built in: build-review (build, verify, review, repair) and
@@ -53,6 +54,11 @@ returns once that host has opened the run, printing {"outcome":"started"} with
 the run directory; follow it with woof status <run-dir> --wait.
 --host foreground runs the scheduler in this process and prints
 {"outcome":"run","result"} when the run ends.
+--watch (herdr-pane only): once the host opened the run, splits a pane below
+the host running woof watch <run-dir> --follow and adds "watch" ({paneId,
+command}, or {problem} when that pane could not be opened) to the output. The
+watch pane stays open after the run unless --no-keep-panes is given. Refused
+(exit 2) with --host foreground or outside Herdr.
 
 Exits 0 started (or completed in the foreground), 4 failed, 5 exhausted,
 6 cancelled, 2 rejected before launch, 3 runtime, host or journal failure
@@ -110,6 +116,7 @@ export async function runStartCommand(args: string[]): Promise<number> {
           "host-start-timeout-ms": { type: "string" },
           "split-from": { type: "string" },
           "runtime-module": { type: "string" },
+          watch: { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -156,9 +163,26 @@ export async function runStartCommand(args: string[]): Promise<number> {
   const projectDir = resolve(values.project ?? process.cwd());
   const runDir = values["run-dir"] !== undefined ? resolve(values["run-dir"]) : undefined;
 
+  const watch = values.watch === true;
+  const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
+  const splitFrom = values["split-from"] ?? (paneId !== undefined ? "current" : undefined);
+  // Refused before any input is read, any Herdr call is made or any run directory exists.
+  if (watch && host === "foreground")
+    return rejected(
+      "watch_unavailable",
+      "--watch needs --host herdr-pane inside Herdr; --host foreground has no pane to split",
+      [],
+      2,
+    );
+  if (watch && (process.env["HERDR_ENV"] !== "1" || splitFrom === undefined))
+    return rejected(
+      "watch_unavailable",
+      "--watch needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID, or --split-from <pane-id>)",
+      [],
+      2,
+    );
+
   if (host === "herdr-pane") {
-    const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
-    const splitFrom = values["split-from"] ?? (paneId !== undefined ? "current" : undefined);
     if (process.env["HERDR_ENV"] !== "1" || splitFrom === undefined) {
       return rejected(
         "runtime_unavailable",
@@ -183,6 +207,27 @@ export async function runStartCommand(args: string[]): Promise<number> {
       nodePath: process.execPath,
       cliPath,
     });
+    const hostPaneId = hostPaneOf(launched.output);
+    if (
+      watch &&
+      launched.code === 0 &&
+      launched.output["outcome"] === "started" &&
+      hostPaneId !== undefined
+    ) {
+      const opened = await openWatchPane({
+        runDir: String(launched.output["runDir"]),
+        hostPaneId,
+        cwd: projectDir,
+        // Only an explicit --no-keep-panes closes the watch pane; the resolved default does not.
+        closeOnEnd: values["no-keep-panes"] === true,
+        herdrBin: herdrBin(),
+        env: process.env,
+        nodePath: process.execPath,
+        cliPath,
+      });
+      console.log(JSON.stringify({ ...launched.output, watch: opened }));
+      return launched.code;
+    }
     console.log(JSON.stringify(launched.output));
     return launched.code;
   }
@@ -509,6 +554,12 @@ export function defaultRunId(workflow: string | undefined): string {
   const prefix =
     workflow === undefined || workflow === "build-review" ? "br" : workflow.slice(0, 24);
   return `${prefix}-${stamp}-${randomBytes(3).toString("hex")}`;
+}
+
+function hostPaneOf(output: Record<string, unknown>): string | undefined {
+  const host = output["host"];
+  const paneId = isPlainObject(host) ? host["paneId"] : undefined;
+  return typeof paneId === "string" && paneId !== "" ? paneId : undefined;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

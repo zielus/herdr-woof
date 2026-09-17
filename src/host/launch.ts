@@ -317,7 +317,7 @@ function rejected(
   };
 }
 
-function paneIdOf(stdout: string): string | undefined {
+export function paneIdOf(stdout: string): string | undefined {
   try {
     const value = JSON.parse(stdout) as { result?: { pane?: { pane_id?: unknown } } };
     const id = value.result?.pane?.pane_id;
