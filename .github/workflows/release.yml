@@ -40,7 +40,7 @@ jobs:
           node-version: "22.18.0"
       - run: bun install --frozen-lockfile
       - id: select-mode
-        uses: changesets/action/select-mode@66d7d1ddafddf1ef45f98ee51a7496f9cdadb2f4 # v2.1.2
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
 
   # With the default GITHUB_TOKEN the Version PR gets no CI runs (GitHub does not trigger
   # workflows from events that token creates). Either set a fine-grained PAT secret
@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: "22.18.0"
       - run: bun install --frozen-lockfile
-      - uses: changesets/action/version@66d7d1ddafddf1ef45f98ee51a7496f9cdadb2f4 # v2.1.2
+      - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           script: bun run version
           commit-message: "chore: version packages"
@@ -117,7 +117,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - id: pack
-        uses: changesets/action/pack@66d7d1ddafddf1ef45f98ee51a7496f9cdadb2f4 # v2.1.2
+        uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
 
@@ -144,7 +144,7 @@ jobs:
       # Trusted publishing needs npm >= 11.5.1; Node 22.18.0 ships an older npm.
       - run: npm install -g npm@11.19.1
       - run: bun install --frozen-lockfile
-      - uses: changesets/action/publish@66d7d1ddafddf1ef45f98ee51a7496f9cdadb2f4 # v2.1.2
+      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
           create-github-releases: true
