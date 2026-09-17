@@ -92,13 +92,17 @@ function check(run: Preflight, id: string): Json | undefined {
   return (run.summary?.["checks"] as Json[] | undefined)?.find((item) => item["id"] === id);
 }
 
-/** The copy's CHANGELOG with an empty [Unreleased], as right after a release. */
-function releasedChangelog(root: string): void {
+/** Sets package.json's version and puts `section` at the top of CHANGELOG.md, below the title. */
+function withRelease(root: string, version: string, section: string): void {
+  const pkgPath = join(root, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Json;
+  pkg["version"] = version;
+  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   const path = join(root, "CHANGELOG.md");
-  const text = readFileSync(path, "utf8");
-  const start = text.indexOf("## [Unreleased]");
-  const next = text.indexOf("\n## [", start + 1);
-  writeFileSync(path, `${text.slice(0, start)}## [Unreleased]\n${text.slice(next)}`);
+  writeFileSync(
+    path,
+    readFileSync(path, "utf8").replace("# Changelog\n\n", `# Changelog\n\n${section}\n`),
+  );
 }
 
 function setScripts(root: string, scripts: Record<string, string>): void {
@@ -111,7 +115,6 @@ function setScripts(root: string, scripts: Record<string, string>): void {
 describe("release:preflight", () => {
   it("(a) passes a clean copy and prints one parseable summary as the last stdout line", async () => {
     const root = copy();
-    releasedChangelog(root);
     const run = await preflight(root, ["--only", "versions,changelog,private-strings,pack"]);
     expect(run.status, run.stdout + run.stderr).toBe(0);
     const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Json)[
@@ -132,21 +135,6 @@ describe("release:preflight", () => {
     // Progress is on stderr: stdout is the summary alone.
     expect(run.stdout.trim().split("\n")).toHaveLength(1);
     expect(run.stderr).toContain("preflight: versions pass");
-
-    // Unreleased entries warn, and --strict turns that into a failure.
-    writeFileSync(
-      join(root, "CHANGELOG.md"),
-      readFileSync(join(root, "CHANGELOG.md"), "utf8").replace(
-        "## [Unreleased]\n",
-        "## [Unreleased]\n\n### Added\n\n- something new\n",
-      ),
-    );
-    const warned = await preflight(root, ["--only", "changelog"]);
-    expect(warned.status).toBe(0);
-    expect(check(warned, "changelog")).toMatchObject({ status: "warn" });
-    const strict = await preflight(root, ["--only", "changelog", "--strict"]);
-    expect(strict.status).toBe(1);
-    expect(check(strict, "changelog")).toMatchObject({ status: "fail" });
   }, 120_000);
 
   it("(b) fails versions when herdr-plugin.toml disagrees, and (j) check:version fails on a plugin.json drift", async () => {
@@ -385,5 +373,51 @@ console.log(JSON.stringify([
       ["pack", "skip"],
     ]);
     expect(check(skipped, "pack")).toMatchObject({ message: "skipped by --skip" });
+  }, 120_000);
+
+  it("(k) changelog accepts a Changesets `## x.y.z` and a dated `## [x.y.z] - date` section, ignores a leftover [Unreleased], and fails a missing, empty or undated one", async () => {
+    const cases: Array<[string, string, string, Json]> = [
+      ["changesets", "0.1.3", "## 0.1.3\n\n### Patch Changes\n\n- A fix.\n", { status: "pass" }],
+      ["legacy", "0.1.3", "## [0.1.3] - 2026-09-18\n\n### Fixed\n\n- A fix.\n", { status: "pass" }],
+      [
+        "leftover Unreleased",
+        "0.1.3",
+        "## [Unreleased]\n\n### Added\n\n- Not released yet.\n\n## 0.1.3\n\n### Patch Changes\n\n- A fix.\n",
+        { status: "pass" },
+      ],
+      [
+        "missing",
+        "0.1.3",
+        "",
+        { status: "fail", message: "CHANGELOG.md has no `## 0.1.3` section" },
+      ],
+      [
+        "empty",
+        "0.1.3",
+        "## 0.1.3\n",
+        { status: "fail", message: "CHANGELOG.md `## 0.1.3` has no entries" },
+      ],
+      [
+        "undated legacy",
+        "0.1.3",
+        "## [0.1.3]\n\n### Fixed\n\n- A fix.\n",
+        {
+          status: "fail",
+          message: expect.stringContaining("is not dated as `## [0.1.3] - YYYY-MM-DD`"),
+        },
+      ],
+    ];
+    const root = copy();
+    const original = ["package.json", "CHANGELOG.md"].map(
+      (rel) => [rel, readFileSync(join(root, rel), "utf8")] as const,
+    );
+    for (const [name, version, section, expected] of cases) {
+      for (const [rel, text] of original) writeFileSync(join(root, rel), text);
+      withRelease(root, version, section);
+      // oxlint-disable-next-line no-await-in-loop
+      const run = await preflight(root, ["--only", "changelog"]);
+      expect(check(run, "changelog"), name).toMatchObject(expected);
+      expect(run.status, name).toBe(expected["status"] === "pass" ? 0 : 1);
+    }
   }, 120_000);
 });

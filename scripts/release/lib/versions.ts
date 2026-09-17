@@ -25,7 +25,8 @@ function read(root: string, rel: string, pick: (text: string) => unknown): unkno
 
 /**
  * The manifest versions agree and are semver (D1). With `changelog`, CHANGELOG.md
- * also has a dated, non-empty `## [version]` section (0.0.0 is exempt). With
+ * also has a non-empty section for the version, dated when it uses the legacy
+ * `## [version] - YYYY-MM-DD` heading (0.0.0 is exempt). With
  * `tag`, the tag is `v` + the version.
  */
 export function checkVersions(
