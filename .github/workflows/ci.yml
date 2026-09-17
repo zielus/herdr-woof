@@ -94,7 +94,7 @@ jobs:
       - run: bun run build
       - run: bun run smoke:package
 
-  # A PR that changes src/ must carry a CHANGELOG.md entry (CONTRIBUTING.md § Changelog).
+  # A PR that changes src/ must add a changeset (CONTRIBUTING.md § Changesets).
   changelog:
     name: changelog
     runs-on: ubuntu-latest
@@ -102,18 +102,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: src/ change requires a changelog entry
+      - name: src/ change requires a changeset
         env:
           BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "not a pull request: nothing to check"
+            exit 0
+          fi
+          # The Version PR consumes changesets; it never adds one.
+          if [ "$HEAD_REF" = "changeset-release/master" ]; then
+            echo "the Changesets Version PR: nothing to check"
             exit 0
           fi
           changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
           printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -q '^src/' && ! printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
-            echo "::error::this PR changes src/ but not CHANGELOG.md; add an entry under [Unreleased]"
+          changesets="$(grep -v -x '\.changeset/README\.md' <<<"$changed" | grep -E '^\.changeset/.*\.md$' || true)"
+          if grep -q '^src/' <<<"$changed" && [ -z "$changesets" ]; then
+            echo "::error::this PR changes src/ but adds no changeset; run bun run changeset"
             exit 1
           fi
           echo "ok"
