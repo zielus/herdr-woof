@@ -2,13 +2,14 @@ import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 
-import { MAX_EVENTS_LIMIT, readEvents } from "../observe/events.js";
+import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "../observe/events.js";
 import { subscribeEvents } from "../observe/subscribe.js";
 import { readSnapshot } from "../state/snapshot.js";
 import { UsageError, milliseconds, parse } from "./common.js";
+import { watchRun } from "./watch.js";
 
 export const EVENTS_USAGE = `Usage: woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] [--poll-ms <n>]
-                   [--stats]
+                   [--stats] [--pretty]
 
 Prints the run's lifecycle events as NDJSON, one event per line, resuming after
 --after when given. Without --follow it prints the events recorded so far; with
@@ -19,7 +20,9 @@ run's last cursor it ends at once with "terminated". The last line is always
 polling statistics to stderr. Read-only: no journal lock, no Herdr; a partial
 final journal line unchanged for 2 s ends a follow with a journal_corrupt error.
 Exits 0 end or terminated, 7 timeout, 2 resync_required (the cursor cannot
-resume; the reason is printed before the end line), 3 journal error, 130 SIGINT.`;
+resume; the reason is printed before the end line), 3 journal error, 130 SIGINT.
+--pretty prints the same as woof watch (a header and one readable line per
+event) with the same exit codes.`;
 
 const CURSOR_REASONS: ReadonlySet<string> = new Set([
   "cursor_ahead",
@@ -28,13 +31,32 @@ const CURSOR_REASONS: ReadonlySet<string> = new Set([
   "cursor_expired",
 ]);
 
+export interface StreamOptions {
+  after?: string;
+  follow: boolean;
+  pollMs: number;
+  timeoutMs?: number;
+  stats: boolean;
+}
+
+/** Where streamEvents writes: the NDJSON sink of woof events, or the readable one of woof watch. */
+export interface EventsSink {
+  event(event: RunEvent): void;
+  problem(item: { type: "resync_required" | "error"; reason: string; message: string }): void;
+  end(cursor: string | null, terminal: boolean, reason: string): void;
+  stats(line: Record<string, unknown>): void;
+}
+
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-function end(cursor: string | null, terminal: boolean, reason: string): void {
-  print({ kind: "woof.events.end", cursor, terminal, reason });
-}
+const JSON_SINK: EventsSink = {
+  event: print,
+  problem: print,
+  end: (cursor, terminal, reason) => print({ kind: "woof.events.end", cursor, terminal, reason }),
+  stats: (line) => process.stderr.write(`${JSON.stringify(line)}\n`),
+};
 
 export async function eventsCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(
@@ -49,6 +71,7 @@ export async function eventsCommand(args: string[]): Promise<number> {
           "timeout-ms": { type: "string" },
           "poll-ms": { type: "string" },
           stats: { type: "boolean" },
+          pretty: { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -68,8 +91,29 @@ export async function eventsCommand(args: string[]): Promise<number> {
     values["timeout-ms"] === undefined
       ? undefined
       : milliseconds(values["timeout-ms"], "--timeout-ms", 1, 604_800_000);
-  if (values.follow !== true) {
-    let after = values.after;
+  const options: StreamOptions = {
+    ...(values.after !== undefined ? { after: values.after } : {}),
+    follow: values.follow === true,
+    pollMs,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    stats: values.stats === true,
+  };
+  if (values.pretty === true) return watchRun(runDir, options);
+  return streamEvents(runDir, options, JSON_SINK);
+}
+
+/**
+ * Reads the run's events, or follows them with options.follow, into a sink; returns the exit code of
+ * woof events (0 end or terminated, 7 timeout, 2 resync_required, 3 journal error, 130 SIGINT).
+ */
+export async function streamEvents(
+  runDir: string,
+  options: StreamOptions,
+  sink: EventsSink,
+): Promise<number> {
+  const { pollMs } = options;
+  if (!options.follow) {
+    let after = options.after;
     let cursor: string | null = after ?? null;
     let terminal = false;
     for (;;) {
@@ -79,16 +123,16 @@ export async function eventsCommand(args: string[]): Promise<number> {
       });
       if (!read.ok) {
         if (CURSOR_REASONS.has(read.reason)) {
-          print({ type: "resync_required", reason: read.reason, message: read.message });
-          end(cursor, false, "resync_required");
+          sink.problem({ type: "resync_required", reason: read.reason, message: read.message });
+          sink.end(cursor, false, "resync_required");
           return 2;
         }
-        print({ type: "error", reason: read.reason, message: read.message });
-        end(cursor, false, "error");
+        sink.problem({ type: "error", reason: read.reason, message: read.message });
+        sink.end(cursor, false, "error");
         return 3;
       }
       for (const event of read.events) {
-        print(event);
+        sink.event(event);
         if (event.type === "run.terminated") terminal = true;
       }
       cursor = read.cursor;
@@ -99,15 +143,15 @@ export async function eventsCommand(args: string[]): Promise<number> {
       const snapshot = readSnapshot(runDir);
       terminal = snapshot.ok && snapshot.snapshot.outcome !== null;
     }
-    end(cursor, terminal, "end");
+    sink.end(cursor, terminal, "end");
     return 0;
   }
 
   // A resume cursor already at the run's terminal record: no event can follow, so end now instead of
   // waiting for the timeout (PR #6). The snapshot's cursor equal to the resume cursor proves no record
   // was appended between the two lock-free reads.
-  if (values.after !== undefined) {
-    const read = readEvents(runDir, { after: values.after, limit: 1 });
+  if (options.after !== undefined) {
+    const read = readEvents(runDir, { after: options.after, limit: 1 });
     if (read.ok && read.events.length === 0) {
       const snapshot = readSnapshot(runDir);
       if (
@@ -115,8 +159,8 @@ export async function eventsCommand(args: string[]): Promise<number> {
         snapshot.snapshot.outcome !== null &&
         snapshot.snapshot.cursor === read.cursor
       ) {
-        end(read.cursor, true, "terminated");
-        if (values.stats === true) printStats(0, 0, pollMs);
+        sink.end(read.cursor, true, "terminated");
+        if (options.stats) sink.stats(statsLine(0, 0, pollMs));
         return 0;
       }
     }
@@ -125,12 +169,12 @@ export async function eventsCommand(args: string[]): Promise<number> {
   const controller = new AbortController();
   let stopped: "timeout" | "signal" | undefined;
   const timer =
-    timeoutMs === undefined
+    options.timeoutMs === undefined
       ? undefined
       : setTimeout(() => {
           stopped = "timeout";
           controller.abort();
-        }, timeoutMs);
+        }, options.timeoutMs);
   const onSignal = () => {
     stopped = "signal";
     controller.abort();
@@ -139,12 +183,12 @@ export async function eventsCommand(args: string[]): Promise<number> {
   // Inspection never takes the journal lock (PR #6): a partial final line that persists past the
   // subscription's grace period ends the follow with error/journal_corrupt instead of a locked read.
   const iterator = subscribeEvents(runDir, {
-    ...(values.after !== undefined ? { after: values.after } : {}),
+    ...(options.after !== undefined ? { after: options.after } : {}),
     pollMs,
     lockFree: true,
     signal: controller.signal,
   });
-  let cursor: string | null = values.after ?? null;
+  let cursor: string | null = options.after ?? null;
   let terminal = false;
   let reason = "end";
   let code = 0;
@@ -172,18 +216,18 @@ export async function eventsCommand(args: string[]): Promise<number> {
       }
       const item = next.value;
       if (item.type === "resync_required") {
-        print(item);
+        sink.problem(item);
         reason = "resync_required";
         code = 2;
         break;
       }
       if (item.type === "error") {
-        print(item);
+        sink.problem(item);
         reason = "error";
         code = 3;
         break;
       }
-      print(item);
+      sink.event(item);
       cursor = item.cursor;
       if (item.type === "run.terminated") {
         terminal = true;
@@ -196,19 +240,21 @@ export async function eventsCommand(args: string[]): Promise<number> {
     process.off("SIGINT", onSignal);
     await iterator.return(undefined);
   }
-  end(cursor, terminal, reason);
-  if (values.stats === true) printStats(polls, maxProjectionMs, pollMs);
+  sink.end(cursor, terminal, reason);
+  if (options.stats) sink.stats(statsLine(polls, maxProjectionMs, pollMs));
   return code;
 }
 
-function printStats(polls: number, maxProjectionMs: number, pollMs: number): void {
-  process.stderr.write(
-    `${JSON.stringify({
-      kind: "woof.events.stats",
-      polls,
-      maxProjectionMs: Math.round(maxProjectionMs * 100) / 100,
-      pollMs,
-      method: "iterator step wall time beyond the poll interval",
-    })}\n`,
-  );
+function statsLine(
+  polls: number,
+  maxProjectionMs: number,
+  pollMs: number,
+): Record<string, unknown> {
+  return {
+    kind: "woof.events.stats",
+    polls,
+    maxProjectionMs: Math.round(maxProjectionMs * 100) / 100,
+    pollMs,
+    method: "iterator step wall time beyond the poll interval",
+  };
 }

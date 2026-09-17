@@ -18,6 +18,7 @@ import {
 } from "./commands/run.js";
 import { runsCommand } from "./commands/runs.js";
 import { statusCommand } from "./commands/status.js";
+import { watchCommand } from "./commands/watch.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import { readSnapshot } from "./state/snapshot.js";
 import { terminateRun } from "./state/store.js";
@@ -88,6 +89,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       return runsCommand(args);
     case "events":
       return eventsCommand(args);
+    case "watch":
+      return watchCommand(args);
     case "herdr":
       return herdrCommand(args);
     case "submit":
@@ -125,6 +128,9 @@ function printHelp(): void {
   console.log("  status        Print a run's status and owner liveness; --wait until it needs you");
   console.log("  runs          List the runs under the runs directory");
   console.log("  events        Print a run's lifecycle events as NDJSON; --follow to keep reading");
+  console.log(
+    "  watch         Print a run's header and events as readable lines; --follow to keep reading",
+  );
   console.log("");
   console.log("Configuration:");
   console.log("  config show   Print the effective configuration and where each value came from");
@@ -144,6 +150,9 @@ function printHelp(): void {
   console.log("  herdr status      Notify the focused project's active runs");
   console.log("  herdr start       Start a run with the project's .woof/start.json input");
   console.log("  herdr cancel      Cancel the focused project's single active run");
+  console.log(
+    "  herdr watch       Open a plugin pane following the focused project's single active run",
+  );
   console.log(
     "  herdr doctor      Check Woof, Herdr, Claude Code, trust and config for the focused project",
   );

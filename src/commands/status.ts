@@ -6,10 +6,11 @@ import { parseArgs } from "node:util";
 import { readJsonFile } from "../host/files.js";
 import { OUTCOME_EXIT_CODES, OUTCOME_FILE } from "../host/run.js";
 import { readRunStatus, type ReadRunStatusResult } from "../inspect/status.js";
+import { colorEnabled, formatHeader, formatHostOutcome } from "../observe/format.js";
 import { UsageError, milliseconds, parse } from "./common.js";
 
 export const STATUS_USAGE = `Usage: woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] [--poll-ms <n>]
-                   [--verify-artifacts]
+                   [--verify-artifacts] [--pretty]
 
 Prints one JSON line {"outcome":"status","status","result"} for the run in
 <run-dir>: status, owner liveness (unhosted, alive, lost, exited), active
@@ -25,7 +26,10 @@ With --wait (poll every --poll-ms, default 1000; --timeout-ms default 540000):
     at least two heartbeats apart), or exited (a host interrupted before the run
     recorded its end; its outcome.json, when present, is printed as hostOutcome);
   9 the run is blocked and needs the operator (unless --allow-blocked).
-The last line printed is always the status at return time.`;
+The last line printed is always the status at return time.
+--pretty prints the human header of woof watch (run, workflow, current stage,
+owner, agents, outcome) instead of the JSON line, with the same exit codes; a
+run directory it cannot read prints "woof status: <reason>: <message>".`;
 
 const DEFAULT_WAIT_TIMEOUT_MS = 540_000;
 const DEFAULT_HEARTBEAT_MS = 2000;
@@ -43,6 +47,7 @@ export async function statusCommand(args: string[]): Promise<number> {
           "allow-blocked": { type: "boolean" },
           "poll-ms": { type: "string" },
           "verify-artifacts": { type: "boolean" },
+          pretty: { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -64,6 +69,7 @@ export async function statusCommand(args: string[]): Promise<number> {
       : milliseconds(values["timeout-ms"], "--timeout-ms", 0, 604_800_000);
   const read = () =>
     readRunStatus(runDir, { verifyArtifacts: values["verify-artifacts"] === true });
+  const print = values.pretty === true ? printPretty : printJson;
 
   let current = read();
   if (values.wait !== true) return print(current, 0);
@@ -102,7 +108,22 @@ export async function statusCommand(args: string[]): Promise<number> {
   }
 }
 
-function print(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+function printPretty(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+  const format = { color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }) };
+  if (!current.ok) {
+    console.log(`woof status: ${current.reason}: ${current.message}`);
+    return 3;
+  }
+  const lines = formatHeader(
+    { status: current.status, agents: current.snapshot.agents, outcome: current.snapshot.outcome },
+    format,
+  );
+  if (hostOutcome !== undefined) lines.push(formatHostOutcome(hostOutcome, format));
+  console.log(lines.join("\n"));
+  return code;
+}
+
+function printJson(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
   if (current.ok) {
     console.log(
       JSON.stringify({
