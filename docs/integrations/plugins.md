@@ -37,7 +37,7 @@ reports the result. Every command and action below is a real, tested surface.
   stage, host owner, agents with role, kind, model and pane) and one line per
   event, following like `events --follow` and with its exit codes; `<run-dir>`
   defaults to `WOOF_RUN_DIR`. `status --pretty` prints only that header. Colors
-  only on a terminal without `NO_COLOR`. See
+  only when stdout is a terminal and `NO_COLOR` is unset or empty. See
   [observability](../architecture/observability.md#implemented-now-p4).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
   starts a workflow hosted in a Herdr pane (`--host herdr-pane`, default) or

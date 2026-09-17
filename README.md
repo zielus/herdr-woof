@@ -404,9 +404,9 @@ subject and a summary. `--follow` keeps reading until the run's terminal
 record, with the exit codes of `woof events --follow`; `woof events --pretty`
 prints the same output, and `woof status <run-dir> --pretty` prints only the
 header instead of JSON. Colors appear only when stdout is a terminal and
-`NO_COLOR` is unset. `woof run start --watch` opens that view in a pane below
-the run host; the pane stays open after the run so its last lines remain
-readable, unless `--no-keep-panes` is given (refused, exit 2, with `--host
+`NO_COLOR` is unset or empty. `woof run start --watch` opens that view in a
+pane below the run host; the pane stays open after the run so its last lines
+remain readable, unless `--no-keep-panes` is given (refused, exit 2, with `--host
 foreground` or outside Herdr):
 
 ```sh
