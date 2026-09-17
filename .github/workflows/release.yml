@@ -54,5 +54,17 @@ jobs:
       # Trusted publishing needs npm >= 11.5.1; Node 22.18.0 ships an older npm.
       - run: npm install -g npm@11.19.1
       - run: bun install --frozen-lockfile
+      # A version already on the registry (for example the first release, published by hand
+      # before the trusted publisher existed) is not published twice.
+      - id: registry
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "herdr-woof@${version}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "herdr-woof@${version} is already on the registry; skipping publish"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       # prepublishOnly builds dist/ before the tarball is packed.
-      - run: npm publish --provenance --access public
+      - if: steps.registry.outputs.published == 'false'
+        run: npm publish --provenance --access public
