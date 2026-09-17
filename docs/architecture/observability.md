@@ -53,13 +53,17 @@ and repair rounds. [Herdr socket API](https://herdr.dev/docs/socket-api/).
 
 ## Human-facing projection
 
-The Herdr adapter can publish role, model, task, workflow, stage, round, and state
-metadata. A useful display might read:
+The current publisher emits compact `$woof` and `$woof-role` pane tokens as
+described in [plugin surfaces](../integrations/plugins.md). The
+[next metadata phase](../design/herdr-metadata-phase.md) proposes separate
+role/kind/model/stage fields and matching worktree labels/keys on agent and
+workspace rows. The recommended sidebar omits stage totals and round/attempt
+counters; detailed inspection retains those facts. A proposed display might read:
 
 ```text
-builder · configured model
-task-123 · build-review · repair · round 2
-working
+83ac19e2 · woof/api
+builder · claude · configured model
+working · repair
 ```
 
 Metadata is a view of the engine state. Losing a sidebar update cannot change a

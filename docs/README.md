@@ -38,6 +38,19 @@ merged to master as `b329cdc`.
   [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
   [the acceptance evidence](acceptance/v1-evidence.md).
 
+## Proposed next phase
+
+[Use the existing Herdr plugin, then close display gaps](design/herdr-metadata-phase.md)
+starts with the [plugin audit](research/herdr-plugin-audit.md): registration,
+actions, basic metadata and third-party presets already exist. Configure and
+verify those first. Separate kind/model/stage fields and additional worktree cues
+are follow-ups only where the adoption check demonstrates a gap. Sidebar
+configuration and workspace presets remain outside Woof.
+
+See the [checkout-based plugin setup](integrations/herdr-setup.md) and
+[optional sidebar proposal](integrations/herdr-sidebar.md). New tokens are
+proposals; these pages do not claim that the phase is implemented or installed.
+
 ## Reading order
 
 Read in this order:
