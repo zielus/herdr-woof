@@ -93,3 +93,27 @@ jobs:
       - run: bun run check:version
       - run: bun run build
       - run: bun run smoke:package
+
+  # A PR that changes src/ must carry a CHANGELOG.md entry (CONTRIBUTING.md § Changelog).
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: src/ change requires a changelog entry
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "not a pull request: nothing to check"
+            exit 0
+          fi
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -q '^src/' && ! printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "::error::this PR changes src/ but not CHANGELOG.md; add an entry under [Unreleased]"
+            exit 1
+          fi
+          echo "ok"
