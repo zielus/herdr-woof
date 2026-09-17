@@ -13,10 +13,10 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D22.18-brightgreen)](https://nodejs.org/en/download)
 [![Herdr](https://img.shields.io/badge/herdr-%3E%3D0.9.0-blueviolet)](https://herdr.dev)
 
-Woof is an orchestration SDK and CLI for coding agents running through [Herdr](https://herdr.dev).
-It runs a workflow such as build → review → repair: it launches `claude` agents in Herdr panes,
-validates the artifact each agent submits and hands the accepted artifact to the next agent. A run
-ends when a review passes on the exact repaired revision or a limit ends it.
+Woof is a multi-agent workflow engine for [Herdr](https://herdr.dev): plan, build, review,
+repair, every hand-off verified. It launches `claude` agents in Herdr panes, validates the
+artifact each agent submits and hands the accepted artifact to the next agent. A run ends when a
+review passes on the exact repaired revision or a limit ends it.
 
 ## Demo
 
