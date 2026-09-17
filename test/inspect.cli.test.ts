@@ -301,6 +301,72 @@ out = await store.blockRun({ runDir, agentId: "worker", reason: "blocked_on_inpu
   });
 });
 
+describe("woof status --pretty", () => {
+  it("I9: prints the human header instead of JSON, with the same exit codes", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    openAttemptOk(runDir);
+    writeAliveHost(runDir);
+    const pretty = woof(["status", runDir, "--pretty"]);
+    expect(pretty.status, pretty.stdout + pretty.stderr).toBe(0);
+    expect(pretty.stdout.trim().split("\n")).toEqual([
+      "run      run-1  report-review@1  created",
+      `dir      ${realpathSync(runDir)}`,
+      "now      report v1 a1 (worker)",
+      `owner    alive pane w1:p9 pid ${process.pid}`,
+      "agent    worker  role writer kind claude model -",
+      "agent    reviewer  role reviewer kind claude model -",
+    ]);
+    expect(pretty.json).toBeUndefined();
+    // Without --pretty the JSON line is unchanged.
+    expect(woof(["status", runDir]).json).toMatchObject({ outcome: "status" });
+
+    terminateRunOk(runDir, "cancelled");
+    const waited = woof(["status", runDir, "--wait", "--pretty"], { timeoutMs: 20_000 });
+    expect(waited.status, waited.stdout).toBe(6);
+    const lines = waited.stdout.trim().split("\n");
+    expect(lines[0]).toBe("run      run-1  report-review@1  cancelled");
+    expect(lines.at(-1)).toBe("outcome  cancelled: test termination");
+
+    const empty = makeRunDir();
+    const refused = woof(["status", empty, "--pretty"]);
+    expect(refused.status).toBe(3);
+    expect(refused.stdout).toMatch(/^woof status: run_dir_invalid: /);
+  });
+
+  it("I9: --wait --pretty names the host outcome when the owner exited without a terminal record", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    writeAliveHost(runDir);
+    writeFileSync(
+      join(runDir, "host-exit.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.host.exit",
+        pid: process.pid,
+        exitedAt: new Date().toISOString(),
+        exitCode: 130,
+      }),
+    );
+    writeFileSync(
+      join(runDir, "outcome.json"),
+      JSON.stringify({
+        outcome: "rejected",
+        reason: "host_interrupted",
+        message: "the run host received a second signal",
+        details: [],
+      }),
+    );
+    const waited = woof(["status", runDir, "--wait", "--pretty", "--timeout-ms", "10000"], {
+      timeoutMs: 20_000,
+    });
+    expect(waited.status, waited.stdout).toBe(8);
+    expect(waited.stdout.trim().split("\n").at(-1)).toBe(
+      "host     rejected host_interrupted: the run host received a second signal",
+    );
+  });
+});
+
 describe("woof runs", () => {
   it("I5: lists runs newest first with owner and project, filters by project and skips non-runs", () => {
     const runsDir = tempDir("woof-runs-");
@@ -847,7 +913,7 @@ describe("woof doctor --json", () => {
 });
 
 describe("inspection is read-only", () => {
-  it("I8: status, runs, events and config show never create journal.lock or run herdr", async () => {
+  it("I8: status, runs, events, watch and config show never create journal.lock or run herdr", async () => {
     const root = tempDir("woof-readonly-");
     const bin = join(root, "bin");
     const log = join(root, "herdr.log");
@@ -885,8 +951,12 @@ describe("inspection is read-only", () => {
         env,
       }),
       woofAsync(["config", "show", "--project", root], { env }),
+      woofAsync(["watch", runDir], { env }),
+      woofAsync(["watch", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "400"], { env }),
+      woofAsync(["events", runDir, "--pretty"], { env }),
+      woofAsync(["status", runDir, "--pretty"], { env }),
     ]);
-    expect(results.map((result) => result.status)).toEqual([0, 7, 0, 0, 7, 0]);
+    expect(results.map((result) => result.status)).toEqual([0, 7, 0, 0, 7, 0, 0, 7, 0, 0]);
     const after = statSync(lockPath);
     expect(readFileSync(lockPath, "utf8")).toBe(sentinel);
     expect([after.ino, after.size, after.mtimeMs]).toEqual([

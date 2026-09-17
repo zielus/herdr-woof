@@ -14,7 +14,7 @@ import { UsageError } from "./common.js";
 import { doctorReport } from "./doctor.js";
 import { cliPath, defaultRunId, herdrBin, readWorkflowInput } from "./run.js";
 
-export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel|doctor>
+export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel|doctor|watch>
 
 Herdr plugin actions (unstable). The project is the git top level of the
 invocation context's focused pane directory, else the workspace directory, else
@@ -29,6 +29,10 @@ Each action shows a Herdr notification and prints one JSON line.
           none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
           configuration (a configuration problem is reported, not refused); exits 0
+  watch   open a Herdr plugin pane running woof watch --follow for the project's
+          single active run (herdr plugin pane open, run directory in
+          WOOF_RUN_DIR); exits 0 with outcome noop when none is active; refuses
+          (exit 2) when several are; 3 when the pane cannot be opened
 
 Exits 2 without a project context.`;
 
@@ -36,6 +40,8 @@ const TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled
 const NOTIFICATION_TIMEOUT_MS = 5000;
 const MAX_NOTIFICATION_BODY = 1000;
 const MAX_LISTED_RUNS = 5;
+const PANE_OPEN_TIMEOUT_MS = 10_000;
+const PLUGIN_ID = "herdr-woof";
 
 interface Project {
   root: string;
@@ -52,11 +58,15 @@ export async function herdrCommand(args: string[]): Promise<number> {
     return 0;
   }
   if (
-    (action !== "status" && action !== "start" && action !== "cancel" && action !== "doctor") ||
+    (action !== "status" &&
+      action !== "start" &&
+      action !== "cancel" &&
+      action !== "doctor" &&
+      action !== "watch") ||
     extra.length > 0
   ) {
     throw new UsageError(
-      `expected "herdr status", "herdr start", "herdr cancel" or "herdr doctor"\n\n${HERDR_USAGE}`,
+      `expected "herdr status", "herdr start", "herdr cancel", "herdr doctor" or "herdr watch"\n\n${HERDR_USAGE}`,
     );
   }
   const context = process.env["HERDR_PLUGIN_CONTEXT_JSON"];
@@ -95,6 +105,7 @@ export async function herdrCommand(args: string[]): Promise<number> {
     print({ outcome: "runs", ...listed, runs });
     return 0;
   }
+  if (action === "watch") return watch(project, runs);
   return cancel(project, runs);
 }
 
@@ -186,6 +197,79 @@ async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
   await notify(`Woof: rejected (${outcome.reason})`, outcome.message);
   print({ ...outcome, runId: run.runId, runDir: run.runDir });
   return isInfraReason(outcome.reason) ? 3 : 2;
+}
+
+async function watch(project: Project, runs: RunListEntry[]): Promise<number> {
+  const [run, ...others] = runs;
+  if (run === undefined) {
+    const message = `no active Woof run in ${project.root}`;
+    await notify("Woof: nothing to watch", message);
+    print({ outcome: "noop", reason: "no_active_run", message, details: [] });
+    return 0;
+  }
+  if (others.length > 0) {
+    const commands = runs.map((entry) => `woof watch ${entry.runDir}`);
+    const message = `${runs.length} active Woof runs in ${project.root}; watch one with woof watch <run-dir>`;
+    await notify(`Woof: ${runs.length} active runs, none watched`, commands.join("\n"));
+    print({
+      outcome: "rejected",
+      reason: "run_ambiguous",
+      message,
+      details: commands.map((command) => ({ field: "runDir", message: command })),
+    });
+    return 2;
+  }
+  // The [[panes]] entry runs bin/woof watch --follow from the plugin root; the run travels in its env.
+  const opened = await execHerdr(
+    [
+      "plugin",
+      "pane",
+      "open",
+      "--plugin",
+      PLUGIN_ID,
+      "--entrypoint",
+      "watch",
+      "--placement",
+      "split",
+      ...(project.focusedPaneId !== null ? ["--target-pane", project.focusedPaneId] : []),
+      "--direction",
+      "right",
+      "--env",
+      `WOOF_RUN_DIR=${run.runDir}`,
+      "--no-focus",
+    ],
+    { bin: herdrBin(), env: process.env, timeoutMs: PANE_OPEN_TIMEOUT_MS, graceMs: 2000 },
+  );
+  if (opened.exitCode !== 0) {
+    const message = `herdr plugin pane open failed: ${
+      opened.spawnErrorMessage ??
+      (opened.stderr.trim().split("\n")[0] || `exit ${opened.exitCode ?? opened.signal}`)
+    }`;
+    await notify("Woof: rejected (watch_pane_failed)", message);
+    print({ outcome: "rejected", reason: "watch_pane_failed", message, details: [] });
+    return 3;
+  }
+  await notify(`Woof: watching ${run.runId}`, run.runDir);
+  print({
+    outcome: "watching",
+    runId: run.runId,
+    runDir: run.runDir,
+    paneId: pluginPaneIdOf(opened.stdout),
+  });
+  return 0;
+}
+
+/** The pane id Herdr 0.9 reports for an opened plugin pane (result.plugin_pane.pane.pane_id). */
+function pluginPaneIdOf(stdout: string): string | null {
+  try {
+    const value = JSON.parse(stdout) as {
+      result?: { plugin_pane?: { pane?: { pane_id?: unknown } } };
+    };
+    const id = value.result?.plugin_pane?.pane?.pane_id;
+    return typeof id === "string" && id !== "" ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 async function refuseContext(refused: { reason: string; message: string }): Promise<number> {

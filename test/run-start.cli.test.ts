@@ -1175,3 +1175,157 @@ console.log(JSON.stringify({ h: createHash("sha256").update(readFileSync(process
     expect(help.stdout).toContain("--host herdr-pane|foreground");
   });
 });
+
+describe("woof run start --watch", () => {
+  const paneOf = (paneId: string) => JSON.stringify({ result: { pane: { pane_id: paneId } } });
+
+  /** S1's scenario with a second split and pane run for the watch pane; `call` entries come first. */
+  function writeWatchScenario(ws: Workspace, overrides: Json[] = []): void {
+    writeFileSync(
+      ws.scenario,
+      JSON.stringify([
+        ...overrides,
+        { match: ["pane", "split"], call: 1, stdout: paneOf("w9:p2") },
+        { match: ["pane", "split"], call: 2, stdout: paneOf("w9:p3") },
+        {
+          match: ["pane", "run"],
+          call: 1,
+          stdout: "{}",
+          spawn: {
+            commandIndex: 3,
+            env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p2" },
+            log: join(ws.root, "host.log"),
+          },
+        },
+        {
+          match: ["pane", "run"],
+          call: 2,
+          stdout: "{}",
+          spawn: {
+            commandIndex: 3,
+            env: { HERDR_PANE_ID: "w9:p3", TZ: "UTC" },
+            log: join(ws.root, "watch.log"),
+          },
+        },
+        { match: ["pane", "close"], stdout: "{}" },
+        { match: ["pane", "report-metadata"], stdout: "{}" },
+        { match: ["notification", "show"], stdout: "{}" },
+      ]),
+    );
+  }
+
+  const watchLog = (ws: Workspace) =>
+    existsSync(join(ws.root, "watch.log")) ? readFileSync(join(ws.root, "watch.log"), "utf8") : "";
+
+  it("S9: opens a watch pane below the host running woof watch <run-dir> --follow, and leaves it open", async () => {
+    const ws = workspace();
+    writeWatchScenario(ws);
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir, ["--run-id", "s9-run", "--watch"]), {
+      WOOF_TEST_SCRIPT: "slow",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    expect(started.stdout.trim().split("\n")).toHaveLength(1);
+    expect(started.json).toMatchObject({
+      outcome: "started",
+      runId: "s9-run",
+      host: { mode: "herdr-pane", paneId: "w9:p2" },
+      watch: {
+        paneId: "w9:p3",
+        command: [expect.stringMatching(/^\/.*node[^/]*$/), cliPath, "watch", runDir, "--follow"],
+      },
+    });
+    const calls = fakeCalls(ws);
+    const panes = calls.filter((argv) => argv[1] === "split" || argv[1] === "run");
+    expect(panes.map((argv) => argv.slice(0, 3))).toEqual([
+      ["pane", "split", "--current"],
+      ["pane", "run", "w9:p2"],
+      ["pane", "split", "w9:p2"],
+      ["pane", "run", "w9:p3"],
+    ]);
+    expect(panes[2]).toEqual([
+      "pane",
+      "split",
+      "w9:p2",
+      "--direction",
+      "down",
+      "--cwd",
+      ws.repo,
+      "--no-focus",
+    ]);
+    expect(panes[3]?.slice(4)).toEqual([cliPath, "watch", runDir, "--follow"]);
+    expect(panes[3]?.[3]).toMatch(/^\/.*node[^/]*$/);
+
+    writeFileSync(ws.release, "go\n");
+    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
+    await waitFor(
+      () => watchLog(ws).includes("-- end (terminated)"),
+      "the watch pane to see the end",
+      30_000,
+    );
+    const log = watchLog(ws);
+    expect(log).toMatch(/^run      s9-run  build-review@1 /);
+    expect(log).toMatch(/ run\.terminated +- {2}completed: /);
+    expect(fakeCalls(ws).some((argv) => argv[1] === "close")).toBe(false);
+  }, 60_000);
+
+  it("S10: with --no-keep-panes the watch pane closes itself after watch ends", async () => {
+    const ws = workspace();
+    writeWatchScenario(ws);
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-keep-panes"]));
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    const run = fakeCalls(ws).filter((argv) => argv[1] === "run")[1];
+    expect(run?.slice(-6)).toEqual(["--follow", "&&", fakeHerdr, "pane", "close", "w9:p3"]);
+    expect(started.json?.["watch"]["command"].slice(-6)).toEqual([
+      "--follow",
+      "&&",
+      fakeHerdr,
+      "pane",
+      "close",
+      "w9:p3",
+    ]);
+    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
+    await waitFor(
+      () => fakeCalls(ws).some((argv) => argv.join(" ") === "pane close w9:p3"),
+      "the watch pane to close itself",
+      30_000,
+    );
+    expect(watchLog(ws)).toContain("-- end (terminated)");
+  }, 60_000);
+
+  it("S11: --watch is refused before launch with --host foreground or outside Herdr", () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const foreground = woofIn(ws, startArgs(ws, runDir, ["--watch", "--host", "foreground"]));
+    expect(foreground.status, foreground.stdout + foreground.stderr).toBe(2);
+    expect(foreground.json).toMatchObject({ outcome: "rejected", reason: "watch_unavailable" });
+    expect(foreground.json?.["message"]).toContain("--watch");
+    const outside = woofIn(ws, startArgs(ws, runDir, ["--watch"]), {
+      HERDR_ENV: undefined,
+      HERDR_PANE_ID: undefined,
+    });
+    expect(outside.status, outside.stdout + outside.stderr).toBe(2);
+    expect(outside.json).toMatchObject({ outcome: "rejected", reason: "watch_unavailable" });
+    expect(outside.json?.["message"]).toContain("--watch");
+    expect(fakeCalls(ws)).toEqual([]);
+    expect(existsSync(runDir)).toBe(false);
+    expect(woofIn(ws, ["run", "start", "--help"]).stdout).toContain("[--watch]");
+  });
+
+  it("S12: a watch pane that cannot be split is reported next to the started run, which still completes", async () => {
+    const ws = workspace();
+    writeWatchScenario(ws, [
+      { match: ["pane", "split"], call: 2, exit: 1, stderr: "split refused\n" },
+    ]);
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir, ["--watch"]));
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    expect(started.json).toMatchObject({
+      outcome: "started",
+      watch: { problem: "herdr pane split w9:p2 failed: split refused" },
+    });
+    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "run")).toHaveLength(1);
+  }, 60_000);
+});

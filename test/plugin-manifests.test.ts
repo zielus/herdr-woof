@@ -72,7 +72,7 @@ describe("herdr-plugin.toml", () => {
     any // oxlint-disable-line no-explicit-any
   >;
 
-  it("builds from the checkout and declares the four actions", () => {
+  it("builds from the checkout and declares the five actions and the watch pane", () => {
     expect(manifest).toMatchObject({
       id: "herdr-woof",
       name: "Woof",
@@ -91,8 +91,16 @@ describe("herdr-plugin.toml", () => {
       "status",
       "start",
       "cancel",
+      "watch",
     ]);
-    expect(manifest["panes"]).toBeUndefined();
+    expect(manifest["panes"]).toEqual([
+      {
+        id: "watch",
+        title: "Woof watch",
+        placement: "split",
+        command: ["bin/woof", "watch", "--follow"],
+      },
+    ]);
     expect(manifest["events"]).toBeUndefined();
   });
 
@@ -116,7 +124,14 @@ describe("herdr-plugin.toml", () => {
       ["status", ["bin/woof", "herdr", "status"]],
       ["start", ["bin/woof", "herdr", "start"]],
       ["cancel", ["bin/woof", "herdr", "cancel"]],
+      ["watch", ["bin/woof", "herdr", "watch"]],
     ]);
+    // The watch pane runs a command the CLI lists too; its run directory arrives as WOOF_RUN_DIR.
+    for (const pane of manifest["panes"] as Array<{ command: string[] }>) {
+      const [bin, ...args] = pane.command;
+      expect(bin).toBe("bin/woof");
+      expect(listed(help, args[0] ?? ""), args.join(" ")).toBe(true);
+    }
   });
 });
 

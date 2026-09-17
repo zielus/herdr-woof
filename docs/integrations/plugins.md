@@ -3,8 +3,8 @@
 Status: foundation, plus p1–p3 CLI/SDK prototypes and p4 configuration, run
 hosting and inspection. As of p4, `woof run start` hosts a workflow run in a
 Herdr pane with a heartbeat-tracked liveness, `woof status`/`runs`/`events`/
-`config show` give read-only inspection, and both plugins are functional: the
-Herdr plugin exposes `doctor`, `status`, `start` and `cancel` actions, and the
+`watch`/`config show` give read-only inspection, and both plugins are functional: the
+Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and `watch` actions, and the
 Claude Code plugin's `/woof:run` command starts a run, waits for it and
 reports the result. Every command and action below is a real, tested surface.
 
@@ -29,20 +29,34 @@ reports the result. Every command and action below is a real, tested surface.
   user or built-in), the file that supplied it and what it shadows. See
   [configuration](../architecture/configuration.md#implemented-now-p4).
 - Inspection (read-only; no journal lock, never contacts Herdr):
-  `status <run-dir> [--wait]`, `runs [--runs-dir <dir>] [--project <dir>]
+  `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
-[--stats]`. See
+[--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--after <cursor>]
+[--poll-ms <n>] [--timeout-ms <n>]`. `watch` (and `events --pretty`, which
+  prints exactly the same) is the human view: a header (run, workflow, current
+  stage, host owner, agents with role, kind, model and pane) and one line per
+  event, following like `events --follow` and with its exit codes; `<run-dir>`
+  defaults to `WOOF_RUN_DIR`. `status --pretty` prints only that header. Colors
+  only when stdout is a terminal and `NO_COLOR` is unset or empty. See
   [observability](../architecture/observability.md#implemented-now-p4).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
   starts a workflow hosted in a Herdr pane (`--host herdr-pane`, default) or
-  in this process (`--host foreground`); `run cancel <run-dir>`; `run
+  in this process (`--host foreground`); with `--watch` (herdr-pane only;
+  refused with exit 2 under `--host foreground` or outside Herdr) it also
+  splits a pane below the host running `woof watch <run-dir> --follow` and
+  adds `watch: {paneId, command}` (or `watch: {problem}`) to its output. The
+  watch pane closes when the run ends only with an explicit `--no-keep-panes`
+  (its typed command is then `… --follow && herdr pane close <pane>`); unlike
+  agent panes it otherwise stays, so its final lines remain readable;
+  `run cancel <run-dir>`; `run
 build-review …` (foreground, kept as an alias for `run start --workflow
 build-review --host foreground`); `run host <run-dir>` (internal and
   unstable — hosts a launch request in this process; `run start` types this
   into the Herdr pane it opens).
 - Herdr plugin actions (unstable; the project comes from
   `HERDR_PLUGIN_CONTEXT_JSON`, never the working directory): `herdr status`,
-  `herdr start`, `herdr cancel`, `herdr doctor` — see "Herdr plugin" below.
+  `herdr start`, `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
+  plugin" below.
 
 See [domain model](../architecture/domain-model.md#implemented-now-p4) for
 run hosting's claim/heartbeat/liveness contract and
@@ -60,8 +74,9 @@ existing capabilities, saved configuration and live verification. The behavior
 below describes the existing implementation.
 
 `herdr-plugin.toml` registers a build step (`bun install --frozen-lockfile`,
-`bun run build`) and four parameterless actions, each running `bin/woof
-herdr <action>` from the plugin's own checkout:
+`bun run build`), five parameterless actions, each running `bin/woof
+herdr <action>` from the plugin's own checkout, and one plugin pane
+(`[[panes]] watch`, command `bin/woof watch --follow`):
 
 - **`doctor`** — `woof doctor --json` for the invocation context's project:
   Herdr and Claude Code availability, the read-only Claude folder-trust
@@ -87,6 +102,20 @@ herdr <action>` from the plugin's own checkout:
   no-op must exit 0. With several active, refuses (exit 2) with
   `{"outcome":"rejected","reason":"run_ambiguous",…}`, naming each
   `woof run cancel <run-dir>`.
+- **`watch`** ("Woof: watch the active run") — opens a Herdr plugin pane
+  following the project's one non-terminal run: `herdr plugin pane open
+--plugin herdr-woof --entrypoint watch --placement split [--target-pane
+<focused pane>] --direction right --env WOOF_RUN_DIR=<run-dir> --no-focus`.
+  The pane's fixed command runs `bin/woof watch --follow` from the plugin
+  root and reads the run directory from `WOOF_RUN_DIR`. Prints
+  `{"outcome":"watching","runId","runDir","paneId"}` and notifies "Woof:
+  watching <run-id>". With none active, exits **0** with `outcome` `noop`
+  (`no_active_run`, "Woof: nothing to watch"), like `cancel`; with several,
+  refuses (exit 2, `run_ambiguous`), naming each `woof watch <run-dir>`; a
+  pane that cannot be opened is `watch_pane_failed` (exit 3). Herdr closes a
+  plugin pane when its command exits, so the pane disappears as soon as the
+  run reaches its terminal record; use `woof watch <run-dir>` in a shell to
+  read the full history afterwards.
 
 Every action, including `doctor`, resolves its target project from
 `HERDR_PLUGIN_CONTEXT_JSON`, never from the action process's own working
@@ -120,6 +149,7 @@ For local wiring checks after a build:
 herdr plugin link .
 herdr plugin action list --plugin herdr-woof
 herdr plugin action invoke status --plugin herdr-woof
+herdr plugin action invoke watch --plugin herdr-woof
 ```
 
 ## Claude Code plugin

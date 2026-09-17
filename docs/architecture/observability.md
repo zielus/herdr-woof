@@ -442,8 +442,20 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   estimate from the iterator's own step time, not a measurement taken inside
   `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
   its first real consumer).
+- **`woof watch [<run-dir>]`** (and **`woof events --pretty`**, the same
+  output) is a human projection of the same stream, from the pure formatter
+  `src/observe/format.ts`: a header from one `readRunStatus` read (run,
+  workflow, active attempts, `liveness.owner`, each agent's role, kind,
+  model and assigned pane, the outcome once recorded), then one line per
+  event (local `HH:MM:SS`, `#seq`, type, subject and a type-specific
+  summary; an unknown type prints its data as compact JSON) and a
+  `-- end (<reason>) cursor <cursor>` line. It shares the read and follow
+  loop of `woof events`, so its exit codes are identical. Journal strings
+  are sanitized (control characters become spaces), and SGR colors are
+  added only when stdout is a TTY and `NO_COLOR` is unset or empty.
+  `woof status --pretty` prints that header instead of the JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
-events`** and **`woof run show`** are read-only and never take the journal
+events`**, **`woof watch`** and **`woof run show`** are read-only and never take the journal
   lock or contact Herdr; see
   [configuration](configuration.md#implemented-now-p4). **`woof doctor
 [--json]`** is not part of that guarantee: it is non-mutating, but it
