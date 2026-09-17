@@ -31,11 +31,13 @@ changes `src/` without one; the Changesets Version PR
 
 `CHANGELOG.md` sections from 0.1.3 on are generated from those files as
 `## x.y.z` with `### Patch Changes` / `### Minor Changes` bullets that link the
-pull request. Sections up to 0.1.2 keep their Keep a Changelog form
-(`## [x.y.z] - YYYY-MM-DD`) under the heading `## Releases up to 0.1.2`. That
-heading exists because Changesets inserts a new release above the first
-`## x.y.z` heading, or directly below the title when there is none; without it
-the first generated section would land above the file's introduction.
+pull request. Sections up to 0.1.1 keep their Keep a Changelog heading
+(`## [x.y.z] - YYYY-MM-DD`). The 0.1.2 section's heading is the bare `## 0.1.2`
+(its date moved into the body) for two reasons: Changesets inserts a new release
+above the first `## x.y.z` heading, or directly below the title when there is
+none, which would have put 0.1.3 above the file's introduction; and the
+changesets publish action takes the GitHub release body from the section whose
+heading is exactly the version, falling back to the whole file.
 `check:version` and `release:preflight` accept both heading forms, require a
 non-empty section for `package.json`'s version, and require a date only in the
 bracketed form.
