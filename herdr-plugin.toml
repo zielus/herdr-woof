@@ -5,7 +5,7 @@ id = "herdr-woof"
 name = "Woof"
 version = "0.1.2"
 min_herdr_version = "0.9.0"
-description = "Start, inspect and cancel Woof workflow runs; runs report state as pane metadata."
+description = "Start, inspect, watch and cancel Woof workflow runs; runs report state as pane metadata."
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -37,3 +37,17 @@ id = "cancel"
 title = "Woof: cancel the active run"
 description = "Cancel the focused project's single active Woof run."
 command = ["bin/woof", "herdr", "cancel"]
+
+[[actions]]
+id = "watch"
+title = "Woof: watch the active run"
+description = "Open a pane following the focused project's single active Woof run."
+command = ["bin/woof", "herdr", "watch"]
+
+# The pane the watch action opens: `woof watch --follow` from the plugin root, for the run
+# directory the action passes as WOOF_RUN_DIR. Herdr closes a plugin pane when its command exits.
+[[panes]]
+id = "watch"
+title = "Woof watch"
+placement = "split"
+command = ["bin/woof", "watch", "--follow"]
