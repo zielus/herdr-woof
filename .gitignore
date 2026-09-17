@@ -20,3 +20,6 @@ graphify-out/
 # per-machine Claude Code state
 .claude/settings.local.json
 .claude/worktrees/
+
+# demo video sources stay local; the GIF is the committed artifact
+assets/*.mp4
