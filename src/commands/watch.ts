@@ -11,7 +11,7 @@ import {
   type FormatOptions,
 } from "../observe/format.js";
 import { UsageError, milliseconds, parse } from "./common.js";
-import { streamEvents, type EventsSink, type StreamOptions } from "./events.js";
+import { streamEvents, type EventsSink, type StreamOptions } from "./stream-events.js";
 
 export const WATCH_USAGE = `Usage: woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
 
@@ -63,41 +63,57 @@ export async function watchCommand(args: string[]): Promise<number> {
   });
 }
 
-function write(line: string): void {
-  process.stdout.write(`${line}\n`);
-}
-
 /** woof watch and woof events --pretty: the header, then the event stream as readable lines. */
 export async function watchRun(runDir: string, options: StreamOptions): Promise<number> {
   const format: FormatOptions = {
     color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }),
   };
-  // A reader that went away (woof watch | head) ends the watch quietly instead of an EPIPE crash.
-  process.stdout.once("error", (error: NodeJS.ErrnoException) => {
+  // A reader that went away (woof watch | head) stops the follow and exits 0 instead of an EPIPE
+  // crash; any other stdout error still throws. The handler lives only as long as this call.
+  const closed = new AbortController();
+  const onError = (error: NodeJS.ErrnoException) => {
     if (error.code !== "EPIPE") throw error;
-    process.exit(0);
-  });
-  const header = readRunStatus(runDir);
-  if (header.ok) {
-    for (const line of formatHeader(
-      {
-        status: header.status,
-        agents: header.snapshot.agents,
-        outcome: header.snapshot.outcome,
-      },
-      format,
-    ))
-      write(line);
-  } else {
-    // The stream decides the exit code: a follow on a directory without a journal yet still waits.
-    write(`run      ${runDir}: ${header.reason}`);
-  }
-  write("");
-  const sink: EventsSink = {
-    event: (event) => write(formatEventLine(event, format)),
-    problem: (item) => write(formatProblem(item, format)),
-    end: (cursor, _terminal, reason) => write(formatEnd(cursor, reason, format)),
-    stats: (line) => process.stderr.write(`${JSON.stringify(line)}\n`),
+    closed.abort();
   };
-  return streamEvents(runDir, options, sink);
+  const write = (line: string) => {
+    if (!closed.signal.aborted) process.stdout.write(`${line}\n`);
+  };
+  process.stdout.on("error", onError);
+  try {
+    const header = readRunStatus(runDir);
+    if (header.ok) {
+      for (const line of formatHeader(
+        {
+          status: header.status,
+          agents: header.snapshot.agents,
+          outcome: header.snapshot.outcome,
+        },
+        format,
+      ))
+        write(line);
+    } else {
+      // The stream decides the exit code: a follow on a directory without a journal yet still waits.
+      write(`run      ${runDir}: ${header.reason}`);
+    }
+    write("");
+    const sink: EventsSink = {
+      event: (event) => write(formatEventLine(event, format)),
+      problem: (item) => write(formatProblem(item, format)),
+      end: (cursor, _terminal, reason) => write(formatEnd(cursor, reason, format)),
+      stats: (line) => process.stderr.write(`${JSON.stringify(line)}\n`),
+    };
+    const code = await streamEvents(runDir, { ...options, signal: closed.signal }, sink);
+    // A queued write to a pipe reports EPIPE to its callback before the error event: wait for the
+    // flush and, when it failed, for the close after the error event, so the handler above sees it.
+    await new Promise<void>((done) => {
+      if (closed.signal.aborted) return done();
+      process.stdout.write("", (error) => {
+        if (error === null || error === undefined || closed.signal.aborted) done();
+        else process.stdout.once("close", () => done());
+      });
+    });
+    return closed.signal.aborted ? 0 : code;
+  } finally {
+    process.stdout.off("error", onError);
+  }
 }

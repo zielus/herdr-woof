@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -235,5 +235,33 @@ describe("woof watch", () => {
       expect.stringMatching(/^!! resync_required cursor_foreign: /),
       `-- end (resync_required) cursor ${foreign}`,
     ]);
+  });
+
+  it("W8: a reader that closes early (woof watch --follow | head -1) ends the follow with exit 0 and no stack trace", async () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    const child = spawn(
+      "node",
+      [cliPath, "watch", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "20000"],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, ...ENV, NO_COLOR: "" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    const exited = new Promise<number | null>((resolveExit) => child.on("close", resolveExit));
+    // Like head -1: read the first line, then close the pipe while the follow still waits.
+    await new Promise<void>((firstChunk) => child.stdout.once("data", () => firstChunk()));
+    child.stdout.destroy();
+    await delay(100);
+    // The next event is written into the closed pipe.
+    openAttemptOk(runDir);
+    const started = Date.now();
+    const status = await exited;
+    expect(status, stderr).toBe(0);
+    expect(stderr).toBe("");
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
