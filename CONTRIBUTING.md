@@ -29,13 +29,18 @@ agent acting for him) is the one who merges.
 - Delete the branch after the merge unless a document cites one of its
   commits.
 
-## Changelog
+## Changesets
 
-`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-A pull request that changes anything under `src/` must add an entry under
-`## [Unreleased]`; the `changelog` CI job fails otherwise. Docs-only, CI-only
-and test-only changes may add one. Write the entry for the person upgrading:
-what changed in observable behaviour, not which file moved.
+Releases are cut with [Changesets](https://changesets.dev). A pull request that
+changes anything under `src/` runs `bun run changeset` and commits the
+generated `.changeset/*.md` file; the `changelog` CI job fails otherwise.
+Docs-only, CI-only and test-only changes may add one.
+
+Pick `patch` for fixes and `minor` for new behaviour (see
+[docs/decisions/release-process.md](docs/decisions/release-process.md) §
+Versioning). The summary you write is what the user reads in `CHANGELOG.md` and
+in the GitHub release: write it for the person upgrading, about what changed in
+observable behaviour, not which file moved.
 
 ## Verification
 
@@ -60,10 +65,15 @@ evidence pointers.
 
 ## Releases
 
-Tags and npm publishes are the maintainer's action, taken through the
-`release` skill (`.claude/skills/release/SKILL.md`), never by an agent on its
-own. The process itself is recorded in
-[docs/decisions/release-process.md](docs/decisions/release-process.md).
+Every merge to `master` runs `.github/workflows/release.yml`. While changesets
+are pending it opens, or updates, the pull request "chore: version packages",
+which bumps the version in `package.json`, `herdr-plugin.toml` and the Claude
+Code `plugin.json` and writes the `CHANGELOG.md` section. Merging that pull
+request publishes the package to npm through trusted publishing, tags
+`vX.Y.Z` and creates the GitHub release. The maintainer's only action is
+merging it. A manual tag and `npm publish` are the fallback only, taken through
+the `release` skill (`.claude/skills/release/SKILL.md`). The process itself is
+recorded in [docs/decisions/release-process.md](docs/decisions/release-process.md).
 
 ## Agents
 
