@@ -1,7 +1,7 @@
 {
   "name": "woof",
   "description": "Start and inspect Woof workflow runs in Herdr",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "author": { "name": "Tomasz Chmielarz", "url": "https://github.com/zielus" },
   "repository": "https://github.com/zielus/herdr-woof",
   "keywords": ["herdr", "orchestration", "agents"]
