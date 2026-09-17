@@ -43,7 +43,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "woof": "./dist/cli.js"
+    "woof": "dist/cli.js"
   },
   "files": [
     "dist/",
