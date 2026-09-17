@@ -1,8 +1,10 @@
 # Release process
 
-Status: decided 2026-09-17 after the 0.1.1 and 0.1.2 releases. This records how a
-version of `herdr-woof` gets from `master` to npm and why each step exists.
-The executable form is the `release` skill in `.claude/skills/release/SKILL.md`.
+Status: decided 2026-09-17 after the 0.1.1 and 0.1.2 releases; Changesets
+adopted the same day. This records how a version of `herdr-woof` gets from
+`master` to npm and why each step exists. The workflow is
+`.github/workflows/release.yml`; the operator's view, including the manual
+fallback, is the `release` skill in `.claude/skills/release/SKILL.md`.
 
 ## Versioning
 
@@ -20,41 +22,58 @@ The version is written in three files and must agree: `package.json`,
 
 ## Changelog as the gate
 
-`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Every PR touching `src/` adds to `## [Unreleased]` (the `changelog` CI job
-checks this). A release is therefore never written at release time: it is the
-accumulated `[Unreleased]` section, and `release:bump` refuses to run when that
-section is empty.
+Release notes are written by the pull request author, not at release time.
+Every PR touching `src/` runs `bun run changeset` and commits the generated
+`.changeset/*.md` file: the bump level (patch or minor, per the table above)
+and a summary for the person upgrading. The `changelog` CI job fails a PR that
+changes `src/` without one; the Changesets Version PR
+(`changeset-release/master`) is exempt, because it consumes changesets.
+
+`CHANGELOG.md` sections from 0.1.3 on are generated from those files as
+`## x.y.z` with `### Patch Changes` / `### Minor Changes` bullets that link the
+pull request. Sections up to 0.1.2 keep their Keep a Changelog form
+(`## [x.y.z] - YYYY-MM-DD`) under the heading `## Releases up to 0.1.2`. That
+heading exists because Changesets inserts a new release above the first
+`## x.y.z` heading, or directly below the title when there is none; without it
+the first generated section would land above the file's introduction.
+`check:version` and `release:preflight` accept both heading forms, require a
+non-empty section for `package.json`'s version, and require a date only in the
+bracketed form.
 
 ## Steps
 
-1. **Bump on a branch.** `bun run release:bump <x.y.z>` edits the three version
-   files and moves `[Unreleased]` under `## [x.y.z] - YYYY-MM-DD`. It refuses a
-   dirty tree, a version that is not strictly greater, an existing section for
-   that version, or an empty `[Unreleased]`. It never commits or tags.
-2. **PR, CI green, merge.** The bump is an ordinary change. `master` is
-   protected, so this is the only way it lands.
-3. **Strict preflight on `master`.** `bun run release:preflight --strict` turns
-   every warning and skip into a failure: secrets scan (gitleaks) must run,
-   links must resolve, `npm pack --dry-run` must list `dist/cli.js`, the bin
-   entry and the Claude plugin.
-4. **Tag, human gate.** `git tag -a v<x.y.z> <merge-sha> -m "Woof <x.y.z>"` and
-   `git push origin v<x.y.z>`. Pushing the tag is the only trigger of
-   `.github/workflows/release.yml`. An agent never creates or pushes a tag.
-5. **Publish, automated.** `release.yml` runs verify, builds, and publishes
-   with npm trusted publishing (OIDC, provenance attached). There is no npm
-   token in the repository or its secrets. If the tagged version is already on
-   the registry the publish step is skipped and the run stays green.
-6. **GitHub release.** `gh release create v<x.y.z> --notes-file <(bun run
-release:notes <x.y.z>)` renders the changelog section as the release body.
-7. **Confirm.** `npm view herdr-woof version` prints the new version.
+1. **Merge a PR with a changeset.** Any push to `master` runs `release.yml`.
+   Its `select-mode` job reads `.changeset/`: pending changesets select
+   `version`; none, with a `package.json` version that is not on the registry,
+   select `publish`; otherwise nothing runs.
+2. **Version PR, automated.** The `version` job runs `bun run version`
+   (`changeset version`, then `scripts/release/sync-version.ts` copies the new
+   version into `herdr-plugin.toml` and the Claude Code `plugin.json`, then
+   prettier) and opens or updates the PR "chore: version packages" on
+   `changeset-release/master`. More merges before it is merged update the same
+   PR. With the default `GITHUB_TOKEN` that PR gets no CI runs; a
+   `CHANGESETS_TOKEN` secret (fine-grained PAT, contents and pull-requests
+   write) fixes that, or close and reopen the PR.
+3. **Merge the Version PR, human gate.** This is the maintainer's only action
+   in a normal release. Everything before it is reversible.
+4. **Gate and pack, automated.** On the resulting push, `select-mode` selects
+   `publish`. `gate` runs `bun run verify` and
+   `bun run release:preflight --only versions,changelog,private-strings,pack`;
+   `pack` builds and packs the tarball from the publish plan.
+5. **Publish, automated.** `publish` runs in the `npm` environment (add
+   required reviewers there for a second human gate), publishes the packed
+   tarball with npm trusted publishing (OIDC, provenance attached), pushes the
+   tag `vX.Y.Z` and creates the GitHub release from the changelog section.
+   There is no npm token in the repository or its secrets. `id-token: write`
+   is granted to this job only.
+6. **Confirm.** `npm view herdr-woof version` prints the new version.
 
 ## Fallback: manual publish
 
 If trusted publishing is unavailable, `npm publish` from a clean `master`
-checkout by the maintainer, with npm's browser 2FA. Tag first so the tag and the
-published tarball share a commit. `release.yml` then skips the already-published
-version.
+checkout by the maintainer, with npm's browser 2FA, after the Version PR has
+merged. Tag first so the tag and the published tarball share a commit. The next
+`release.yml` run finds the version on the registry and publishes nothing.
 
 ## Why these rules
 
@@ -64,7 +83,12 @@ version.
   `package.json` (tracked for phase 8).
 - **PR-only master.** Two direct pushes broke lint and format on `master`
   during phase 7. Protection makes the CI gate unavoidable.
-- **Tag by a human.** Publishing is irreversible and public. Everything before
-  the tag is reversible.
+- **Merge by a human.** Publishing is irreversible and public. Merging the
+  Version PR is the one human step before it; everything before that merge is
+  reversible.
+- **Changesets, adopted 2026-09-17, replaces the hand-rolled bump**
+  (`release:bump`, `release:notes`, a human-pushed tag). Reasons: bump-by-merge
+  is the ecosystem standard (pnpm, Turborepo, Radix); entries are written by
+  the PR author when the change is fresh; no token lives in the repository.
 - **Serial verify.** The real-process timing tests flake above roughly 1.5×
   machine load; three concurrent verify runs produced false failures twice.
