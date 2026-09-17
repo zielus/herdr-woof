@@ -53,7 +53,7 @@ configuration-driven role and workflow resolution.
 
 For registration and wiring, see [Set up the Woof Herdr plugin](herdr-setup.md).
 For operator-owned presentation, see [Optional sidebar](herdr-sidebar.md).
-The [next metadata phase](../design/herdr-metadata-phase.md) first verifies the
+The [metadata proposal](../proposals/herdr-metadata.md) first verifies the
 existing setup, then considers separate stage/model fields and worktree cues.
 See the [audit](../research/herdr-plugin-audit.md) for the difference between
 existing capabilities, saved configuration and live verification. The behavior

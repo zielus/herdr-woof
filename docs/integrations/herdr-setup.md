@@ -1,7 +1,7 @@
 # Set up the Woof Herdr plugin
 
 Status: guide for the existing 0.1.2 checkout-based integration. Rich metadata
-and the proposed sidebar are a [future phase](../design/herdr-metadata-phase.md).
+and the proposed sidebar are a [future phase](../proposals/herdr-metadata.md).
 Writing this guide did not install a plugin or alter local Herdr configuration.
 
 ## Installation is separate from CLI availability
@@ -76,7 +76,7 @@ cancel work merely to check installation; follow the behavior documented in
 The plugin already publishes `$woof` and `$woof-role` while a hosted run is active.
 Herdr shows custom fields only when its sidebar configuration references them.
 Use the [sidebar guide](herdr-sidebar.md) for a current-version example and the
-proposed worktree-oriented layout.
+[proposed worktree-oriented layout](../proposals/herdr-metadata.md#conditional-follow-ups).
 
 Merge selected settings into your existing `~/.config/herdr/config.toml`; do not
 overwrite the whole file or repeat TOML table declarations. Apply them using the

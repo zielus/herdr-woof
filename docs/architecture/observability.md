@@ -54,17 +54,8 @@ and repair rounds. [Herdr socket API](https://herdr.dev/docs/socket-api/).
 ## Human-facing projection
 
 The current publisher emits compact `$woof` and `$woof-role` pane tokens as
-described in [plugin surfaces](../integrations/plugins.md). The
-[next metadata phase](../design/herdr-metadata-phase.md) proposes separate
-role/kind/model/stage fields and matching worktree labels/keys on agent and
-workspace rows. The recommended sidebar omits stage totals and round/attempt
-counters; detailed inspection retains those facts. A proposed display might read:
-
-```text
-83ac19e2 · woof/api
-builder · claude · configured model
-working · repair
-```
+described in [plugin surfaces](../integrations/plugins.md). See the
+[Herdr metadata proposal](../proposals/herdr-metadata.md) for proposed extensions.
 
 Metadata is a view of the engine state. Losing a sidebar update cannot change a
 gate decision. Keep visual layout and keybindings in the host's presentation
