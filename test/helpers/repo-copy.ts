@@ -33,6 +33,11 @@ export function git(cwd: string, ...args: string[]): string {
       "user.email=release-test@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      // `git commit` otherwise spawns a detached `git maintenance run --auto` that outlives the
+      // call and writes under .git/ while a test removes the copy (ENOTEMPTY). `gc.auto=0` does
+      // not stop that spawn; `maintenance.auto=false` does.
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV } },

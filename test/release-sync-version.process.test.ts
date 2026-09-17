@@ -10,7 +10,8 @@ import { copyRepository } from "./helpers/repo-copy.js";
 // `bun` processes in a throwaway copy of the repository.
 const dirs: string[] = [];
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 const bun = (process.env["PATH"] ?? "")

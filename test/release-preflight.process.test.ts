@@ -26,7 +26,8 @@ const dirs: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) await new Promise((done) => server.close(done));
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
