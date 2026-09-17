@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `package.json` `bin` path is `dist/cli.js` without a leading `./`: npm 11
+  silently dropped the `./`-prefixed entry at publish time, which would have
+  shipped the package without the `woof` command.
+
+### Changed
+
+- README command blocks use the installed `woof` binary; `bin/woof` is
+  documented once as the checkout launcher.
+- One-line description in `package.json` and the README: "Multi-agent workflow
+  engine for Herdr: plan, build, review, repair, every hand-off verified."
+- `release.yml` skips `npm publish` when the tagged version is already on the
+  registry, so a release published by hand does not turn the tag's run red.
+
 ## [0.1.1] - 2026-09-17
 
 ### Added
