@@ -4,11 +4,10 @@ Status: proposed, 2026-09-17. Based on source at `87c9ca3` (Woof 0.1.2).
 
 ## Problem
 
-The [source and saved-configuration audit](../research/herdr-plugin-audit.md)
-found that Woof's Herdr plugin already exists and is registered in the saved local
-setup, but its sidebar metadata is not configured there. The registry caches
-version 0.1.0; the saved setup also includes Herdr Plus for project/worktree
-layouts. Live verification is still needed before adding plugin code.
+The [plugin audit](../research/herdr-plugin-audit.md) established that the Herdr
+integration and metadata publisher already exist. The remaining Woof work is to
+expose the missing facts through that publisher. Herdr configuration is a separate
+operator task and is not a prerequisite for implementing this proposal.
 
 The existing [manifest](../../herdr-plugin.toml) exposes `doctor`, `status`,
 `start` and `cancel`. The [publisher](../../src/host/metadata.ts) emits `$woof`
@@ -25,13 +24,11 @@ remaining gap, and are outside the proposed slice.
 
 ### Proposed slice: M0 and three tokens
 
-Start with M0: verify the existing registration, inspect `doctor`/`status` results,
-and try the [current sidebar guide](../integrations/herdr-sidebar.md) through the
-operator's normal setup flow. Observe an intended run across two worktrees,
-including role metadata, native lifecycle indicators, refresh and notifications.
-Record whether native workspace labels distinguish the checkouts. Reuse installed
-preset tooling and the [checkout setup guide](../integrations/herdr-setup.md).
-An npm CLI install alone does not register the checkout's Herdr manifest.
+M0 verifies the existing Woof integration boundary: manifest/launcher wiring,
+metadata sources, targeting and the publisher's existing tests. Reuse the shipped
+actions and reporter; identify only repository changes needed for the three-token
+contract. This does not include registering a personal plugin, configuring Herdr,
+choosing sidebar rows or setting up third-party plugins.
 
 Then extend the existing publisher with exactly three tokens: `woof-kind`,
 `woof-model` and counter-free `woof-stage`. Preserve `$woof` and `$woof-role` for
@@ -66,8 +63,8 @@ absent. Publish no prompts, secrets or artifact bodies.
 
 ### Token reference
 
-Names are literal keys, referenced with `$` in sidebar configuration. Scope is
-explicit below: candidate follow-up fields are not part of the proposed slice.
+Names are literal keys exposed to Herdr consumers. Scope is explicit below:
+candidate follow-up fields are not part of the proposed slice.
 Token names and their sources form a public display contract.
 
 | Token                                     | Target                                   | Meaning                                                                                                        | Scope                 |
@@ -89,12 +86,11 @@ Token names and their sources form a public display contract.
 
 These extensions, including M4 workspace projection and custom worktree keys,
 are outside this proposal's initial implementation scope. Select and plan them
-separately only when M0 demonstrates a need.
+separately when consumer requirements demonstrate a missing Woof metadata capability.
 
-**Explicit worktree identity.** First try native workspace labels and consistent
-names supplied by the operator or a preset plugin. If those are insufficient,
-consider `woof-worktree`, `woof-tree-key` and `woof-branch`. Agents from one checkout
-would share a readable label and stable key, independent of role, model, run,
+**Explicit worktree identity.** If independently established consumer requirements
+cannot be met by native Herdr context, consider `woof-worktree`, `woof-tree-key`
+and `woof-branch`. Agents from one checkout would share a readable label and stable key, independent of role, model, run,
 branch renaming and display naming. Derive identity from verified Git worktree
 context and runtime host identity, not a basename or branch alone. Define collision
 handling and symlink resolution before implementation; preserve the key when
@@ -113,62 +109,27 @@ single workspace key/label. Moving a pane must not advertise its run checkout as
 the destination workspace's checkout. Plan bounded ownership and reconciliation
 without moving workflow coordination into the display layer.
 
-If these follow-ups are selected and implemented, the following optional layout
-could expose them. It is not usable in full with 0.1.2 or with the three-token
-slice alone. Use it instead of the current guide's snippet, not alongside it.
-
-```toml
-[ui]
-status_indicators = "symbols"
-
-[ui.sidebar.agents]
-row_gap = 1
-rows = [
-  ["machine", "workspace", "agent"],
-  [{ token = "$woof-tree-key", bold = true }, "$woof-worktree"],
-  ["$woof-branch"],
-  ["state_icon", "$woof-role", "$woof-kind", "$woof-model"],
-  ["state_text", "$woof-stage"],
-]
-
-[ui.sidebar.spaces]
-row_gap = 1
-rows = [
-  ["state_icon", "workspace"],
-  [{ token = "$woof-tree-key", bold = true }, "$woof-worktree"],
-  ["branch", "git_status"],
-  ["$woof-workflow", "$woof-stage", "$woof-activity"],
-]
-```
-
-This supplies matching cues in a flat Agent list. It does not reorder agents or
-create collapsible groups; the checked Herdr documentation does not establish a
-`group_by = "worktree"` option. Native context keeps unmanaged agents visible.
-Missing custom values disappear. Existing `rows_by_agent` overrides replace the
-general Agent layout, so they may hide these cues. Verify normal and narrow widths;
-expanded desktop rows do not establish compact or mobile coverage. Optional colors
-belong to operator configuration and must supplement readable text.
-
 ## Acceptance criteria
 
 For M0 and the three-token slice:
 
-- Record registration/action results, the actual loaded configuration and a live
-  gap report. Use two worktrees with repeated builder/reviewer roles to check
-  whether native workspace labels associate agents with the correct checkout.
+- Record the existing plugin wiring and publisher behavior from source and tests.
+  Reuse supported Herdr metadata operations without adding another publisher or
+  changing the operator's setup.
 - `woof-kind` and `woof-model` match resolved launch configuration. Unknown values
   disappear; configured model is not described as an observed in-session model.
 - `woof-stage` represents the current assignment, including host check stages,
   and clears when inactive or complete. It contains no stage total, visit, attempt
   or round counters. Existing `$woof` and `$woof-role` remain compatible.
-- Native working/idle/blocked indicators, unmanaged agents and existing title or
-  summary plugins continue to work.
+- Publication preserves Herdr lifecycle state and non-Woof metadata. Unmanaged
+  agents are not targeted to populate missing Woof fields.
 - Publisher death expires stale values. Restart, pane moves and agent replacement
   do not attach old metadata to unrelated work. Metadata failure cannot fail a run.
 - Unit and real-process tests cover transitions, missing values and stale targets.
-  Live acceptance records commands, revision, Herdr version, metadata responses
-  and screenshots or a manual display record. Automated tests alone do not prove
-  that sidebar cues are readable or supported by the installed version.
+  Live integration acceptance records commands, revision, Herdr version and actual
+  metadata responses from a test environment. The acceptance boundary is correct
+  token publication and cleanup; sidebar rendering and personal configuration
+  are separate operator work.
 
 Conditional follow-ups require their own acceptance before implementation: distinct
 keys for same-named checkouts on different repositories/hosts; symlink aliases of
@@ -179,7 +140,8 @@ requirements for the proposed slice.
 
 ## Non-goals
 
-- A Woof sidebar renderer, structural Agent-list grouping or automatic config edits.
+- Herdr configuration, sidebar layouts/colors/grouping, personal plugin registration
+  and visual acceptance of the operator's setup.
 - Workspace presets, project pickers, generated activity summaries or automatic
   naming already handled by Herdr and optional plugins.
 - Worktree keys, M4 workspace projection or the other conditional tokens in the
@@ -189,20 +151,19 @@ requirements for the proposed slice.
 
 ## Suggested phase
 
-| Task                                       | Outcome and acceptance                                                                                                                                                            |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M0. Adopt and verify existing capabilities | Check registration/actions, native context/state and existing role metadata; reuse preset tooling and produce a live gap report before implementation planning.                   |
-| M1. Finalize the three-token contract      | Verify installed Herdr capabilities, resolved kind/model sources, check-stage representation and ownership/cleanup rules. A separate plan reviewer challenges stale-target cases. |
-| M2. Define acceptance scenarios            | Before implementation, an independent acceptance verifier specifies evidence for the in-scope criteria above.                                                                     |
-| M3. Extend pane projection                 | Add only kind, model and counter-free stage; preserve legacy tokens and external metadata. Cover transitions, missing fields and replaced targets.                                |
-| M5. Verify setup and sidebar               | In a test environment, inspect existing plugin actions and validate an optional layout using native context, existing role and the three new tokens at normal and narrow widths.  |
-| M6. Independent code review and acceptance | Review the implementation against the contract, then execute M2 scenarios against the final revision and record evidence.                                                         |
+| Task                                             | Outcome and acceptance                                                                                                                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0. Verify the existing integration              | Inspect manifest/launcher wiring, metadata sources, targeting and reporter tests. Record the repository changes needed for the three-token contract.                              |
+| M1. Finalize the three-token contract            | Verify installed Herdr capabilities, resolved kind/model sources, check-stage representation and ownership/cleanup rules. A separate plan reviewer challenges stale-target cases. |
+| M2. Define acceptance scenarios                  | Before implementation, an independent acceptance verifier specifies evidence for the in-scope criteria above.                                                                     |
+| M3. Extend pane projection                       | Add only kind, model and counter-free stage; preserve legacy tokens and external metadata. Cover transitions, missing fields and replaced targets.                                |
+| M5. Verify publication and document the contract | Verify actual token values, targeting, refresh and cleanup in a Herdr test environment. Update the shipped token reference and relevant plugin documentation.                     |
+| M6. Independent code review and acceptance       | Review the implementation against the contract, then execute M2 scenarios against the final revision and record evidence.                                                         |
 
 M4 retains its identifier under Conditional follow-ups; it is not a step required
 to complete this phase. Select models per assignment. Keep plan review, code review
 and acceptance in separate roles/contexts; the same builder handles repairs.
 
-The [Herdr configuration reference](https://herdr.dev/docs/configuration/)
-and [CLI metadata reference](https://herdr.dev/docs/cli-reference/) were checked
+The [Herdr CLI metadata reference](https://herdr.dev/docs/cli-reference/) was checked
 on 2026-09-17. Implementation must verify the installed version's capabilities.
-No live installation or visual acceptance was performed while writing this proposal.
+No live integration acceptance was performed while writing this proposal.

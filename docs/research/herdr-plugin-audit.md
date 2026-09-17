@@ -1,4 +1,4 @@
-# Herdr plugin audit: use what exists first
+# Herdr plugin audit: existing integration
 
 Inspected 2026-09-17 against source at `87c9ca3` (0.1.2). This is a source and
 saved-configuration audit, not a live Herdr acceptance report. No plugins were
@@ -6,21 +6,20 @@ installed, actions invoked, sessions inspected or personal settings changed.
 
 ## Findings
 
-| Capability                  | Evidence                                                                                                                                                                                          | Next action                                                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Woof plugin registration    | The default saved `plugins.json` contains an enabled local `herdr-woof` entry pointing at this repository. Its cached version is 0.1.0; the current manifest is 0.1.2.                            | Verify/refresh the existing registration inside Herdr, rather than assume the plugin needs to be built or newly installed. |
-| Woof actions                | The manifest and command handlers already implement `doctor`, `status`, `start`, `cancel`.                                                                                                        | Use and validate these actions in the intended project context.                                                            |
-| Role and compact progress   | `src/host/metadata.ts` publishes `$woof-role` and `$woof` on assigned worker panes, plus `$woof` and a title on the host pane.                                                                    | Expose the existing role token in an optional personal sidebar config.                                                     |
-| Refresh and notifications   | The publisher has TTLs, coalesced requests, bounded CLI calls, block/end notifications and nonfatal error handling. `test/host.process.test.ts` contains real-process tests against a fake Herdr. | Retain this code and verify the actual displayed result; no second publisher is needed just to enable existing tokens.     |
-| Saved sidebar configuration | The default `config.toml` has no `ui.sidebar` table, `status_indicators` setting or Woof references.                                                                                              | Merge an operator-selected sidebar configuration; check the live client actually loaded it.                                |
-| Workspace presets           | The saved registry lists enabled Herdr Plus 0.1.20; its installed README describes project templates and worktree-created/opened auto-layouts.                                                    | Configure that plugin if presets are wanted. Do not implement a preset manager in Woof.                                    |
-| File viewer                 | An enabled Herdr file viewer registration and manifest are present.                                                                                                                               | Reuse it for generic file viewing; this audit did not verify opening Woof artifacts through it.                            |
+| Capability                  | Evidence                                                                                                                                                                                          | Next action                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Woof plugin registration    | The default saved `plugins.json` contains an enabled local `herdr-woof` entry pointing at this repository. Its cached version is 0.1.0; the current manifest is 0.1.2.                            | Existing registration; personal refresh is operator work, not a missing Woof implementation. |
+| Woof actions                | The manifest and command handlers already implement `doctor`, `status`, `start`, `cancel`.                                                                                                        | Use and validate these actions in the intended project context.                              |
+| Role and compact progress   | `src/host/metadata.ts` publishes `$woof-role` and `$woof` on assigned worker panes, plus `$woof` and a title on the host pane.                                                                    | Existing Woof token; presentation is separate operator configuration.                        |
+| Refresh and notifications   | The publisher has TTLs, coalesced requests, bounded CLI calls, block/end notifications and nonfatal error handling. `test/host.process.test.ts` contains real-process tests against a fake Herdr. | Retain this publisher and verify publication/cleanup at the integration boundary.            |
+| Saved sidebar configuration | The default `config.toml` has no `ui.sidebar` table, `status_indicators` setting or Woof references.                                                                                              | Outside Woof scope; the operator configures Herdr separately.                                |
+| Workspace presets           | The saved registry lists enabled Herdr Plus 0.1.20; its installed README describes project templates and worktree-created/opened auto-layouts.                                                    | Outside Woof scope; do not implement a preset manager here.                                  |
+| File viewer                 | An enabled Herdr file viewer registration and manifest are present.                                                                                                                               | Outside this metadata proposal; no file-viewer integration was verified.                     |
 
 The registry is cached disk state, not proof of current server health or plugin
 build success. The default config may differ from one explicitly selected by a
-running client. Confirm both during the in-Herdr setup check. The installed
-Herdr Plus README contains both plugin-config-directory guidance and historical
-path examples; resolve its actual configuration directory instead of guessing it.
+running client. These saved-configuration findings are historical context, not
+Herdr setup tasks for Woof. The operator handles that configuration separately.
 
 ## What publication actually means today
 
@@ -39,18 +38,7 @@ The publisher does not currently export separate kind/model, counter-free stage,
 branch/worktree or workspace-level tokens. Although snapshots contain kind/model
 and the SDK tracks work, those fields do not automatically appear in the sidebar.
 
-## Smallest useful adoption
-
-1. Check the existing plugin registration and action logs from inside Herdr.
-2. Expose `workspace`, `tab`, native agent identity/state and `$woof-role` in each
-   Agent entry. Keep native branch/activity fields on Space rows.
-3. Use consistent workspace names and optional matching workspace-label colors
-   to distinguish agents across worktrees. First test with two worktrees and
-   repeated builder/reviewer roles, without adding Woof grouping machinery.
-4. Use Herdr Plus for desired layout presets; optional title providers can supply
-   activity text separately. No naming/summary plugin was identified in the saved
-   registry inspected here; that does not exclude external hooks or other setups.
-5. Record the remaining usability gaps before implementing new metadata fields.
+## Woof follow-up
 
 The likely small follow-up is publishing configured kind/model and a separate
 current-stage token. Explicit worktree keys or workspace multi-run summaries are
@@ -71,8 +59,8 @@ configuration contents and unrelated registrations are not copied into this repo
 
 This task runs outside a Herdr-managed pane (`HERDR_ENV` is absent), so live
 registration, action execution, token responses and visual behavior remain
-unverified. Follow [plugin setup](../integrations/herdr-setup.md) inside Herdr and
-use the [sidebar guide](../integrations/herdr-sidebar.md) for optional config.
+unverified. See [plugin setup](../integrations/herdr-setup.md) for the shipped
+checkout-based integration. Personal Herdr configuration is outside this work.
 
 Offline verification performed during this audit: `bun run build` passed, then
 `bun x vitest run test/host.process.test.ts -t metadata` passed all 3 selected

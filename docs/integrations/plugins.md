@@ -52,9 +52,9 @@ configuration-driven role and workflow resolution.
 ## Herdr plugin
 
 For registration and wiring, see [Set up the Woof Herdr plugin](herdr-setup.md).
-For operator-owned presentation, see [Optional sidebar](herdr-sidebar.md).
-The [metadata proposal](../proposals/herdr-metadata.md) first verifies the
-existing setup, then considers separate stage/model fields and worktree cues.
+The [metadata proposal](../proposals/herdr-metadata.md) extends the existing
+publisher with separate kind/model/stage fields. Herdr presentation and personal
+configuration remain outside Woof's implementation scope.
 See the [audit](../research/herdr-plugin-audit.md) for the difference between
 existing capabilities, saved configuration and live verification. The behavior
 below describes the existing implementation.
