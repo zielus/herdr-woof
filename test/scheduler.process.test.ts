@@ -12,7 +12,8 @@ import { repoRoot } from "./helpers/process.js";
 const fixture = join(repoRoot, "test", "fixtures", "scheduler-scenarios.mjs");
 const dirs: string[] = [];
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 type Json = Record<string, unknown>;

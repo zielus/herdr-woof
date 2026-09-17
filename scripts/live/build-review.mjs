@@ -157,6 +157,8 @@ const gitAs = (...args) =>
       "user.email=live@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     {

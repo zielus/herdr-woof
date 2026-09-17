@@ -84,6 +84,8 @@ function git(cwd: string, ...args: string[]): void {
       "user.email=test@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } },

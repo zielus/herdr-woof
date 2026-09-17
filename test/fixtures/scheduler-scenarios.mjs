@@ -47,6 +47,8 @@ function git(repo, ...args) {
       "user.email=test@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      "-c",
+      "maintenance.auto=false",
       ...args,
     ],
     { cwd: repo, encoding: "utf8" },
