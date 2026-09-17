@@ -1,7 +1,7 @@
 /**
  * CHANGELOG.md release sections, each running to the next `## ` heading. Two
  * heading forms: `## x.y.z`, written by Changesets from 0.1.3 on, and the
- * Keep a Changelog form `## [x.y.z] - YYYY-MM-DD` of the releases up to 0.1.2.
+ * Keep a Changelog form `## [x.y.z] - YYYY-MM-DD` of the releases up to 0.1.1.
  */
 
 export interface ChangelogSection {

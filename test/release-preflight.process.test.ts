@@ -92,17 +92,16 @@ function check(run: Preflight, id: string): Json | undefined {
   return (run.summary?.["checks"] as Json[] | undefined)?.find((item) => item["id"] === id);
 }
 
-/** Sets package.json's version and puts `section` at the top of CHANGELOG.md, below the title. */
+/** Sets package.json's version and puts `section` above CHANGELOG.md's first release heading. */
 function withRelease(root: string, version: string, section: string): void {
   const pkgPath = join(root, "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Json;
   pkg["version"] = version;
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   const path = join(root, "CHANGELOG.md");
-  writeFileSync(
-    path,
-    readFileSync(path, "utf8").replace("# Changelog\n\n", `# Changelog\n\n${section}\n`),
-  );
+  const text = readFileSync(path, "utf8");
+  const first = text.indexOf("\n## ") + 1;
+  writeFileSync(path, `${text.slice(0, first)}${section}\n${text.slice(first)}`);
 }
 
 function setScripts(root: string, scripts: Record<string, string>): void {
