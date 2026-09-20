@@ -342,11 +342,15 @@ if (probe) {
     log(`event ${event.seq} ${event.type} ${JSON.stringify(event.subject)}`);
   }
 
+  // deliver reports outcome, not ok: "started" means the prompt reached the agent
+  // and it began working. "ambiguous" is never treated as delivered.
   gate(
     "P3",
-    "pi received the prompt",
-    delivered.ok === true,
-    delivered.ok ? "delivered" : JSON.stringify(delivered.error),
+    "pi received the prompt and started working",
+    delivered.outcome === "started" && delivered.observation?.lifecycle === "working",
+    delivered.outcome === "started"
+      ? `lifecycle ${delivered.observation?.lifecycle}`
+      : `${delivered.outcome}: ${JSON.stringify(delivered.error)}`,
   );
   gate(
     "P4",
