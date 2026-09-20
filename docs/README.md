@@ -38,6 +38,11 @@ merged to master as `b329cdc`.
   [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
   [the acceptance evidence](acceptance/v1-evidence.md).
 
+- **Web UI** (p9): `woof ui`, a local dashboard over the observability contract —
+  a run list, a run detail with stage and agent state, a live event stream that
+  resumes from its cursor, and cancel. Actions the engine has no call for are
+  reported unsupported, not simulated. See [Web UI](architecture/web-ui.md).
+
 ## Proposed next phase
 
 [Use the existing Herdr plugin, then close display gaps](design/herdr-metadata-phase.md)
@@ -62,11 +67,12 @@ Read in this order:
 5. [Configuration](architecture/configuration.md): project settings and user defaults.
 6. [Observability](architecture/observability.md): snapshots and updates for every interface.
 7. [Plugin surfaces](integrations/plugins.md): the CLI, the Herdr plugin (`doctor`/`status`/`start`/`cancel`), and the Claude Code plugin (`/woof:run`); MCP is deferred.
-8. [Workflow authoring](workflows/authoring.md) and [initial workflows](workflows/initial-workflows.md).
-9. [Decision record](decisions/architecture.md): settled direction, superseded ideas, and open choices.
-10. [Release process](decisions/release-process.md): versioning, the Changesets gate, and publishing to npm when the "chore: version packages" PR merges on master.
-11. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.
-12. [Acceptance criteria](acceptance/v1.md): evidence required before calling v1 complete.
+8. [Web UI](architecture/web-ui.md): `woof ui`, its API over the observability contract, its security model, the development loop, and what it cannot do yet.
+9. [Workflow authoring](workflows/authoring.md) and [initial workflows](workflows/initial-workflows.md).
+10. [Decision record](decisions/architecture.md): settled direction, superseded ideas, and open choices.
+11. [Release process](decisions/release-process.md): versioning, the Changesets gate, and publishing to npm when the "chore: version packages" PR merges on master.
+12. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.
+13. [Acceptance criteria](acceptance/v1.md): evidence required before calling v1 complete.
 
 The product brief and the conversation's final corrections govern requirements.
 Other pages explain those requirements or explicitly label implementation

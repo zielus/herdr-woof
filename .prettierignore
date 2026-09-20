@@ -1,4 +1,5 @@
 dist/
+dist-ui/
 node_modules/
 bun.lock
 # agent tooling (design system skill), not shipped code

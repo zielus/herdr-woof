@@ -2,7 +2,7 @@
 // tracked and untracked-but-not-ignored files of the working tree, committed
 // once in a fresh git repository with a throwaway identity. The copy shares
 // the repository's node_modules through a symlink (excluded from git) and has
-// minimal fake dist/ entry files, so `npm pack --dry-run` can list them.
+// minimal fake dist/ and dist-ui/ entry files, so `npm pack --dry-run` can list them.
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -76,5 +76,10 @@ export function copyRepository(prefix = "woof-release-"): string {
   mkdirSync(join(root, "dist"));
   for (const name of ["index.js", "cli.js", "testing.js"])
     writeFileSync(join(root, "dist", name), "export {};\n");
+  // The web UI bundle ships in the tarball too, so the copy must carry a
+  // stand-in for it or the pack preflight reports it missing.
+  mkdirSync(join(root, "dist-ui", "assets"), { recursive: true });
+  writeFileSync(join(root, "dist-ui", "index.html"), "<!doctype html>\n");
+  writeFileSync(join(root, "dist-ui", "assets", "index-00000000.js"), "export {};\n");
   return root;
 }

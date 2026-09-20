@@ -11,7 +11,7 @@ import {
   type FormatOptions,
 } from "../observe/format.js";
 import { UsageError, milliseconds, parse } from "./common.js";
-import { streamEvents, type EventsSink, type StreamOptions } from "./stream-events.js";
+import { streamEvents, type EventsSink, type StreamOptions } from "../observe/stream.js";
 
 export const WATCH_USAGE = `Usage: woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
 

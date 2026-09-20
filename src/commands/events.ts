@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { UsageError, milliseconds, parse } from "./common.js";
-import { streamEvents, type EventsSink, type StreamOptions } from "./stream-events.js";
+import { streamEvents, type EventsSink, type StreamOptions } from "../observe/stream.js";
 import { watchRun } from "./watch.js";
 
 export const EVENTS_USAGE = `Usage: woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] [--poll-ms <n>]

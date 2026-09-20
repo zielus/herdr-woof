@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 
-import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "../observe/events.js";
-import { subscribeEvents } from "../observe/subscribe.js";
+import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "./events.js";
+import { subscribeEvents } from "./subscribe.js";
 import { readSnapshot } from "../state/snapshot.js";
 
 const CURSOR_REASONS: ReadonlySet<string> = new Set([
@@ -19,6 +19,13 @@ export interface StreamOptions {
   stats: boolean;
   /** Ends a follow early with reason "end" and exit 0, e.g. when the reader of stdout went away. */
   signal?: AbortSignal;
+  /**
+   * Whether the follow loop installs its own process SIGINT listener. True for
+   * the CLI commands, whose process this loop owns. A server running many
+   * concurrent follows passes false and ends them through `signal` instead: one
+   * process-level listener per stream is a signal concern in a library loop.
+   */
+  handleSigint?: boolean;
 }
 
 /** Where streamEvents writes: the NDJSON sink of woof events, or the readable one of woof watch. */
@@ -102,11 +109,12 @@ export async function streamEvents(
           stopped = "timeout";
           controller.abort();
         }, options.timeoutMs);
+  const handleSigint = options.handleSigint !== false;
   const onSignal = () => {
     stopped = "signal";
     controller.abort();
   };
-  process.on("SIGINT", onSignal);
+  if (handleSigint) process.on("SIGINT", onSignal);
   const onStop = () => controller.abort();
   if (options.signal?.aborted === true) controller.abort();
   else options.signal?.addEventListener("abort", onStop, { once: true });
@@ -167,7 +175,7 @@ export async function streamEvents(
     }
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    process.off("SIGINT", onSignal);
+    if (handleSigint) process.off("SIGINT", onSignal);
     options.signal?.removeEventListener("abort", onStop);
     await iterator.return(undefined);
   }
