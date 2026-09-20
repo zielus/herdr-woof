@@ -18,9 +18,10 @@ import { isAbsolute, resolve } from "node:path";
  *   - a `bash` call that is exactly the run's own CLI invoked as
  *     `<cliPath> submit --run-dir <runDir> --envelope <that phase's envelope>`.
  * The submit is then paired with the journal's `submission.accepted` for the
- * same stage: by receipt id when pi's tool result carries one, otherwise by the
- * submit call preceding that record's timestamp. The pairing used is reported,
- * never silently downgraded.
+ * same stage: by receipt id when pi's tool result carries one, and only when no
+ * receipt is present at all by the submit call preceding that record's timestamp.
+ * A receipt that is present and does not match fails outright. The pairing used
+ * is reported, never silently downgraded.
  *
  * The model is the one active at each qualifying call, tracked through
  * `model_change` entries in order, so work done under one model cannot be
@@ -76,6 +77,24 @@ function flagValue(tokens, flag) {
 export function receiptIdOf(text) {
   const match = /"receiptId"\s*:\s*"([^"]+)"/.exec(text);
   return match === null ? null : match[1];
+}
+
+/** Shell metacharacters that would make a command more than one plain invocation. */
+const SHELL_OPERATORS = /[;&|<>`$(){}]|\n/;
+
+/**
+ * Whether the command is exactly `<node executable> <cliPath> submit …` and nothing else:
+ * no prefix command (`echo …`, `env …`, `sh -c …`), no pipeline, no chaining, no
+ * substitution. Anything that merely mentions the CLI path is not pi running the CLI.
+ */
+export function isDirectCliInvocation(command, cliPath) {
+  if (SHELL_OPERATORS.test(command)) return false;
+  const tokens = tokenize(command);
+  if (tokens.length < 3) return false;
+  const executable = tokens[0];
+  const base = executable.slice(executable.lastIndexOf("/") + 1);
+  if (base !== "node" && base !== "node.exe") return false;
+  return tokens[1] === cliPath && tokens[2] === "submit";
 }
 
 function emptyPhase() {
@@ -210,10 +229,8 @@ export function readPiSessionProof(options) {
       }
 
       if (name !== "bash" || command === "") continue;
+      if (!isDirectCliInvocation(command, cliPath)) continue;
       const tokens = tokenize(command);
-      const submitAt = tokens.indexOf("submit");
-      // The run's own CLI, invoked as a subcommand: not any command mentioning "submit".
-      if (submitAt <= 0 || tokens[submitAt - 1] !== cliPath) continue;
       if (flagValue(tokens, "--run-dir") !== runDir) continue;
       const envelope = flagValue(tokens, "--envelope");
       if (envelope === null || !phase.envelopePaths.includes(absolute(envelope))) continue;
@@ -230,8 +247,10 @@ export function readPiSessionProof(options) {
     if (phase.submit === null) continue;
     const record = accepted.find((item) => item.stageId === name);
     if (record === undefined) continue;
-    if (phase.receiptId !== null && phase.receiptId === record.receiptId) {
-      phase.pairing = "receipt";
+    if (phase.receiptId !== null) {
+      // A receipt that is present and does not match is a contradiction, not a reason
+      // to fall back: the submit printed a different receipt from the accepted one.
+      if (phase.receiptId === record.receiptId) phase.pairing = "receipt";
       continue;
     }
     const recordAt = Date.parse(record.ts ?? "");

@@ -175,10 +175,16 @@ records `agents.builder.value.kind = "pi"`, `source: "input"`, with the built-in
 claude role under `shadowed` (gate 4); and the fixture carries the change with an
 independent `node --test` exiting 0 (gate 9).
 
-The probe mode of the same script was run separately and passed 6/6, exit 0: one
-pi agent started through `herdr agent start --kind pi`, observed `ready` with no
-trust question, given one prompt, completing a `woof submit` round-trip from its
-own shell whose accepted digest matched the artifact on disk.
+The probe mode of the same script was run separately and passed **6/6, exit 0**,
+and has its own committed log: one pi agent started through `herdr agent start
+--kind pi` (P1), observed `ready` with no pi trust question blocking startup
+(P2), given one prompt it began working on (P3), writing the artifact from its
+own shell (P4), whose `woof submit` was accepted with a digest matching the file
+on disk (P5, receipt `rcpt-3-8970e2847765`), after which the pane the probe
+opened was closed (P6). That is a standalone startup and submission check,
+separate from the workflow run above, and is evidenced by
+`docs/research/pi-probe-live.log` rather than by the full-run log, which contains
+no probe output.
 
 Recorded preconditions, logged by the script rather than assumed: `pi --version`
 0.86.0; `pi auth check --provider openai-codex` → `ready`/`oauth`;
@@ -193,9 +199,13 @@ delivery or readiness limit; a wrong pi model under a real provider fails slow
 with nothing naming the model; pi's trust question can still fire on a project
 carrying `.pi/`.
 
-Evidence log: `docs/research/pi-build-review-live.log` (361 lines), redacted
-line-preservingly from the run above. _Falsified by_ a re-run of that script
-failing a gate on the revision this document describes.
+Evidence logs, both redacted line-preservingly from the runs they record:
+`docs/research/pi-build-review-live.log` (361 lines) carries the full run — its
+run id, versions, 10/10 gates, the delivery and loop gates, the receipt-paired
+session proof, the model and the repository test result. `docs/research/pi-probe-live.log`
+(68 lines) carries the standalone probe's P1-P6 and its `PROBE PASS`. Each claim
+above is backed by the log that actually contains it. _Falsified by_ a re-run of
+either mode failing a gate on the revision this document describes.
 
 ### Parallel scheduling
 

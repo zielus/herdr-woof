@@ -206,6 +206,61 @@ describe("transcripts that must not prove authorship", () => {
     expect(result.reason).toContain("not openai-codex/gpt-5.6-sol");
   });
 
+  it("rejects `echo <cliPath> submit …`, the near neighbour that keeps the CLI path", () => {
+    // P8A-R7: the earlier matcher only checked the token before `submit`, so a command
+    // that merely names the CLI qualified while pi never ran it. The result carries no
+    // receipt, so this would previously have paired by timestamp and returned ok.
+    const result = proof(
+      fixture((entry) => {
+        for (const call of toolCalls(entry)) {
+          const command = call["arguments"]?.["command"];
+          if (typeof command === "string" && command.includes(" submit "))
+            call["arguments"]["command"] = `echo ${command.replace(/^\S+ /, "")}`;
+        }
+        if (entry["type"] === "message" && entry["message"]?.["role"] === "toolResult")
+          entry["message"]["content"] = [{ type: "text", text: "ok" }];
+        return entry;
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("submit");
+  });
+
+  it("rejects a shell-wrapped or chained invocation of the real CLI", () => {
+    const result = proof(
+      fixture((entry) => {
+        for (const call of toolCalls(entry)) {
+          const command = call["arguments"]?.["command"];
+          if (typeof command === "string" && command.includes(" submit "))
+            call["arguments"]["command"] = `true && ${command}`;
+        }
+        return entry;
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("submit");
+  });
+
+  it("rejects a receipt that is present and does not match the journal", () => {
+    // A mismatched receipt is a contradiction, not a reason to fall back to timestamps.
+    const result = proof(
+      fixture((entry) => {
+        if (entry["type"] === "message" && entry["message"]?.["role"] === "toolResult") {
+          const content = entry["message"]["content"];
+          if (Array.isArray(content))
+            entry["message"]["content"] = content.map((part: Json) =>
+              typeof part?.["text"] === "string" && part["text"].includes("receiptId")
+                ? { type: "text", text: '{"receipt":{"receiptId":"rcpt-99-deadbeef"}}' }
+                : part,
+            );
+        }
+        return entry;
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("pairs with no accepted submission");
+  });
+
   it("rejects a submit that pairs with no accepted submission for its stage", () => {
     const result = proof(fixture(), { accepted: [] });
     expect(result.ok).toBe(false);
