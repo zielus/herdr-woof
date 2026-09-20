@@ -109,7 +109,7 @@ decide it (product direction, scope, timing).
     candidates for the next small release.
   - *Design-level*: fixing it changes a public contract, a trust boundary, or
     a documented non-goal. Do not fix these opportunistically — document them
-    (bucket B, or a "Known limits" table) and let the operator decide when
+    (bucket B, or a "Known limits" section) and let the operator decide when
     and whether to schedule the redesign.
 - **D. Recommendation** — one paragraph: is the repository sound to ship (or
   keep public) as-is, with the remaining items documented rather than fixed?

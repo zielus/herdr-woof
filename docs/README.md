@@ -1,81 +1,61 @@
 # Woof documentation
 
-Status: 0.1.x pre-release. The Implemented-now sections linked below describe shipped behaviour,
-backed by the acceptance evidence; other sections are design and requirements.
-
-## What exists today
-
-The [acceptance evidence](acceptance/v1-evidence.md) states which revision each part of it was
-run against. Its live logs were recorded before two source fixes that are part of the 0.1.0 code
-merged to master as `b329cdc`.
-
-- **Result handoff** (p1): envelope v1, `woof submit`, `woof attempt open`, and the run journal.
-  See [Communication and artifacts](architecture/communication.md#implemented-now-p1-prototype).
-- **Run facts and snapshots** (p2): run plans, journaled agent assignment/dispatch/termination,
-  derived run snapshots and events, a runtime adapter over the Herdr CLI, and `woof run show`. See
-  [Domain model](architecture/domain-model.md#implemented-now-p2) and
-  [Observability](architecture/observability.md#implemented-now-p2).
-- **Workflow scheduling** (p3): a workflow definition contract and loader, the built-in
-  `build-review` workflow (build → verify → review → repair, with format repair, revision binding
-  and bounded blocking/reconciliation), and `woof run build-review`/`woof run cancel`. See
-  [Domain model](architecture/domain-model.md#implemented-now-p3),
-  [Observability](architecture/observability.md#implemented-now-p3),
-  [Workflow authoring](workflows/authoring.md#implemented-now-p3) and
-  [Initial workflows](workflows/initial-workflows.md#implemented-now-p3).
-- **Product integration** (p4): `.woof`/`~/.woof` configuration with provenance, `woof run start`
-  hosting a run in a Herdr pane with claim/heartbeat liveness, the read-only inspection CLI
-  (`status`, `runs`, `events`, `config show`), and functional Herdr and Claude Code plugins
-  (`/woof:run`). See [Configuration](architecture/configuration.md#implemented-now-p4),
-  [Domain model](architecture/domain-model.md#implemented-now-p4),
-  [Observability](architecture/observability.md#implemented-now-p4) and
-  [Workflow authoring](workflows/authoring.md#implemented-now-p4).
-- **Plan-build-review and project workflows** (p5): a second built-in workflow
-  (`plan-build-review`), project/user workflow discovery via `--workflow <name>`, an opt-in
-  artifact/envelope verdict check, and acceptance evidence. See
-  [Communication and artifacts](architecture/communication.md#implemented-now-p5),
-  [Domain model](architecture/domain-model.md#implemented-now-p5),
-  [Workflow authoring](workflows/authoring.md#implemented-now-p5),
-  [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
-  [the acceptance evidence](acceptance/v1-evidence.md).
-
-- **Web UI** (p9): `woof ui`, a local dashboard over the observability contract —
-  a run list, a run detail with stage and agent state, a live event stream that
-  resumes from its cursor, and cancel. Actions the engine has no call for are
-  reported unsupported, not simulated. See [Web UI](architecture/web-ui.md).
-
-## Proposed next phase
-
-[Use the existing Herdr plugin, then close display gaps](design/herdr-metadata-phase.md)
-starts with the [plugin audit](research/herdr-plugin-audit.md): registration,
-actions, basic metadata and third-party presets already exist. Configure and
-verify those first. Separate kind/model/stage fields and additional worktree cues
-are follow-ups only where the adoption check demonstrates a gap. Sidebar
-configuration and workspace presets remain outside Woof.
-
-See the [checkout-based plugin setup](integrations/herdr-setup.md) and
-[optional sidebar proposal](integrations/herdr-sidebar.md). New tokens are
-proposals; these pages do not claim that the phase is implemented or installed.
+These pages describe Woof 0.2.0: what it is, how the current engine and
+integrations behave, how to extend it, and which capabilities are not supported.
 
 ## Reading order
 
-Read in this order:
+1. [Product brief](product/brief.md) for current scope and boundaries.
+2. [Architecture decisions](decisions/architecture.md) for the settled design,
+   open choices and known limits.
+3. [Domain model](architecture/domain-model.md),
+   [communication and artifacts](architecture/communication.md),
+   [configuration](architecture/configuration.md) and
+   [observability](architecture/observability.md) for the engine contracts.
+4. [Initial workflows](workflows/initial-workflows.md) and
+   [workflow authoring](workflows/authoring.md) to use or extend workflows.
+5. [Integration surfaces](integrations/plugins.md),
+   [Herdr plugin setup](integrations/herdr-setup.md) and
+   [Web UI](architecture/web-ui.md) for operator-facing entry points.
+6. [Contributing](../CONTRIBUTING.md) and the
+   [release process](decisions/release-process.md) for repository work and
+   publishing.
 
-1. [Product brief](product/brief.md): purpose, scope, and required outcomes.
-2. [Architecture plan](design/woof-v1-architecture-plan.md): ownership and proposed implementation boundaries.
-3. [Domain model](architecture/domain-model.md): agents, stages, rounds, attempts, gates, and state.
-4. [Communication and artifacts](architecture/communication.md): requests, canonical work products, validation, and handoff.
-5. [Configuration](architecture/configuration.md): project settings and user defaults.
-6. [Observability](architecture/observability.md): snapshots and updates for every interface.
-7. [Plugin surfaces](integrations/plugins.md): the CLI, the Herdr plugin (`doctor`/`status`/`start`/`cancel`), and the Claude Code plugin (`/woof:run`); MCP is deferred.
-8. [Web UI](architecture/web-ui.md): `woof ui`, its API over the observability contract, its security model, the development loop, and what it cannot do yet.
-9. [Workflow authoring](workflows/authoring.md) and [initial workflows](workflows/initial-workflows.md).
-10. [Decision record](decisions/architecture.md): settled direction, superseded ideas, and open choices.
-11. [Release process](decisions/release-process.md): versioning, the Changesets gate, and publishing to npm when the "chore: version packages" PR merges on master.
-12. [Project assessment](research/project-assessment.md): what was actually inspected and what can be reused.
-13. [Acceptance criteria](acceptance/v1.md): evidence required before calling v1 complete.
+## Reference pages
 
-The product brief and the conversation's final corrections govern requirements.
-Other pages explain those requirements or explicitly label implementation
-recommendations. Code-shaped examples are contract illustrations, not a released
-API. The acceptance matrix is evidenced in
-[v1-evidence.md](acceptance/v1-evidence.md).
+### Product and architecture
+
+- [Product brief](product/brief.md)
+- [Architecture decisions and known limits](decisions/architecture.md)
+- [Domain model and execution state](architecture/domain-model.md)
+- [Communication and artifacts](architecture/communication.md)
+- [Configuration and project context](architecture/configuration.md)
+- [Observability](architecture/observability.md)
+- [Web UI](architecture/web-ui.md)
+
+### Workflows and integrations
+
+- [Initial workflows](workflows/initial-workflows.md)
+- [Authoring a workflow](workflows/authoring.md)
+- [CLI and plugin surfaces](integrations/plugins.md)
+- [Set up the Woof Herdr plugin](integrations/herdr-setup.md)
+- [Open proposals](design/proposals.md), clearly separated from implemented
+  behavior
+
+### Contribution and release
+
+- [Contributing](../CONTRIBUTING.md)
+- [Release process](decisions/release-process.md)
+- [Repository working instructions](../AGENTS.md)
+
+## Acceptance records
+
+[Acceptance criteria](acceptance/v1.md) define the v1 checks. The
+[acceptance evidence](acceptance/v1-evidence.md), its machine-readable evidence
+and `research/*.log` files record results for the revisions named in those
+files. They are retained because tests and evidence tooling parse them; they do
+not claim fresh 0.2.x acceptance.
+
+The phase-labelled headings in some contract pages remain as compatibility
+anchors. A later documentation pass can consolidate those sections without
+changing their meaning.

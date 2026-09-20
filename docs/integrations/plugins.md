@@ -1,12 +1,10 @@
 # Woof integration surfaces
 
-Status: foundation, plus p1–p3 CLI/SDK prototypes and p4 configuration, run
-hosting and inspection. As of p4, `woof run start` hosts a workflow run in a
-Herdr pane with a heartbeat-tracked liveness, `woof status`/`runs`/`events`/
-`watch`/`config show` give read-only inspection, and both plugins are functional: the
-Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and `watch` actions, and the
-Claude Code plugin's `/woof:run` command starts a run, waits for it and
-reports the result. Every command and action below is a real, tested surface.
+Woof 0.2.0 provides the CLI and SDK, hosted runs with heartbeat-tracked
+liveness, read-only inspection commands, a Herdr plugin and a Claude Code
+plugin. The Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and
+`watch`; `/woof:run` starts a run, waits for it and reports the result. Every
+command and action below is an implemented surface.
 
 ## CLI
 
@@ -21,7 +19,7 @@ reports the result. Every command and action below is a real, tested surface.
   (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
   `trust_unknown`/`config_invalid`). Diagnostic only: exits 0, or 2 with
   `--strict` when `problems` is non-empty.
-- Prototype result handoff (unstable): `attempt open`, `submit`, `run show
+- Result handoff (unstable): `attempt open`, `submit`, `run show
 <run-dir> [--verify-artifacts]` — see
   [communication.md](../architecture/communication.md#implemented-now-p1-prototype).
 - Configuration: `config show [--project <dir>] [--workflow <name>]` — prints
@@ -66,12 +64,10 @@ configuration-driven role and workflow resolution.
 ## Herdr plugin
 
 For registration and wiring, see [Set up the Woof Herdr plugin](herdr-setup.md).
-For operator-owned presentation, see [Optional sidebar](herdr-sidebar.md).
-The [next metadata phase](../design/herdr-metadata-phase.md) first verifies the
-existing setup, then considers separate stage/model fields and worktree cues.
-See the [audit](../research/herdr-plugin-audit.md) for the difference between
-existing capabilities, saved configuration and live verification. The behavior
-below describes the existing implementation.
+That guide also contains an operator-owned sidebar example using the metadata
+available now. Separate stage/model fields, checkout cues and workspace
+projection are [open proposals](../design/proposals.md). The behavior below
+describes the existing implementation.
 
 `herdr-plugin.toml` registers a build step (`bun install --frozen-lockfile`,
 `bun run build`), five parameterless actions, each running `bin/woof

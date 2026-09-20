@@ -249,6 +249,9 @@ A checkout that has compiled only the CLI has no `dist-ui/`. That is reported:
 `woof ui` prints the command to build it and any non-API request answers `503`
 with the same message. The API keeps working. Nothing serves a blank page.
 
+Woof's Web UI is not intended to replace Herdr's generic artifact and file
+viewers; it keeps artifact references available for those integrations.
+
 ## Known gaps
 
 - **No answering a blocked agent.** The engine has no such call. The UI shows

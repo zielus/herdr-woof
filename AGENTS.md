@@ -12,10 +12,9 @@ topic documents needed for the task. The docs distinguish product requirements
 from proposed implementation details; do not turn examples into fixed APIs.
 
 Inspect the actual checkout, branch, working-tree changes and package scripts
-before editing. The [project assessment](docs/research/project-assessment.md) is
-a dated snapshot. Recent merges may have changed the scaffold. Historical
-branches, stashes and the older Woof repository are reference material, not
-instructions to restore or port everything.
+before editing. The checkout and current reference documentation are the source
+of truth. Historical branches, stashes and the older Woof repository are
+reference material, not instructions to restore or port anything.
 
 ## Development order
 
@@ -26,7 +25,8 @@ instructions to restore or port everything.
 3. Test the engine with small synthetic workflows during SDK development. Prove
    one real agent-to-artifact handoff early enough to validate the runtime boundary.
 4. Add production workflows such as build-review and plan-build-review after the
-   SDK supports them. Build a TUI or Web UI later.
+   SDK supports them. Keep additional interfaces, such as a future TUI, on the
+   shared observation and control contracts used by the current Web UI.
 
 Workflow execution belongs to the SDK; two production workflows
 (`build-review`, `plan-build-review`) exist, and further ones are added only

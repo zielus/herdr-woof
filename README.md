@@ -73,7 +73,7 @@ tests, not less:
   integrity relies on workers not editing it.
 
 These are statements of the current design, not fixes pending. See
-[Known limits (0.1.x)](docs/decisions/architecture.md#known-limits-01x) in
+[Known limits](docs/decisions/architecture.md#known-limits) in
 the decision record for the related design-level items this release does not
 address.
 
