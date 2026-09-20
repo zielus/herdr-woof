@@ -13,17 +13,21 @@ import { herdrBin } from "./run.js";
 
 export const DOCTOR_USAGE = `Usage: woof doctor [--json] [--strict] [--repo <dir>]
 
-Reports Woof, Herdr and Claude Code availability, the read-only Claude
+Reports Woof, Herdr, Claude Code and pi availability, the read-only Claude
 folder-trust status of the repository and whether its configuration resolves.
 The repository is the git top level of --repo (or the working directory), or
 that directory itself outside a git work tree; trust is read for exactly that
 key, and an ancestor's trust does not count. The trust status is advisory: Woof
-never answers or bypasses Claude Code's trust question.
+never answers or bypasses Claude Code's trust question. pi has no folder-trust
+pre-flight; it is reported as a known limit, not checked here.
 
 --json prints the report as one JSON line; without it the same report is
-printed as text. Both run the same probes (herdr and claude --version).
-"problems" lists herdr_unavailable, claude_unavailable, trust_untrusted,
-trust_unknown and config_invalid when they apply.
+printed as text. Both run the same probes (herdr, claude and pi --version).
+"problems" lists herdr_unavailable, claude_unavailable, pi_unavailable,
+trust_untrusted, trust_unknown and config_invalid when they apply. pi is always
+probed, but a missing pi is a problem only when some resolved role has
+kind "pi"; a missing claude is always a problem, because the built-in roles are
+claude and are the bottom layer of resolution.
 
 Exits 0, or 2 with --strict when the report lists any problem.`;
 
@@ -59,6 +63,7 @@ type ProbeStatus = "available" | "not_found" | "failed";
 export type DoctorProblem =
   | "herdr_unavailable"
   | "claude_unavailable"
+  | "pi_unavailable"
   | "trust_untrusted"
   | "trust_unknown"
   | "config_invalid";
@@ -68,6 +73,8 @@ export interface DoctorReport {
   woof: { version: string; cli: string; node: string };
   herdr: { env: boolean; paneId: string | null; status: ProbeStatus; version: string | null };
   claude: { status: ProbeStatus; version: string | null };
+  /** Always probed; a problem only when some resolved role has kind "pi". */
+  pi: { status: ProbeStatus; version: string | null };
   trust: { dir: string; status: ReturnType<typeof claudeTrustStatus>["status"] };
   config:
     | { ok: true; project: string | null; warnings: unknown[] }
@@ -76,15 +83,22 @@ export interface DoctorReport {
   problems: DoctorProblem[];
 }
 
-/** Probes Herdr and Claude Code and reads the repository's Claude trust and configuration (read-only). */
+/** Probes Herdr, Claude Code and pi and reads the repository's Claude trust and configuration (read-only). */
 export async function doctorReport(repo: string): Promise<DoctorReport> {
   const herdr = versionOf(herdrBin());
   const claude = versionOf("claude");
+  const pi = versionOf("pi");
   const resolved = await resolveConfiguration({ projectDir: repo });
   const trust = claudeTrustStatus(await trustDir(repo));
   const problems: DoctorProblem[] = [];
   if (herdr.status !== "available") problems.push("herdr_unavailable");
   if (claude.status !== "available") problems.push("claude_unavailable");
+  // A run needs pi only when a role selects it, and doctor has no run input, so any resolved
+  // role counts. claude stays unconditional on purpose: built-in roles are the bottom layer of
+  // resolution, so a project that shadows builder, planner and reviewer with pi roles leaves no
+  // resolved claude role, and gating claude the same way would silently stop claude_unavailable
+  // firing for it -- a documented --strict contract this phase did not set out to change.
+  if (pi.status !== "available" && usesPi(resolved)) problems.push("pi_unavailable");
   if (trust.status === "untrusted") problems.push("trust_untrusted");
   if (trust.status === "unknown") problems.push("trust_unknown");
   if (!resolved.ok) problems.push("config_invalid");
@@ -97,6 +111,7 @@ export async function doctorReport(repo: string): Promise<DoctorReport> {
       version: herdr.version,
     },
     claude: { status: claude.status, version: claude.version },
+    pi: { status: pi.status, version: pi.version },
     trust: { dir: trust.dir, status: trust.status },
     config: resolved.ok
       ? {
@@ -107,6 +122,13 @@ export async function doctorReport(repo: string): Promise<DoctorReport> {
       : { ok: false, reason: resolved.reason, message: resolved.message },
     problems,
   };
+}
+
+/** Whether any resolved role selects pi. An unresolved configuration reports config_invalid instead. */
+function usesPi(resolved: Awaited<ReturnType<typeof resolveConfiguration>>): boolean {
+  const configuration = resolved.configuration;
+  if (configuration === undefined) return false;
+  return Object.values(configuration.roles).some((role) => role.value.kind === "pi");
 }
 
 /**
@@ -152,13 +174,14 @@ function renderReport(report: DoctorReport): string {
     `herdr: ${probeText(report.herdr.status, report.herdr.version)}`,
     `  env: ${env}`,
     `claude: ${probeText(report.claude.status, report.claude.version)}`,
+    `pi: ${probeText(report.pi.status, report.pi.version)}`,
     `trust: ${report.trust.status} (${report.trust.dir})`,
     `config: ${config}`,
     `problems: ${report.problems.length === 0 ? "none" : report.problems.join(", ")}`,
   ].join("\n");
 }
 
-/** Bound on each probe of an external executable, so a hung `herdr` or `claude` cannot block doctor. */
+/** Bound on each probe of an external executable, so a hung `herdr`, `claude` or `pi` cannot block doctor. */
 const PROBE_TIMEOUT_MS = 10_000;
 
 function versionOf(command: string): {

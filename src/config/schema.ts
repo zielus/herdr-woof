@@ -1,5 +1,5 @@
 import { isId, isPlainObject } from "../contracts/envelope.js";
-import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes } from "../scheduler/launch.js";
+import { engineOwnedArgIndexes, engineOwnedFlags } from "../scheduler/launch.js";
 import {
   COUNT_LIMIT_KEYS,
   DURATION_LIMIT_KEYS,
@@ -67,10 +67,26 @@ export const MAX_HOST_START_TIMEOUT_MS = 600_000;
 export const MAX_POLL_MS = 3_600_000;
 const MAX_DESCRIPTION = 500;
 
-const BYPASS_FLAGS: ReadonlySet<string> = new Set([
+const CLAUDE_BYPASS_FLAGS: ReadonlySet<string> = new Set([
   "--dangerously-skip-permissions",
   "--allow-dangerously-skip-permissions",
 ]);
+
+// pi has no permission prompt to skip; --approve/-a trusts project-local files for the run
+// without the operator's answer. Matched by equality only, so --no-approve/-na do not match.
+const PI_TRUST_FLAGS: ReadonlySet<string> = new Set(["--approve", "-a"]);
+
+/** Per kind, the caller arguments that widen what the engine would otherwise ask about. */
+const BYPASS_MATCHERS: Record<string, (args: readonly string[]) => string[]> = {
+  claude: (args) =>
+    args.filter(
+      (arg, index) =>
+        CLAUDE_BYPASS_FLAGS.has(arg) ||
+        arg === "--permission-mode=bypassPermissions" ||
+        (arg === "--permission-mode" && args[index + 1] === "bypassPermissions"),
+    ),
+  pi: (args) => args.filter((arg) => PI_TRUST_FLAGS.has(arg)),
+};
 
 const SETTINGS_KEYS = ["schemaVersion", "defaults"];
 const DEFAULTS_KEYS = [
@@ -215,12 +231,12 @@ export function validateRoleFile(
 
   const argv = (args as string[] | undefined) ?? [];
   // A role that sets an engine-owned flag would silently override the resolved values.
-  const engineOwned = engineOwnedArgIndexes(argv);
+  const engineOwned = engineOwnedArgIndexes(kind as string, argv);
   if (engineOwned.length > 0) {
     return {
       ok: false,
       reason: "role_invalid",
-      message: `${file.path}: args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}; use the model field (the engine adds both)`,
+      message: `${file.path}: args must not set ${engineOwnedFlags(kind as string).join(" or ")}; the engine sets them (use the model field)`,
       details: engineOwned.map((index) => ({
         field: `${file.path}#/args/${index}`,
         message: `${argv[index]} is set by the engine`,
@@ -240,14 +256,23 @@ export function validateRoleFile(
   };
 }
 
+/**
+ * The launch arguments that explicitly configure a permission or trust bypass for that kind
+ * (reported, never added). Strictly per kind: a kind with no own matcher matches nothing, the
+ * same way `engineOwnedFlags` owns nothing for a kind the launch table does not list. Woof has
+ * no flag contract for such a kind, and `role_kind_unsupported` (plus `agent_kind_unsupported`
+ * at admission) is what reports it. Matching it against other vendors' flags would make the
+ * flags cross exactly when the kind is unknown, and would let a newly added kind whose matcher
+ * was forgotten inherit every other matcher instead of exposing the missing entry.
+ */
+export function permissionBypassFlags(kind: string, args: readonly string[]): string[] {
+  const matcher = Object.hasOwn(BYPASS_MATCHERS, kind) ? BYPASS_MATCHERS[kind] : undefined;
+  return matcher === undefined ? [] : matcher(args);
+}
+
 /** Whether launch arguments explicitly configure a permission bypass (reported, never added). */
-export function configuresPermissionBypass(args: readonly string[]): boolean {
-  return args.some(
-    (arg, index) =>
-      BYPASS_FLAGS.has(arg) ||
-      arg === "--permission-mode=bypassPermissions" ||
-      (arg === "--permission-mode" && args[index + 1] === "bypassPermissions"),
-  );
+export function configuresPermissionBypass(kind: string, args: readonly string[]): boolean {
+  return permissionBypassFlags(kind, args).length > 0;
 }
 
 function invalid(path: string, details: ConfigDetail[]): ConfigFailure {

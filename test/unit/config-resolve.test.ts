@@ -16,6 +16,8 @@ let builtinCatalog: () => Json;
 let builtInWorkflowNames: () => string[];
 let validateSettingsFile: (value: unknown, file: Json) => Result;
 let validateRoleFile: (value: unknown, file: Json) => Result;
+let configuresPermissionBypass: (kind: string, args: readonly string[]) => boolean;
+let permissionBypassFlags: (kind: string, args: readonly string[]) => string[];
 
 beforeAll(async () => {
   const resolve = await loadDist<{
@@ -27,10 +29,13 @@ beforeAll(async () => {
   ({ builtInWorkflowNames } = await loadDist<{ builtInWorkflowNames: typeof builtInWorkflowNames }>(
     "workflows/catalog.js",
   ));
-  ({ validateSettingsFile, validateRoleFile } = await loadDist<{
-    validateSettingsFile: typeof validateSettingsFile;
-    validateRoleFile: typeof validateRoleFile;
-  }>("config/schema.js"));
+  ({ validateSettingsFile, validateRoleFile, configuresPermissionBypass, permissionBypassFlags } =
+    await loadDist<{
+      validateSettingsFile: typeof validateSettingsFile;
+      validateRoleFile: typeof validateRoleFile;
+      configuresPermissionBypass: typeof configuresPermissionBypass;
+      permissionBypassFlags: typeof permissionBypassFlags;
+    }>("config/schema.js"));
 });
 
 const hash = (char: string) => char.repeat(64);
@@ -253,6 +258,62 @@ describe("configuration composition", () => {
         path: "/user/.woof/roles/reviewer.json",
       },
     ]);
+  });
+});
+
+describe("permission bypass detection is per kind", () => {
+  it("reports claude's bypass flags exactly as before", () => {
+    expect(configuresPermissionBypass("claude", ["--dangerously-skip-permissions"])).toBe(true);
+    expect(configuresPermissionBypass("claude", ["--allow-dangerously-skip-permissions"])).toBe(
+      true,
+    );
+    expect(configuresPermissionBypass("claude", ["--permission-mode", "bypassPermissions"])).toBe(
+      true,
+    );
+    expect(configuresPermissionBypass("claude", ["--permission-mode=bypassPermissions"])).toBe(
+      true,
+    );
+    expect(configuresPermissionBypass("claude", ["--permission-mode", "auto"])).toBe(false);
+    expect(configuresPermissionBypass("claude", [])).toBe(false);
+  });
+
+  it("reports pi's --approve and -a, which trust project-local files for the run", () => {
+    expect(configuresPermissionBypass("pi", ["--approve"])).toBe(true);
+    expect(configuresPermissionBypass("pi", ["-a"])).toBe(true);
+    expect(configuresPermissionBypass("pi", ["--verbose", "--approve"])).toBe(true);
+  });
+
+  it("matches pi's trust flags by equality, so the negative forms are silent", () => {
+    for (const args of [["--no-approve"], ["-na"], ["--approve-everything"], ["--approved"]])
+      expect(configuresPermissionBypass("pi", args), args.join(" ")).toBe(false);
+  });
+
+  it("does not cross the kinds' flags", () => {
+    // -a and --approve are not claude flags; --dangerously-skip-permissions is not a pi flag.
+    expect(configuresPermissionBypass("claude", ["--approve"])).toBe(false);
+    expect(configuresPermissionBypass("claude", ["-a"])).toBe(false);
+    expect(configuresPermissionBypass("pi", ["--dangerously-skip-permissions"])).toBe(false);
+    expect(configuresPermissionBypass("pi", ["--permission-mode", "bypassPermissions"])).toBe(
+      false,
+    );
+  });
+
+  it("names the matched flags so a warning can say which one it saw", () => {
+    expect(permissionBypassFlags("pi", ["--verbose", "--approve"])).toEqual(["--approve"]);
+    expect(permissionBypassFlags("claude", ["--dangerously-skip-permissions"])).toEqual([
+      "--dangerously-skip-permissions",
+    ]);
+    expect(permissionBypassFlags("pi", ["--no-approve"])).toEqual([]);
+  });
+
+  it("matches nothing for a kind that has no matcher of its own", () => {
+    // Woof has no flag contract for such a kind, so another vendor's flags must not be read
+    // into its args. role_kind_unsupported (and agent_kind_unsupported at admission) is what
+    // reports it. A new kind whose matcher was forgotten shows up as an absent entry rather
+    // than silently inheriting every other vendor's.
+    for (const args of [["--dangerously-skip-permissions"], ["--approve"], ["-a"], ["--verbose"]])
+      expect(configuresPermissionBypass("codex", args), args.join(" ")).toBe(false);
+    expect(permissionBypassFlags("codex", ["--approve"])).toEqual([]);
   });
 });
 

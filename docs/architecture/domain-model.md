@@ -387,12 +387,16 @@ latest work-stage gate`; otherwise the engine itself records
   loses the pre-delivery revision fingerprint that revision binding depends
   on.
 
-- **Agent kind table (D10).** `src/scheduler/launch.ts` turns a resolved
-  `{kind, model, args}` into runtime launch arguments; only `"claude"` is
-  supported today (`agent_kind_unsupported` otherwise, checked at admission
-  before any pane opens). The engine adds only `--model <model>` (when given)
-  and `--add-dir <runDir>`; it never adds permission flags — those are
-  caller-supplied `args`. Before every dispatch the scheduler requires the
+- **Agent kind table (D10, per kind since p8a).** `src/scheduler/launch.ts`
+  turns a resolved `{kind, model, args}` into runtime launch arguments;
+  `"claude"` and `"pi"` are supported (`agent_kind_unsupported` otherwise,
+  checked at admission before any pane opens). Each kind declares the flags the
+  engine owns, and the engine adds only those: `claude` gets `--model <model>`
+  (when given) and `--add-dir <runDir>`; `pi` gets `--model <model>` only,
+  because pi has no directory sandbox and so needs no run-directory grant. It
+  never adds permission flags — those are caller-supplied `args`. A flag one
+  kind owns is not owned for another: `--add-dir` in a `pi` role is passed
+  through to pi, which has no such flag. Before every dispatch the scheduler requires the
   tracked observation's terminal id to equal the assignment's; a mismatch
   ends the run `failed{reason:"agent_replaced: …"}`, and a `gone` observation
   ends it `failed{reason:"agent_gone: …"}`.

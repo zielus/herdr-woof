@@ -153,7 +153,18 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   `--project <repository>`), `workflow_not_found`. An unsupported role `kind`
   is only a warning (`role_kind_unsupported`) in `config show`, and fails
   admission (`agent_kind_unsupported`) only for a role the workflow actually
-  resolves to.
+  resolves to. The supported kinds are `claude` and `pi`. Engine-owned flags
+  are per kind, so the rejection message names that kind's flags: a `pi` role
+  setting `--model` is `role_invalid` naming `--model` alone. The converse is a
+  known limit: a flag Woof does not own for that kind is passed through
+  unchecked, so `--add-dir` in a `pi` role is accepted here and rejected by pi
+  itself. Measured against pi 0.86.0, pi exits on the unknown option before any
+  agent is detected, so it fails at startup (`agent_start_failed`, runtime
+  `timeout`) rather than as `role_invalid` here or as an exhausted limit later.
+  Woof keeps no per-kind list of flags to reject. A pi `model` is written `provider/id`;
+  an unknown provider fails at start (`agent_start_failed`), while an unknown id
+  under a real provider starts and then fails on its first API call, which
+  reaches the run as an exhausted limit naming no model.
 - **A role or workflow name that collides with an `Object.prototype`
   member resolves cleanly, never as a phantom or a crash.** Role and
   workflow lookups are matched as own entries only (`Object.hasOwn`) against
@@ -176,16 +187,22 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
 shadowed:[]}` rather than picking up `Object.prototype`'s own `constructor`/
   `toString` as a phantom shadowed layer (or throwing, before this was
   fixed).
-- **Built-in roles and permission visibility.** `builder`/`reviewer` default
-  to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
+- **Built-in roles and permission visibility.** Built-in roles are still
+  `claude`, and they are the bottom layer of resolution: selecting `pi` means
+  writing a role file or an input agent that shadows one. `builder`/`reviewer`
+  default to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
   never adds a permission flag, so an interactive agent with no explicit
   permission configuration stops at its own prompt and the run records
   `run.blocked{reason:"startup_blocked"}`. Args that configure a permission
-  bypass (`--dangerously-skip-permissions`,
-  `--allow-dangerously-skip-permissions`, `--permission-mode
-bypassPermissions`, split or `=`-joined) are allowed but produce warning
-  `permission_bypass_configured`, naming the source, in `run start` output
-  and `config.json` — only for the agents actually admitted, once per role
+  bypass are allowed but produce warning `permission_bypass_configured`,
+  naming the kind, the flag and the source, in `run start` output
+  and `config.json`. The flags are per kind: for `claude`,
+  `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions` and
+  `--permission-mode bypassPermissions` (split or `=`-joined); for `pi`,
+  `--approve` and `-a`, matched by equality so `--no-approve` and `-na` do not
+  warn. pi's flag is not a permission bypass in Claude Code's sense: it trusts
+  project-local files for that run without the operator's answer. Woof never
+  adds either. Reported only for the agents actually admitted, once per role
   file, and with no path when the workflow input itself set the bypass. A
   role-file bypass an input agent's safe args replaced, or one on a role the
   workflow does not use, is never reported in `config.json`/`run start`;

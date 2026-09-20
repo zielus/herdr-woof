@@ -19,7 +19,12 @@ export type {
   ResolveConfigurationResult,
   ResolvedConfiguration,
 } from "./resolve.js";
-export { configuresPermissionBypass, validateRoleFile, validateSettingsFile } from "./schema.js";
+export {
+  configuresPermissionBypass,
+  permissionBypassFlags,
+  validateRoleFile,
+  validateSettingsFile,
+} from "./schema.js";
 export type {
   ConfigDetail,
   ConfigFailure,

@@ -37,6 +37,11 @@ merged to master as `b329cdc`.
   [Workflow authoring](workflows/authoring.md#implemented-now-p5),
   [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
   [the acceptance evidence](acceptance/v1-evidence.md).
+- **A second agent kind** (p8a): the launch table is per kind, so a role or an input agent can
+  set `kind: "pi"`. pi owns `--model` only and never receives a run-directory grant; `woof
+doctor` probes pi and reports `pi_unavailable` when a resolved role selects it; pi's
+  `--approve`/`-a` is reported under `permission_bypass_configured` and never added. See
+  [Agent kinds](design/agent-kinds.md).
 
 ## Proposed next phase
 

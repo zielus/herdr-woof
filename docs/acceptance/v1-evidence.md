@@ -110,12 +110,102 @@ not restore the ability to cancel.
 
 ### A second agent kind
 
-Not exercised. The `RuntimeAdapter` interface (`openPane, startAgent, observe,
-waitFor, deliver, stop`) is the capability boundary, implemented today only by
-`createHerdrCliRuntime` (over `claude` through Herdr) and the in-memory
-`createScriptedRuntime` test double. Nothing in this phase adds or exercises a
-second real provider kind. _Falsified by_ a live run against a second agent
-kind through the same `RuntimeAdapter` contract with no engine change.
+**Closed in p8a.** `pi` is the second supported kind: the launch table is a
+per-kind record, `pi` owns `--model` and receives no run-directory grant, and a
+role or an input agent selects it. The engine change is confined to the kind
+table, the per-kind owned-flag rejection, the per-kind permission-bypass report
+and doctor's probe; the scheduler, the `RuntimeAdapter` contract and the
+submission path are untouched, which is what makes this evidence about the
+boundary generalizing rather than about one provider.
+
+A full `build-review` run with a pi builder and a claude reviewer passed **10/10
+gates, exit 0**, on 2026-09-20 — run id **`live-pi-br-20260920-071627`**, against
+pi 0.86.0, Herdr 0.9.1, Claude Code 2.1.278 and model
+`openai-codex/gpt-5.6-sol` (the `github-copilot/kimi-k3` fallback was not needed
+and no rate limit was hit). `scripts/live/pi-build-review.mjs` produced it and
+the log is named at the end of this section.
+
+The claims below are exactly what the gates assert, and each is attributed to
+the gate that asserts it. Two of them are deliberately kept apart, because
+conflating them was the defect review P8A-R6 found:
+
+- **The builder was a real pi session**, not an agent merely named `builder`
+  (gate 5): `agent.assigned.sessionId` is a pi session-file path under
+  `~/.pi/agent/sessions/`, where Claude Code's is a bare UUID.
+- **Woof delivered both requests to that session** (gate 6): each
+  `request.dispatched` for the builder has `delivery: "started"` and a
+  `target.sessionId` equal to the assignment's. **This establishes delivery
+  only.** It does not by itself show that the pi session did the work, because a
+  different process with access to the shared repository and run directory could
+  have produced the artifacts while pi did something harmless.
+- **The pi session performed the accepted build and repair** (gate 8). This is
+  the gate that carries authorship. Per phase it requires, from pi's own session
+  file and each with a **successful** tool result: an `edit`/`write` of the
+  repository's `src/slugify.mjs` (plus `test/slugify.test.mjs` in build), a
+  `write` of an envelope under the run directory, and a `bash` call that is the
+  run's own CLI invoked as `<cliPath> submit --run-dir <runDir> --envelope
+<that phase's envelope>` — not any command merely containing the word. That
+  submit is then paired with the journal's `submission.accepted` for the same
+  stage; in this run both phases paired **by receipt id**
+  (`rcpt-5-f24f2195ba38` for build, `rcpt-15-1ec8b80c61bf` for repair), and the
+  log records which pairing was used. The model is the one active at each
+  qualifying call, so work under one model cannot be excused by a later switch.
+- **The reject → repair → approve loop ran** (gate 7): review 1 `fail` routing to
+  `repair`, an accepted repair submission, review 2 `pass`, and
+  `completed/approved` at journal seq 22. A run whose first review passed would
+  fail this gate and exit non-zero as loop-not-exercised, so a green run cannot
+  mean the loop was skipped.
+
+Taken together — and it is gates 7 and 8 together, not gate 6, that support it —
+a second kind both produced artifacts and consumed a rejected review through the
+one envelope contract, in the session Woof assigned it.
+
+`test/pi-session-proof.test.ts` pins gate 8's helper offline. Its passing case is
+a real recorded pi transcript (from the preceding live run,
+`live-pi-br-20260920-064617`, trimmed to its qualifying entries with the paths
+parameterized), and its failing cases are the false positives the review named:
+`/tmp/marker` writes, `echo submit --run-dir`, failed tool results, a submit
+naming another run directory, and a model switch after the work each fail the
+proof.
+
+The surrounding gates place that in context: the plan's builder is `kind:"pi"`
+with args `["--model","openai-codex/gpt-5.6-sol"]` and no `--add-dir`, while the
+reviewer stays `claude` with `--add-dir <runDir>` (gates 2 and 3); `config.json`
+records `agents.builder.value.kind = "pi"`, `source: "input"`, with the built-in
+claude role under `shadowed` (gate 4); and the fixture carries the change with an
+independent `node --test` exiting 0 (gate 9).
+
+The probe mode of the same script was run separately and passed **6/6, exit 0**,
+and has its own committed log: one pi agent started through `herdr agent start
+--kind pi` (P1), observed `ready` with no pi trust question blocking startup
+(P2), given one prompt it began working on (P3), writing the artifact from its
+own shell (P4), whose `woof submit` was accepted with a digest matching the file
+on disk (P5, receipt `rcpt-3-8970e2847765`), after which the pane the probe
+opened was closed (P6). That is a standalone startup and submission check,
+separate from the workflow run above, and is evidenced by
+`docs/research/pi-probe-live.log` rather than by the full-run log, which contains
+no probe output.
+
+Recorded preconditions, logged by the script rather than assumed: `pi --version`
+0.86.0; `pi auth check --provider openai-codex` → `ready`/`oauth`;
+`~/.pi/agent/trust.json exists: false`; `~/.agents/skills exists: true`; the
+fixture has no `.pi/`. No pi trust question appeared.
+
+Known limits shipped with the kind and recorded in
+[Agent kinds](../design/agent-kinds.md): `--add-dir` in a pi role is admitted by
+Woof and forwarded, and pi then exits on the unknown option before any agent is
+detected, so it fails at startup (`agent_start_failed`) rather than reaching a
+delivery or readiness limit; a wrong pi model under a real provider fails slow
+with nothing naming the model; pi's trust question can still fire on a project
+carrying `.pi/`.
+
+Evidence logs, both redacted line-preservingly from the runs they record:
+`docs/research/pi-build-review-live.log` (361 lines) carries the full run — its
+run id, versions, 10/10 gates, the delivery and loop gates, the receipt-paired
+session proof, the model and the repository test result. `docs/research/pi-probe-live.log`
+(68 lines) carries the standalone probe's P1-P6 and its `PROBE PASS`. Each claim
+above is backed by the log that actually contains it. _Falsified by_ a re-run of
+either mode failing a gate on the revision this document describes.
 
 ### Parallel scheduling
 

@@ -14,8 +14,8 @@
 [![Herdr](https://img.shields.io/badge/herdr-%3E%3D0.9.0-blueviolet)](https://herdr.dev)
 
 Woof is a multi-agent workflow engine for [Herdr](https://herdr.dev): plan, build, review,
-repair, every hand-off verified. It launches `claude` agents in Herdr panes, validates the
-artifact each agent submits and hands the accepted artifact to the next agent. A run ends when a
+repair, every hand-off verified. It launches `claude` and `pi` agents in Herdr panes, validates
+the artifact each agent submits and hands the accepted artifact to the next agent. A run ends when a
 review passes on the exact repaired revision or a limit ends it.
 
 ## Demo
@@ -25,9 +25,12 @@ review passes on the exact repaired revision or a limit ends it.
 > **Status: 0.1.x, pre-release.**
 >
 > - The SDK and CLI surfaces are unstable until v1 (marked in `src/index.ts`).
-> - macOS and Linux only. Workflows need Herdr 0.9 or newer and Claude Code.
-> - Not implemented yet: an MCP adapter, crash resume or re-hosting a lost run, parallel work
->   within a run, and a second agent kind besides `claude`.
+> - macOS and Linux only. Workflows need Herdr 0.9 or newer, and Claude Code or pi for the
+>   kinds a run uses.
+> - Two agent kinds: `claude` and `pi`. Built-in roles are still `claude`; a role or an input
+>   agent selects `pi`.
+> - Not implemented yet: an MCP adapter, crash resume or re-hosting a lost run, and parallel
+>   work within a run.
 
 ## Contents
 
@@ -185,12 +188,15 @@ role name). Prints `{"outcome":"started","role","roleSource","agent"}`. Exits
 the pane/agent start failed (a pane this command split is then closed, and
 `paneClosed` in the rejection says whether that worked), 1 a usage error.
 
-`doctor` reports whether Herdr and Claude Code can be invoked, and (with
+`doctor` reports whether Herdr, Claude Code and pi can be invoked, and (with
 `--json`) the read-only Claude folder-trust status of a repository, resolved
-to that repository's git top level. Neither Herdr nor Claude Code is
-required for the command to complete. `doctor` exits 0 by default; `--strict`
-exits 2 when the report lists any problem (`herdr_unavailable`,
-`claude_unavailable`, `trust_untrusted`, `trust_unknown`, `config_invalid`).
+to that repository's git top level. None of them is required for the command to
+complete. `doctor` exits 0 by default; `--strict` exits 2 when the report lists
+any problem (`herdr_unavailable`, `claude_unavailable`, `pi_unavailable`,
+`trust_untrusted`, `trust_unknown`, `config_invalid`). pi is always probed, but
+a missing pi is a problem only when some resolved role has `kind: "pi"`; a
+missing Claude Code is always a problem, because the built-in roles are
+`claude`.
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
@@ -286,11 +292,14 @@ A scheduler runs the built-in `build-review` workflow end to end: build
 → repair, until a review passes on the exact repaired revision or a limit
 ends the run.
 
-It launches `claude` agents in Herdr panes next to the scheduler's own
+It launches `claude` and `pi` agents in Herdr panes next to the scheduler's own
 (`HERDR_ENV=1` and `HERDR_PANE_ID` must be set). An interactive Claude agent it
 starts must already be allowed to run: the operator must have trusted the target
 repository in Claude Code at least once (open `claude` there and answer its
 folder-trust question) before `woof run build-review` can start an agent in it.
+Woof has no pi equivalent of that pre-flight; see
+[Agent kinds](docs/design/agent-kinds.md) for pi's own trust behaviour and its
+known limits.
 Woof surfaces an untrusted repository as `run.blocked{reason:"startup_blocked"}`
 and never bypasses that dialog.
 
@@ -310,7 +319,7 @@ cat > input.json <<'EOF'
   },
   "verify": { "command": ["node", "--test"], "timeoutMs": 120000 },
   "agents": {
-    "builder": { "kind": "claude", "model": "sonnet", "args": ["--permission-mode", "auto"] },
+    "builder": { "kind": "pi", "model": "openai-codex/gpt-5.6-sol", "args": [] },
     "reviewer": { "kind": "claude", "model": "sonnet", "args": ["--permission-mode", "auto"] }
   }
 }
@@ -371,9 +380,31 @@ mkdir -p .woof/roles
 cat > .woof/roles/builder.json <<'EOF'
 {"schemaVersion":1,"kind":"claude","model":"sonnet","args":["--permission-mode","auto"]}
 EOF
+# or a pi role, whose model is written provider/id:
+# {"schemaVersion":1,"kind":"pi","model":"openai-codex/gpt-5.6-sol","args":[]}
 woof config show
 # {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
 ```
+
+Two things to know when writing a `pi` role, because Woof cannot catch either
+for you:
+
+- **Only the flags that kind owns are rejected.** Woof rejects `--model` in a
+  pi role's `args` (the engine sets it from `model`), but `--add-dir` is not a
+  pi flag, so Woof passes it straight through and pi rejects it itself. Verified
+  against pi 0.86.0: pi exits immediately on the unknown option, so no agent is
+  ever detected and `woof agent start` reports
+  `{"reason":"agent_start_failed", …,"runtime":{"runtimeCode":"timeout"}}` with
+  the message `timed out waiting for agent startup`. The flag never reaches a
+  running agent, so the failure is at startup, not an exhausted limit later.
+  Don't put `--add-dir` in a pi role.
+- **Write the model `provider/id`, and get the provider right.** An unknown
+  provider (`nosuchprovider/foo`) makes pi exit at start, which Woof reports as
+  `agent_start_failed`. An unknown _id_ under a real provider is worse: pi
+  warns, starts anyway, and fails on its first API call, so the run ends on an
+  exhausted delivery or readiness limit with nothing in Woof's output naming the
+  model. Check the model with `pi --list-models` if a pi agent starts and then
+  goes nowhere.
 
 `woof run start` resolves that configuration, launches a scheduler in a
 Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host
@@ -427,14 +458,21 @@ for it with `woof status --wait`, reporting the structured result.
 
 ### Operator-trust precondition
 
-Both `woof run build-review` and `woof run start` launch interactive `claude`
-agents in Herdr panes. An agent that has never been trusted in a target
-repository stops at its own folder-trust prompt, and the run records
+Both `woof run build-review` and `woof run start` launch interactive agents in
+Herdr panes. This precondition is Claude Code's: a `claude` agent that has never
+been trusted in a target repository stops at its own folder-trust prompt, and the run records
 `run.blocked{reason:"startup_blocked"}` rather than proceeding. Before starting
 a run against a repository, open `claude` there at least once and accept its
 trust question. Woof only reports this status (`woof doctor --json`,
 `run start`'s `warnings[]`, `/woof:run`'s pre-flight); it never answers the
 prompt or bypasses it.
+
+pi has no equivalent pre-flight in Woof. pi asks its own trust question only
+when the project carries trust-requiring resources and no decision is saved, so
+a repository holding `.pi/` can stop a pi agent the same way, and Woof surfaces
+that only as an exhausted readiness limit. `--approve` / `-a` would answer it,
+but Woof never adds either; a role that sets one is reported under
+`permission_bypass_configured`.
 
 See [configuration](docs/architecture/configuration.md#implemented-now-p4),
 [domain model](docs/architecture/domain-model.md#implemented-now-p4),

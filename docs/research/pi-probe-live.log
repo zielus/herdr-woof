@@ -1,0 +1,68 @@
+
+=== Woof p8a live probe: pi agent kind ===
+date: 2026-09-20T07:44:18.758Z
+HERDR_ENV=1
+HERDR_PANE_ID=w98:p2
+herdr --version: herdr 0.9.1
+claude --version: 2.1.278 (Claude Code)
+pi --version: 0.86.0
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: 3bf062082fc75377cd324401fc70e13a7f96b60d
+woof worktree status --porcelain:
+M scripts/live/lib/pi-session-proof.mjs
+ M test/pi-session-proof.test.ts
+
+=== pi preconditions (recorded, not assumed) ===
+pi model (provider/id): openai-codex/gpt-5.6-sol
+pi auth check --provider openai-codex --json --no-refresh: {"status":"ready","provider":"openai-codex","authType":"oauth"}
+~/.pi/agent/trust.json exists: false
+~/.agents/skills exists: true
+reason no pi trust question is expected: pi's trust manager treats the user-global
+~/.agents/skills directory as an always-trusted user resource and ignores it when deciding
+whether a project has trust-requiring resources; the fixture below has no .pi/ of its own.
+precondition (claude reviewer): the operator must have trusted ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/fixture-repo in Claude Code once (open `claude` there and answer its folder-trust question); Woof never does this.
+
+=== fixture ===
+live root: ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/probe-20260920-074419
+repo (fixed, re-initialized): ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/fixture-repo
+run dir: ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/probe-20260920-074419/run
+ls -a ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/fixture-repo:
+.
+..
+.git
+package.json
+README.md
+src
+fixture has .pi/: false
+
+=== probe: start a pi agent ===
+openPane: {"ok":true,"value":{"paneId":"w98:pV"}}
+herdr agent start w-builder-0ad8d2 --kind pi ... -- --model openai-codex/gpt-5.6-sol
+startAgent: {"ok":true,"value":{"adapter":"herdr","runtimeName":"w-builder-0ad8d2","kind":"pi","paneId":"w98:pV","paneOwned":true,"terminalId":"term_65be54d1a006625","sessionId":"~/.pi/agent/sessions/--Users-zielu-.herdr-dev-runs-herdr-woof-p8a-pi-agent-kind-live-fixture-repo--/2026-09-20T07-44-21-642Z_01a0bdc5-f289-70d6-89be-2c749c08d955.jsonl"}}
+observe (before): {"ok":true,"value":{"runtimeName":"w-builder-0ad8d2","paneId":"w98:pV","lifecycle":"ready","runtimeStatus":"idle","sessionId":"~/.pi/agent/sessions/--Users-zielu-.herdr-dev-runs-herdr-woof-p8a-pi-agent-kind-live-fixture-repo--/2026-09-20T07-44-21-642Z_01a0bdc5-f289-70d6-89be-2c749c08d955.jsonl","order":{"terminalId":"term_65be54d1a006625","stateChangeSeq":180,"revision":3},"observedAt":"2026-09-20T07:44:23.630Z"}}
+PASS gate P1: pi agent starts through herdr agent start --kind pi and Woof observes it (lifecycle ready)
+PASS gate P2: no pi trust question blocked startup (lifecycle ready)
+
+=== probe: one woof submit round-trip ===
+woof attempt open: exit 0 {"outcome":"opened","attempt":{"runId":"live-pi-probe-20260920-074419","agentId":"builder","stageId":"build","visit":1,"attempt":1,"seq":2,"verdicts":["pass","fail"],"artifactDir":"~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live/probe-20260920-074419/run/artifacts/build/visit-1/attempt-1"}}
+deliver: {"outcome":"started","observation":{"runtimeName":"w-builder-0ad8d2","paneId":"w98:pV","lifecycle":"working","runtimeStatus":"working","sessionId":"~/.pi/agent/sessions/--Users-zielu-.herdr-dev-runs-herdr-woof-p8a-pi-agent-kind-live-fixture-repo--/2026-09-20T07-44-21-642Z_01a0bdc5-f289-70d6-89be-2c749c08d955.jsonl","order":{"terminalId":"term_65be54d1a006625","stateChangeSeq":181,"revision":3},"observedAt":"2026-09-20T07:44:24.291Z"}}
+
+=== probe: journal ===
+1 run.opened
+2 attempt.opened
+3 submission.accepted
+event 1 run.opened {}
+event 2 attempt.opened {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+event 3 submission.accepted {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+PASS gate P3: pi received the prompt and started working (lifecycle working)
+PASS gate P4: pi wrote the artifact from its own shell (artifact 32 bytes)
+PASS gate P5: woof submit accepted pi's envelope and the digest matches the file on disk (receipt rcpt-3-8970e2847765)
+stop: {"ok":true,"value":{"paneClosed":true}}
+observe (after): {"ok":true,"value":{"runtimeName":"w-builder-0ad8d2","paneId":"w98:pV","lifecycle":"gone","runtimeStatus":null,"sessionId":null,"order":{"terminalId":null,"stateChangeSeq":null,"revision":null},"observedAt":"2026-09-20T07:44:44.396Z"}}
+PASS gate P6: the pane this probe opened is closed
+
+=== summary ===
+6/6 gates passed
+probe log: ~/.herdr-dev/runs/herdr-woof/p8a-pi-agent-kind/live-probe.log
+PROBE PASS

@@ -79,11 +79,11 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
 (`[[panes]] watch`, command `bin/woof watch --follow`):
 
 - **`doctor`** — `woof doctor --json` for the invocation context's project:
-  Herdr and Claude Code availability, the read-only Claude folder-trust
+  Herdr, Claude Code and pi availability, the read-only Claude folder-trust
   status, and whether the project's configuration resolves (a configuration
   problem is reported, `config: {ok: false, reason, message}`, never
   refused). Notifies with the project root and one line each for herdr,
-  claude, trust and config; prints `{"outcome":"doctor","project",…report}`.
+  claude, pi, trust and config; prints `{"outcome":"doctor","project",…report}`.
   The notification title is `Woof: doctor` with no problems, `Woof: doctor
 (1 problem)` for one, and `Woof: doctor (N problems)` for N ≥ 2; the action
   still exits 0 either way.
