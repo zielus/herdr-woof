@@ -110,25 +110,61 @@ not restore the ability to cancel.
 
 ### A second agent kind
 
-Partly exercised as of p8a. `pi` is the second supported kind: the launch table
-is a per-kind record, `pi` owns `--model` and receives no run-directory grant,
-and a role or an input agent selects it. The engine change is confined to the
-kind table, the per-kind owned-flag rejection, the per-kind permission-bypass
-report and doctor's probe; the scheduler, the `RuntimeAdapter` contract and the
-submission path are untouched.
+**Closed in p8a.** `pi` is the second supported kind: the launch table is a
+per-kind record, `pi` owns `--model` and receives no run-directory grant, and a
+role or an input agent selects it. The engine change is confined to the kind
+table, the per-kind owned-flag rejection, the per-kind permission-bypass report
+and doctor's probe; the scheduler, the `RuntimeAdapter` contract and the
+submission path are untouched, which is what makes this evidence about the
+boundary generalizing rather than about one provider.
 
-A real pi agent has been exercised through that contract. The probe mode of
-`scripts/live/pi-build-review.mjs` started one pi agent through `herdr agent
-start --kind pi` with the launch table's arguments, observed it `ready` with no
-trust question, delivered one prompt, and had pi complete a `woof submit`
-round-trip from its own shell whose accepted digest matched the artifact on
-disk: 6/6 gates, exit 0, on 2026-09-20 against pi 0.86.0, Herdr 0.9.1 and model
-`openai-codex/gpt-5.6-sol`.
+A full `build-review` run with a pi builder and a claude reviewer completed
+`approved`, exit 0, 8/8 gates, on 2026-09-20 — run id `live-pi-br-20260920-054240`,
+against pi 0.86.0, Herdr 0.9.1, Claude Code, and model
+`openai-codex/gpt-5.6-sol` (the `github-copilot/kimi-k3` fallback was not
+needed). It is recorded in the live log named at the end of this section;
+`scripts/live/pi-build-review.mjs` produced it.
 
-Still outstanding, so this limit stays open: the full `build-review` run with a
-pi builder and a claude reviewer, which the same script performs without
-`--probe` and records to `docs/research/pi-build-review-live.log`. _Falsified by_
-that run passing every gate.
+The run was a genuine loop, not a single pass: build accepted, gates `built` and
+`checks_passed`, review 1 **fail** (`changes_requested`), repair dispatched to
+the **same** pi builder and accepted, review visit 2 **pass** (`approved`),
+`run.terminated completed/approved` — 22 journal records, no `run.blocked`. The
+reject → repair → approve trace is the part that matters: the reviewer-only
+checklist line was missing from pi's first submission, review 1 quoted the
+required line and named pi's false completion claim, and pi's repair — in the
+same pi session — read that accepted review artifact and added the line, which
+review 2 confirmed byte-for-byte. A second kind therefore both produced and
+consumed artifacts through the same envelope contract.
+
+The builder's kind is confirmed from three independent places: the plan in
+journal record 1 (`kind:"pi"`, args `["--model","openai-codex/gpt-5.6-sol"]` and
+no `--add-dir`, while the reviewer's args carry `--add-dir <runDir>`), the
+builder's `agent.assigned` `sessionId`, which is a pi session-file path where the
+reviewer's is Claude Code's plain UUID, and `config.json`
+(`agents.builder.value.kind = "pi"`, `source: "input"`, the built-in claude role
+listed under `shadowed`). Repository effects are real: `src/slugify.mjs` carries
+the implementation and the checklist header, `test/slugify.test.mjs` holds three
+`node:test` cases, and an independent `node --test` exits 0.
+
+The probe mode of the same script was run separately and passed 6/6, exit 0:
+one pi agent started through `herdr agent start --kind pi`, observed `ready` with
+no trust question, given one prompt, completing a `woof submit` round-trip from
+its own shell whose accepted digest matched the artifact on disk.
+
+Recorded preconditions, logged by the script rather than assumed: `pi --version`
+0.86.0; `pi auth check --provider openai-codex` → `ready`/`oauth`;
+`~/.pi/agent/trust.json exists: false`; `~/.agents/skills exists: true`; the
+fixture has no `.pi/`. No pi trust question appeared.
+
+Known limits shipped with the kind and recorded in
+[Agent kinds](../design/agent-kinds.md): `--add-dir` in a pi role is passed
+through and fails late; a wrong pi model under a real provider fails slow with
+nothing naming the model; pi's trust question can still fire on a project
+carrying `.pi/`.
+
+Evidence log: `docs/research/pi-build-review-live.log` (322 lines). _Falsified
+by_ a re-run of that script failing a gate on the revision this document
+describes.
 
 ### Parallel scheduling
 

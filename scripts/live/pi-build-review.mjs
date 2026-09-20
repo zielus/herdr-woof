@@ -316,6 +316,11 @@ if (probe) {
   const delivered = await adapter.deliver(handle, prompt, { timeoutMs: 120_000 });
   log(`deliver: ${JSON.stringify(delivered)}`, "deliver");
 
+  // Polling is sequential by nature: each pass decides whether there is a next one, and the
+  // sleep must follow the observation rather than race it. Promise.all would fire a fixed
+  // number of observations at once and lose the early exits, so the rule is disabled here
+  // rather than satisfied.
+  // oxlint-disable no-await-in-loop
   const deadline = Date.now() + 600_000;
   let acceptedRecord;
   while (Date.now() < deadline) {
@@ -328,6 +333,7 @@ if (probe) {
     if (observed.ok && observed.value.lifecycle === "gone") break;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
+  // oxlint-enable no-await-in-loop
 
   const artifactPath = join(runDir, artifactRel);
   const artifactText = existsSync(artifactPath) ? readFileSync(artifactPath, "utf8") : "";
