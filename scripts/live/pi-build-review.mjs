@@ -665,6 +665,7 @@ gate(
   `sessionId ${redact(String(builderSessionId))}`,
 );
 
+const dispatches = ofType("request.dispatched");
 const builderDispatches = dispatches.filter((record) => record.agentId === "builder");
 const buildDispatches = builderDispatches.filter((record) => record.stageId === "build");
 const repairDispatches = builderDispatches.filter((record) => record.stageId === "repair");
