@@ -3,9 +3,10 @@
 ## One source of run meaning
 
 The engine exposes current state and incremental updates. Herdr, Claude Code,
-logs, a future TUI, and a future Web UI consume that contract. Consumers must not
-infer stages or success by reading prompts, scraping terminals, or interpreting
-UI labels. Observability works when the Herdr Woof plugin is absent.
+logs and the Web UI consume that contract; a future TUI can do the same.
+Consumers must not infer stages or success by reading prompts, scraping
+terminals, or interpreting UI labels. Observability works when the Herdr Woof
+plugin is absent.
 
 ## Snapshot contract
 
@@ -54,17 +55,9 @@ and repair rounds. [Herdr socket API](https://herdr.dev/docs/socket-api/).
 ## Human-facing projection
 
 The current publisher emits compact `$woof` and `$woof-role` pane tokens as
-described in [plugin surfaces](../integrations/plugins.md). The
-[next metadata phase](../design/herdr-metadata-phase.md) proposes separate
-role/kind/model/stage fields and matching worktree labels/keys on agent and
-workspace rows. The recommended sidebar omits stage totals and round/attempt
-counters; detailed inspection retains those facts. A proposed display might read:
-
-```text
-83ac19e2 · woof/api
-builder · claude · configured model
-working · repair
-```
+described in [plugin surfaces](../integrations/plugins.md). Separate kind, model,
+stage and checkout tokens are [proposed but not implemented](../design/proposals.md).
+Detailed inspection retains stage totals and round/attempt counters.
 
 Metadata is a view of the engine state. Losing a sidebar update cannot change a
 gate decision. Keep visual layout and keybindings in the host's presentation
@@ -75,8 +68,9 @@ should focus on blocks, failures and completion rather than every activity chang
 
 The future TUI needs run listing, snapshots, incremental updates, artifact
 retrieval, and defined control operations such as cancellation. It should be
-possible to build it without modifying workflow definitions. No TUI, Web UI,
-rendering library, WebSocket server, or specific database is required now.
+possible to build it without modifying workflow definitions. No TUI, rendering
+library, WebSocket server or specific database is required. The current Web UI
+uses the same snapshot, event and cancellation contracts over local HTTP and SSE.
 
 Verify this with an external consumer that follows an active run, disconnects,
 reconnects, and reaches the same visible state as a fresh snapshot. Include a

@@ -3,26 +3,24 @@
 ## Required behavior
 
 Woof has reusable user-level defaults and project-local overrides. Projects can
-version roles, workflow definitions, model preferences, and context with their
-code. The SDK accepts resolved configuration; it does not depend on Claude Code
-to resolve settings or on a host plugin being installed.
+version roles, workflow definitions and model preferences with their code.
+Per-run instructions come from workflow input; role instruction/context files
+are not supported. The SDK accepts resolved configuration; it does not depend on
+Claude Code to resolve settings or on a host plugin being installed.
 
-Conceptual precedence is project → user → built-in. Explicit per-run overrides,
-if exposed, must be validated, visible to the caller, and recorded with the run.
-Resolving configuration must explain which source supplied each effective role,
-workflow and setting.
+Precedence is project → user → built-in. Explicit per-run overrides are
+validated, visible to the caller and recorded with the run. Resolution explains
+which source supplied each effective role, workflow and setting.
 
 Role, agent kind and model are separate. For example, `reviewer` is a project
 responsibility that can resolve to a supported coding-agent CLI and a configured
-model. Model identifiers in the earlier conversation were examples, not permanent
-defaults or a tested provider support matrix.
+model. Model values are configuration, not a tested provider support matrix.
 
 ## Recommended layout
 
-The old loader already discovers project `.woof/` and user `~/.woof/` workflow
-directories. Preserve those conventions unless a concrete conflict appears.
-This layout is implemented (p4); see "Implemented now (p4)" below for the
-exact schemas, discovery rules and precedence:
+The implemented layout uses project `.woof/` and user `~/.woof/` directories.
+See "Implemented now (p4)" below for the exact schemas, discovery rules and
+precedence:
 
 ```text
 ~/.woof/
@@ -40,10 +38,9 @@ exact schemas, discovery rules and precedence:
 (`runs/` is a user-scope-only default: `woof.json`'s `runsDir` setting is
 refused in a project file.)
 
-Prefer whole-definition replacement for named roles and workflows. For scalar
-defaults, define field-level precedence explicitly. Avoid an implicit recursive
-merge that silently combines incompatible permission settings or workflow edges.
-Exact filenames, schemas, and root discovery are open implementation choices.
+Named roles and workflows use whole-definition replacement. Scalar defaults use
+explicit field-level precedence; limits compose per key. There is no implicit
+recursive merge of permission settings or workflow edges.
 
 Do not invent project-local `.herdr/` semantics. Keep Woof project configuration
 separate from Herdr's own installation, runtime and UI configuration. A plugin
@@ -52,23 +49,22 @@ adapter can map host-provided directories into explicit Woof configuration.
 ## Run resolution
 
 At admission, resolve the project root and runtime target, discover the workflow,
-validate its input, resolve every role, collect declared context, and validate
-limits and required capabilities. Missing roles, invalid settings, or unavailable
-providers must fail with an explanation before workers are launched.
+validate its input, resolve every role, and validate limits and required
+capabilities. Missing roles, invalid settings, or unavailable providers fail with
+an explanation before workers are launched.
 
 Capture the effective configuration and provenance with the run. Editing a role
 file halfway through a review loop must not silently change the builder's model
 or permissions. If a run intentionally changes configuration, record it as an
 explicit operation.
 
-Context files are resolved relative to a documented root, with size bounds and
-visible handling of missing or truncated content. Separate shareable project
-settings from private runtime credentials and generated run artifacts.
+Role instruction/context files are not a configuration surface. Keep shareable
+project settings separate from private runtime credentials and generated run
+artifacts.
 
-Permission policy belongs to explicit role/project configuration. The earlier
-draft's automatic `bypassPermissions` default and automatic trust-dialog dismissal
-are not product requirements. Represent a permission block accurately and expose
-the required user action.
+Permission policy belongs to explicit role/project configuration. Woof does not
+add `bypassPermissions` or dismiss trust dialogs. It represents a permission
+block and exposes the required user action.
 
 ## Implemented now (p4)
 
@@ -220,7 +216,7 @@ bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
   `herdr_unavailable`, `claude_unavailable`, `trust_untrusted`,
   `trust_unknown`, `config_invalid`. `--strict` exits 2 when `problems` is
   non-empty, in both modes; without it `doctor` still always exits 0.
-- **Non-goals (unchanged from the plan).** Role instructions and context
+- **Non-goals.** Role instructions and context
   files are not part of configuration — per-run `instructions` stays in the
   input, and the role file schema reserves no such key. A per-run `.herdr/`
   layer, TOML/YAML, and TypeScript config modules that execute at every
@@ -237,5 +233,4 @@ open. Root discovery, role serialization, the configuration schema/
 versioning, run storage location and per-run override rules are resolved by
 "Implemented now (p4)" above.
 
-See [project assessment](../research/project-assessment.md) for the inspected
-loader precedent and [acceptance criteria](../acceptance/v1.md) for precedence tests.
+See [acceptance criteria](../acceptance/v1.md) for precedence tests.

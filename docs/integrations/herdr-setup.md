@@ -1,40 +1,20 @@
 # Set up the Woof Herdr plugin
 
-Status: guide for the existing 0.1.2 checkout-based integration. Rich metadata
-and the proposed sidebar are a [future phase](../design/herdr-metadata-phase.md).
-Writing this guide did not install a plugin or alter local Herdr configuration.
-
-## Installation is separate from CLI availability
-
-First check whether the plugin is already registered. The
-[2026-09-17 saved-configuration audit](../research/herdr-plugin-audit.md) found an
-enabled Woof entry pointing at this checkout, with older cached version metadata.
-Treat linking below as a registration refresh only if inspection shows it is
-needed. The same audit found no custom sidebar rows, so display configuration is
-the first likely missing connection.
-
-The repository root contains [herdr-plugin.toml](../../herdr-plugin.toml), with
-four actions invoking [bin/woof](../../bin/woof). The published npm package's
-files list currently includes compiled code and the Claude plugin, but excludes
-those two Herdr-specific files. Having `woof` on PATH does not register a Herdr
-plugin. Use a persistent repository checkout for the setup below.
-
-The manifest currently requires Herdr 0.9.0 or newer. Use the Node and Bun versions
-declared in [package.json](../../package.json). Confirm the Herdr version supports
-the sidebar features you select; the manifest minimum alone does not prove that
-every feature in today's online configuration documentation is present.
+The Herdr plugin is a checkout-based integration in Woof 0.2.0. Installing the
+`woof` CLI from npm does not register it because the published package excludes
+the root `herdr-plugin.toml` and `bin/woof` files used by the manifest.
 
 ## Link a built checkout
 
-Run these commands from the Woof repository root in the intended Herdr environment:
+Use a persistent repository checkout. From its root, inspect any existing
+registration before linking or replacing it:
 
 ```sh
 herdr plugin list --plugin herdr-woof --json
 herdr plugin action list --plugin herdr-woof
 ```
 
-Inspect the existing path, enabled state, version and logs first. If the checkout
-needs building or the registration needs refreshing, use:
+If the checkout needs building or registration, run:
 
 ```sh
 bun install --frozen-lockfile
@@ -44,16 +24,19 @@ herdr plugin list --plugin herdr-woof --json
 herdr plugin action list --plugin herdr-woof
 ```
 
-Inspect the registered path, enabled state and build/action errors. Linking uses
-this checkout; retain it and rebuild after updating its source. If Woof is already
-installed through another path, inspect that registration before replacing it.
-Herdr documents linking and registration in its
+The manifest requires Herdr 0.9.0 or newer. Use the Node and Bun versions in
+[`package.json`](../../package.json). Linking keeps the plugin bound to this
+checkout, so rebuild it after updating source. Inspect the registered path,
+enabled state and plugin logs instead of treating command dispatch as proof that
+the action succeeded.
+
+Herdr documents checkout registration in its
 [plugin CLI reference](https://herdr.dev/docs/cli-reference/#plugins).
 
 ## Check the focused project
 
-Focus the actual project/worktree in Herdr, then invoke the existing diagnostic
-and inspection actions through Herdr's action interface or CLI:
+Focus the intended project or worktree in Herdr, then invoke the diagnostic and
+inspection actions:
 
 ```sh
 herdr plugin action invoke doctor --plugin herdr-woof
@@ -61,36 +44,47 @@ herdr plugin action invoke status --plugin herdr-woof
 herdr plugin log list --plugin herdr-woof --limit 10
 ```
 
-Action invocation returns an action log record; inspect the result/log rather
-than treating dispatch as proof of success. These actions resolve the project
-from Herdr invocation context. Running from the plugin checkout does not make
-that checkout the intended project.
+The actions resolve the project from Herdr's invocation context, not from the
+plugin checkout. `start` reads `<project>/.woof/start.json`; `cancel` and `watch`
+act only when the project has one unambiguous active run. Do not start or cancel
+work as an installation probe. See [Woof integration surfaces](plugins.md) for
+the command outcomes and exit behavior.
 
-`start` uses the focused project's `.woof/start.json` and its resolved workflow
-configuration. `cancel` cancels only an unambiguous active run. Do not start or
-cancel work merely to check installation; follow the behavior documented in
-[plugin surfaces](plugins.md) when you actually intend those actions.
+## Configure the current metadata
 
-## Configure presentation separately
+Hosted runs publish compact `woof` and `woof-role` pane tokens. Herdr displays a
+custom token only when the sidebar configuration references it. This optional
+example uses current Woof metadata and native Herdr fields:
 
-The plugin already publishes `$woof` and `$woof-role` while a hosted run is active.
-Herdr shows custom fields only when its sidebar configuration references them.
-Use the [sidebar guide](herdr-sidebar.md) for a current-version example and the
-proposed worktree-oriented layout.
+```toml
+[ui]
+status_indicators = "symbols"
 
-Merge selected settings into your existing `~/.config/herdr/config.toml`; do not
-overwrite the whole file or repeat TOML table declarations. Apply them using the
-installed Herdr version's reload mechanism and check for configuration warnings.
-Keep keybindings, themes and workspace preset plugins under your own control.
+[ui.sidebar.agents]
+row_gap = 1
+rows = [
+  ["machine", "workspace", "tab"],
+  ["state_icon", "$woof-role", "agent"],
+  ["state_text"],
+]
 
-The metadata phase will validate this path with live evidence. Until then, the
-new model/stage/worktree tokens in the proposed example are unavailable, and
-their rows will be absent.
+[ui.sidebar.spaces]
+row_gap = 1
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status"],
+]
+```
 
-## Reuse installed layout tools
+Merge selected settings into the existing Herdr configuration; do not overwrite
+the file or duplicate TOML tables. Keep native lifecycle fields authoritative.
+`agent` is a display name, not a guaranteed CLI kind, and the current `woof`
+token contains stage/visit/attempt counters, so the compact example omits it.
 
-The saved setup already includes Herdr Plus, whose installed documentation covers
-project templates, worktree auto-layouts and quick actions. Use its own supported
-configuration and resolve its actual config directory when setting up presets.
-Keep that configuration separate from Woof roles/workflows and from the Herdr
-sidebar. This phase should verify the combination, not recreate those features.
+Consistent native workspace names are the current checkout cue. Optional style
+rules can color those names, but text must remain sufficient and Woof does not
+rewrite personal configuration. Use Herdr or an existing layout plugin for
+workspace presets; Woof does not manage them.
+
+Separate kind/model/stage and checkout tokens are not available. They remain in
+[Open proposals](../design/proposals.md).

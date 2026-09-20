@@ -108,5 +108,5 @@ nothing.
   `changelog`, `private-strings`, `secrets`, `links`, `format`, `verify`,
   `pack`, in that order.
 - `docs/decisions/release-process.md` for the rules and why they exist.
-- `docs/decisions/architecture.md`'s Known limits (0.1.x) table for the
+- `docs/decisions/architecture.md`'s Known limits section for the
   design-level items a release does not address.
