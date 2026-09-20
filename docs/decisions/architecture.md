@@ -55,10 +55,11 @@ agreement are defined in
 
 ### Run hosting and scheduling
 
-A hosted run has one heartbeat-tracked scheduler process in a Herdr pane. The
-scheduler uses the same derived snapshot an observer reads, performs one bounded
-action at a time and records control decisions before exposing them. Foreground
-runs remain available. See [Domain model](../architecture/domain-model.md) and
+A hosted run has one heartbeat-tracked scheduler process in a Herdr pane, giving
+the run a visible owner that can outlive its caller. The scheduler uses the same
+derived snapshot an observer reads, performs one bounded action at a time and
+records control decisions before exposing them. Foreground runs remain available.
+See [Domain model](../architecture/domain-model.md) and
 [Observability](../architecture/observability.md).
 
 ### Workflow definitions and reuse
@@ -83,12 +84,36 @@ The supported production adapter uses bounded Herdr CLI calls. Runtime samples
 are a freshness-stamped, in-memory overlay rather than journal facts. See
 [Observability](../architecture/observability.md).
 
+## Rejected directions
+
+- Splitting orchestration into a separate Horde product was rejected. Woof is
+  one product, and `HerdrAgentsSDK` owns the workflow loops.
+- Making the review file optional in favor of a rich JSON response was rejected.
+  The review artifact is canonical; JSON is the small control envelope.
+- An MCP-only worker result channel was rejected. Submission must retain a
+  validated non-MCP path so the SDK is transport-independent.
+- Rejecting artifact or completion-file protocols outright was rejected. Required
+  artifacts need explicit publication, acknowledgement, duplicate handling and
+  finite waiting.
+- Automatic permission bypass and a fixed Claude-only rollout were rejected as
+  product requirements. Permission policy and agent-kind support remain explicit
+  operator and capability choices.
+- A fixed multi-package layout, YAML workflow syntax and a fluent workflow API
+  were rejected as premature public contracts. Current consumers do not justify
+  the package split, and examples do not settle an authoring syntax.
+- A `group_by = "worktree"` sidebar setting was rejected because Herdr documents
+  row layout and styling, not collapsible worktree groups. Structural grouping
+  belongs in Herdr or a supported navigation plugin.
+- Treating the plugin checkout or caller's working directory as a managed run's
+  workspace was rejected. Workspace projection must use verified runtime context.
+
 ## Open implementation decisions
 
 ### Persistence and recovery
 
 Run history and artifacts remain inspectable, and lost ownership is reported,
-but crash resume and re-hosting are not implemented. A recovery design must
+but crash resume and re-hosting are not implemented. Herdr restoring an agent
+session does not restore Woof's scheduling decisions. A recovery design must
 prevent duplicate effects before either is promised.
 
 ### Artifact structure and retention
@@ -108,8 +133,10 @@ evidence.
 ### Package layout
 
 The SDK, CLI and integrations currently ship from one package with explicit
-module boundaries. A workspace/package split is deferred until another real
-consumer demonstrates the need.
+module boundaries. The boundary test enforces each area's allowed import
+directions and keeps `cli.ts` unreachable from package entry points and imported
+by nothing. A workspace/package split is deferred until another real consumer
+demonstrates the need.
 
 ### Configuration extensions
 
@@ -130,24 +157,41 @@ alter a public contract, trust boundary or execution model.
 
 - Workflow modules, `--runtime-module` and role `args` execute or pass through
   with the operator's privileges. Permission-bypass arguments are allowed with a
-  warning; Woof never adds one.
+  warning; Woof never adds one. Direction: a real sandbox or lower-trust mode,
+  plus an operator-approved allow/deny list for role arguments.
 - Workflow workers receive `--add-dir <runDir>` and can therefore read or edit
   their run journal and accepted artifacts. Integrity checks detect changes but
-  do not create a same-user security boundary.
+  do not create a same-user security boundary. Direction: narrow the added
+  directory or verify artifacts out of process.
 - A `CheckStage` runs without a sandbox in the repository the builder edited.
+  Direction: run verification in a copy or container.
 - Run-directory creation does not provide a dirfd-based, whole-path trust
-  boundary. Configuration hashing follows symlinks by design.
+  boundary. Configuration hashing follows symlinks by design. Direction: use a
+  dirfd-based walk if the remaining race is shown to be exploitable.
+- Four paths start a run: `woof run start`, `woof run build-review`, the Herdr
+  plugin's `start` action and `/woof:run`. Direction: consolidate the verbs once
+  usage patterns are clear.
+- `journal_write_failed` covers both run-directory creation failures and journal
+  lock-acquisition I/O errors. Direction: split the reason if a consumer needs
+  the distinction.
 - A crashed writer can leave `journal.lock`; Woof does not remove stale locks.
   Lock release checks a token before unlinking, leaving a narrow
-  compare-then-unlink race if the process is killed in that window.
+  compare-then-unlink race if the process is killed in that window. Direction:
+  use a system lock or re-read before unlinking.
 - Journal reads load the complete journal into memory, and Herdr command capture
   has no output-size cap. Check output keeps a 1 MiB tail, but its generated
-  header is added outside that budget.
+  header is added outside that budget. Direction: add configurable journal and
+  capture caps, and reserve header bytes in the check-output budget.
 - Configuration discovery treats any failed `git rev-parse --show-toplevel` as
-  "not a work tree" rather than distinguishing every Git failure mode.
+  "not a work tree" rather than distinguishing every Git failure mode. Direction:
+  distinguish failures if Git-version behavior can be handled safely.
+- Revision fingerprinting treats a failed `git rev-parse HEAD` as "no HEAD yet".
+  Direction: add version-checked exit-code handling if a real repository hits
+  the ambiguity.
 - The Web UI cannot start, retry, answer a blocked agent, resume or re-host a
   run. Unsupported actions return explicit errors; cancellation is the only
-  mutating UI action.
+  mutating UI action. Direction: add controls only after the engine exposes the
+  corresponding safe operations.
 
 The [v1 acceptance evidence](../acceptance/v1-evidence.md#pr-fix-4-untested-paths)
 also records four narrow full-disk or two-host cases that were historically

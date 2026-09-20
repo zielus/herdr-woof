@@ -22,6 +22,9 @@ case to the engine.
 | Limits      | Finite loop, attempt, format-repair and wait budgets, plus an overall bound.                              |
 | Result      | A small structured terminal result referring to accepted artifacts.                                       |
 
+Workflow inputs are rich structured objects validated before launch. Friendly
+CLI flags may adapt that input, but must not constrain the workflow contract.
+
 Define input mappings explicitly. For example, `review` receives the task,
 acceptance criteria, current change reference, and verification evidence. `repair`
 receives the accepted review artifact and belongs to `builder`. Do not send only

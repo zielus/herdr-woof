@@ -49,10 +49,18 @@ The SDK does not depend on plugin UI or MCP. Presentation layers consume the
 engine's snapshot, event and control contracts instead of reconstructing state
 from terminal output.
 
+The CLI supports inspection, debugging, testing and automation. Manually typing
+long commands to start complex workflows is secondary; structured workflow input
+remains the primary contract. Generic diff viewers, file browsers, navigation
+tools and notification interfaces belong in Herdr or optional integrations where
+practical.
+
 ## Not supported
 
 Woof does not currently provide crash resume or re-hosting, parallel workflow
 scheduling, a second production agent kind, per-role instruction/context files,
 or per-stage structural artifact schemas. The Web UI cannot start or retry work
-or answer blocked agents. See [Architecture decisions](../decisions/architecture.md)
-for the open decisions and known limits.
+or answer blocked agents. Multi-machine orchestration and a large command palette
+are not current product goals. See
+[Architecture decisions](../decisions/architecture.md) for the open decisions and
+known limits.

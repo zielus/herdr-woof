@@ -51,6 +51,11 @@ test. Run it before opening a PR and again at the final head of the branch.
 Verify rounds run one at a time per machine. The suite contains real-process
 timing tests that flake when several full runs share a host.
 
+Some assertions and production test seams still use wall-clock time. Revisit
+them when a specific CI race appears. Unit tests also import compiled `dist/`
+in-process; real-process coverage exists, but public-import assertions should
+move to that pattern as they change.
+
 Report what was run and what it printed. A claim without command output is not
 verification. See `AGENTS.md` § Verification for what counts as evidence.
 

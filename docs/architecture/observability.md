@@ -213,7 +213,8 @@ records}`) is the proof of this by construction: it re-derives the
   tampering or loss after acceptance; it does not prevent it (same-user
   write access to `accepted/` is unchanged), and a downstream consumer that
   must trust an artifact before use still has to verify it itself (phase
-  3).
+  3). Stronger `chmod` or `chflags` enforcement was rejected as friction, not
+  as a same-user security boundary; Woof detects later changes instead.
 
 - **Runtime observation is pull-based and lossy.** A runtime adapter's
   `observe`/`waitFor` return point-in-time samples; transitions between two
@@ -229,7 +230,9 @@ records}`) is the proof of this by construction: it re-derives the
   lifecycle and raw status all repeat, which is `duplicate`). A bounded
   watch helper yields only `new`/`replaced` items and exposes
   dropped-stale/dropped-duplicate counts. None of this is
-  journaled, and none of it affects a derived snapshot.
+  journaled, and none of it affects a derived snapshot. A Herdr sample is
+  lossy, and journaling every poll would make replay depend on sampling cadence
+  and wall clock.
 
 - **The Herdr CLI runtime adapter and its scripted test double enforce
   narrow contracts.** `createHerdrCliRuntime`'s `inspect` runs only a
@@ -243,7 +246,8 @@ records}`) is the proof of this by construction: it re-derives the
   success, unless it carries both a non-empty string request `id` and an
   object `result`. `createScriptedRuntime`, the deterministic in-memory
   double for the same contract shipped from the `herdr-woof/testing`
-  subpath (never the main entry), enforces its own edge cases: `advance`
+  subpath so a test double cannot be mistaken for a supported runtime, enforces
+  its own edge cases: `advance`
   throws a TypeError for a negative or non-integer step count, construction
   throws a TypeError for an empty `afterDeliver` sequence (flat or nested),
   and a scripted `started` delivery is checked like the Herdr adapter's own —
