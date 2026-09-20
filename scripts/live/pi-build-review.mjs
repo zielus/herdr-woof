@@ -58,6 +58,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { readPiSessionProof } from "./lib/pi-session-proof.mjs";
+
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
 if (!existsSync(cliPath)) {
@@ -110,71 +112,6 @@ const sha256 = (data) => createHash("sha256").update(data).digest("hex");
  */
 const redact = (text) => text.split(homedir()).join("~");
 
-/** At most this many extracted tool-call lines per phase, each truncated, so the log stays bounded. */
-const PROOF_LINES_PER_PHASE = 12;
-const PROOF_LINE_CHARS = 160;
-
-/**
- * Reads pi's own session file and extracts, narrowly, what shows the work was pi's:
- * the provider and model it ran, and its `edit`/`write`/`bash` tool calls that touched
- * the repository or invoked `woof submit`. Tool calls are split into the build and
- * repair phases at the repair dispatch timestamp, because one pi session serves both.
- * Everything returned is redacted and length-capped; nothing else from the session is read.
- */
-function readPiSessionProof(sessionId, repairDispatchTs) {
-  if (typeof sessionId !== "string" || !sessionId.endsWith(".jsonl"))
-    return {
-      ok: false,
-      reason: `builder sessionId is not a pi session file: ${String(sessionId)}`,
-    };
-  if (!existsSync(sessionId))
-    return { ok: false, reason: `session file not found: ${redact(sessionId)}` };
-  if (repairDispatchTs === null)
-    return { ok: false, reason: "no repair dispatch, so the phases cannot be split" };
-  const repairAt = Date.parse(repairDispatchTs);
-  const phases = { build: [], repair: [] };
-  const wrote = { build: false, repair: false };
-  const submitted = { build: false, repair: false };
-  let provider = null;
-  let model = null;
-  for (const line of readFileSync(sessionId, "utf8").split("\n")) {
-    if (line === "") continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (entry.type === "model_change") {
-      provider = entry.provider ?? provider;
-      model = entry.modelId ?? model;
-      continue;
-    }
-    if (entry.type !== "message") continue;
-    const content = entry.message?.content;
-    if (!Array.isArray(content)) continue;
-    const at = Date.parse(entry.timestamp ?? "");
-    const phase = Number.isNaN(at) || at >= repairAt ? "repair" : "build";
-    for (const part of content) {
-      if (part?.type !== "toolCall") continue;
-      const name = String(part.name ?? "");
-      const args = part.arguments ?? {};
-      const command = typeof args === "object" ? String(args.command ?? "") : String(args);
-      const path = typeof args === "object" ? String(args.path ?? args.file_path ?? "") : "";
-      const isWrite = (name === "edit" || name === "write") && path !== "";
-      const isSubmit = name === "bash" && /\bsubmit\b/.test(command) && /--run-dir/.test(command);
-      if (!isWrite && !isSubmit) continue;
-      if (isWrite) wrote[phase] = true;
-      if (isSubmit) submitted[phase] = true;
-      const detail = isWrite ? path : command;
-      if (phases[phase].length < PROOF_LINES_PER_PHASE)
-        phases[phase].push(redact(`${name}: ${detail}`).slice(0, PROOF_LINE_CHARS));
-    }
-  }
-  if (provider === null || model === null)
-    return { ok: false, reason: "session file records no model_change" };
-  return { ok: true, provider, model, phases, wrote, submitted };
-}
 const woof = (...args) => sh(process.execPath, [cliPath, ...args]);
 const gates = [];
 function gate(id, title, pass, evidence) {
@@ -712,36 +649,50 @@ if (loopNotExercised) {
   log("That is a FAIL, not a green run: the evidence this script exists to produce is the repair.");
 }
 
-// pi's own session file: the only place that shows which process made the edits
-// and ran woof submit. Extracted narrowly (provider/model, edit/write and submit
-// tool calls, split at the repair dispatch) and redacted, then gated on.
+// Gate 6 proves Woof delivered both requests to the assigned pi session. That is
+// delivery, not authorship. This is the gate that ties the accepted build and
+// repair to that session: per phase it requires successful tool results for the
+// repository edit, the envelope write and the run's own `<cli> submit --run-dir
+// <runDir> --envelope <that envelope>`, paired with the journal's accepted
+// submission for the same stage, under the model active at those calls.
 section("pi session proof (extract)");
 const repairDispatchTs = repairDispatches[0]?.ts ?? null;
-const piProof = readPiSessionProof(builderSessionId, repairDispatchTs);
-if (piProof.ok) {
-  log(`session file: ${redact(String(builderSessionId))}`);
-  log(`provider/model: ${piProof.provider}/${piProof.model}`);
-  for (const phase of ["build", "repair"]) {
-    log(`-- ${phase} --`);
-    for (const line of piProof.phases[phase]) log(`   ${line}`);
-    if (piProof.phases[phase].length === 0) log("   (no edit, write or submit tool call)");
+const acceptedForProof = accepted
+  .filter((record) => record.agentId === "builder")
+  .map((record) => ({ stageId: record.stageId, receiptId: record.receiptId, ts: record.ts }));
+const piProof = readPiSessionProof({
+  sessionPath: builderSessionId,
+  repairDispatchTs,
+  runDir,
+  repoDir: repo,
+  cliPath,
+  expectedModel: PI_MODEL,
+  accepted: acceptedForProof,
+});
+log(`session file: ${redact(String(builderSessionId))}`);
+log(`expected model: ${PI_MODEL}`);
+for (const phase of ["build", "repair"]) {
+  const view = piProof.phases?.[phase];
+  log(`-- ${phase} --`);
+  if (view === undefined) {
+    log("   (not parsed)");
+    continue;
   }
-} else {
-  log(`session proof unavailable: ${piProof.reason}`);
+  // Which pairing was used is part of the evidence, never silently downgraded.
+  log(
+    `   pairing: ${view.pairing}${view.receiptId === null ? "" : ` (receipt ${view.receiptId})`}; models ${view.models.map((model) => String(model)).join(", ") || "none"}`,
+  );
+  for (const line of view.calls) log(`   ${redact(line)}`);
+  if (view.calls.length === 0) log("   (no qualifying tool call with a successful result)");
 }
+if (!piProof.ok) log(`session proof failed: ${piProof.reason}`);
 logged.add("pi-session-proof");
-const phaseProved = (phase) =>
-  piProof.ok && piProof.wrote[phase] === true && piProof.submitted[phase] === true;
 gate(
   8,
-  "pi's own session shows the configured model editing the repo and running woof submit, for build and repair",
-  piProof.ok &&
-    piProof.provider === PI_PROVIDER &&
-    `${piProof.provider}/${piProof.model}` === PI_MODEL &&
-    phaseProved("build") &&
-    phaseProved("repair"),
+  "pi's own session performed the accepted build and repair: repo edit, envelope write and the run's submit, each successful and paired with the journal",
+  piProof.ok === true,
   piProof.ok
-    ? `${piProof.provider}/${piProof.model}; build wrote ${piProof.wrote.build} submitted ${piProof.submitted.build}; repair wrote ${piProof.wrote.repair} submitted ${piProof.submitted.repair}`
+    ? `model ${piProof.model}; pairing build ${piProof.phases.build.pairing}, repair ${piProof.phases.repair.pairing}`
     : piProof.reason,
 );
 
