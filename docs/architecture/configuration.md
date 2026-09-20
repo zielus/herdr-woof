@@ -158,8 +158,10 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   setting `--model` is `role_invalid` naming `--model` alone. The converse is a
   known limit: a flag Woof does not own for that kind is passed through
   unchecked, so `--add-dir` in a `pi` role is accepted here and rejected by pi
-  itself, surfacing as an exhausted limit rather than `role_invalid`. Woof keeps
-  no per-kind list of flags to reject. A pi `model` is written `provider/id`;
+  itself. Measured against pi 0.86.0, pi exits on the unknown option before any
+  agent is detected, so it fails at startup (`agent_start_failed`, runtime
+  `timeout`) rather than as `role_invalid` here or as an exhausted limit later.
+  Woof keeps no per-kind list of flags to reject. A pi `model` is written `provider/id`;
   an unknown provider fails at start (`agent_start_failed`), while an unknown id
   under a real provider starts and then fails on its first API call, which
   reaches the run as an exhausted limit naming no model.

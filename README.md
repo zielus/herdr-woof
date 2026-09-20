@@ -391,9 +391,13 @@ for you:
 
 - **Only the flags that kind owns are rejected.** Woof rejects `--model` in a
   pi role's `args` (the engine sets it from `model`), but `--add-dir` is not a
-  pi flag, so Woof passes it straight through and pi rejects it itself. The
-  agent starts and then fails, which reaches you as an exhausted limit rather
-  than a clear rejection. Don't put `--add-dir` in a pi role.
+  pi flag, so Woof passes it straight through and pi rejects it itself. Verified
+  against pi 0.86.0: pi exits immediately on the unknown option, so no agent is
+  ever detected and `woof agent start` reports
+  `{"reason":"agent_start_failed", …,"runtime":{"runtimeCode":"timeout"}}` with
+  the message `timed out waiting for agent startup`. The flag never reaches a
+  running agent, so the failure is at startup, not an exhausted limit later.
+  Don't put `--add-dir` in a pi role.
 - **Write the model `provider/id`, and get the provider right.** An unknown
   provider (`nosuchprovider/foo`) makes pi exit at start, which Woof reports as
   `agent_start_failed`. An unknown _id_ under a real provider is worse: pi

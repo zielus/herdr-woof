@@ -103,6 +103,78 @@ function sh(command, args, options = {}) {
 }
 
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
+
+/**
+ * The same redaction the committed logs under docs/research/ already use: the home
+ * prefix becomes ~. Applied here so the session extract is safe to commit as written.
+ */
+const redact = (text) => text.split(homedir()).join("~");
+
+/** At most this many extracted tool-call lines per phase, each truncated, so the log stays bounded. */
+const PROOF_LINES_PER_PHASE = 12;
+const PROOF_LINE_CHARS = 160;
+
+/**
+ * Reads pi's own session file and extracts, narrowly, what shows the work was pi's:
+ * the provider and model it ran, and its `edit`/`write`/`bash` tool calls that touched
+ * the repository or invoked `woof submit`. Tool calls are split into the build and
+ * repair phases at the repair dispatch timestamp, because one pi session serves both.
+ * Everything returned is redacted and length-capped; nothing else from the session is read.
+ */
+function readPiSessionProof(sessionId, repairDispatchTs) {
+  if (typeof sessionId !== "string" || !sessionId.endsWith(".jsonl"))
+    return {
+      ok: false,
+      reason: `builder sessionId is not a pi session file: ${String(sessionId)}`,
+    };
+  if (!existsSync(sessionId))
+    return { ok: false, reason: `session file not found: ${redact(sessionId)}` };
+  if (repairDispatchTs === null)
+    return { ok: false, reason: "no repair dispatch, so the phases cannot be split" };
+  const repairAt = Date.parse(repairDispatchTs);
+  const phases = { build: [], repair: [] };
+  const wrote = { build: false, repair: false };
+  const submitted = { build: false, repair: false };
+  let provider = null;
+  let model = null;
+  for (const line of readFileSync(sessionId, "utf8").split("\n")) {
+    if (line === "") continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type === "model_change") {
+      provider = entry.provider ?? provider;
+      model = entry.modelId ?? model;
+      continue;
+    }
+    if (entry.type !== "message") continue;
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    const at = Date.parse(entry.timestamp ?? "");
+    const phase = Number.isNaN(at) || at >= repairAt ? "repair" : "build";
+    for (const part of content) {
+      if (part?.type !== "toolCall") continue;
+      const name = String(part.name ?? "");
+      const args = part.arguments ?? {};
+      const command = typeof args === "object" ? String(args.command ?? "") : String(args);
+      const path = typeof args === "object" ? String(args.path ?? args.file_path ?? "") : "";
+      const isWrite = (name === "edit" || name === "write") && path !== "";
+      const isSubmit = name === "bash" && /\bsubmit\b/.test(command) && /--run-dir/.test(command);
+      if (!isWrite && !isSubmit) continue;
+      if (isWrite) wrote[phase] = true;
+      if (isSubmit) submitted[phase] = true;
+      const detail = isWrite ? path : command;
+      if (phases[phase].length < PROOF_LINES_PER_PHASE)
+        phases[phase].push(redact(`${name}: ${detail}`).slice(0, PROOF_LINE_CHARS));
+    }
+  }
+  if (provider === null || model === null)
+    return { ok: false, reason: "session file records no model_change" };
+  return { ok: true, provider, model, phases, wrote, submitted };
+}
 const woof = (...args) => sh(process.execPath, [cliPath, ...args]);
 const gates = [];
 function gate(id, title, pass, evidence) {
@@ -574,26 +646,106 @@ gate(
   JSON.stringify(recordedConfig?.agents?.builder),
 );
 
-const builderAccepted = accepted.filter((record) => record.agentId === "builder");
+// Gates 5-8 exist because "an assignment named builder plus some accepted
+// submission" does not establish that pi did the work. Another process with
+// access to the shared repository and run directory could produce both. These
+// bind the accepted artifacts to the assigned pi session, and require the
+// reject -> repair -> approve loop rather than accepting any terminal state.
+const builderAssignment = assignmentOf("builder");
+const builderSessionId = builderAssignment?.sessionId ?? null;
+// pi writes a session file under ~/.pi/agent/sessions/<cwd-key>/<stamp>.jsonl;
+// Claude Code's sessionId is a bare UUID. The shape is what distinguishes them.
+const piSessionRe = /\/\.pi\/agent\/sessions\/.+\.jsonl$/;
 gate(
   5,
-  "the pi builder started, was dispatched and produced an accepted artifact through woof submit",
-  assignmentOf("builder") !== undefined && builderAccepted.length > 0,
-  `${builderAccepted.length} accepted submissions from builder`,
+  "the builder was assigned a real pi session, not merely an agent named builder",
+  builderAssignment !== undefined &&
+    typeof builderSessionId === "string" &&
+    piSessionRe.test(builderSessionId),
+  `sessionId ${redact(String(builderSessionId))}`,
 );
 
-const firstReview = reviews[0];
+const builderDispatches = dispatches.filter((record) => record.agentId === "builder");
+const buildDispatches = builderDispatches.filter((record) => record.stageId === "build");
+const repairDispatches = builderDispatches.filter((record) => record.stageId === "repair");
+const targetedAtBuilderSession = (record) =>
+  record.delivery === "started" &&
+  builderSessionId !== null &&
+  record.target?.sessionId === builderSessionId;
 gate(
   6,
-  "the claude reviewer reviewed the pi builder's work through the same envelope contract",
-  assignmentOf("reviewer") !== undefined &&
-    firstReview?.status === "completed" &&
-    (firstReview?.verdict === "pass" || firstReview?.verdict === "fail"),
-  `first review verdict ${firstReview?.verdict}`,
+  "both the build and the repair request were delivered to that same pi session",
+  buildDispatches.length > 0 &&
+    repairDispatches.length > 0 &&
+    buildDispatches.every(targetedAtBuilderSession) &&
+    repairDispatches.every(targetedAtBuilderSession),
+  `build ${buildDispatches.length} (${buildDispatches.map((record) => record.delivery).join(",") || "none"}), repair ${repairDispatches.length} (${repairDispatches.map((record) => record.delivery).join(",") || "none"})`,
+);
+
+// The loop is the claim: a second kind must both produce an artifact and consume
+// a rejected review. A run whose first review passes never exercised it, so it is
+// a FAIL here, not a green run -- see the loopNotExercised note below.
+const firstReview = reviews[0];
+const secondReview = reviews[1];
+const firstGate = ofType("gate.recorded").find(
+  (record) => record.subject?.acceptedSeq === firstReview?.seq,
+);
+const repairAccepted = accepted.filter(
+  (record) => record.agentId === "builder" && record.stageId === "repair",
+);
+const loopNotExercised = firstReview !== undefined && firstReview.verdict !== "fail";
+gate(
+  7,
+  "the reject -> repair -> approve loop ran: review 1 fail, repair accepted, review 2 pass",
+  firstReview?.status === "completed" &&
+    firstReview?.verdict === "fail" &&
+    firstGate?.next?.stageId === "repair" &&
+    repairAccepted.length > 0 &&
+    secondReview?.status === "completed" &&
+    secondReview?.verdict === "pass" &&
+    snapshot?.outcome?.reason === "approved",
+  `review 1 ${firstReview?.verdict} -> ${firstGate?.next?.stageId}, repair accepted ${repairAccepted.length}, review 2 ${secondReview?.verdict}, outcome ${snapshot?.outcome?.reason}`,
+);
+if (loopNotExercised) {
+  log("loop not exercised: the first review passed, so this run never sent pi a rejected review.");
+  log("That is a FAIL, not a green run: the evidence this script exists to produce is the repair.");
+}
+
+// pi's own session file: the only place that shows which process made the edits
+// and ran woof submit. Extracted narrowly (provider/model, edit/write and submit
+// tool calls, split at the repair dispatch) and redacted, then gated on.
+section("pi session proof (extract)");
+const repairDispatchTs = repairDispatches[0]?.ts ?? null;
+const piProof = readPiSessionProof(builderSessionId, repairDispatchTs);
+if (piProof.ok) {
+  log(`session file: ${redact(String(builderSessionId))}`);
+  log(`provider/model: ${piProof.provider}/${piProof.model}`);
+  for (const phase of ["build", "repair"]) {
+    log(`-- ${phase} --`);
+    for (const line of piProof.phases[phase]) log(`   ${line}`);
+    if (piProof.phases[phase].length === 0) log("   (no edit, write or submit tool call)");
+  }
+} else {
+  log(`session proof unavailable: ${piProof.reason}`);
+}
+logged.add("pi-session-proof");
+const phaseProved = (phase) =>
+  piProof.ok && piProof.wrote[phase] === true && piProof.submitted[phase] === true;
+gate(
+  8,
+  "pi's own session shows the configured model editing the repo and running woof submit, for build and repair",
+  piProof.ok &&
+    piProof.provider === PI_PROVIDER &&
+    `${piProof.provider}/${piProof.model}` === PI_MODEL &&
+    phaseProved("build") &&
+    phaseProved("repair"),
+  piProof.ok
+    ? `${piProof.provider}/${piProof.model}; build wrote ${piProof.wrote.build} submitted ${piProof.submitted.build}; repair wrote ${piProof.wrote.repair} submitted ${piProof.submitted.repair}`
+    : piProof.reason,
 );
 
 gate(
-  7,
+  9,
   "the fixture repository carries the builder's change and its tests pass independently",
   slugify !== "" && !slugify.includes("not implemented") && nodeTest.status === 0,
   `node --test exit ${nodeTest.status}`,
@@ -617,17 +769,20 @@ const needed = [
   "events",
   "artifacts",
   "config",
+  "pi-session-proof",
   "result",
 ];
 gate(
-  8,
-  "log records versions, pi preconditions, input, command, trace and result",
+  10,
+  "log records versions, pi preconditions, input, command, trace, session proof and result",
   needed.every((key) => logged.has(key)),
   needed.filter((key) => !logged.has(key)).join(", ") || "all recorded",
 );
 
-section("human inspection (required)");
-log("Confirm the accepted build artifact is pi's own work and the review is a real review of it.");
+section("human inspection (not a gate)");
+log("The gates above bind the artifacts to the assigned pi session and require the repair loop.");
+log("Read the two reviews for substance: review 1 must be a real review of pi's change, and");
+log("review 2 must confirm the repair. Nothing below the gates is asserted by the exit status.");
 
 const failed = gates.filter((item) => !item.pass);
 section("summary");

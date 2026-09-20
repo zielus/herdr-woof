@@ -224,7 +224,7 @@ export async function admitWorkflow<Input>(options: {
       const setBy = configured
         ? describe(source)
         : `the workflow input or definition (resolveAgents for ${agentId})`;
-      const message = `agent ${agentId} (role ${role}) args must not set ${engineOwnedFlags(choice.kind).join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
+      const message = `agent ${agentId} (role ${role}) args must not set ${engineOwnedFlags(choice.kind).join(" or ")}: the engine sets them from the resolved agent's fields for kind ${choice.kind} (set by ${setBy})`;
       return reject(
         "role_invalid",
         message,

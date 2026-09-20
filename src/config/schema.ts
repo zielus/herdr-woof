@@ -258,14 +258,16 @@ export function validateRoleFile(
 
 /**
  * The launch arguments that explicitly configure a permission or trust bypass for that kind
- * (reported, never added). A kind the launch table does not list cannot run, but its arguments
- * are still matched against every kind's flags so nothing is silently dropped.
+ * (reported, never added). Strictly per kind: a kind with no own matcher matches nothing, the
+ * same way `engineOwnedFlags` owns nothing for a kind the launch table does not list. Woof has
+ * no flag contract for such a kind, and `role_kind_unsupported` (plus `agent_kind_unsupported`
+ * at admission) is what reports it. Matching it against other vendors' flags would make the
+ * flags cross exactly when the kind is unknown, and would let a newly added kind whose matcher
+ * was forgotten inherit every other matcher instead of exposing the missing entry.
  */
 export function permissionBypassFlags(kind: string, args: readonly string[]): string[] {
   const matcher = Object.hasOwn(BYPASS_MATCHERS, kind) ? BYPASS_MATCHERS[kind] : undefined;
-  if (matcher !== undefined) return matcher(args);
-  const matched = new Set(Object.values(BYPASS_MATCHERS).flatMap((match) => match(args)));
-  return args.filter((arg) => matched.has(arg));
+  return matcher === undefined ? [] : matcher(args);
 }
 
 /** Whether launch arguments explicitly configure a permission bypass (reported, never added). */

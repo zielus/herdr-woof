@@ -306,11 +306,14 @@ describe("permission bypass detection is per kind", () => {
     expect(permissionBypassFlags("pi", ["--no-approve"])).toEqual([]);
   });
 
-  it("still reports the args of a kind the launch table does not list", () => {
-    // Such a role cannot run, but dropping the report would hide a configured bypass.
-    expect(configuresPermissionBypass("codex", ["--dangerously-skip-permissions"])).toBe(true);
-    expect(configuresPermissionBypass("codex", ["--approve"])).toBe(true);
-    expect(configuresPermissionBypass("codex", ["--verbose"])).toBe(false);
+  it("matches nothing for a kind that has no matcher of its own", () => {
+    // Woof has no flag contract for such a kind, so another vendor's flags must not be read
+    // into its args. role_kind_unsupported (and agent_kind_unsupported at admission) is what
+    // reports it. A new kind whose matcher was forgotten shows up as an absent entry rather
+    // than silently inheriting every other vendor's.
+    for (const args of [["--dangerously-skip-permissions"], ["--approve"], ["-a"], ["--verbose"]])
+      expect(configuresPermissionBypass("codex", args), args.join(" ")).toBe(false);
+    expect(permissionBypassFlags("codex", ["--approve"])).toEqual([]);
   });
 });
 

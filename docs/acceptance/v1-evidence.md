@@ -110,46 +110,54 @@ not restore the ability to cancel.
 
 ### A second agent kind
 
-**Closed in p8a.** `pi` is the second supported kind: the launch table is a
-per-kind record, `pi` owns `--model` and receives no run-directory grant, and a
-role or an input agent selects it. The engine change is confined to the kind
-table, the per-kind owned-flag rejection, the per-kind permission-bypass report
-and doctor's probe; the scheduler, the `RuntimeAdapter` contract and the
-submission path are untouched, which is what makes this evidence about the
-boundary generalizing rather than about one provider.
+**Implemented in p8a; the evidence limit stays open pending one rerun.** `pi` is
+the second supported kind: the launch table is a per-kind record, `pi` owns
+`--model` and receives no run-directory grant, and a role or an input agent
+selects it. The engine change is confined to the kind table, the per-kind
+owned-flag rejection, the per-kind permission-bypass report and doctor's probe;
+the scheduler, the `RuntimeAdapter` contract and the submission path are
+untouched, which is what would make this evidence about the boundary
+generalizing rather than about one provider.
 
-A full `build-review` run with a pi builder and a claude reviewer completed
-`approved`, exit 0, 8/8 gates, on 2026-09-20 — run id `live-pi-br-20260920-054240`,
-against pi 0.86.0, Herdr 0.9.1, Claude Code, and model
-`openai-codex/gpt-5.6-sol` (the `github-copilot/kimi-k3` fallback was not
-needed). It is recorded in the live log named at the end of this section;
-`scripts/live/pi-build-review.mjs` produced it.
+A full `build-review` run with a pi builder and a claude reviewer has been
+performed and is recorded in the log named below: it completed `approved`, exit
+0, against pi 0.86.0, Herdr 0.9.1, Claude Code and `openai-codex/gpt-5.6-sol`
+(the `github-copilot/kimi-k3` fallback was not needed), with 22 journal records
+and no `run.blocked`. **That run's gates were too weak to carry the claim this
+section needs**, which review P8A-R1 found: they required only an assignment
+named `builder` and some accepted submission attributed to it, so a run in which
+pi was assigned but another process with access to the shared repository and run
+directory did the work would also have exited 0, as would a run whose first
+review simply passed and never exercised the repair.
 
-The run was a genuine loop, not a single pass: build accepted, gates `built` and
-`checks_passed`, review 1 **fail** (`changes_requested`), repair dispatched to
-the **same** pi builder and accepted, review visit 2 **pass** (`approved`),
-`run.terminated completed/approved` — 22 journal records, no `run.blocked`. The
-reject → repair → approve trace is the part that matters: the reviewer-only
-checklist line was missing from pi's first submission, review 1 quoted the
-required line and named pi's false completion claim, and pi's repair — in the
-same pi session — read that accepted review artifact and added the line, which
-review 2 confirmed byte-for-byte. A second kind therefore both produced and
-consumed artifacts through the same envelope contract.
+`scripts/live/pi-build-review.mjs` now gates on the boundary itself, and **the
+run id and gate count are left pending the rerun that exercises those gates**
+rather than carried over from the earlier run. What a passing rerun establishes,
+and nothing more:
 
-The builder's kind is confirmed from three independent places: the plan in
-journal record 1 (`kind:"pi"`, args `["--model","openai-codex/gpt-5.6-sol"]` and
-no `--add-dir`, while the reviewer's args carry `--add-dir <runDir>`), the
-builder's `agent.assigned` `sessionId`, which is a pi session-file path where the
-reviewer's is Claude Code's plain UUID, and `config.json`
-(`agents.builder.value.kind = "pi"`, `source: "input"`, the built-in claude role
-listed under `shadowed`). Repository effects are real: `src/slugify.mjs` carries
-the implementation and the checklist header, `test/slugify.test.mjs` holds three
-`node:test` cases, and an independent `node --test` exits 0.
+- the builder's assignment carries a real pi session file, not merely an agent
+  named `builder` (`agent.assigned.sessionId` matching pi's session-file shape,
+  where Claude Code's is a bare UUID);
+- both the build and the repair request were delivered to **that same** session
+  (`request.dispatched.delivery === "started"` and
+  `target.sessionId` equal to the assignment's, for both stages);
+- the reject → repair → approve loop ran: review 1 `fail` routing to `repair`,
+  an accepted repair submission, review 2 `pass`, and `completed/approved`. A run
+  whose first review passes now **fails** this gate and exits non-zero as
+  loop-not-exercised, instead of reporting green;
+- pi's own session file shows the configured provider and model making the
+  repository edits and invoking `woof submit` in both the build and the repair
+  phase. A narrowly scoped, redacted extract of exactly those tool calls is
+  written into the log, so the claim is readable in the committed artifact rather
+  than resting on an external file;
+- the plan and `config.json` name `kind: "pi"` with `source: "input"`, the
+  reviewer stays `claude` and still receives `--add-dir <runDir>`, and the
+  fixture's own tests pass under an independent `node --test`.
 
-The probe mode of the same script was run separately and passed 6/6, exit 0:
-one pi agent started through `herdr agent start --kind pi`, observed `ready` with
-no trust question, given one prompt, completing a `woof submit` round-trip from
-its own shell whose accepted digest matched the artifact on disk.
+The probe mode of the same script was run separately and passed 6/6, exit 0: one
+pi agent started through `herdr agent start --kind pi`, observed `ready` with no
+trust question, given one prompt, completing a `woof submit` round-trip from its
+own shell whose accepted digest matched the artifact on disk.
 
 Recorded preconditions, logged by the script rather than assumed: `pi --version`
 0.86.0; `pi auth check --provider openai-codex` → `ready`/`oauth`;
@@ -157,14 +165,17 @@ Recorded preconditions, logged by the script rather than assumed: `pi --version`
 fixture has no `.pi/`. No pi trust question appeared.
 
 Known limits shipped with the kind and recorded in
-[Agent kinds](../design/agent-kinds.md): `--add-dir` in a pi role is passed
-through and fails late; a wrong pi model under a real provider fails slow with
-nothing naming the model; pi's trust question can still fire on a project
+[Agent kinds](../design/agent-kinds.md): `--add-dir` in a pi role is admitted by
+Woof and forwarded, and pi then exits on the unknown option before any agent is
+detected, so it fails at startup (`agent_start_failed`) rather than reaching a
+delivery or readiness limit; a wrong pi model under a real provider fails slow
+with nothing naming the model; pi's trust question can still fire on a project
 carrying `.pi/`.
 
-Evidence log: `docs/research/pi-build-review-live.log` (322 lines). _Falsified
-by_ a re-run of that script failing a gate on the revision this document
-describes.
+Evidence log: `docs/research/pi-build-review-live.log` (322 lines), from the
+earlier run described above; the rerun replaces it. _Closed by_ that rerun
+passing every gate, at which point this section takes its run id and gate count
+from the new log. _Falsified by_ the rerun failing one.
 
 ### Parallel scheduling
 

@@ -13,8 +13,10 @@ run directory. Write a pi model as `provider/id`, for example
 Because the owned flags are per kind, the rejection you get for setting one
 names only that kind's flags: a pi role setting `--model` is rejected for
 `--model` alone. The flip side is that `--add-dir` in a pi role is no longer
-rejected by Woof; it is passed through to pi, which has no such flag, so the
-agent starts and then fails on its own.
+rejected by Woof; it is passed through to pi, which has no such flag. Against pi
+0.86.0 that means pi exits on the unknown option before any agent is detected,
+so the failure arrives as `agent_start_failed` (runtime `timeout`, "timed out
+waiting for agent startup"), not as a rejected role.
 
 `woof doctor` now probes `pi --version` and reports it beside claude, in
 `--json`, in the text report and in `herdr doctor`. A missing pi is a problem

@@ -104,10 +104,19 @@ These are real and unfixed. They are the cost of keeping admission strict
 without a per-kind rejected-flag allowlist, which is the "kinds as
 configuration" alternative this document rejects.
 
-- **A pi role setting `--add-dir` starts and then fails.** `--add-dir` is not
-  engine-owned for `pi`, so Woof accepts it and passes it through, and pi has no
-  such flag. Woof sees an exhausted limit rather than a clean rejection. Pinned
-  by a process test so the behaviour cannot change silently.
+- **A pi role setting `--add-dir` fails at startup, not at admission.**
+  `--add-dir` is not engine-owned for `pi`, so Woof accepts it and passes it
+  through, and pi has no such flag. Measured against pi 0.86.0 through a real
+  `herdr agent start` (no prompt, no model call): pi exits immediately on the
+  unknown option, the adapter never detects an agent, and `startAgent` returns
+  `{code:"timeout", runtimeCode:"timeout", message:"timed out waiting for agent
+startup", exitCode:1}` with the pane then observed `gone`. `woof agent start`
+  surfaces that as `agent_start_failed`. The flag never reaches a running agent,
+  so the earlier description of this limit as an _exhausted_ readiness or
+  delivery limit was wrong: nothing is ever delivered. Woof's side of the
+  contract — that it admits the flag and forwards it — is pinned by a process
+  test (K3); the failure above is pi's, and is recorded here rather than pinned,
+  because it belongs to pi's CLI, not to Woof.
 - **A wrong pi model can fail slow.** An unknown id under a known provider
   starts and then fails on its first turn, surfacing as a delivery or readiness
   exhaustion with nothing in Woof's output naming the model. Only an unknown
