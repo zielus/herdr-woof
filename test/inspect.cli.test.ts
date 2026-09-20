@@ -652,6 +652,9 @@ describe("woof doctor --json", () => {
       },
       herdr: { env: false, paneId: null, status: "available", version: "herdr 0.0.0-fake" },
       claude: { status: "available", version: "9.9.9 (Claude Code)" },
+      // pi is always probed; no shim is on this PATH and no role selects it, so it is
+      // reported as missing without becoming a problem.
+      pi: { status: "not_found", version: null },
       trust: { dir: repo, status: "unknown" },
       config: { ok: true, project: repo, warnings: [] },
       problems: ["trust_unknown"],

@@ -292,6 +292,7 @@ async function doctor(root: string): Promise<number> {
       root,
       `herdr ${probeLine(report.herdr.status, report.herdr.version)}`,
       `claude ${probeLine(report.claude.status, report.claude.version)}`,
+      `pi ${probeLine(report.pi.status, report.pi.version)}`,
       `trust ${report.trust.status}`,
       report.config.ok ? "config ok" : `config ${report.config.reason}: ${report.config.message}`,
     ].join("\n"),
