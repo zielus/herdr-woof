@@ -47,6 +47,10 @@ verify those first. Separate kind/model/stage fields and additional worktree cue
 are follow-ups only where the adoption check demonstrates a gap. Sidebar
 configuration and workspace presets remain outside Woof.
 
+[A second agent kind: pi](design/agent-kinds.md) proposes a per-kind launch
+table so a role can set `kind: "pi"`, and names the evidence needed to close the
+second-kind limit.
+
 See the [checkout-based plugin setup](integrations/herdr-setup.md) and
 [optional sidebar proposal](integrations/herdr-sidebar.md). New tokens are
 proposals; these pages do not claim that the phase is implemented or installed.
