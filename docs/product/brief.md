@@ -47,7 +47,7 @@ their provenance are fixed for a run. Woof does not invent project-local
 
 The SDK does not depend on plugin UI or MCP. Presentation layers consume the
 engine's snapshot, event and control contracts instead of reconstructing state
-from terminal output.
+from terminal output. A run does not require a Claude Code conversation.
 
 The CLI supports inspection, debugging, testing and automation. Manually typing
 long commands to start complex workflows is secondary; structured workflow input

@@ -113,8 +113,8 @@ are a freshness-stamped, in-memory overlay rather than journal facts. See
 
 Run history and artifacts remain inspectable, and lost ownership is reported,
 but crash resume and re-hosting are not implemented. Herdr restoring an agent
-session does not restore Woof's scheduling decisions. A recovery design must
-prevent duplicate effects before either is promised.
+session does not restore Woof's scheduling decisions. A recovery contract and
+tests must prevent duplicate effects before either is promised.
 
 ### Artifact structure and retention
 
@@ -128,7 +128,7 @@ Only the `claude` agent kind is admitted by the built-in launch mapping. The
 Herdr CLI adapter is the default runtime; `--runtime-module` is an unstable
 extension point. Scheduling is sequential. A second built-in kind, stable runtime
 adapter and parallel workflows need their own capability, ordering and acceptance
-evidence.
+evidence. Stress coverage for more than two concurrent hosted runs remains open.
 
 ### Package layout
 

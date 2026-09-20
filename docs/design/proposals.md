@@ -113,6 +113,10 @@ reorder agents or create collapsible worktree sections. Do not invent a
 content and styling, not that grouping feature. Structural navigation belongs
 in Herdr or a supported navigation plugin.
 
+An optional final Agent row may use `terminal_title_stripped` or one third-party
+summary source; generated prose stays outside workflow state and must not rename
+runtime agents.
+
 If the setup-first trial still leaves a gap after the metadata extension exists,
 a richer personal layout may add checkout, kind, model and stage fields. It must
 remain useful when optional values are absent. Existing `rows_by_agent`
