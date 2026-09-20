@@ -110,12 +110,25 @@ not restore the ability to cancel.
 
 ### A second agent kind
 
-Not exercised. The `RuntimeAdapter` interface (`openPane, startAgent, observe,
-waitFor, deliver, stop`) is the capability boundary, implemented today only by
-`createHerdrCliRuntime` (over `claude` through Herdr) and the in-memory
-`createScriptedRuntime` test double. Nothing in this phase adds or exercises a
-second real provider kind. _Falsified by_ a live run against a second agent
-kind through the same `RuntimeAdapter` contract with no engine change.
+Partly exercised as of p8a. `pi` is the second supported kind: the launch table
+is a per-kind record, `pi` owns `--model` and receives no run-directory grant,
+and a role or an input agent selects it. The engine change is confined to the
+kind table, the per-kind owned-flag rejection, the per-kind permission-bypass
+report and doctor's probe; the scheduler, the `RuntimeAdapter` contract and the
+submission path are untouched.
+
+A real pi agent has been exercised through that contract. The probe mode of
+`scripts/live/pi-build-review.mjs` started one pi agent through `herdr agent
+start --kind pi` with the launch table's arguments, observed it `ready` with no
+trust question, delivered one prompt, and had pi complete a `woof submit`
+round-trip from its own shell whose accepted digest matched the artifact on
+disk: 6/6 gates, exit 0, on 2026-09-20 against pi 0.86.0, Herdr 0.9.1 and model
+`openai-codex/gpt-5.6-sol`.
+
+Still outstanding, so this limit stays open: the full `build-review` run with a
+pi builder and a claude reviewer, which the same script performs without
+`--probe` and records to `docs/research/pi-build-review-live.log`. _Falsified by_
+that run passing every gate.
 
 ### Parallel scheduling
 

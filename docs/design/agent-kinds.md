@@ -1,11 +1,15 @@
 # A second agent kind: pi
 
-Status: proposal, 2026-09-20. Based on source at `38b44b5` (Woof 0.2.0), Herdr
-0.9.1 and pi 0.86.0 (`@earendil-works/pi-coding-agent`). Closes the "A second
-agent kind" limit in [v1 evidence](../acceptance/v1-evidence.md) once a live run
-passes. Flags below were read from `pi --help` and pi's bundled `README.md` and
-`docs/security.md`; re-check them against the installed version before relying
-on them.
+Status: implemented in p8a, 2026-09-20. Based on source at `38b44b5` (Woof
+0.2.0), Herdr 0.9.1 and pi 0.86.0 (`@earendil-works/pi-coding-agent`). Flags
+below were read from `pi --help` and pi's bundled `README.md`, `docs/security.md`
+and `dist/core/trust-manager.js` on the development machine; re-check them
+against the installed version before relying on them.
+
+This document is both the design and the record of what shipped. "What is
+kind-specific today" describes the state before the change; "What shipped"
+replaces the proposal; "Known limits" is the part a reader acting on this needs
+most.
 
 ## Goal
 
@@ -13,7 +17,7 @@ A role may set `kind: "pi"`. Woof starts that agent through Herdr, delivers the
 same prompts, and accepts the same envelope and artifacts as for `claude`, with
 no change to the scheduler, the `RuntimeAdapter` contract or the submission path.
 
-## What is kind-specific today
+## What was kind-specific before p8a
 
 Herdr 0.9.1 starts 24 kinds (`herdr agent`: pi, claude, codex, gemini, cursor,
 opencode, grok, amp, droid, …). Woof admits one. The kind-specific surface in
@@ -35,31 +39,83 @@ runs, so it needs only a shell tool.
 
 - `--model <pattern>` selects the model (`provider/id`, optional `:<thinking>`).
   `--models` is a different flag (Ctrl+P cycling) and must not match.
-- pi has no directory sandbox and no permission prompts: its tools reach any
-  path the process can. The run directory needs no grant, and there is no
-  bypass flag to warn about.
+- **`--model` is not restricted to `enabledModels`.** `enabledModels` in
+  `~/.pi/agent/settings.json` scopes the interactive picker and `--models`
+  cycling; `--model` accepts any model in the catalogue. Verified by running a
+  model absent from `enabledModels` successfully. Always write the model
+  `provider/id`, never the bare `defaultModel`, which drifts with that file.
+- **A wrong model fails fast or slow depending on which half is wrong.** An
+  unknown _provider_ (`nosuchprovider/foo`) makes pi print an error and exit, so
+  `herdr agent start` never detects the agent and Woof reports
+  `agent_start_failed`. An unknown _id_ under a known provider warns, then
+  starts, and dies on its first API call (HTTP 400), so Woof sees a normal
+  startup and then an exhausted delivery or readiness limit with nothing naming
+  the model. There is no Woof-side fix in scope; see Known limits.
+- pi has no directory sandbox and no permission prompts: its tools read, write,
+  edit and run shell commands with the pi process's permissions. The run
+  directory needs no grant.
 - Project trust: an interactive start asks a trust question only when the
-  project has resources that need trust (`.pi/` settings, extensions, prompts)
-  and no saved decision in `~/.pi/agent/trust.json` and `defaultProjectTrust`
-  is `ask`. `--approve`/`--no-approve` override it for one run. This is a
-  startup block of the same class as Claude folder trust.
+  project has resources that need trust (`.pi/` settings, extensions, prompts),
+  there is no saved decision in `~/.pi/agent/trust.json`, and
+  `defaultProjectTrust` is `ask`. `--approve`/`-a` and `--no-approve`/`-na`
+  override it for one run. This is a startup block of the same class as Claude
+  folder trust.
+- **The user-global `~/.agents/skills` directory is excluded from that scan.**
+  pi's `hasTrustRequiringProjectResources` treats it as an always-trusted user
+  resource and ignores it, even when the working directory is `$HOME`. That is
+  why a fixture repository with no `.pi/` of its own reaches no trust question
+  on a machine that has `~/.agents/skills` — the behaviour is not stated in
+  pi's `docs/security.md` prose, so it is recorded here.
 
-## Proposed change
+## What shipped
 
-1. Make the kind table an explicit per-kind record: owned flags plus the engine
+1. The kind table is an explicit per-kind record: owned flags plus the engine
    arguments. `claude` keeps `--model` and `--add-dir`; `pi` owns `--model`
-   only. Owned-flag rejection becomes per kind, and its messages name that
-   kind's flags. An unlisted kind owns nothing and is still refused by
-   `launchArgs`.
-2. Woof never adds `--approve`. A role may set it; report it under the existing
-   `permission_bypass_configured` warning, since it widens what loads without
-   the operator's answer.
-3. Doctor probes `pi --version` and reports it. An executable is a problem only
-   when the resolved configuration uses that kind; `claude_unavailable` keeps
-   its current meaning because the built-in roles are `claude`.
-4. No pi trust pre-flight in this phase. A pi start that blocks on the trust
-   question already ends through the bounded readiness limit. Record it as a
-   known limit; add an advisory check only if live runs show it bites.
+   only and never receives a run-directory grant. Owned-flag rejection is per
+   kind and its messages name that kind's flags. An unlisted kind owns nothing
+   and is still refused by `launchArgs`.
+2. Woof never adds `--approve`. A role may set it; it is reported under the
+   existing `permission_bypass_configured` warning, since it widens what pi
+   loads without the operator's answer. `--approve` and `-a` match by equality,
+   so `--no-approve` and `-na` do not warn, and the kinds' flags do not cross.
+   The warning code is unchanged — `config.json` readers depend on it — but its
+   message now names the kind and the flag, so a reader is not told pi bypasses
+   a permission prompt it never had.
+3. `woof doctor` probes `pi --version` and always reports it. A missing pi is a
+   problem (`pi_unavailable`) only when some resolved role has `kind: "pi"`;
+   doctor has no run input, so any resolved role counts, including a custom one.
+   **`claude_unavailable` stays unconditional.** The earlier draft of this item
+   justified that by saying the built-in roles are `claude`, which is not a
+   sufficient reason: built-in roles are the _bottom layer_ of resolution, so a
+   project defining `.woof/roles/{builder,planner,reviewer}.json` with
+   `kind: "pi"` shadows all three and leaves no resolved `claude` role. Gating
+   claude the same way would therefore silently stop `claude_unavailable`
+   firing for such a project, weakening a documented `--strict` contract this
+   phase did not set out to change.
+4. No pi trust pre-flight, and no `pi` analogue of `src/runtime/claude/trust.ts`.
+   A pi start that blocks on the trust question ends through the bounded
+   readiness limit. See Known limits.
+5. No scheduler, `RuntimeAdapter` or submission change, and no third kind.
+   `codex` and `grok` stay unsupported.
+
+## Known limits
+
+These are real and unfixed. They are the cost of keeping admission strict
+without a per-kind rejected-flag allowlist, which is the "kinds as
+configuration" alternative this document rejects.
+
+- **A pi role setting `--add-dir` starts and then fails.** `--add-dir` is not
+  engine-owned for `pi`, so Woof accepts it and passes it through, and pi has no
+  such flag. Woof sees an exhausted limit rather than a clean rejection. Pinned
+  by a process test so the behaviour cannot change silently.
+- **A wrong pi model can fail slow.** An unknown id under a known provider
+  starts and then fails on its first turn, surfacing as a delivery or readiness
+  exhaustion with nothing in Woof's output naming the model. Only an unknown
+  provider fails at start.
+- **pi's trust question can still fire.** The finding above is
+  machine-specific: it holds because the fixture has no `.pi/` and the only
+  `.agents/skills` is the excluded user one. A project that carries `.pi/`
+  blocks a pi start, and Woof reports it only as an exhausted readiness limit.
 
 ## Alternatives considered
 
@@ -74,15 +130,23 @@ runs, so it needs only a shell tool.
   stays strict. Cost: a release per kind. Falsified if the second and third
   entries need fields the record cannot express without special cases.
 
-## Evidence this phase must produce
+## Evidence
 
 - Unit: `launchArgs` and owned-flag rejection for `claude` and `pi`, including
-  `--models` not matching and an unlisted kind still refused.
+  `--models` not matching and an unlisted kind still refused —
+  `test/unit/launch-kinds.test.ts`. Per-kind bypass detection —
+  `test/unit/config-resolve.test.ts`.
 - Process: admission accepts a `pi` role; a role file setting `--model` for
-  `pi` is rejected; `--add-dir` in a `pi` role is not rejected by Woof.
-- Live: `build-review` with a `pi` builder and a `claude` reviewer through
-  Herdr, recorded like `docs/research/build-review-live.log`. If pi cannot be
-  run live (no provider credentials), say so and leave the evidence limit open.
+  `pi` is rejected naming `--model` alone; `--add-dir` in a `pi` role is not
+  rejected by Woof — `test/config.process.test.ts` (K1–K5).
+  `woof agent start` with a pi role — `test/agent-start.cli.test.ts`. Doctor's
+  probe and its gating — `test/doctor.process.test.ts`.
+- Live: `scripts/live/pi-build-review.mjs`, a sibling of `build-review.mjs`
+  with its own phase directory and fixture (that script's LV-101 incident is why
+  it is not a flag on it). `--probe` starts one pi agent through
+  `herdr agent start --kind pi` and has it complete one `woof submit`
+  round-trip; the full run is `build-review` with a pi builder and a claude
+  reviewer, recorded to `docs/research/pi-build-review-live.log`.
 
 ## Next kinds
 

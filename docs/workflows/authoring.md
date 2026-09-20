@@ -124,7 +124,7 @@ args?}`, a non-object limits result) is `definition_invalid` naming the
   letting the exception escape. A run directory that equals, contains, or lies
   inside that repository is rejected `input_invalid` before any agent kind is
   resolved. Agent kind/model/args resolve through the kind table
-  (`src/scheduler/launch.ts`; only `"claude"` is currently supported —
+  (`src/scheduler/launch.ts`; `"claude"` and `"pi"` are supported —
   `agent_kind_unsupported` otherwise) into the run plan. The repository
   admission resolved is the one the scheduler uses for every later pane, check
   and fingerprint; `runWorkflow` never calls `definition.repository(input)`

@@ -37,6 +37,11 @@ merged to master as `b329cdc`.
   [Workflow authoring](workflows/authoring.md#implemented-now-p5),
   [Initial workflows](workflows/initial-workflows.md#implemented-now-p5) and
   [the acceptance evidence](acceptance/v1-evidence.md).
+- **A second agent kind** (p8a): the launch table is per kind, so a role or an input agent can
+  set `kind: "pi"`. pi owns `--model` only and never receives a run-directory grant; `woof
+doctor` probes pi and reports `pi_unavailable` when a resolved role selects it; pi's
+  `--approve`/`-a` is reported under `permission_bypass_configured` and never added. See
+  [Agent kinds](design/agent-kinds.md).
 
 ## Proposed next phase
 
@@ -46,10 +51,6 @@ actions, basic metadata and third-party presets already exist. Configure and
 verify those first. Separate kind/model/stage fields and additional worktree cues
 are follow-ups only where the adoption check demonstrates a gap. Sidebar
 configuration and workspace presets remain outside Woof.
-
-[A second agent kind: pi](design/agent-kinds.md) proposes a per-kind launch
-table so a role can set `kind: "pi"`, and names the evidence needed to close the
-second-kind limit.
 
 See the [checkout-based plugin setup](integrations/herdr-setup.md) and
 [optional sidebar proposal](integrations/herdr-sidebar.md). New tokens are
