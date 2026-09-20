@@ -7,7 +7,7 @@ import { discoverRoots, type ConfigWarning, type DiscoverOptions } from "./disco
 import { loadScope, type ScopeContent } from "./read.js";
 import {
   CONFIG_LIMIT_KEYS,
-  configuresPermissionBypass,
+  permissionBypassFlags,
   type ConfigFailure,
   type ConfigScope,
   type ConfigSource,
@@ -193,10 +193,11 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
         ...(resolved.path !== null ? { path: resolved.path } : {}),
       });
     }
-    if (configuresPermissionBypass(resolved.value.args)) {
+    const bypass = permissionBypassFlags(resolved.value.kind, resolved.value.args);
+    if (bypass.length > 0) {
       warnings.push({
         code: "permission_bypass_configured",
-        message: `role ${name} configures a permission bypass in its args; Woof never adds one`,
+        message: `role ${name} (kind ${resolved.value.kind}) sets ${bypass.join(", ")} in its args; Woof never adds one`,
         ...(resolved.path !== null ? { path: resolved.path } : {}),
       });
     }

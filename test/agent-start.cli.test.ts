@@ -522,8 +522,9 @@ describe("woof agent start <role>", () => {
     });
     const started = agentStart(s, ["builder"]);
     expect(started.status, started.stdout + started.stderr).toBe(0);
+    // The warning names the kind and the flag it saw, so a reader is not left guessing which.
     expect(started.stderr).toContain(
-      "woof: warning: role builder configures a permission bypass in its args; Woof never adds one",
+      "woof: warning: role builder (kind claude) sets --dangerously-skip-permissions in its args; Woof never adds one",
     );
     const start = calls(s).find((argv) => argv[0] === "agent" && argv[1] === "start") ?? [];
     expect(start.slice(start.indexOf("--"))).toEqual(["--", "--dangerously-skip-permissions"]);

@@ -67,10 +67,26 @@ export const MAX_HOST_START_TIMEOUT_MS = 600_000;
 export const MAX_POLL_MS = 3_600_000;
 const MAX_DESCRIPTION = 500;
 
-const BYPASS_FLAGS: ReadonlySet<string> = new Set([
+const CLAUDE_BYPASS_FLAGS: ReadonlySet<string> = new Set([
   "--dangerously-skip-permissions",
   "--allow-dangerously-skip-permissions",
 ]);
+
+// pi has no permission prompt to skip; --approve/-a trusts project-local files for the run
+// without the operator's answer. Matched by equality only, so --no-approve/-na do not match.
+const PI_TRUST_FLAGS: ReadonlySet<string> = new Set(["--approve", "-a"]);
+
+/** Per kind, the caller arguments that widen what the engine would otherwise ask about. */
+const BYPASS_MATCHERS: Record<string, (args: readonly string[]) => string[]> = {
+  claude: (args) =>
+    args.filter(
+      (arg, index) =>
+        CLAUDE_BYPASS_FLAGS.has(arg) ||
+        arg === "--permission-mode=bypassPermissions" ||
+        (arg === "--permission-mode" && args[index + 1] === "bypassPermissions"),
+    ),
+  pi: (args) => args.filter((arg) => PI_TRUST_FLAGS.has(arg)),
+};
 
 const SETTINGS_KEYS = ["schemaVersion", "defaults"];
 const DEFAULTS_KEYS = [
@@ -240,14 +256,21 @@ export function validateRoleFile(
   };
 }
 
+/**
+ * The launch arguments that explicitly configure a permission or trust bypass for that kind
+ * (reported, never added). A kind the launch table does not list cannot run, but its arguments
+ * are still matched against every kind's flags so nothing is silently dropped.
+ */
+export function permissionBypassFlags(kind: string, args: readonly string[]): string[] {
+  const matcher = Object.hasOwn(BYPASS_MATCHERS, kind) ? BYPASS_MATCHERS[kind] : undefined;
+  if (matcher !== undefined) return matcher(args);
+  const matched = new Set(Object.values(BYPASS_MATCHERS).flatMap((match) => match(args)));
+  return args.filter((arg) => matched.has(arg));
+}
+
 /** Whether launch arguments explicitly configure a permission bypass (reported, never added). */
-export function configuresPermissionBypass(args: readonly string[]): boolean {
-  return args.some(
-    (arg, index) =>
-      BYPASS_FLAGS.has(arg) ||
-      arg === "--permission-mode=bypassPermissions" ||
-      (arg === "--permission-mode" && args[index + 1] === "bypassPermissions"),
-  );
+export function configuresPermissionBypass(kind: string, args: readonly string[]): boolean {
+  return permissionBypassFlags(kind, args).length > 0;
 }
 
 function invalid(path: string, details: ConfigDetail[]): ConfigFailure {
