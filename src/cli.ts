@@ -18,6 +18,7 @@ import {
 } from "./commands/run.js";
 import { runsCommand } from "./commands/runs.js";
 import { statusCommand } from "./commands/status.js";
+import { uiCommand } from "./commands/ui.js";
 import { watchCommand } from "./commands/watch.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import { readSnapshot } from "./state/snapshot.js";
@@ -91,6 +92,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       return eventsCommand(args);
     case "watch":
       return watchCommand(args);
+    case "ui":
+      return uiCommand(args);
     case "herdr":
       return herdrCommand(args);
     case "submit":
@@ -131,6 +134,12 @@ function printHelp(): void {
   console.log(
     "  watch         Print a run's header and events as readable lines; --follow to keep reading",
   );
+  console.log("");
+  console.log("Web UI (unstable):");
+  console.log(
+    "  ui            Serve the run dashboard and its inspection API on 127.0.0.1; reads,",
+  );
+  console.log("                plus one mutating action, cancel");
   console.log("");
   console.log("Configuration:");
   console.log("  config show   Print the effective configuration and where each value came from");

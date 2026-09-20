@@ -100,9 +100,16 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
       "scheduler",
       "state",
       "submission",
+      "web",
       "workflows",
     ],
     modules: ["version.js"],
+  },
+  // p9: the web UI server reads through the inspection and observation areas and
+  // writes only through the state store, exactly as the CLI's own commands do.
+  // It is below commands/, so nothing in it may import a command handler.
+  web: {
+    areas: ["web", "inspect", "observe", "state", "contracts", "domain"],
   },
   contracts: { areas: ["contracts"] },
   domain: { areas: ["domain", "contracts"] },
