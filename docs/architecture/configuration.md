@@ -155,7 +155,14 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   admission (`agent_kind_unsupported`) only for a role the workflow actually
   resolves to. The supported kinds are `claude` and `pi`. Engine-owned flags
   are per kind, so the rejection message names that kind's flags: a `pi` role
-  setting `--model` is `role_invalid` naming `--model` alone.
+  setting `--model` is `role_invalid` naming `--model` alone. The converse is a
+  known limit: a flag Woof does not own for that kind is passed through
+  unchecked, so `--add-dir` in a `pi` role is accepted here and rejected by pi
+  itself, surfacing as an exhausted limit rather than `role_invalid`. Woof keeps
+  no per-kind list of flags to reject. A pi `model` is written `provider/id`;
+  an unknown provider fails at start (`agent_start_failed`), while an unknown id
+  under a real provider starts and then fails on its first API call, which
+  reaches the run as an exhausted limit naming no model.
 - **A role or workflow name that collides with an `Object.prototype`
   member resolves cleanly, never as a phantom or a crash.** Role and
   workflow lookups are matched as own entries only (`Object.hasOwn`) against

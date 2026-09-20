@@ -180,6 +180,19 @@ describe("woof doctor probes pi", () => {
     expect(doctor(env, ["--strict"]).status).toBe(2);
   }, 60_000);
 
+  it("D7: an unresolved configuration reports config_invalid alone, not a guess about pi", () => {
+    // The pi gate reads resolved roles. When the configuration does not resolve there are
+    // none to read, so doctor reports the thing that is actually wrong and makes no claim
+    // about pi from unreliable input. --strict still exits 2, so nothing is hidden.
+    const env = setup({ pi: false });
+    role(env, "builder", { kind: "pi", model: null });
+    writeFileSync(join(env.repo, ".woof", "woof.json"), "{");
+    const json = report(env);
+    expect(json.problems).toEqual(["config_invalid"]);
+    expect(json.pi).toEqual({ status: "not_found", version: null });
+    expect(doctor(env, ["--strict"]).status).toBe(2);
+  }, 60_000);
+
   it("D6: the text report and the usage name pi", () => {
     const env = setup();
     const text = doctor(env).stdout;

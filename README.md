@@ -386,6 +386,22 @@ woof config show
 # {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
 ```
 
+Two things to know when writing a `pi` role, because Woof cannot catch either
+for you:
+
+- **Only the flags that kind owns are rejected.** Woof rejects `--model` in a
+  pi role's `args` (the engine sets it from `model`), but `--add-dir` is not a
+  pi flag, so Woof passes it straight through and pi rejects it itself. The
+  agent starts and then fails, which reaches you as an exhausted limit rather
+  than a clear rejection. Don't put `--add-dir` in a pi role.
+- **Write the model `provider/id`, and get the provider right.** An unknown
+  provider (`nosuchprovider/foo`) makes pi exit at start, which Woof reports as
+  `agent_start_failed`. An unknown _id_ under a real provider is worse: pi
+  warns, starts anyway, and fails on its first API call, so the run ends on an
+  exhausted delivery or readiness limit with nothing in Woof's output naming the
+  model. Check the model with `pi --list-models` if a pi agent starts and then
+  goes nowhere.
+
 `woof run start` resolves that configuration, launches a scheduler in a
 Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host
 foreground` to run in this process), and returns once the pane host has
