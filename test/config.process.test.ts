@@ -679,6 +679,66 @@ describe("woof config show: configuration matrix", () => {
     }
   }, 60_000);
 
+  it("K1 (pi): a pi builder role is admitted and its launch args carry --model and no --add-dir", () => {
+    const env = setup();
+    writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "pi", model: "openai-codex/gpt-5.6-sol" }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(recordedConfig(out)["agents"]["builder"]).toMatchObject({
+      value: { kind: "pi", model: "openai-codex/gpt-5.6-sol" },
+      source: "project",
+    });
+    const plan = JSON.parse(
+      readFileSync(join(runDirOf(out), "journal.jsonl"), "utf8").split("\n")[0] as string,
+    ) as Json;
+    const builder = (plan["plan"]["agents"] as Json[]).find((agent) => agent["role"] === "builder");
+    expect(builder?.["kind"]).toBe("pi");
+    // pi has no directory sandbox, so the engine grants the run directory to no pi agent.
+    expect(builder?.["args"]).toEqual(["--model", "openai-codex/gpt-5.6-sol"]);
+    const reviewer = (plan["plan"]["agents"] as Json[]).find(
+      (agent) => agent["role"] === "reviewer",
+    );
+    expect(reviewer?.["kind"]).toBe("claude");
+    expect(reviewer?.["args"]).toContain("--add-dir");
+  }, 60_000);
+
+  it("K2 (pi): a pi role whose args set --model is role_invalid naming --model only", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "pi", args: ["--model", "github-copilot/kimi-k3"] }),
+    );
+    const out = show(env, ["--project", env.repo]);
+    expect(out.status).toBe(2);
+    expect(out.json).toMatchObject({
+      reason: "role_invalid",
+      details: [{ pointer: "/args/0", path }],
+    });
+    // The message names this kind's owned flags, so a pi reader is not told about --add-dir.
+    expect(out.json?.["message"]).toContain("--model");
+    expect(out.json?.["message"]).not.toContain("--add-dir");
+  });
+
+  it("K3 (pi): a pi role setting --add-dir is not rejected by Woof and the flag reaches the plan", () => {
+    // Known limit: --add-dir is not engine-owned for pi, so Woof passes it through and pi,
+    // which has no such flag, fails on its own. Woof does not keep a per-kind reject list.
+    const env = setup();
+    writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "pi", model: "openai-codex/gpt-5.6-sol", args: ["--add-dir", "/tmp"] }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const plan = JSON.parse(
+      readFileSync(join(runDirOf(out), "journal.jsonl"), "utf8").split("\n")[0] as string,
+    ) as Json;
+    const builder = (plan["plan"]["agents"] as Json[]).find((agent) => agent["role"] === "builder");
+    expect(builder?.["args"]).toEqual(["--model", "openai-codex/gpt-5.6-sol", "--add-dir", "/tmp"]);
+  }, 60_000);
+
   it("PI-004: a permission bypass set by the input is reported in config.json and on stderr", () => {
     const env = setup();
     const out = startForeground(

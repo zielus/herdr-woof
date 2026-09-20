@@ -1,5 +1,5 @@
 import { isId, isPlainObject } from "../contracts/envelope.js";
-import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes } from "../scheduler/launch.js";
+import { engineOwnedArgIndexes, engineOwnedFlags } from "../scheduler/launch.js";
 import {
   COUNT_LIMIT_KEYS,
   DURATION_LIMIT_KEYS,
@@ -215,12 +215,12 @@ export function validateRoleFile(
 
   const argv = (args as string[] | undefined) ?? [];
   // A role that sets an engine-owned flag would silently override the resolved values.
-  const engineOwned = engineOwnedArgIndexes(argv);
+  const engineOwned = engineOwnedArgIndexes(kind as string, argv);
   if (engineOwned.length > 0) {
     return {
       ok: false,
       reason: "role_invalid",
-      message: `${file.path}: args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}; use the model field (the engine adds both)`,
+      message: `${file.path}: args must not set ${engineOwnedFlags(kind as string).join(" or ")}; the engine sets them (use the model field)`,
       details: engineOwned.map((index) => ({
         field: `${file.path}#/args/${index}`,
         message: `${argv[index]} is set by the engine`,

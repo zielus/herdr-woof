@@ -19,7 +19,8 @@ Starts one agent from a role definition, outside any workflow run. The role is
 resolved like a run's: <project>/.woof/roles/<role>.json, else
 ~/.woof/roles/<role>.json, else a built-in role (builder, planner, reviewer).
 Its model and args become the launch flags; no run directory exists, so no
---add-dir is added, and Woof never adds a permission flag.
+run-directory grant is added, and Woof never adds a permission flag. Which
+flags the engine sets depends on the role's kind (claude, pi).
 
 The agent starts in a new pane split from this one (--split, default down), or
 in the existing pane --pane. It is named --name (default: the role name), which

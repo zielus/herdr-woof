@@ -239,6 +239,54 @@ describe("woof agent start <role>", () => {
     ]);
   });
 
+  it("starts a pi role with --kind pi and only the model, with no run-directory grant", () => {
+    const s = setup();
+    const projectRole = role(s.repo, "builder", {
+      kind: "pi",
+      model: "openai-codex/gpt-5.6-sol",
+      args: [],
+    });
+    // The fake Herdr only scripts --kind claude by default; a pi start is a different call.
+    scenario(s, "w-builder-2", [
+      {
+        match: ["agent", "start", "w-builder-2", "--kind", "pi", "--pane", "w9:p7"],
+        stdout: agentInfo("w-builder-2", "w9:p7"),
+      },
+    ]);
+    const started = agentStart(s, [
+      "builder",
+      "--split",
+      "right",
+      "--name",
+      "w-builder-2",
+      "--project",
+      s.repo,
+    ]);
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    expect(started.json).toMatchObject({
+      outcome: "started",
+      role: "builder",
+      roleSource: `project ${projectRole}`,
+    });
+    expect(calls(s)).toEqual([
+      ["pane", "split", "--current", "--direction", "right", "--cwd", s.repo, "--no-focus"],
+      [
+        "agent",
+        "start",
+        "w-builder-2",
+        "--kind",
+        "pi",
+        "--pane",
+        "w9:p7",
+        "--timeout",
+        "30000",
+        "--",
+        "--model",
+        "openai-codex/gpt-5.6-sol",
+      ],
+    ]);
+  });
+
   it("resolves a user role in an existing pane with --pane, without splitting", () => {
     const s = setup();
     const userRole = role(s.home, "scribe", {
