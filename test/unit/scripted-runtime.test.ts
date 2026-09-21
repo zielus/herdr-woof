@@ -423,6 +423,37 @@ describe("scripted runtime adapter behaviour", () => {
     });
   });
 
+  it("opens a pane as a fake tab, carries the tab id and closes that tab on stop", async () => {
+    const runtime = createScriptedRuntime({
+      agents: { [NAME]: { timeline: [{ status: "idle" }] } },
+    });
+    const split = await runtime.openPane({ near: "current", cwd: "/tmp" });
+    const tab = await runtime.openPane({ placement: "tab", label: "woof:builder", cwd: "/tmp" });
+    expect(split).toEqual({ ok: true, value: { paneId: "scripted:p1", tabId: null } });
+    expect(tab).toEqual({ ok: true, value: { paneId: "scripted:p2", tabId: "scripted:t1" } });
+    const handle = await runtime.startAgent({
+      runtimeName: NAME,
+      kind: "claude",
+      paneId: "scripted:p2",
+      timeoutMs: 10,
+    });
+    expect(handle).toMatchObject({ ok: true, value: { paneOwned: true, tabId: "scripted:t1" } });
+    if (!handle.ok) throw new Error("startAgent failed");
+    expect(await runtime.stop(handle.value, { timeoutMs: 10 })).toEqual({
+      ok: true,
+      value: { paneClosed: true, tabClosed: true },
+    });
+    expect(await runtime.stop(handle.value, { timeoutMs: 10 })).toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+    expect(runtime.calls()[1]).toEqual({
+      method: "openPane",
+      runtimeName: null,
+      args: { placement: "tab", label: "woof:builder", cwd: "/tmp" },
+    });
+  });
+
   it("delays observe by observeDelayMs and times out at a shorter observe timeout", async () => {
     const { runtime, handle } = await started({
       timeline: [{ status: "idle", stateChangeSeq: 1 }],

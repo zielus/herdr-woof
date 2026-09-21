@@ -872,6 +872,16 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       const panes = report.calls.filter((call) => call.method === "openPane");
       expect(panes.length).toBeGreaterThan(0);
       for (const pane of panes) expect(pane.args["cwd"]).toBe(report.repo);
+      // One agent per tab: every agent pane is opened as a labelled new tab, never as a split.
+      for (const pane of panes) {
+        expect(pane.args).toMatchObject({
+          placement: "tab",
+          label: expect.stringMatching(/^woof:[a-z]/),
+        });
+        expect(pane.args).not.toHaveProperty("near");
+      }
+      const started = report.calls.filter((call) => call.method === "startAgent");
+      expect(panes).toHaveLength(started.length);
     },
     SCENARIO_TIMEOUT,
   );

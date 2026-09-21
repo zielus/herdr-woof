@@ -470,10 +470,12 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
   top-level side effects twice — see
   [workflow authoring](../workflows/authoring.md#implemented-now-p4)). Either
   way the launcher writes `<runDir>/launch.json` (exclusive, mode 0444) with
-  the raw input and flags, splits a sibling pane (`herdr pane split --current
---direction right --cwd <project root> --no-focus`, or `--split-from
-<pane-id>` for the Herdr `start` action, which has no pane of its own) and
-  types `woof run host <run-dir>` into it. `woof run host` claims the run
+  the raw input and flags, creates the host's own tab (`herdr tab create
+[--workspace $HERDR_WORKSPACE_ID] --cwd <project root> --label
+woof:<workflow> --no-focus`; nothing is split, and `--split-from` only
+  stands in for `HERDR_PANE_ID`) and types `woof run host <run-dir>` into
+  that tab's root pane. The live watch is a down split inside that tab, and
+  each agent later gets a tab of its own (`woof:<role>`). `woof run host` claims the run
   exclusively (`claimHost`, `host.json`), loads the definition (once, in this
   process) and re-admits the launch request authoritatively — for a
   discovered workflow this is the **only** admission it gets, so its loader
@@ -535,8 +537,8 @@ run host <run-dir>` on that directory is refused `run_host_claimed`
   failed, never left as an invalid, unowned claim for something else to
   find.
 - **A pane the launcher itself cannot open or start closes the run
-  directory.** When `herdr pane split` fails (a non-zero exit, a spawn
-  error, or no pane id in its output) or `herdr pane run` exits non-zero,
+  directory.** When `herdr tab create` fails (a non-zero exit, a spawn
+  error, or no tab and root pane id in its output) or `herdr pane run` exits non-zero,
   `woof run start` abandons the still-unclaimed run directory
   (`abandonHost`, `host.json` `state:"abandoned"`) and exits 3
   `host_pane_failed`, naming the Herdr error and that the directory "is

@@ -3,8 +3,9 @@ import { shellQuote } from "./files.js";
 import { paneIdOf } from "./launch.js";
 
 /**
- * `woof run start --watch`: once the run host has opened the run, split a pane below the host pane
- * and type `woof watch <run-dir> --follow` into it. With `closeOnEnd` the typed command closes the
+ * The live watch of a pane-hosted run (on by default; `woof run start --no-watch` opts out): once
+ * the run host has opened the run, split a pane below the host pane — the root pane of the host's
+ * own tab, so the watch lives inside that tab — and type `woof watch <run-dir> --follow` into it. With `closeOnEnd` the typed command closes the
  * pane after watch exits 0 (the run reached its terminal record); otherwise the pane stays, so the
  * final lines remain readable. A failure here never fails the started run: it is reported as a
  * problem next to the launch output.
