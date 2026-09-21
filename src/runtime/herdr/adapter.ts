@@ -20,7 +20,9 @@ import { execHerdr } from "./exec.js";
 import {
   observationFromAgent,
   parseAgentInfo,
+  paneWorkspaceId,
   parseHerdrOutput,
+  parseTabCreated,
   type HerdrOutcome,
 } from "./parse.js";
 
@@ -100,6 +102,24 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
     }
     const exec = await execHerdr(args, { bin: options.bin, env, timeoutMs, graceMs });
     return parseHerdrOutput(args, exec);
+  }
+
+  /**
+   * The workspace new tabs go to: the one Herdr reports for this process's own pane
+   * (`pane get $HERDR_PANE_ID`, read once), else HERDR_WORKSPACE_ID, else none (Herdr's default).
+   * The environment value alone can be absent or stale; the pane read is authoritative.
+   */
+  let resolvedWorkspace: Promise<string | undefined> | undefined;
+  function tabWorkspaceId(): Promise<string | undefined> {
+    resolvedWorkspace ??= (async () => {
+      const fromEnv = env["HERDR_WORKSPACE_ID"];
+      const fallback = fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined;
+      const ownPane = env["HERDR_PANE_ID"];
+      if (ownPane === undefined || ownPane === "") return fallback;
+      const pane = await run(["pane", "get", ownPane], commandTimeoutMs);
+      return (pane.ok ? paneWorkspaceId(pane.result) : undefined) ?? fallback;
+    })();
+    return resolvedWorkspace;
   }
 
   async function observe(
@@ -190,12 +210,11 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         `${key}=${value}`,
       ]);
       if (input.placement === "tab") {
-        // The tab goes to the caller's workspace when Herdr names it, else Herdr's default.
-        const workspaceId = env["HERDR_WORKSPACE_ID"];
+        const workspaceId = await tabWorkspaceId();
         const args = [
           "tab",
           "create",
-          ...(workspaceId !== undefined && workspaceId !== "" ? ["--workspace", workspaceId] : []),
+          ...(workspaceId !== undefined ? ["--workspace", workspaceId] : []),
           "--cwd",
           input.cwd,
           ...(input.label !== undefined && input.label !== "" ? ["--label", input.label] : []),
@@ -204,10 +223,20 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         ];
         const created = await run(args, input.timeoutMs ?? commandTimeoutMs);
         if (!created.ok) return created;
-        const tabId = stringField(created.result["tab"], "tab_id");
-        const paneId = stringField(created.result["root_pane"], "pane_id");
-        if (tabId === undefined) return protocol(args, "tab create returned no tab_id");
-        if (paneId === undefined) return protocol(args, "tab create returned no root pane_id");
+        // Herdr has created the tab by now: ownership is recorded only for a fully verified reply,
+        // and a reply that fails verification has its tab closed (best effort) instead of leaked.
+        const tab = parseTabCreated(created.result, workspaceId);
+        if (!tab.ok) {
+          if (tab.createdTabId === undefined) return protocol(args, tab.message);
+          const closed = await run(["tab", "close", tab.createdTabId], commandTimeoutMs);
+          return protocol(
+            args,
+            `${tab.message}; the created tab ${tab.createdTabId} ${
+              closed.ok ? "was closed" : `could not be closed (${closed.error.message})`
+            }`,
+          );
+        }
+        const { paneId, tabId } = tab;
         ownedPanes.add(paneId);
         ownedTabs.set(paneId, tabId);
         return { ok: true, value: { paneId, tabId } };

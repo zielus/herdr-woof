@@ -471,10 +471,18 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
   [workflow authoring](../workflows/authoring.md#implemented-now-p4)). Either
   way the launcher writes `<runDir>/launch.json` (exclusive, mode 0444) with
   the raw input and flags, creates the host's own tab (`herdr tab create
-[--workspace $HERDR_WORKSPACE_ID] --cwd <project root> --label
+[--workspace <id>] --cwd <project root> --label
 woof:<workflow> --no-focus`; nothing is split, and `--split-from` only
-  stands in for `HERDR_PANE_ID`) and types `woof run host <run-dir>` into
-  that tab's root pane. The live watch is a down split inside that tab, and
+  stands in for `HERDR_PANE_ID`) and types `env HERDR_WORKSPACE_ID=<id> woof
+run host <run-dir>` into that tab's root pane. The workspace is the one
+  Herdr reports for the launcher's pane (`herdr pane get`; for a Herdr action,
+  the focused pane), else `HERDR_WORKSPACE_ID`, else none (Herdr's default).
+  The `tab create` reply is verified as a whole before the tab is used — tab
+  id, root pane id, the root pane's `tab_id` equal to the tab's, and one
+  agreeing workspace id — and the verified workspace is what the host process
+  receives, so the agents' tabs open in the host's workspace. The Herdr
+  runtime adapter verifies its agent tabs the same way and resolves their
+  workspace from its own pane first. The live watch is a down split inside that tab, and
   each agent later gets a tab of its own (`woof:<role>`). `woof run host` claims the run
   exclusively (`claimHost`, `host.json`), loads the definition (once, in this
   process) and re-admits the launch request authoritatively — for a
@@ -548,6 +556,13 @@ run host <run-dir>` on that directory is refused `run_host_claimed`
   a host that claimed the directory first, even though its own exit code
   was non-zero — the message instead says the directory "could not be
   closed (abandoned)" and names why; that host may still run the request.
+  A successful abandonment proves no host owns the directory, so the tab
+  Herdr created for that host is closed with it (`herdr tab close`, best
+  effort, reported in the message) — after a failed `pane run`, a
+  `host_claim_failed` handoff, a `host_not_started` timeout, or a `tab
+create` reply that does not verify but names its tab. The tab is kept
+  only when a host did claim the directory (it may still be running there),
+  and a reply naming two different tabs identifies none to close.
   Neither `launch.json` nor an unclosed run directory is left usable after a
   reported pane failure.
 - **An unwritable runs directory, or a non-regular input file, is refused

@@ -117,6 +117,66 @@ export function parseAgentInfo(value: unknown): HerdrAgentInfo | undefined {
   };
 }
 
+export type TabCreated =
+  | { ok: true; tabId: string; paneId: string; workspaceId: string }
+  | {
+      ok: false;
+      message: string;
+      /** The tab Herdr did create, when the reply names exactly one; the caller closes it. */
+      createdTabId: string | undefined;
+    };
+
+/**
+ * Validates a whole `tab create` result (`.result`) before anyone records ownership: the tab id,
+ * the root pane id, the root pane's tab id equal to the tab's, and one workspace id (the tab's,
+ * when Herdr reports it, and the requested one must both agree with the root pane's). Herdr has
+ * already created the tab when this runs, so a refusal names the tab to close whenever the reply
+ * identifies it without contradiction.
+ */
+export function parseTabCreated(
+  result: Record<string, unknown>,
+  requestedWorkspaceId?: string,
+): TabCreated {
+  const tab = isPlainObject(result["tab"]) ? result["tab"] : {};
+  const root = isPlainObject(result["root_pane"]) ? result["root_pane"] : {};
+  const tabId = stringOrNull(tab["tab_id"]);
+  const rootTabId = stringOrNull(root["tab_id"]);
+  const paneId = stringOrNull(root["pane_id"]);
+  const workspaceId = stringOrNull(root["workspace_id"]);
+  const tabWorkspaceId = stringOrNull(tab["workspace_id"]);
+  if (tabId !== null && rootTabId !== null && tabId !== rootTabId) {
+    // Two different tabs are named: neither is positively the created one, so none is closed.
+    return {
+      ok: false,
+      message: `tab create returned tab ${tabId} with a root pane of tab ${rootTabId}`,
+      createdTabId: undefined,
+    };
+  }
+  const createdTabId = tabId ?? rootTabId ?? undefined;
+  const refuse = (message: string): TabCreated => ({ ok: false, message, createdTabId });
+  if (tabId === null) return refuse("tab create returned no tab_id");
+  if (paneId === null) return refuse("tab create returned no root pane_id");
+  if (rootTabId === null) return refuse("tab create returned a root pane with no tab_id");
+  if (workspaceId === null) return refuse("tab create returned a root pane with no workspace_id");
+  if (tabWorkspaceId !== null && tabWorkspaceId !== workspaceId) {
+    return refuse(
+      `tab create returned tab workspace ${tabWorkspaceId} with a root pane of workspace ${workspaceId}`,
+    );
+  }
+  if (requestedWorkspaceId !== undefined && requestedWorkspaceId !== workspaceId) {
+    return refuse(
+      `tab create was asked for workspace ${requestedWorkspaceId} and returned workspace ${workspaceId}`,
+    );
+  }
+  return { ok: true, tabId, paneId, workspaceId };
+}
+
+/** The workspace a `pane get` result (`.result`) places the pane in, else undefined. */
+export function paneWorkspaceId(result: Record<string, unknown>): string | undefined {
+  const pane = result["pane"];
+  return isPlainObject(pane) ? (stringOrNull(pane["workspace_id"]) ?? undefined) : undefined;
+}
+
 export function observationFromAgent(
   runtimeName: string,
   fallbackPaneId: string,

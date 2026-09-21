@@ -50,7 +50,10 @@ command and action below is an implemented surface.
   `watch: {paneId, command}` (or `watch: {problem}`) to its output, next to
   `host: {paneId, tabId, …}`. The
   watch pane closes when the run ends only with an explicit `--no-keep-panes`
-  (its typed command is then `… --follow && herdr pane close <pane>`); unlike
+  (its typed command is then `sh -c '… --follow; s=$?; herdr pane close
+<pane>; exit $s'`: the close is unconditional, since `woof watch --follow`
+  may exit non-zero for a run that did not complete, and watch's status is
+  kept); unlike
   agent panes it otherwise stays, so its final lines remain readable;
   `run cancel <run-dir>`; `run
 build-review …` (foreground, kept as an alias for `run start --workflow
@@ -94,9 +97,10 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
   `<project>/.woof/start.json` (a missing file, or one that is not a regular
   file — a FIFO, device or directory is `input_invalid` at once, without
   blocking — is a notification and exit 2), hosted in the root pane of a new
-  tab with the `woof watch --follow` pane split below it (an action process
-  has no `HERDR_PANE_ID` of its own, and a new tab needs none; without
-  `HERDR_WORKSPACE_ID` the tab goes to Herdr's default workspace).
+  tab with the `woof watch --follow` pane split below it. An action process
+  has no `HERDR_PANE_ID` of its own: the tab goes to the workspace Herdr
+  reports for the context's `focused_pane_id` (`herdr pane get`), else to
+  `HERDR_WORKSPACE_ID`, and only with neither to Herdr's default workspace.
 - **`cancel`** — cancels the project's one non-terminal run. With none
   active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
 "message":"no active Woof run in <project>","details":[]}` (notification

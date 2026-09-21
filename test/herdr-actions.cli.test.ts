@@ -137,6 +137,14 @@ function setup(): Setup {
     s.scenario,
     JSON.stringify([
       { match: ["notification", "show"], stdout: "{}" },
+      // Herdr places the pane the action was invoked from (focused_pane_id) in workspace w5.
+      {
+        match: ["pane", "get", "w5:p3"],
+        stdout: JSON.stringify({
+          id: "cli:pane:get",
+          result: { pane: { pane_id: "w5:p3", workspace_id: "w5" }, type: "pane_info" },
+        }),
+      },
       {
         match: ["tab", "create"],
         call: 1,
@@ -369,10 +377,16 @@ describe("woof herdr actions", () => {
       host: { mode: "herdr-pane", paneId: "w5:p8", tabId: "w5:t4" },
       watch: { paneId: "w5:p9" },
     });
-    // The action process names no workspace: the tab goes to Herdr's default workspace.
+    // The action process has no HERDR_WORKSPACE_ID: the tab goes to the workspace Herdr reports
+    // for the focused pane, never to Herdr's default workspace.
+    expect(calls(s).filter((argv) => argv[1] === "get" && argv[2] === "w5:p3")).toEqual([
+      ["pane", "get", "w5:p3"],
+    ]);
     expect(calls(s).find((argv) => argv[0] === "tab")).toEqual([
       "tab",
       "create",
+      "--workspace",
+      "w5",
       "--cwd",
       repo,
       "--label",
