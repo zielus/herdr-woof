@@ -14,7 +14,21 @@ import { streamEvents, type EventsSink } from "./stream.js";
  * `readEvents` per run merged by time, and a follow is one `streamEvents` follow
  * per run, the same loop a single-run follow uses. A problem with one run is
  * reported with its run id and never ends the stream.
+ *
+ * A follow is bounded: at most `maxRuns` runs are followed at a time, a follower
+ * is dropped as soon as its run has ended, and a run that has to wait for a free
+ * follower is reported once (`follow_cap`), never silently left out.
  */
+
+/** How many runs a follow polls at the same time unless `maxRuns` says otherwise. */
+export const DEFAULT_MAX_FOLLOWED_RUNS = 64;
+
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "exhausted",
+]);
 
 export interface AllStreamOptions {
   runsDir: string;
@@ -29,6 +43,8 @@ export interface AllStreamOptions {
   /** How often a follow looks for new runs; defaults to `pollMs`, at least 500 ms. */
   discoverMs?: number;
   timeoutMs?: number;
+  /** How many runs a follow polls at the same time; defaults to DEFAULT_MAX_FOLLOWED_RUNS. */
+  maxRuns?: number;
   /** Ends a follow early with reason "end" and exit 0. */
   signal?: AbortSignal;
   /** Whether the follow installs its own SIGINT listener (see `StreamOptions.handleSigint`). */
@@ -49,15 +65,24 @@ export interface AllProblem {
   message: string;
 }
 
+/** A run the follow is not polling right now, because `maxRuns` other runs are being followed. */
+export interface AllNotFollowed extends AllRunInfo {
+  reason: "follow_cap";
+  message: string;
+}
+
 export interface AllEventsSink {
   /** Once per run, before its first event. */
   run(info: AllRunInfo): void;
   event(event: RunEvent, info: AllRunInfo): void;
   problem(problem: AllProblem): void;
+  /** Once per run that has to wait for a free follower. */
+  notFollowed(item: AllNotFollowed): void;
   end(reason: string, runs: number): void;
 }
 
 interface Backlog {
+  entry: RunListEntry;
   info: AllRunInfo;
   events: RunEvent[];
   /** Cursor after the last event read, for the follow to resume from; undefined when the read failed. */
@@ -150,10 +175,13 @@ export async function streamAllEvents(
   if (options.signal?.aborted === true) controller.abort();
   else options.signal?.addEventListener("abort", onStop, { once: true });
 
+  const maxRuns = Math.max(1, options.maxRuns ?? DEFAULT_MAX_FOLLOWED_RUNS);
   const known = new Set<string>();
-  const tails: Array<Promise<unknown>> = [];
-  const follow = (info: AllRunInfo, after: string | undefined): void => {
-    known.add(real(info.runDir));
+  // Only followers that are still running: a settled one removes itself.
+  const live = new Set<Promise<void>>();
+  const waiting: Array<{ entry: RunListEntry; after: string | undefined }> = [];
+  const told = new Set<string>();
+  const start = (info: AllRunInfo, after: string | undefined): void => {
     const runSink: EventsSink = {
       event: (event) => {
         if (wanted(event)) emit(event, info);
@@ -163,34 +191,80 @@ export async function streamAllEvents(
       end: () => {},
       stats: () => {},
     };
-    tails.push(
-      streamEvents(
-        info.runDir,
-        {
-          ...(after !== undefined ? { after } : {}),
-          follow: true,
-          pollMs: options.pollMs,
-          stats: false,
-          signal: controller.signal,
-          handleSigint: false,
+    // streamEvents returns once the run has terminated and its host's exit was delivered (or the
+    // follow failed): the run is not polled again, and its place goes to a waiting run.
+    const tail: Promise<void> = streamEvents(
+      info.runDir,
+      {
+        ...(after !== undefined ? { after } : {}),
+        follow: true,
+        pollMs: options.pollMs,
+        stats: false,
+        signal: controller.signal,
+        handleSigint: false,
+      },
+      runSink,
+    )
+      .then(
+        () => {},
+        (error: unknown) => {
+          sink.problem({
+            runId: info.runId,
+            runDir: info.runDir,
+            type: "error",
+            reason: "stream_failed",
+            message: (error as Error).message,
+          });
         },
-        runSink,
-      ).catch((error: unknown) => {
-        sink.problem({
-          runId: info.runId,
-          runDir: info.runDir,
-          type: "error",
-          reason: "stream_failed",
-          message: (error as Error).message,
-        });
-      }),
+      )
+      .finally(() => {
+        live.delete(tail);
+        pump();
+      });
+    live.add(tail);
+  };
+  // Runs that have not ended first, then the most recently opened.
+  const pump = (): void => {
+    if (controller.signal.aborted) return;
+    waiting.sort(
+      (a, b) =>
+        Number(TERMINAL_STATUSES.has(a.entry.status)) -
+          Number(TERMINAL_STATUSES.has(b.entry.status)) ||
+        compare(b.entry.openedAt, a.entry.openedAt),
     );
+    while (live.size < maxRuns) {
+      const next = waiting.shift();
+      if (next === undefined) break;
+      start(infoOf(next.entry), next.after);
+    }
+    for (const { entry } of waiting) {
+      if (told.has(entry.runDir)) continue;
+      told.add(entry.runDir);
+      sink.notFollowed({
+        ...infoOf(entry),
+        reason: "follow_cap",
+        message:
+          `not followed: ${maxRuns} runs are being followed (--max-runs); ` +
+          `it is followed from where it stands once one of them ends`,
+      });
+    }
+  };
+  const follow = (entry: RunListEntry, after: string | undefined): void => {
+    known.add(real(entry.runDir));
+    waiting.push({ entry, after });
   };
   for (const backlog of backlogs) {
+    const { entry } = backlog;
     // A run whose backlog could not be read was reported; following it would only repeat that.
-    if (backlog.cursor === undefined) known.add(real(backlog.info.runDir));
-    else follow(backlog.info, backlog.cursor);
+    // A run that ended and whose host is gone has nothing left to deliver: its follow is over.
+    if (
+      backlog.cursor === undefined ||
+      (TERMINAL_STATUSES.has(entry.status) && entry.owner !== "alive")
+    )
+      known.add(real(entry.runDir));
+    else follow(entry, backlog.cursor);
   }
+  pump();
 
   const discoverMs = Math.max(500, options.discoverMs ?? options.pollMs);
   try {
@@ -202,14 +276,15 @@ export async function streamAllEvents(
       } catch {
         break;
       }
-      for (const entry of discover(options, known)) follow(infoOf(entry), undefined);
+      for (const entry of discover(options, known)) follow(entry, undefined);
+      pump();
     }
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     if (handleSigint) process.off("SIGINT", onSignal);
     options.signal?.removeEventListener("abort", onStop);
     controller.abort();
-    await Promise.allSettled(tails);
+    await Promise.allSettled(live);
   }
   sink.end(stopped === "timeout" ? "timeout" : stopped === "signal" ? "signal" : "end", known.size);
   return stopped === "timeout" ? 7 : stopped === "signal" ? 130 : 0;
@@ -232,11 +307,11 @@ function readBacklog(entry: RunListEntry, sink: AllEventsSink): Backlog {
         reason: read.reason,
         message: read.message,
       });
-      return { info, events, cursor: undefined };
+      return { entry, info, events, cursor: undefined };
     }
     events.push(...read.events);
     after = read.cursor;
-    if (read.events.length < MAX_EVENTS_LIMIT) return { info, events, cursor: read.cursor };
+    if (read.events.length < MAX_EVENTS_LIMIT) return { entry, info, events, cursor: read.cursor };
   }
 }
 

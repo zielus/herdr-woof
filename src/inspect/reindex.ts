@@ -20,9 +20,14 @@ export interface ReindexResult {
   exists: boolean;
   /** Locators written for runs under the runs directory that had none, or a dead one. */
   written: Array<{ runId: string; runDir: string }>;
-  /** Locators removed because their run directory no longer exists. */
+  /** Locators removed because their run directory does not exist; only with `prune`. */
   pruned: Array<{ runId: string; runDir: string }>;
-  /** Locators left as they were. */
+  /**
+   * Locators whose run directory cannot be reached right now (it does not exist, or its volume is
+   * not mounted). Left in place: only `prune` removes those whose directory does not exist.
+   */
+  unavailable: Array<{ runId: string; runDir: string; reason: string }>;
+  /** Locators whose run directory is there, left as they were. */
   kept: number;
   /** A run whose id is already indexed at another readable run directory: left alone. */
   conflicts: Array<{ runId: string; runDir: string; indexedRunDir: string }>;
@@ -32,18 +37,28 @@ export interface ReindexResult {
 /**
  * Repairs the locator index from a runs directory (`woof runs --reindex`), the
  * only inspector that writes anything: a locator is written for every readable
- * run under `runsDir` that has none (or one that can no longer be followed),
- * and locators whose run directory is gone are removed. It never touches a run
- * directory. Throws when the runs directory exists but cannot be read.
+ * run under `runsDir` that has none (or one whose directory holds no such run).
+ * A locator whose run directory cannot be reached is reported as `unavailable`
+ * and kept — a volume that is not mounted right now must not lose its runs —
+ * unless `prune` is set, which removes the locators whose directory does not
+ * exist. It never touches a run directory. Throws when the runs directory exists
+ * but cannot be read.
  */
-export function reindexRuns(options: { runsDir: string; indexDir: string }): ReindexResult {
+export function reindexRuns(options: {
+  runsDir: string;
+  indexDir: string;
+  /** Remove locators whose run directory does not exist (`woof runs --reindex --prune`). */
+  prune?: boolean;
+}): ReindexResult {
   const { runsDir, indexDir } = options;
+  const prune = options.prune === true;
   const result: ReindexResult = {
     runsDir,
     indexDir,
     exists: true,
     written: [],
     pruned: [],
+    unavailable: [],
     kept: 0,
     conflicts: [],
     skipped: [],
@@ -75,7 +90,11 @@ export function reindexRuns(options: { runsDir: string; indexDir: string }): Rei
     const real = realpathSync(path);
     const existing = locators.get(entry.runId);
     if (existing !== undefined && existing.runDir === real) continue;
-    if (existing !== undefined && locateRun(existing).ok) {
+    // The indexed directory holds that run, or cannot be reached and may hold it once it is back.
+    if (
+      existing !== undefined &&
+      (locateRun(existing).ok || (!prune && reachable(existing.runDir) !== "present"))
+    ) {
       result.conflicts.push({ runId: entry.runId, runDir: real, indexedRunDir: existing.runDir });
       continue;
     }
@@ -96,14 +115,13 @@ export function reindexRuns(options: { runsDir: string; indexDir: string }): Rei
   }
 
   for (const locator of locators.values()) {
-    let gone = false;
-    try {
-      gone = !statSync(locator.runDir).isDirectory();
-    } catch (error) {
-      gone = (error as NodeJS.ErrnoException).code === "ENOENT";
-    }
-    if (!gone) {
+    const state = reachable(locator.runDir);
+    if (state === "present") {
       if (!result.written.some((item) => item.runId === locator.runId)) result.kept += 1;
+      continue;
+    }
+    if (!prune || state !== "run_dir_missing") {
+      result.unavailable.push({ runId: locator.runId, runDir: locator.runDir, reason: state });
       continue;
     }
     try {
@@ -124,4 +142,14 @@ export function reindexRuns(options: { runsDir: string; indexDir: string }): Rei
     }
   }
   return result;
+}
+
+/** Whether a locator's directory is there, does not exist, or cannot be examined. */
+function reachable(runDir: string): "present" | "run_dir_missing" | "run_dir_unavailable" {
+  try {
+    return statSync(runDir).isDirectory() ? "present" : "run_dir_missing";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "run_dir_missing" : "run_dir_unavailable";
+  }
 }

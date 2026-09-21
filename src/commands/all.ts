@@ -21,7 +21,12 @@ its directory is. --project keeps only runs recorded for that project root and
 --since only events at or after an ISO time. Recorded events come first, merged
 by time; with --follow each run is then followed and runs opened later are
 picked up, until --timeout-ms passes or SIGINT. A run that cannot be read is
-reported with its run id and does not end the stream.`;
+reported with its run id and does not end the stream. A follow polls at most
+--max-runs runs at a time (default 64), runs that have not ended and the most
+recent first; a run that ended is no longer polled, and a run that has to wait
+for a free place is reported once as {"kind":"woof.events.skipped","runId",
+"runDir","reason":"follow_cap"} and followed from where it stands when a place
+frees.`;
 
 export interface AllFlags {
   "runs-dir"?: string | undefined;
@@ -30,6 +35,8 @@ export interface AllFlags {
   follow: boolean;
   pollMs: number;
   timeoutMs?: number | undefined;
+  /** The raw --max-runs value; validated here. */
+  maxRuns?: string | undefined;
   pretty: boolean;
 }
 
@@ -41,6 +48,7 @@ const JSON_SINK: AllEventsSink = {
   run: (info) => print({ kind: "woof.events.run", ...info }),
   event: (event) => print(event),
   problem: (problem) => print(problem),
+  notFollowed: (item) => print({ kind: "woof.events.skipped", ...item }),
   end: (reason, runs) =>
     print({ kind: "woof.events.end", scope: "all", runs, cursor: null, terminal: false, reason }),
 };
@@ -48,6 +56,8 @@ const JSON_SINK: AllEventsSink = {
 export async function allEventsCommand(flags: AllFlags, usage: string): Promise<number> {
   if (flags.since !== undefined && Number.isNaN(Date.parse(flags.since)))
     throw new UsageError(`--since must be an ISO 8601 time\n\n${usage}`);
+  if (flags.maxRuns !== undefined && !/^[1-9][0-9]{0,3}$/.test(flags.maxRuns))
+    throw new UsageError(`--max-runs must be an integer between 1 and 9999\n\n${usage}`);
   let runsDir: string;
   let indexDir: string | null;
   if (flags["runs-dir"] !== undefined) {
@@ -68,6 +78,7 @@ export async function allEventsCommand(flags: AllFlags, usage: string): Promise<
     follow: flags.follow,
     pollMs: flags.pollMs,
     ...(flags.timeoutMs !== undefined ? { timeoutMs: flags.timeoutMs } : {}),
+    ...(flags.maxRuns !== undefined ? { maxRuns: Number(flags.maxRuns) } : {}),
   };
   if (!flags.pretty) return streamAllEvents(options, JSON_SINK);
 
@@ -91,6 +102,7 @@ export async function allEventsCommand(flags: AllFlags, usage: string): Promise<
         run: (info) => write(formatAllRun(info, format)),
         event: (event) => write(formatAllEventLine(event, format)),
         problem: (problem) => write(formatAllProblem(problem, format)),
+        notFollowed: (item) => write(formatAllProblem({ ...item, type: "skipped" }, format)),
         end: (reason, runs) => write(formatAllEnd(reason, runs, format)),
       },
     );

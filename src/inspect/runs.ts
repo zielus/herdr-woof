@@ -127,23 +127,34 @@ export type LocateRunResult =
 
 /**
  * The run a locator points at, read from its own journal. Refused when the
- * directory is gone (`run_dir_missing`), its journal cannot be read (the
- * snapshot's own reason, e.g. `run_dir_invalid`), or the journal records
- * another run id (`run_id_mismatch`).
+ * directory is gone (`run_dir_missing`) or cannot be resolved right now
+ * (`run_dir_unavailable`), its journal cannot be read (the snapshot's own
+ * reason, e.g. `run_dir_invalid`), or the journal records another run id
+ * (`run_id_mismatch`). The locator's path is resolved on every load, so the
+ * entry names the real directory.
  */
 export function locateRun(locator: RunLocator): LocateRunResult {
+  let runDir: string;
   try {
-    if (!statSync(locator.runDir).isDirectory()) {
+    runDir = realpathSync(locator.runDir);
+    if (!statSync(runDir).isDirectory()) {
       return {
         ok: false,
         reason: "run_dir_missing",
         message: `${locator.runDir} is not a directory`,
       };
     }
-  } catch {
-    return { ok: false, reason: "run_dir_missing", message: `${locator.runDir} does not exist` };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR"
+      ? { ok: false, reason: "run_dir_missing", message: `${locator.runDir} does not exist` }
+      : {
+          ok: false,
+          reason: "run_dir_unavailable",
+          message: `cannot resolve ${locator.runDir}: ${(error as Error).message}`,
+        };
   }
-  const read = readRunEntry(locator.runDir);
+  const read = readRunEntry(runDir);
   if (!read.ok) return read;
   if (read.entry.runId !== locator.runId) {
     return {

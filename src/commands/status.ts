@@ -116,7 +116,11 @@ export async function statusCommand(args: string[]): Promise<number> {
   }
 }
 
-function printPretty(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+/** A status read, or a `<run-dir|run-id>` argument that named no single run. */
+type Printable =
+  ReadRunStatusResult | { ok: false; reason: string; message: string; line?: number };
+
+function printPretty(current: Printable, code: number, hostOutcome?: unknown): number {
   const format = { color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }) };
   if (!current.ok) {
     console.log(`woof status: ${current.reason}: ${current.message}`);
@@ -131,7 +135,7 @@ function printPretty(current: ReadRunStatusResult, code: number, hostOutcome?: u
   return code;
 }
 
-function printJson(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+function printJson(current: Printable, code: number, hostOutcome?: unknown): number {
   if (current.ok) {
     console.log(
       JSON.stringify({

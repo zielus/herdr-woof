@@ -9,10 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { isId } from "../contracts/envelope.js";
 import { readJsonFile } from "../host/files.js";
+import { readSnapshot } from "../state/snapshot.js";
 
 /**
  * The run locator index: one small file per run id under
@@ -108,9 +109,26 @@ export function writeRunLocator(input: RegisterRunLocatorInput): RunLocator {
 /**
  * Registers a newly opened run in the index. The index only helps find runs:
  * a failure here is logged to stderr and never fails the run.
+ *
+ * A run id that is already indexed at another run directory which still holds
+ * that run keeps its locator: a second run with the same id never takes over
+ * the first one's id. The newcomer is logged to stderr and stays discoverable
+ * by its directory and by a runs-directory listing.
  */
 export function registerRunLocator(input: RegisterRunLocatorInput): void {
   try {
+    const indexDir = input.indexDir ?? defaultIndexDir();
+    const existing = readRunLocator(input.runId, indexDir);
+    if (existing !== null) {
+      const held = realpathOrNull(existing.runDir);
+      if (held !== null && held !== realpathSync(input.runDir) && holdsRun(held, input.runId)) {
+        process.stderr.write(
+          `woof: run id ${input.runId} is already indexed at ${held}; ` +
+            `${input.runDir} is not indexed (the run is unaffected; address it by its directory)\n`,
+        );
+        return;
+      }
+    }
     writeRunLocator(input);
   } catch (error) {
     process.stderr.write(
@@ -190,7 +208,8 @@ function parseLocator(value: unknown): RunLocator | null {
   if (!isObject(value)) return null;
   if (value["schemaVersion"] !== 1 || value["kind"] !== "woof.run.locator") return null;
   const { runId, runDir, projectRoot, workflow, openedAt, registeredAt } = value;
-  if (!isId(runId) || typeof runDir !== "string" || runDir === "") return null;
+  // A relative path would be followed against the inspector's working directory: never valid.
+  if (!isId(runId) || typeof runDir !== "string" || !isAbsolute(runDir)) return null;
   if (projectRoot !== null && typeof projectRoot !== "string") return null;
   if (typeof openedAt !== "string" || typeof registeredAt !== "string") return null;
   let parsedWorkflow: RunLocator["workflow"] = null;
@@ -213,6 +232,20 @@ function parseLocator(value: unknown): RunLocator | null {
     openedAt,
     registeredAt,
   };
+}
+
+function realpathOrNull(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `runDir` holds a readable journal that records `runId`. Read-only, lock-free. */
+function holdsRun(runDir: string, runId: string): boolean {
+  const read = readSnapshot(runDir);
+  return read.ok && read.snapshot.runId === runId;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

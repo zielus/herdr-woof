@@ -7,7 +7,8 @@ import { reindexRuns } from "../inspect/reindex.js";
 import { listRuns } from "../inspect/runs.js";
 import { UsageError, parse } from "./common.js";
 
-export const RUNS_USAGE = `Usage: woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>] [--reindex]
+export const RUNS_USAGE = `Usage: woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
+       woof runs --reindex [--prune] [--runs-dir <dir>]
 
 Lists the runs under the runs directory (--runs-dir, else the user setting
 defaults.runsDir in ~/.woof/woof.json, else ~/.woof/runs) as one JSON line:
@@ -23,8 +24,11 @@ directory is gone, has no journal or records another run id is listed under
 "skipped", never as a run. With --runs-dir only that directory is listed.
 
 --reindex repairs the index instead of listing: it writes the missing locators
-of the runs under the runs directory and removes locators whose run directory no
-longer exists, printing {"outcome":"reindexed","written","pruned","kept",...}.
+of the runs under the runs directory, printing {"outcome":"reindexed","written",
+"pruned","unavailable","kept",...}. A locator whose run directory cannot be
+reached is listed under "unavailable" and kept, so a volume that is not mounted
+does not lose its runs; --prune removes the locators whose directory does not
+exist.
 It is the only inspection command that writes, and it never touches a run
 directory. Otherwise read-only: no journal lock, no
 workflow loading, no Herdr. Exits 0 (a missing runs directory lists nothing),
@@ -43,6 +47,7 @@ export async function runsCommand(args: string[]): Promise<number> {
           all: { type: "boolean" },
           limit: { type: "string" },
           reindex: { type: "boolean" },
+          prune: { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -56,7 +61,9 @@ export async function runsCommand(args: string[]): Promise<number> {
     values.reindex === true &&
     (values.project !== undefined || values.all === true || values.limit !== undefined)
   )
-    throw new UsageError(`--reindex takes only --runs-dir\n\n${RUNS_USAGE}`);
+    throw new UsageError(`--reindex takes only --runs-dir and --prune\n\n${RUNS_USAGE}`);
+  if (values.prune === true && values.reindex !== true)
+    throw new UsageError(`--prune needs --reindex\n\n${RUNS_USAGE}`);
   if (values.limit !== undefined && !/^[1-9][0-9]{0,5}$/.test(values.limit))
     throw new UsageError(`--limit must be an integer between 1 and 999999\n\n${RUNS_USAGE}`);
   let runsDir: string;
@@ -80,7 +87,11 @@ export async function runsCommand(args: string[]): Promise<number> {
   }
   try {
     if (values.reindex === true) {
-      const reindexed = reindexRuns({ runsDir, indexDir: defaultIndexDir() });
+      const reindexed = reindexRuns({
+        runsDir,
+        indexDir: defaultIndexDir(),
+        prune: values.prune === true,
+      });
       console.log(JSON.stringify({ outcome: "reindexed", ...reindexed }));
       return 0;
     }
