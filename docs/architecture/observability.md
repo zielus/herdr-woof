@@ -570,7 +570,11 @@ seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest
 - **Still not covered:** per-agent runtime lifecycle transitions
   (ready/working/blocked/gone, a replaced pane occupant) are not journaled;
   they stay the in-memory overlay. Format repair and work retry are not
-  records of their own: the reducer derives an attempt's `cause`.
+  records of their own: the reducer derives an attempt's `cause`. The journaled
+  `tabId`s say which tabs a run opened, not whether they are still open: the
+  run host closes its agent tabs when the run ends, so a host that was killed
+  leaves them open, `host.lost` and `woof run cancel` close nothing, and no
+  record says a tab was closed.
 
 ## Implemented now (central index)
 
@@ -590,13 +594,20 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   status or events. It is written when `run.opened` is recorded (`openRun`,
   and the implicit plan-less open of `openAttempt`) through a `*.tmp` file and
   a `rename`; readers ignore `*.tmp`. A failed index write is one stderr line
-  and never fails the run. A later run with the same id replaces the locator.
+  and never fails the run. A later run with the same id does not take over a
+  locator that still leads to its run at another directory: the first locator
+  stays, the newcomer is one stderr line, its open succeeds, and it remains
+  reachable by its directory and by a runs-directory scan. A locator that no
+  longer leads to its run is replaced.
 - **Readers never trust a locator as state.** Status always comes from
-  `readSnapshot(runDir)`. A locator whose directory is gone
-  (`run_dir_missing`), whose journal cannot be read (the snapshot's own reason,
-  e.g. `run_dir_invalid`) or whose journal records another run id
-  (`run_id_mismatch`) is reported under `skipped` with its `runId`, and a
-  locator file that does not parse as `locator_invalid` — never as a run.
+  `readSnapshot(runDir)`. The locator's `runDir` is resolved (`realpath`) on
+  every load. A locator whose directory is gone (`run_dir_missing`) or cannot
+  be resolved right now (`run_dir_unavailable`), whose journal cannot be read
+  (the snapshot's own reason, e.g. `run_dir_invalid`) or whose journal records
+  another run id (`run_id_mismatch`) is reported under `skipped` with its
+  `runId`, and a locator file that does not parse, or whose `runDir` is not an
+  absolute path, as `locator_invalid` — never as a run. A relative `runDir` is
+  never followed against the inspector's working directory.
 - **`listRuns({runsDir, indexDir})` is the union** of the runs-directory scan
   and the index, listed once per resolved directory. `woof runs` with no
   `--runs-dir` passes the index (its output gains `indexDir`), so a run opened
@@ -606,14 +617,24 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   run id. There is no `GET /api/events` for all runs.
 - **`woof runs --reindex`** is the only inspection command that writes: it
   writes a locator for each readable run under the runs directory that has
-  none (or one that can no longer be followed), removes locators whose run
-  directory no longer exists, and prints `{"outcome":"reindexed","written",
-"pruned","kept","conflicts","skipped"}`. A run id already indexed at another
-  readable directory is left alone and listed under `conflicts`. It never
-  touches a run directory.
+  none (or one whose directory holds no such run) and prints
+  `{"outcome":"reindexed","written","pruned","unavailable","kept","conflicts",
+"skipped"}`. A locator whose run directory cannot be reached is listed under
+  `unavailable` (`run_dir_missing` or `run_dir_unavailable`) and **kept**: a
+  volume that is not mounted right now must not lose its runs. Only
+  `--reindex --prune` removes the locators whose directory does not exist. A
+  run id already indexed at another directory that holds that run — or, without
+  `--prune`, at a directory that cannot be reached — is left alone and listed
+  under `conflicts`. It never touches a run directory.
 - **Run addressing by id.** `woof status|events|watch|run show|run cancel`
-  resolve their argument in order: an existing directory; else, for a bare run
-  id, the locator (which must still lead to that run); else `<runs-dir>/<id>`.
+  resolve their argument: an existing directory always wins; else, for a bare
+  run id, the locator (which must still lead to that run) and `<runs-dir>/<id>`
+  are both looked at. When both hold a run with that id at different real
+  directories the id is rejected as `run_id_ambiguous` (exit 3, the message
+  names both directories) — `run cancel` never picks one of two runs — and the
+  run directory still works. Directories under the runs directory whose name
+  differs from the run id they record are not searched by the CLI (`woof runs`
+  and the Web API, which read every journal, do see them).
   A bare id found nowhere is `run_dir_invalid` (exit 3). Any other path that
   does not exist is still treated as a run directory, so `events --follow` keeps
   waiting for a directory that is about to be created.
@@ -625,7 +646,15 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   that appear later (a new locator or runs-directory entry, checked at least
   every 500 ms) are followed from their start; live lines of different runs
   are not re-ordered against each other. `--timeout-ms` (exit 7) and SIGINT
-  (130) bound it. A run's `resync_required`/`error` item, or an entry that
+  (130) bound it. The follow is bounded: at most `--max-runs <n>` runs
+  (default 64) are polled at a time, runs that have not ended and the most
+  recently opened first; a follower is dropped as soon as its run has
+  terminated (and its `host.exited` was delivered or given up on), and a run
+  that was already terminal with no live host when the stream started is not
+  polled at all. A run that has to wait for a free follower is reported once as
+  `{"kind":"woof.events.skipped","runId","runDir","project","reason":
+"follow_cap","message"}` and is followed from where it stood (its backlog
+  cursor, or its start) once a follower ends — delayed, never silently dropped. A run's `resync_required`/`error` item, or an entry that
   holds no readable run (`type: "skipped"`), is printed with `runId` and
   `runDir` and does not end the stream. The last line is
   `{"kind":"woof.events.end","scope":"all","runs","cursor":null,"terminal":
