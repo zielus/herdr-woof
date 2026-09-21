@@ -1,0 +1,77 @@
+
+== Woof live acceptance: tabs + observability ==
+date: 2026-09-21T05:00:15.296Z
+evidence dir: <evidence-dir>/live-A
+parts: A
+HERDR_ENV=1
+HERDR_PANE_ID=w9A:p1
+herdr --version: herdr 0.9.1
+claude --version: 2.1.278 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: 9375fcd735b28b250e87bf968931be708ebdaa46
+woof worktree status --porcelain:
+(clean)
+precondition: the operator must have trusted ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo in Claude Code once (open `claude` there and answer its folder-trust question); Woof never does this.
+[precondition] ok   inside a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID)
+[precondition] ok   herdr is on PATH
+[precondition] ok   claude is on PATH
+[precondition] ok   dist/cli.js is built (bun run build)
+[precondition] ok   dist/index.js exports foldEvents, readSnapshot, readJournal, claudeTrustStatus
+[precondition] ok   the built CLI has the run index (woof runs)
+[precondition] ok   herdr tab list and herdr pane list answer with JSON — 3 tabs, 3 panes
+[precondition] ok   herdr pane get reports this pane's tab_id — tab w9A:t1, workspace w9A
+[precondition] ok   Claude Code folder trust for the fixture (~/.claude.json) — trusted
+
+== Part A: hosted build-review run, one tab per participant ==
+[fixture] re-initialized ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo (exit 0, clean true)
+run id: live-tabs-a-20260921-050015
+run dir: ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run
+command: woof run start --workflow build-review --input ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/input.json --project ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo --run-dir ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run --run-id live-tabs-a-20260921-050015 --host herdr-pane
+launcher exit 0: {"outcome":"started","runId":"live-tabs-a-20260921-050015","runDir":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run","workflow":{"name":"build-review","version":"1"},"host":{"mode":"herdr-pane","paneId":"w9A:p3","tabId":"w9A:t3","pid":57214},"configuration":{"sha256":"d1b53a883cfe94a469921546ff91151f51744c91cf703104d47c98ec529e67ea","agents":{"builder":{"kind":"claude","model":"sonnet","source":"input","path":null},"reviewer":{"kind":"claude","model":"sonnet","source":"input","path":null}},"warnings":[]},"next":{"status":["woof","status","~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run","--wait"],"cancel":["woof","run","cancel","~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run"]},"watch":{"paneId":"w9A:p5","command":["/opt/homebrew/Cellar/node/26.7.0/bin/node","~/Projects/herdr-woof/dist/cli.js","watch","~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run","--follow"]}}
+nonce: 757e2a453c94
+GATE A1 PASS: woof run start --host herdr-pane started the run in its own tab — outcome started (-), host pane w9A:p3, tab w9A:t3, pid 57214
+[sample] 2026-09-21T05:00:17.860Z records=2 terminated=false tabs=5 last=host.claimed
+[sample] 2026-09-21T05:00:22.886Z records=3 terminated=false tabs=5 last=agent.assigned
+[sample] 2026-09-21T05:00:27.901Z records=5 terminated=false tabs=5 last=request.dispatched
+[sample] 2026-09-21T05:00:32.946Z records=5 terminated=false tabs=5 last=request.dispatched
+[sample] 2026-09-21T05:00:37.994Z records=5 terminated=false tabs=5 last=request.dispatched
+[sample] 2026-09-21T05:00:43.024Z records=6 terminated=false tabs=5 last=submission.accepted
+[sample] 2026-09-21T05:00:48.065Z records=8 terminated=false tabs=6 last=gate.recorded
+[sample] 2026-09-21T05:00:53.106Z records=11 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:00:58.131Z records=11 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:03.164Z records=11 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:08.195Z records=11 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:13.244Z records=13 terminated=false tabs=6 last=gate.recorded
+[sample] 2026-09-21T05:01:18.282Z records=15 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:23.307Z records=15 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:28.344Z records=18 terminated=false tabs=6 last=gate.recorded
+[sample] 2026-09-21T05:01:33.380Z records=20 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:38.427Z records=20 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:43.465Z records=20 terminated=false tabs=6 last=request.dispatched
+[sample] 2026-09-21T05:01:48.505Z records=24 terminated=true tabs=4 last=host.exited
+GATE A2 PASS: the run completed (journal and woof status <runId> --wait) — run.terminated completed (approved), status --wait exit 0
+GATE A3 PASS: host.claimed is journaled with the host's pane and tab — seq 2, pane w9A:p3, tab w9A:t3, pid 57214
+GATE A4 PASS: agent.assigned ×2 with two different non-null tab ids, neither the host's tab — builder w9A:t4, reviewer w9A:t5, host w9A:t3
+GATE A5 PASS: herdr tab list showed the host tab and both agent tabs while the run was active — 18 active samples; builder=w9A:t4:woof:builder, reviewer=w9A:t5:woof:reviewer
+GATE A6 PASS: one agent per tab: each agent tab held exactly its agent's pane in every active sample — [{"agentId":"builder","rows":18,"ok":true},{"agentId":"reviewer","rows":12,"ok":true}]
+GATE A7 PASS: the watch pane is a split inside the host's tab — watch pane w9A:p5 in tab w9A:t3, host pane w9A:p3 in tab w9A:t3
+GATE A8 PASS: the first review fails (gate reject → repair) citing the nonce line; a later review passes on a newer revision — reviews fail → pass; gates reject@33868b761b9c1ca853a844ccc629d04bada5d8e0 → pass@fb6a63c7edace1a55985607f8c2171422a10ca61; cites line true
+GATE A9 PASS: repair reused the builder: same agent, pane, terminal and session as the build, and no replacement — builder ["w9A:p4","term_65bf72055291de","ec29c089-1d36-4184-a342-c3be297e96f7"]; 1 build and 1 repair dispatch(es)
+GATE A10 PASS: woof run show --verify-artifacts reports no altered artifact — exit 0, checked 4, altered []
+GATE A11 PASS: the repository holds the repaired change: nonce line first, tests exist, node --test passes — first line "// woof-acceptance: 757e2a453c94", node --test exit 0
+GATE A12 PASS: woof runs (no path flags) lists the run from the run index — entry {"runId":"live-tabs-a-20260921-050015","runDir":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run","workflow":{"name":"build-review","version":"1"},"status":"completed","owner":"exited","openedAt":"2026-09-21T05:00:17.736Z","updatedAt":"2026-09-21T05:01:45.932Z","project":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo"}
+GATE A13 PASS: woof status <runId> resolves the run by id — exit 0, status completed, owner exited
+GATE A14 PASS: woof events --all introduces the run and carries every one of its events — exit 0, intro present, 24/24 events
+GATE A15 PASS: host.exited is recorded after run.terminated, as the last record, by the claiming pid — run.terminated seq 23, host.exited {"schemaVersion":1,"seq":24,"ts":"2026-09-21T05:01:45.932Z","type":"host.exited","pid":57214,"exitCode":0,"reason":"completed"}
+GATE A16 PASS: after the run the agent tabs are closed and the host tab remains — agent tabs still listed [], host tab listed true
+[cleanup] Part A agent tabs: [{"tabId":"w9A:t4","state":"already_closed"},{"tabId":"w9A:t5","state":"already_closed"}]
+[cleanup] Part A host tab w9A:t3 is left open (its last lines stay readable); close it with: herdr tab close w9A:t3
+
+== script hygiene ==
+GATE H1 PASS: Woof worktree unchanged; the script never reads pane text or sends keys — source grep for agent read, pane read, send-keys: no matches; worktree unchanged true
+
+== summary ==
+run A: live-tabs-a-20260921-050015  ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/tabs-a-20260921-050015/run
+evidence dir: <evidence-dir>/live-A
+17/17 gates passed

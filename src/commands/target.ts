@@ -8,11 +8,12 @@ export async function userRunsDir(): Promise<string | null> {
   return resolved.ok ? resolved.configuration.settings.runsDir.value : null;
 }
 
-/** A `<run-dir|run-id>` argument as a run directory: an existing directory, else the run index, else the runs directory. */
+/** A `<run-dir|run-id>` argument as a run directory: an existing directory, else the run index and the runs directory. */
 export function resolveTarget(target: string): Promise<ResolveRunTargetResult> {
   return resolveRunTarget(target, { runsDir: userRunsDir });
 }
 
 export const TARGET_HELP = `<run-dir|run-id>: an existing directory wins; otherwise a run id is looked up in
-the run index (~/.woof/index, or WOOF_INDEX_DIR) and then as <runs-dir>/<id>. An
-unknown id is rejected as run_dir_invalid (exit 3).`;
+the run index (~/.woof/index, or WOOF_INDEX_DIR) and as <runs-dir>/<id>. An
+unknown id is rejected as run_dir_invalid and an id that names two different
+runs as run_id_ambiguous (both exit 3); the run directory always works.`;

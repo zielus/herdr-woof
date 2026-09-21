@@ -6,6 +6,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -309,7 +310,128 @@ console.log(JSON.stringify(await resolveRunTarget("by-id-1")));`,
     });
   });
 
-  it("--reindex writes missing locators and prunes those whose run directory is gone", () => {
+  it("rejects a run id that names two runs instead of picking one, and keeps the first locator", () => {
+    const s = sandbox();
+    const elsewhere = { HOME: s.home, WOOF_INDEX_DIR: join(s.root, "unused") };
+    // Run A under the runs directory, never indexed; run B elsewhere with the same id, indexed.
+    const a = join(s.runsDir, "dup-1");
+    const b = join(s.outside, "dup-b");
+    openRun(s, a, "dup-1", elsewhere);
+    openRun(s, b, "dup-1");
+
+    for (const args of [
+      ["run", "cancel", "dup-1"],
+      ["status", "dup-1"],
+      ["run", "show", "dup-1"],
+      ["events", "dup-1"],
+    ]) {
+      const refused = woof(args, { env: s.env });
+      expect(refused.status, args.join(" ")).toBe(3);
+      expect(refused.json, args.join(" ")).toMatchObject({
+        outcome: "rejected",
+        reason: "run_id_ambiguous",
+      });
+      const message = String((refused.json as Json)["message"]);
+      expect(message).toContain(a);
+      expect(message).toContain(b);
+    }
+    // Nothing was cancelled, and each run is still addressable by its directory.
+    for (const runDir of [a, b]) {
+      expect(woof(["status", runDir], { env: s.env }).json).toMatchObject({
+        status: { runId: "dup-1", status: "created" },
+      });
+    }
+    expect(woof(["run", "cancel", a], { env: s.env }).status).toBe(0);
+    expect(woof(["status", a], { env: s.env }).json).toMatchObject({
+      status: { status: "cancelled" },
+    });
+    expect(woof(["status", b], { env: s.env }).json).toMatchObject({
+      status: { status: "created" },
+    });
+
+    // A directory of that name that holds no such run is not a second run.
+    const empty = sandbox();
+    openRun(empty, join(empty.outside, "only"), "only-1");
+    mkdirSync(join(empty.runsDir, "only-1"), { recursive: true });
+    const resolved = runNode(
+      `const { resolveRunTarget } = await import(${JSON.stringify(distUrl("inspect/target.js"))});
+console.log(JSON.stringify(await resolveRunTarget("only-1", { runsDir: async () => process.argv[1] })));`,
+      [empty.runsDir],
+      { env: { ...empty.env, HOME: empty.root } },
+    );
+    expect(resolved.json).toMatchObject({ ok: true, via: "index" });
+
+    // A third run with the same id does not take over B's locator; its open still succeeds.
+    const c = join(s.outside, "dup-c");
+    const opened = woof(attemptOpenArgs(c, "dup-1"), { env: s.env });
+    expect(opened.status, opened.stdout + opened.stderr).toBe(0);
+    expect(opened.json).toMatchObject({ outcome: "opened" });
+    expect(opened.stderr).toContain("run id dup-1 is already indexed at");
+    expect(
+      (JSON.parse(readFileSync(join(s.indexDir, "runs", "dup-1.json"), "utf8")) as Json)["runDir"],
+    ).toBe(b);
+    expect(woof(["status", c], { env: s.env }).status).toBe(0);
+    // Once B is gone its locator is dead, and a new run with that id may be indexed.
+    rmSync(b, { recursive: true });
+    const d = join(s.outside, "dup-d");
+    openRun(s, d, "dup-1");
+    expect(
+      (JSON.parse(readFileSync(join(s.indexDir, "runs", "dup-1.json"), "utf8")) as Json)["runDir"],
+    ).toBe(d);
+  });
+
+  it("never follows a locator with a relative run directory", () => {
+    const s = sandbox();
+    // A real run the relative path would reach from the inspector's working directory.
+    const elsewhere = { HOME: s.home, WOOF_INDEX_DIR: join(s.root, "unused") };
+    openRun(s, join(s.outside, "rel"), "rel-1", elsewhere);
+    mkdirSync(join(s.indexDir, "runs"), { recursive: true });
+    const path = join(s.indexDir, "runs", "rel-1.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "woof.run.locator",
+        runId: "rel-1",
+        runDir: "rel",
+        projectRoot: null,
+        workflow: null,
+        openedAt: "2026-01-01T00:00:00.000Z",
+        registeredAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const result = runNode(
+      `process.chdir(process.argv[1]);
+const { listRuns } = await import(${JSON.stringify(distUrl("inspect/runs.js"))});
+const { resolveRunTarget } = await import(${JSON.stringify(distUrl("inspect/target.js"))});
+const listed = listRuns({ runsDir: process.argv[2], indexDir: process.argv[3], all: true });
+const target = await resolveRunTarget("rel-1", { indexDir: process.argv[3] });
+console.log(JSON.stringify({ listed, target }));`,
+      [s.outside, s.runsDir, s.indexDir],
+      { env: s.env },
+    );
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      listed: { runs: [], skipped: [{ path, reason: "locator_invalid" }] },
+      target: { ok: false, reason: "run_dir_invalid" },
+    });
+  });
+
+  it("names the real directory of a run indexed through a symlink", () => {
+    const s = sandbox();
+    const runDir = join(s.outside, "real");
+    openRun(s, runDir, "link-1");
+    const link = join(s.outside, "link");
+    symlinkSync(runDir, link);
+    const path = join(s.indexDir, "runs", "link-1.json");
+    const locator = JSON.parse(readFileSync(path, "utf8")) as Json;
+    writeFileSync(path, JSON.stringify({ ...locator, runDir: link }));
+    expect((woof(["runs"], { env: s.env }).json as Json)["runs"]).toMatchObject([
+      { runId: "link-1", runDir },
+    ]);
+  });
+
+  it("--reindex writes missing locators, keeps unreachable ones, and prunes only with --prune", () => {
     const s = sandbox();
     const elsewhere = { HOME: s.home, WOOF_INDEX_DIR: join(s.root, "unused") };
     const unindexed = join(s.runsDir, "unindexed");
@@ -322,6 +444,9 @@ console.log(JSON.stringify(await resolveRunTarget("by-id-1")));`,
     const refused = woof(["runs", "--reindex", "--all"], { env: s.env });
     expect(refused.status).toBe(1);
 
+    expect(woof(["runs", "--prune"], { env: s.env }).status).toBe(1);
+
+    // A directory that is not there now may be on a volume that is not mounted: the locator stays.
     const reindexed = woof(["runs", "--reindex"], { env: s.env });
     expect(reindexed.status, reindexed.stdout + reindexed.stderr).toBe(0);
     expect(reindexed.json).toMatchObject({
@@ -330,17 +455,39 @@ console.log(JSON.stringify(await resolveRunTarget("by-id-1")));`,
       indexDir: s.indexDir,
       exists: true,
       written: [{ runId: "repair-1", runDir: unindexed }],
-      pruned: [{ runId: "pruned-1", runDir: gone }],
+      pruned: [],
+      unavailable: [{ runId: "pruned-1", runDir: gone, reason: "run_dir_missing" }],
       kept: 1,
       conflicts: [],
       skipped: [],
     });
     expect(readdirSync(join(s.indexDir, "runs")).toSorted()).toEqual([
       "kept-1.json",
+      "pruned-1.json",
+      "repair-1.json",
+    ]);
+    // The run comes back (the volume is mounted again): it is found through the kept locator.
+    openRun(s, gone, "pruned-1", elsewhere);
+    expect(woof(["status", "pruned-1"], { env: s.env }).json).toMatchObject({
+      outcome: "status",
+      status: { runId: "pruned-1", runDir: gone },
+    });
+    rmSync(gone, { recursive: true });
+
+    const pruned = woof(["runs", "--reindex", "--prune"], { env: s.env });
+    expect(pruned.status, pruned.stdout + pruned.stderr).toBe(0);
+    expect(pruned.json).toMatchObject({
+      written: [],
+      pruned: [{ runId: "pruned-1", runDir: gone }],
+      unavailable: [],
+      kept: 2,
+    });
+    expect(readdirSync(join(s.indexDir, "runs")).toSorted()).toEqual([
+      "kept-1.json",
       "repair-1.json",
     ]);
     const again = woof(["runs", "--reindex"], { env: s.env });
-    expect(again.json).toMatchObject({ written: [], pruned: [], kept: 2 });
+    expect(again.json).toMatchObject({ written: [], pruned: [], unavailable: [], kept: 2 });
     // The journal was only read.
     expect(existsSync(join(unindexed, "journal.jsonl"))).toBe(true);
     expect(woof(["runs"], { env: s.env }).json).toMatchObject({ skipped: [] });
@@ -465,5 +612,44 @@ describe("woof events --all", () => {
     expect(out.find((line) => line["runId"] === "follow-2")).toMatchObject({ runDir: late });
     expect(out).toHaveLength(8);
     expect(out.at(-1)).toMatchObject({ scope: "all", runs: 2, reason: "timeout" });
+  }, 20_000);
+
+  it("--follow polls at most --max-runs runs, names the ones that wait, and follows them when a place frees", async () => {
+    const s = sandbox();
+    const dirs3 = ["cap-1", "cap-2", "cap-3"].map((runId) => join(s.outside, runId));
+    for (const [index, runDir] of dirs3.entries()) {
+      openRun(s, runDir, `cap-${index + 1}`);
+      // Distinct openedAt, so "most recent first" is decided.
+      // oxlint-disable-next-line no-await-in-loop
+      await delay(15);
+    }
+    expect(woof(["events", "--all", "--max-runs", "0"], { env: s.env }).status).toBe(1);
+    expect(woof(["events", dirs3[0] as string, "--max-runs", "2"], { env: s.env }).status).toBe(1);
+
+    const following = woofAsync(
+      ["events", "--all", "--follow", "--max-runs", "1", "--poll-ms", "50", "--timeout-ms", "5000"],
+      { env: s.env },
+    );
+    await delay(1200);
+    // cap-3 (the most recent) is followed; the others wait. Ending it frees its place for cap-2.
+    expect(woof(attemptOpenArgs(dirs3[1] as string, "cap-2"), { env: s.env }).status).toBe(0);
+    expect(woof(["run", "cancel", dirs3[2] as string], { env: s.env }).status).toBe(0);
+
+    const result = await following;
+    expect(result.status, result.stdout + result.stderr).toBe(7);
+    const out = lines(result.stdout);
+    expect(out.filter((line) => line["kind"] === "woof.events.skipped")).toEqual([
+      expect.objectContaining({ runId: "cap-2", runDir: dirs3[1], reason: "follow_cap" }),
+      expect.objectContaining({ runId: "cap-1", runDir: dirs3[0], reason: "follow_cap" }),
+    ]);
+    const of = (runId: string) =>
+      out
+        .filter((line) => line["runId"] === runId && line["kind"] === "woof.run.event")
+        .map((line) => line["type"]);
+    expect(of("cap-3")).toEqual(["run.opened", "run.cancel_requested", "run.terminated"]);
+    // Followed from its backlog cursor once cap-3 ended: nothing of it was lost.
+    expect(of("cap-2")).toEqual(["run.opened", "attempt.opened"]);
+    expect(of("cap-1")).toEqual(["run.opened"]);
+    expect(out.at(-1)).toMatchObject({ scope: "all", runs: 3, reason: "timeout" });
   }, 20_000);
 });

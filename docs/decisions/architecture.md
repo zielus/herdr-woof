@@ -56,7 +56,10 @@ agreement are defined in
 ### Run hosting and scheduling
 
 A hosted run has one heartbeat-tracked scheduler process in a Herdr pane, giving
-the run a visible owner that can outlive its caller. The scheduler uses the same
+the run a visible owner that can outlive its caller. The layout is one Herdr tab
+per participant: the host in the root pane of its own tab (with the optional
+watch pane split below it) and every agent in its own tab, never a pane split;
+the tab ids are journaled with `host.claimed` and `agent.assigned`. The scheduler uses the same
 derived snapshot an observer reads, performs one bounded action at a time and
 records control decisions before exposing them. Foreground runs remain available.
 See [Domain model](../architecture/domain-model.md) and
@@ -188,6 +191,26 @@ alter a public contract, trust boundary or execution model.
 - Revision fingerprinting treats a failed `git rev-parse HEAD` as "no HEAD yet".
   Direction: add version-checked exit-code handling if a real repository hits
   the ambiguity.
+- The run host closes the agent tabs it opened when the run ends. A host that is
+  killed leaves them open: `host.lost` and `woof run cancel` close nothing, and
+  no record says a tab was closed. Direction: let cancel (or a later host) close
+  the journaled tabs of a lost host once Herdr ownership of them can be checked.
+- Per-agent runtime lifecycle transitions (ready, working, blocked, gone) are not
+  journaled; only host, cancel-request and observation-loss transitions are.
+  Direction: journal them as transitions if a consumer needs history rather than
+  the live overlay.
+- The run index (`~/.woof/index`) is a per-user set of locators, never state. A
+  run id is unique only by convention: an id that the index and `<runs-dir>/<id>`
+  resolve to different runs is rejected as `run_id_ambiguous`, but the CLI does
+  not read every journal to find a same-id run in a differently named directory
+  (`woof runs` and the Web API do). A locator whose directory cannot be reached
+  is kept until `woof runs --reindex --prune`. Registration of a locator is a
+  read-then-rename, not an exclusive create, so two runs with the same id opened
+  at the same instant can still race for it.
+- `woof events|watch --all --follow` polls each followed run separately and caps
+  them (`--max-runs`, default 64); runs over the cap are named and wait for a
+  free follower. There is no cross-run cursor and no `GET /api/events` for all
+  runs.
 - The Web UI cannot start, retry, answer a blocked agent, resume or re-host a
   run. Unsupported actions return explicit errors; cancellation is the only
   mutating UI action. Direction: add controls only after the engine exposes the

@@ -9,7 +9,7 @@ import { watchRun } from "./watch.js";
 export const EVENTS_USAGE = `Usage: woof events <run-dir|run-id> [--after <cursor>] [--follow] [--timeout-ms <n>] [--poll-ms <n>]
                    [--stats] [--pretty]
        woof events --all [--follow] [--project <dir>] [--since <iso>] [--runs-dir <dir>]
-                   [--timeout-ms <n>] [--poll-ms <n>] [--pretty]
+                   [--max-runs <n>] [--timeout-ms <n>] [--poll-ms <n>] [--pretty]
 
 Prints the run's lifecycle events as NDJSON, one event per line, resuming after
 --after when given. Without --follow it prints the events recorded so far; with
@@ -60,6 +60,7 @@ export async function eventsCommand(args: string[]): Promise<number> {
           project: { type: "string" },
           since: { type: "string" },
           "runs-dir": { type: "string" },
+          "max-runs": { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -86,6 +87,7 @@ export async function eventsCommand(args: string[]): Promise<number> {
         follow: values.follow === true,
         pollMs,
         timeoutMs,
+        maxRuns: values["max-runs"],
         pretty: values.pretty === true,
       },
       EVENTS_USAGE,
@@ -94,9 +96,12 @@ export async function eventsCommand(args: string[]): Promise<number> {
   if (
     values.project !== undefined ||
     values.since !== undefined ||
-    values["runs-dir"] !== undefined
+    values["runs-dir"] !== undefined ||
+    values["max-runs"] !== undefined
   )
-    throw new UsageError(`--project, --since and --runs-dir need --all\n\n${EVENTS_USAGE}`);
+    throw new UsageError(
+      `--project, --since, --runs-dir and --max-runs need --all\n\n${EVENTS_USAGE}`,
+    );
   const [target, ...extra] = positionals;
   if (target === undefined || target === "" || extra.length > 0)
     throw new UsageError(`expected exactly one <run-dir|run-id>\n\n${EVENTS_USAGE}`);

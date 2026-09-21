@@ -39,13 +39,16 @@ command and action below is an implemented surface.
   [observability](../architecture/observability.md#implemented-now-p4).
 - Runs across directories: `status`, `events`, `watch`, `run show` and
   `run cancel` take a run id wherever they take `<run-dir>` (an existing
-  directory wins, then the run index, then `<runs-dir>/<id>`; an unknown id is
-  `run_dir_invalid`, exit 3). `runs` without `--runs-dir` also lists every run
+  directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is
+  `run_dir_invalid` and an id that names two different runs `run_id_ambiguous`,
+  both exit 3). `runs` without `--runs-dir` also lists every run
   in the run index (`~/.woof/index`, or `WOOF_INDEX_DIR`), so a run started
-  with its own `--run-dir` shows up; `runs --reindex` repairs that index and is
-  the only inspection command that writes. `events --all [--follow]
-[--project <dir>] [--since <iso>] [--runs-dir <dir>] [--pretty]` streams the
-  events of every known run as NDJSON, and `watch --all` prints the same stream
+  with its own `--run-dir` shows up; `runs --reindex [--prune]` repairs that index and is
+  the only inspection command that writes (locators whose directory cannot be
+  reached are reported as `unavailable` and kept unless `--prune`). `events --all [--follow]
+[--project <dir>] [--since <iso>] [--runs-dir <dir>] [--max-runs <n>] [--pretty]`
+  streams the events of every known run as NDJSON (a follow polls at most
+  `--max-runs` runs at a time, default 64, and names the ones that wait), and `watch --all` prints the same stream
   as readable lines behind a short run id. See
   [observability](../architecture/observability.md#implemented-now-central-index).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
@@ -54,7 +57,10 @@ command and action below is an implemented surface.
   tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
   holds the run host in its root pane, and every agent of the run gets its
   own unfocused tab (`woof:<role>`); agents are never pane splits. Woof
-  closes only the tabs it created. By default (herdr-pane only; `--no-watch`
+  closes only the tabs it created, and it is the run host that closes the
+  agent tabs when the run ends: a host killed mid-run leaves them open, and
+  `run cancel` does not close them (close them with `herdr tab close`; the
+  tab ids are in the run's `agent.assigned` records). By default (herdr-pane only; `--no-watch`
   opts out, `--watch` is still accepted and is refused with exit 2 under
   `--host foreground` or outside Herdr) it also splits a pane below the host,
   inside the host's tab, running `woof watch <run-dir> --follow` and adds

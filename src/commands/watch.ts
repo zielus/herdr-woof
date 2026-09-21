@@ -16,7 +16,7 @@ import { TARGET_HELP, resolveTarget } from "./target.js";
 
 export const WATCH_USAGE = `Usage: woof watch [<run-dir|run-id>] [--follow] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
        woof watch --all [--follow] [--project <dir>] [--since <iso>] [--runs-dir <dir>]
-                  [--poll-ms <n>] [--timeout-ms <n>]
+                  [--max-runs <n>] [--poll-ms <n>] [--timeout-ms <n>]
 
 Prints a short header for the run in <run-dir> (run id, workflow, current
 stage, host owner, each agent with role, kind, model and pane) and then one
@@ -49,6 +49,7 @@ export async function watchCommand(args: string[]): Promise<number> {
           project: { type: "string" },
           since: { type: "string" },
           "runs-dir": { type: "string" },
+          "max-runs": { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -75,6 +76,7 @@ export async function watchCommand(args: string[]): Promise<number> {
         follow: values.follow === true,
         pollMs,
         timeoutMs,
+        maxRuns: values["max-runs"],
         pretty: true,
       },
       WATCH_USAGE,
@@ -83,9 +85,12 @@ export async function watchCommand(args: string[]): Promise<number> {
   if (
     values.project !== undefined ||
     values.since !== undefined ||
-    values["runs-dir"] !== undefined
+    values["runs-dir"] !== undefined ||
+    values["max-runs"] !== undefined
   )
-    throw new UsageError(`--project, --since and --runs-dir need --all\n\n${WATCH_USAGE}`);
+    throw new UsageError(
+      `--project, --since, --runs-dir and --max-runs need --all\n\n${WATCH_USAGE}`,
+    );
   const [positional, ...extra] = positionals;
   const envRunDir = process.env["WOOF_RUN_DIR"];
   const target =
