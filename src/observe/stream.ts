@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 
 import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "./events.js";
 import { subscribeEvents } from "./subscribe.js";
-import { readSnapshot } from "../state/snapshot.js";
+import { parseCursor, readSnapshot } from "../state/snapshot.js";
 
 const CURSOR_REASONS: ReadonlySet<string> = new Set([
   "cursor_ahead",
@@ -81,18 +81,22 @@ export async function streamEvents(
     return 0;
   }
 
-  // A resume cursor already at the run's terminal record: no event can follow, so end now instead of
-  // waiting for the timeout (PR #6). The snapshot's cursor equal to the resume cursor proves no record
-  // was appended between the two lock-free reads.
+  // A resume cursor at or past the run's terminal record: the only record that can follow a
+  // termination is the host's own host.exited, so deliver what is left and end now instead of
+  // waiting for the timeout (PR #6). The snapshot's cursor equal to the read's cursor proves no
+  // record was appended between the two lock-free reads.
   if (options.after !== undefined) {
-    const read = readEvents(runDir, { after: options.after, limit: 1 });
-    if (read.ok && read.events.length === 0) {
+    const read = readEvents(runDir, { after: options.after });
+    const resumedAt = parseCursor(options.after)?.seq;
+    if (read.ok && resumedAt !== undefined) {
       const snapshot = readSnapshot(runDir);
       if (
         snapshot.ok &&
         snapshot.snapshot.outcome !== null &&
+        snapshot.snapshot.outcome.seq <= resumedAt &&
         snapshot.snapshot.cursor === read.cursor
       ) {
+        for (const event of read.events) sink.event(event);
         sink.end(read.cursor, true, "terminated");
         if (options.stats) sink.stats(statsLine(0, 0, pollMs));
         return 0;

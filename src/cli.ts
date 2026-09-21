@@ -22,7 +22,7 @@ import { uiCommand } from "./commands/ui.js";
 import { watchCommand } from "./commands/watch.js";
 import { isInfraReason } from "./contracts/reasons.js";
 import { readSnapshot } from "./state/snapshot.js";
-import { terminateRun } from "./state/store.js";
+import { cancelRun } from "./state/store.js";
 import { openAttempt } from "./submission/attempt.js";
 import { submitResult } from "./submission/submit.js";
 import { VERSION } from "./version.js";
@@ -188,9 +188,9 @@ async function runCancelCommand(args: string[]): Promise<number> {
   }
   if (values.reason === "")
     throw new UsageError(`--reason must not be empty\n\n${RUN_CANCEL_USAGE}`);
-  const outcome = await terminateRun({
+  const outcome = await cancelRun({
     runDir: resolve(runDir),
-    outcome: "cancelled",
+    source: "cli",
     reason: values.reason ?? "cancelled via woof run cancel",
   });
   console.log(JSON.stringify(outcome));

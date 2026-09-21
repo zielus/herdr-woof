@@ -151,10 +151,12 @@ describe("woof watch", () => {
     expect(events.map((line) => line.split(/\s+/)[2])).toEqual([
       "run.opened",
       "attempt.opened",
+      "run.cancel_requested",
       "run.terminated",
     ]);
+    expect(events.at(-2)).toMatch(/ -  by cli: cancelled via woof run cancel$/);
     expect(events.at(-1)).toMatch(/ -  cancelled: cancelled via woof run cancel$/);
-    expect(outputLines(result.stdout).at(-1)).toMatch(/^-- end \(terminated\) cursor v1\.3\./);
+    expect(outputLines(result.stdout).at(-1)).toMatch(/^-- end \(terminated\) cursor v1\.4\./);
 
     const open = makeRunDir();
     openPlannedRun(open);

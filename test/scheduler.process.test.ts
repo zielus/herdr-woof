@@ -645,6 +645,13 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         .map((call) => call.runtimeName);
       expect(stops.toSorted()).toEqual([report.names.builder, report.names.reviewer].toSorted());
       const termination = ofType(report, "run.terminated")[0];
+      // The request is its own fact, journaled right before the termination it leads to.
+      expect(ofType(report, "run.cancel_requested")).toMatchObject([
+        { seq: (termination?.seq ?? 0) - 1, source: "abort_signal", reason: "cancel requested" },
+      ]);
+      expect(report.snapshot["lifecycle"]).toMatchObject({
+        cancelRequested: { source: "abort_signal", seq: (termination?.seq ?? 0) - 1 },
+      });
       expect(
         report.journal
           .filter((record) => record.seq > (termination?.seq ?? 0))
@@ -661,7 +668,10 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         outcome: "cancelled",
         reason: "cancelled from another process",
       });
-      expect(external.types.at(-1)).toBe("run.terminated");
+      expect(external.types.slice(-2)).toEqual(["run.cancel_requested", "run.terminated"]);
+      expect(ofType(external, "run.cancel_requested")[0]).toMatchObject({ source: "cli" });
+      // A scheduler driven without a run host journals no host facts, and none is invented.
+      expect(external.types.filter((type) => type.startsWith("host."))).toEqual([]);
       expect(external.calls.filter((call) => call.method === "stop")).toHaveLength(2);
     },
     SCENARIO_TIMEOUT,
@@ -941,13 +951,30 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       const error = runScenario("observe-error");
       expect(error.result).toMatchObject({ outcome: "failed", limit: null });
       expect(error.result.reason).toMatch(/^runtime_error: runtime_unavailable: agent builder/);
+      expect(ofType(error, "observation.lost")).toMatchObject([
+        { agentId: "builder", code: "runtime_unavailable" },
+      ]);
 
       const timeouts = runScenario("observe-timeouts");
       expect(timeouts.result).toMatchObject({ outcome: "failed", limit: null });
       expect(timeouts.result.reason).toMatch(/^runtime_error: timeout: agent builder/);
+      // One record for the whole streak (a transition, not a sample), before the run fails on it.
+      const lost = ofType(timeouts, "observation.lost");
+      expect(lost).toMatchObject([{ agentId: "builder", code: "timeout" }]);
+      expect(lost[0]?.seq).toBeLessThan(ofType(timeouts, "run.terminated")[0]?.seq ?? 0);
+      expect(ofType(timeouts, "observation.recovered")).toEqual([]);
+      expect(timeouts.snapshot["lifecycle"]).toMatchObject({
+        observationLost: [{ agentId: "builder", seq: lost[0]?.seq, code: "timeout" }],
+      });
 
       const recovered = runScenario("observe-two-timeouts");
       expect(recovered.result).toMatchObject({ outcome: "completed", limit: null });
+      const outage = ofType(recovered, "observation.lost");
+      expect(outage).toMatchObject([{ agentId: "builder", code: "timeout" }]);
+      expect(ofType(recovered, "observation.recovered")).toMatchObject([
+        { agentId: "builder", lostSeq: outage[0]?.seq },
+      ]);
+      expect(recovered.snapshot["lifecycle"]).toMatchObject({ observationLost: [] });
     },
     SCENARIO_TIMEOUT,
   );

@@ -178,6 +178,22 @@ function summaryOf(type: string, raw: unknown): string {
         return text(data["resolution"]);
       case "delivery.reconciled":
         return `${text(data["resolution"])} (${text(data["evidence"])}) dispatch #${text(data["dispatchSeq"])}`;
+      case "host.claimed":
+        return `pid ${text(data["pid"])} on ${text(data["hostname"])}${
+          data["paneId"] === null ? "" : ` pane ${text(data["paneId"])}`
+        } heartbeat ${text(data["heartbeatMs"])} ms`;
+      case "host.exited":
+        return `pid ${text(data["pid"])} exit ${text(data["exitCode"])} (${clipped(data["reason"])})`;
+      case "host.lost":
+        return `pid ${data["pid"] === null ? "-" : text(data["pid"])} ${clipped(data["reason"])}, last heartbeat ${
+          data["heartbeatAt"] === null ? "-" : text(data["heartbeatAt"])
+        } (found by ${text(data["detectedBy"])})`;
+      case "run.cancel_requested":
+        return `by ${text(data["source"])}: ${clipped(data["reason"])}`;
+      case "observation.lost":
+        return `${text(data["code"])}: ${clipped(data["message"])}`;
+      case "observation.recovered":
+        return `after loss #${text(data["lostSeq"])}`;
       default:
         return unknownSummary(raw);
     }
@@ -204,7 +220,11 @@ function typeStyle(type: string, data: Record<string, unknown>): Style | undefin
       return "red";
     case "submission.duplicate":
     case "run.blocked":
+    case "run.cancel_requested":
+    case "observation.lost":
       return "yellow";
+    case "host.lost":
+      return "red";
     case "gate.recorded":
       return data["decision"] === "pass" ? "green" : "red";
     case "run.terminated":

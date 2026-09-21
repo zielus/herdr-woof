@@ -450,8 +450,9 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
   was passed in; admission and the launched agent's `--add-dir` still use the
   run directory exactly as given, so both name the same directory, one
   canonical and one as supplied. `woof run cancel <run-dir>` records
-  `terminateRun{outcome:"cancelled"}` for a scheduler that may still be
-  running elsewhere. Neither command is hosted: each is a foreground CLI
+  `run.cancel_requested` and then `run.terminated{outcome:"cancelled"}`
+  (`cancelRun`, one lock) for a scheduler that may still be running
+  elsewhere. Neither command is hosted: each is a foreground CLI
   process, and a killed scheduler leaves a non-terminal run whose only
   resolution is `woof run cancel`.
 

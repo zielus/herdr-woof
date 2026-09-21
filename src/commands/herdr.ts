@@ -10,7 +10,7 @@ import { clip } from "../host/metadata.js";
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
 import { execHerdr } from "../runtime/herdr/exec.js";
-import { terminateRun } from "../state/store.js";
+import { cancelRun } from "../state/store.js";
 import { UsageError } from "./common.js";
 import { doctorReport } from "./doctor.js";
 import { cliPath, defaultRunId, herdrBin, readWorkflowInput } from "./run.js";
@@ -194,9 +194,9 @@ async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
     });
     return 2;
   }
-  const outcome = await terminateRun({
+  const outcome = await cancelRun({
     runDir: run.runDir,
-    outcome: "cancelled",
+    source: "herdr_action",
     reason: "cancelled via Herdr action",
   });
   if (outcome.outcome === "recorded") {

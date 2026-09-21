@@ -177,13 +177,17 @@ function startBuildReview(
   return { child, exited };
 }
 
-const journalTypes = (runDir: string): string[] =>
+const journalRecords = (runDir: string): Array<Json & { type: string }> =>
   existsSync(join(runDir, "journal.jsonl"))
     ? readFileSync(join(runDir, "journal.jsonl"), "utf8")
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => (JSON.parse(line) as { type: string }).type)
+        .map((line) => JSON.parse(line) as Json & { type: string })
     : [];
+const journalTypes = (runDir: string): string[] =>
+  journalRecords(runDir).map((record) => record.type);
+/** A foreground host's own exit is the one record after the run's termination. */
+const RUN_END = ["run.terminated", "host.exited"];
 
 async function waitForRecord(runDir: string, type: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -457,7 +461,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
       const printed = JSON.parse(result.stdout.trim()) as { outcome: string; result: Json };
       expect(printed).toMatchObject({ outcome: "run", result: { outcome: "failed" } });
       expect(String(printed.result["reason"])).toContain(`engine_file_error: ${path}`);
-      expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+      expect(journalTypes(ws.runDir).slice(-2)).toEqual(RUN_END);
     };
 
     // A pre-planted request file with other bytes.
@@ -535,7 +539,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
       "engine_file_error: requests/build/visit-1/attempt-1/request.md",
     );
     expect(String(printed.result["reason"])).toContain("not a regular file");
-    expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+    expect(journalTypes(ws.runDir).slice(-2)).toEqual(RUN_END);
   }, 30_000);
 
   it("exits 5 when the reviewer never passes and the rounds run out", () => {
@@ -567,7 +571,12 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     expect(JSON.parse(done.stdout.trim())).toMatchObject({
       result: { outcome: "cancelled", reason: "cancel requested" },
     });
-    expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+    // The signal is journaled as the request, distinct from the termination it leads to; the
+    // host's claim and exit bracket the run.
+    expect(journalTypes(ws.runDir)[1]).toBe("host.claimed");
+    expect(journalTypes(ws.runDir).slice(-3)).toEqual(["run.cancel_requested", ...RUN_END]);
+    expect(journalRecords(ws.runDir).at(-3)).toMatchObject({ source: "signal" });
+    expect(journalRecords(ws.runDir).at(-1)).toMatchObject({ exitCode: 6, reason: "cancelled" });
 
     const rel = "artifacts/build/visit-1/attempt-1/completion.md";
     writeFileSync(join(ws.runDir, rel), "# Late\n");
@@ -609,7 +618,13 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     expect(JSON.parse(done.stdout.trim())).toMatchObject({
       result: { outcome: "cancelled", reason: "stop from the test" },
     });
-    expect(journalTypes(ws.runDir).at(-1)).toBe("run.terminated");
+    expect(journalTypes(ws.runDir).slice(-3)).toEqual(["run.cancel_requested", ...RUN_END]);
+    expect(journalRecords(ws.runDir).at(-3)).toMatchObject({
+      source: "cli",
+      reason: "stop from the test",
+    });
+    // The host was alive when the cancel ran: nothing claims it was lost.
+    expect(journalTypes(ws.runDir)).not.toContain("host.lost");
     expect(woof(["run", "cancel", ws.runDir])).toMatchObject({
       status: 2,
       json: { outcome: "rejected", reason: "run_closed" },

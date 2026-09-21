@@ -8,11 +8,17 @@ import {
   assigned,
   attempt,
   blocked,
+  cancelRequested,
   checkGate,
   dispatched,
   duplicate,
   gate,
+  hostClaimed,
+  hostExited,
+  hostLost,
   journalOf,
+  observationLost,
+  observationRecovered,
   opened,
   reconciled,
   rejected,
@@ -133,7 +139,13 @@ describe("projectEvents", () => {
       unblocked("builder"),
       blocked("builder", ["build", 1, 1]),
       reconciled(4, "build", "builder"),
+      hostClaimed(),
+      observationLost("builder"),
+      observationRecovered("builder", 15),
+      hostLost(),
+      cancelRequested("signal"),
       terminated("completed"),
+      hostExited(),
     );
     const events = projectEvents(records, ANCHOR);
 
@@ -159,6 +171,12 @@ describe("projectEvents", () => {
       { agentId: "builder" },
       buildSubject,
       buildSubject,
+      {},
+      { agentId: "builder" },
+      { agentId: "builder" },
+      {},
+      {},
+      {},
       {},
     ]);
     for (const [index, event] of events.entries()) {
@@ -331,6 +349,19 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
               ...acceptedRef,
             ),
       ]);
+    } else if (roll < 0.965) {
+      // Lifecycle facts; the host's exit is the one record that may follow a termination.
+      const loss = ofType("observation.lost").at(-1);
+      body = pick([
+        cancelRequested(pick(["cli", "web", "signal", "abort_signal", "herdr_action"])),
+        hostClaimed(pick([4242, 7])),
+        hostExited(pick([4242, 7]), pick([0, 4, 6])),
+        hostLost(pick([4242, null]), pick(["host_process_gone", "heartbeat_stale"])),
+        observationLost(agent, pick(["timeout", "runtime_unavailable"])),
+        observationLost(agent),
+        observationRecovered(agent, (loss?.["seq"] as number | undefined) ?? 1),
+        observationRecovered(agent, (loss?.["seq"] as number | undefined) ?? 1),
+      ]);
     } else {
       body = terminated(pick(["completed", "failed", "cancelled"]));
     }
@@ -384,8 +415,14 @@ describe("snapshot and events consistency", () => {
       "attempt.opened",
       "delivery.reconciled",
       "gate.recorded",
+      "host.claimed",
+      "host.exited",
+      "host.lost",
+      "observation.lost",
+      "observation.recovered",
       "request.dispatched",
       "run.blocked",
+      "run.cancel_requested",
       "run.opened",
       "run.terminated",
       "run.unblocked",
@@ -408,8 +445,13 @@ describe("snapshot and events consistency", () => {
       "gate_mismatch",
       "gate_subject_stale",
       "gate_subject_unknown",
+      "host_exists",
+      "host_gone",
+      "host_unknown",
       "invalid_transition",
       "not_blocked",
+      "observation_lost",
+      "observation_not_lost",
       "owner_mismatch",
       "reconcile_exists",
       "round_invalid",

@@ -25,6 +25,20 @@ import {
   type RunUnblockedRecord,
 } from "./control-records.js";
 import {
+  hostClaimedProblem,
+  hostExitedProblem,
+  hostLostProblem,
+  observationLostProblem,
+  observationRecoveredProblem,
+  runCancelRequestedProblem,
+  type HostClaimedRecord,
+  type HostExitedRecord,
+  type HostLostRecord,
+  type ObservationLostRecord,
+  type ObservationRecoveredRecord,
+  type RunCancelRequestedRecord,
+} from "./lifecycle-records.js";
+import {
   check,
   exactKeysProblem,
   fileRefProblem,
@@ -44,8 +58,14 @@ export type {
   AgentAssignedRecord,
   DeliveryReconciledRecord,
   GateRecordedRecord,
+  HostClaimedRecord,
+  HostExitedRecord,
+  HostLostRecord,
+  ObservationLostRecord,
+  ObservationRecoveredRecord,
   RequestDispatchedRecord,
   RunBlockedRecord,
+  RunCancelRequestedRecord,
   RunTerminatedRecord,
   RunUnblockedRecord,
 };
@@ -128,7 +148,13 @@ export type JournalRecord =
   | GateRecordedRecord
   | RunBlockedRecord
   | RunUnblockedRecord
-  | DeliveryReconciledRecord;
+  | DeliveryReconciledRecord
+  | HostClaimedRecord
+  | HostExitedRecord
+  | HostLostRecord
+  | RunCancelRequestedRecord
+  | ObservationLostRecord
+  | ObservationRecoveredRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -223,6 +249,18 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return runUnblockedProblem(value);
     case "delivery.reconciled":
       return deliveryReconciledProblem(value);
+    case "host.claimed":
+      return hostClaimedProblem(value);
+    case "host.exited":
+      return hostExitedProblem(value);
+    case "host.lost":
+      return hostLostProblem(value);
+    case "run.cancel_requested":
+      return runCancelRequestedProblem(value);
+    case "observation.lost":
+      return observationLostProblem(value);
+    case "observation.recovered":
+      return observationRecoveredProblem(value);
     default:
       return "unknown record type";
   }

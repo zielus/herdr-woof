@@ -32,6 +32,7 @@ import type {
   RunBlockedRecord,
   RunUnblockedRecord,
 } from "../journal/control-records.js";
+import { probeHostEvidence } from "../host/probe.js";
 import {
   JOURNAL_FILE,
   JournalFileError,
@@ -40,6 +41,15 @@ import {
   inspectJournalPath,
   readJournal,
 } from "../journal/journal.js";
+import type {
+  CancelSource,
+  HostClaimedRecord,
+  HostExitedRecord,
+  HostLostRecord,
+  ObservationLostRecord,
+  ObservationRecoveredRecord,
+  RunCancelRequestedRecord,
+} from "../journal/lifecycle-records.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
 import {
   CONFIG_FILE,
@@ -52,7 +62,7 @@ import {
   type RunTerminatedRecord,
 } from "../journal/records.js";
 import { writeAll } from "../journal/write-all.js";
-import { candidateRecord, refuseAppend, replay } from "./reducer.js";
+import { candidateRecord, refuseAppend, replay, type RunState } from "./reducer.js";
 
 /**
  * State store: SDK functions that record run facts in the journal (p2 contract,
@@ -158,6 +168,53 @@ export interface ReconcileDeliveryInput extends StoreInput {
   dispatchSeq: number;
   resolution: "delivered" | "abandoned";
   evidence: DeliveryReconciledRecord["evidence"];
+}
+
+export interface CancelRunInput extends StoreInput {
+  /** Who asked: recorded on run.cancel_requested. */
+  source: CancelSource;
+  reason: string;
+  /**
+   * Probe the run host before cancelling and journal `host.lost` when it is
+   * lost (default true). The scheduler cancelling its own run passes false: it
+   * is the host, and it is alive.
+   */
+  probeHost?: boolean;
+}
+
+export type CancelRunOutcome =
+  | (Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "recorded" }> & {
+      cancelRequest: RunCancelRequestedRecord;
+      hostLost: HostLostRecord | null;
+    })
+  | Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "rejected" }>;
+
+export interface HostClaimedInput extends StoreInput {
+  pid: number;
+  hostname: string;
+  startedAt: string;
+  heartbeatMs: number;
+  paneId: string | null;
+  workspaceId: string | null;
+}
+
+export interface HostExitedInput extends StoreInput {
+  pid: number;
+  exitCode: number;
+  reason: string;
+}
+
+export interface ObservationLostInput extends StoreInput {
+  agentId: string;
+  code: string;
+  message: string;
+  terminalId: string | null;
+}
+
+export interface ObservationRecoveredInput extends StoreInput {
+  agentId: string;
+  lostSeq: number;
+  terminalId: string | null;
 }
 
 export interface TerminateRunInput extends StoreInput {
@@ -450,15 +507,134 @@ export async function terminateRun(
   });
 }
 
+/**
+ * Cancels a run: under one lock it records who asked (`run.cancel_requested`)
+ * and then the termination that request leads to (`run.terminated` with outcome
+ * `cancelled`), so no other writer can come between the two. When the host
+ * probe says the run's host is lost and the journal does not say so yet, the
+ * evidence is recorded first as `host.lost`: this is the first locked writer to
+ * act on that run. A run that already terminated is `run_closed` and records
+ * nothing.
+ */
+export async function cancelRun(input: CancelRunInput): Promise<CancelRunOutcome> {
+  const request: NewJournalRecord = {
+    type: "run.cancel_requested",
+    source: input.source,
+    reason: input.reason,
+  };
+  const termination: NewJournalRecord = {
+    type: "run.terminated",
+    outcome: "cancelled",
+    reason: input.reason,
+  };
+  candidateRecord([], request);
+  candidateRecord([], termination);
+  const outcome = await appendFacts(input, (state, runDir) => {
+    if (state.termination !== undefined || input.probeHost === false) return [request, termination];
+    if (state.host.exited !== undefined || state.host.lost !== undefined) {
+      return [request, termination];
+    }
+    const probed = probeHostEvidence(runDir);
+    if (probed.owner !== "lost") return [request, termination];
+    const lost: NewJournalRecord = {
+      type: "host.lost",
+      pid: probed.host?.pid ?? null,
+      heartbeatAt: probed.host?.heartbeatAt ?? null,
+      reason: (probed.lostReason ?? "heartbeat_stale").slice(0, 500),
+      detectedBy: input.source,
+    };
+    return [lost, request, termination];
+  });
+  if (outcome.outcome === "rejected") return outcome;
+  const written = outcome.records;
+  const terminated = written.at(-1) as RunTerminatedRecord;
+  return {
+    outcome: "recorded",
+    record: terminated,
+    revision: terminated.seq,
+    cancelRequest: written.at(-2) as RunCancelRequestedRecord,
+    hostLost: written.length === 3 ? (written[0] as HostLostRecord) : null,
+  };
+}
+
+/** Records that this process hosts the run (the host writes it once the run is open). */
+export async function recordHostClaimed(
+  input: HostClaimedInput,
+): Promise<StoreOutcome<HostClaimedRecord>> {
+  return appendFact<HostClaimedRecord>(input, {
+    type: "host.claimed",
+    pid: input.pid,
+    hostname: input.hostname,
+    startedAt: input.startedAt,
+    heartbeatMs: input.heartbeatMs,
+    paneId: input.paneId,
+    workspaceId: input.workspaceId,
+  });
+}
+
+/** Records the host's own exit; the one fact allowed after run.terminated. */
+export async function recordHostExited(
+  input: HostExitedInput,
+): Promise<StoreOutcome<HostExitedRecord>> {
+  return appendFact<HostExitedRecord>(input, {
+    type: "host.exited",
+    pid: input.pid,
+    exitCode: input.exitCode,
+    reason: input.reason,
+  });
+}
+
+/** Records that the scheduler stopped seeing an agent's runtime state (a transition, not a sample). */
+export async function recordObservationLost(
+  input: ObservationLostInput,
+): Promise<StoreOutcome<ObservationLostRecord>> {
+  return appendFact<ObservationLostRecord>(input, {
+    type: "observation.lost",
+    agentId: input.agentId,
+    code: input.code,
+    message: input.message,
+    terminalId: input.terminalId,
+  });
+}
+
+/** Records the first successful observation after an observation.lost. */
+export async function recordObservationRecovered(
+  input: ObservationRecoveredInput,
+): Promise<StoreOutcome<ObservationRecoveredRecord>> {
+  return appendFact<ObservationRecoveredRecord>(input, {
+    type: "observation.recovered",
+    agentId: input.agentId,
+    lostSeq: input.lostSeq,
+    terminalId: input.terminalId,
+  });
+}
+
 async function appendFact<R extends JournalRecord>(
   input: StoreInput,
   record: NewJournalRecord,
 ): Promise<StoreOutcome<R>> {
+  // Field contract first, outside the lock: a malformed fact is an engine bug.
+  candidateRecord([], record);
+  const outcome = await appendFacts(input, () => [record]);
+  if (outcome.outcome === "rejected") return outcome;
+  return recorded(outcome.records[0] as R);
+}
+
+/**
+ * Appends the records `plan` returns, in order, under one lock. Each is checked
+ * by the reducer against the journal including the ones before it; the first
+ * refusal ends the call, and nothing after it is written.
+ */
+async function appendFacts(
+  input: StoreInput,
+  plan: (state: RunState, runDir: string) => NewJournalRecord[],
+): Promise<
+  | { outcome: "recorded"; records: JournalRecord[] }
+  | Extract<StoreOutcome<never>, { outcome: "rejected" }>
+> {
   if (typeof input.runDir !== "string" || input.runDir === "") {
     throw new TypeError("runDir must be a non-empty path");
   }
-  // Field contract first, outside the lock: a malformed fact is an engine bug.
-  candidateRecord([], record);
   const runDir = resolve(input.runDir);
   const journalPath = join(runDir, JOURNAL_FILE);
   let entry: ReturnType<typeof inspectJournalPath>;
@@ -474,9 +650,9 @@ async function appendFact<R extends JournalRecord>(
     return rejected("run_dir_invalid", `${runDir} does not contain ${JOURNAL_FILE}`);
   if (entry instanceof JournalFileError) return rejected("journal_corrupt", entry.message);
 
-  return locked(
+  const result = await locked<JournalRecord[]>(
     runDir,
-    (): StoreOutcome<R> => {
+    () => {
       const read = readJournal(runDir);
       if (!read.ok) return readFailure(read.reason, read.message);
       const records = read.records;
@@ -492,19 +668,26 @@ async function appendFact<R extends JournalRecord>(
           [{ field: "runId", message: `expected ${String(replayed.state.runId)}` }],
         );
       }
-      const refusal = refuseAppend(records, record);
-      if (refusal !== undefined) {
-        const reason = refusal.reason;
-        if (reason === "invalid_transition" || reason === "attempt_open_conflict") {
-          // Only attempt and submission records produce these; the store writes neither.
-          throw new Error(`unexpected reducer refusal ${reason}: ${refusal.message}`);
+      const written: JournalRecord[] = [];
+      for (const record of plan(replayed.state, runDir)) {
+        const refusal = refuseAppend(records, record);
+        if (refusal !== undefined) {
+          const reason = refusal.reason;
+          if (reason === "invalid_transition" || reason === "attempt_open_conflict") {
+            // Only attempt and submission records produce these; the store writes neither.
+            throw new Error(`unexpected reducer refusal ${reason}: ${refusal.message}`);
+          }
+          return rejected(reason, refusal.message);
         }
-        return rejected(reason, refusal.message);
+        const appended = appendRecord(runDir, records, record);
+        records.push(appended);
+        written.push(appended);
       }
-      return recorded(appendRecord(runDir, records, record) as R);
+      return { outcome: "recorded", record: written, revision: written.at(-1)?.seq ?? 0 };
     },
     input.lock,
   );
+  return result.outcome === "rejected" ? result : { outcome: "recorded", records: result.record };
 }
 
 async function locked<R>(
