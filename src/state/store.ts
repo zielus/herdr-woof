@@ -22,6 +22,7 @@ import type {
   RunPlan,
   TerminalOutcome,
 } from "../domain/types.js";
+import { registerRunLocator } from "../inspect/locator.js";
 import type {
   CheckResultRecord,
   DeliveryReconciledRecord,
@@ -252,7 +253,7 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
     );
   }
 
-  return locked(
+  const opened = await locked(
     runDir,
     (): StoreOutcome<RunOpenedRecord> => {
       const entry = inspectJournalPath(join(runDir, JOURNAL_FILE));
@@ -294,6 +295,17 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
     },
     input.lock,
   );
+  // The locator index only helps inspectors find the run; it never fails the open.
+  if (opened.outcome === "recorded") {
+    registerRunLocator({
+      runDir,
+      runId: input.runId,
+      openedAt: opened.record.ts,
+      workflow: validated.plan.workflow,
+      configuration: input.configuration,
+    });
+  }
+  return opened;
 }
 
 /** Records that an agent runs in a runtime pane. A later assignment on another pane is a replacement. */

@@ -90,6 +90,11 @@ export const CAPABILITIES = {
 export interface WebServerOptions {
   /** Directory holding one subdirectory per run. */
   runsDir: string;
+  /**
+   * The run locator index to list as well, so runs opened outside `runsDir` are
+   * reachable. Omitted or null: only `runsDir` is served.
+   */
+  indexDir?: string | null;
   host?: string;
   port?: number;
   /** Required on every request when set. A non-loopback host must set one. */
@@ -244,13 +249,14 @@ class OpenStreams {
  */
 function runDirOf(
   runsDir: string,
+  indexDir: string | null,
   runId: string,
 ): { ok: true; entry: RunListEntry } | { ok: false; reason: string; message: string } {
   let listed;
   try {
     // `all` matters: the default listing keeps only the 20 most recent terminal
     // runs, so an older finished run would be unreachable by id.
-    listed = listRuns({ runsDir, all: true });
+    listed = listRuns({ runsDir, indexDir, all: true });
   } catch (error) {
     return {
       ok: false,
@@ -273,11 +279,17 @@ function runDirOf(
   return { ok: true, entry };
 }
 
-function handleRuns(response: ServerResponse, runsDir: string, url: URL): void {
+function handleRuns(
+  response: ServerResponse,
+  runsDir: string,
+  indexDir: string | null,
+  url: URL,
+): void {
   const project = url.searchParams.get("project");
   try {
     const listed = listRuns({
       runsDir,
+      indexDir,
       all: url.searchParams.get("all") === "true",
       ...(project !== null && project !== "" ? { project: resolve(project) } : {}),
     });
@@ -396,6 +408,7 @@ async function route(
   response: ServerResponse,
   options: {
     runsDir: string;
+    indexDir: string | null;
     distUiDir: string;
     policy: SecurityPolicy;
     pollMs: number;
@@ -449,7 +462,7 @@ async function route(
   }
   if (segments.length === 2) {
     if (method === "GET") {
-      handleRuns(response, options.runsDir, url);
+      handleRuns(response, options.runsDir, options.indexDir, url);
       return;
     }
     if (method === "POST") {
@@ -478,7 +491,7 @@ async function route(
     return;
   }
 
-  const found = runDirOf(options.runsDir, runId);
+  const found = runDirOf(options.runsDir, options.indexDir, runId);
   if (!found.ok) {
     rejected(
       response,
@@ -533,6 +546,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const token = options.token ?? null;
   const distUiDir = options.distUiDir ?? distUiDefault;
   const runsDir = resolve(options.runsDir);
+  const indexDir =
+    options.indexDir === undefined || options.indexDir === null ? null : resolve(options.indexDir);
   if (!isLoopback(host) && token === null) {
     throw new TypeError(
       `refusing to bind ${host}: a server reachable beyond loopback needs --token, because the Host and Origin checks do not authenticate whoever can reach the port`,
@@ -566,7 +581,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const streams = new OpenStreams();
 
   const server = createServer((request, response) => {
-    void route(request, response, { runsDir, distUiDir, policy, pollMs, streams }).catch(
+    void route(request, response, { runsDir, indexDir, distUiDir, policy, pollMs, streams }).catch(
       (error: unknown) => {
         if (response.headersSent) {
           response.end();

@@ -83,6 +83,8 @@ function childEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pr
   // A test run inside Herdr must not leak the developer's workspace into `tab create` argv.
   env["HERDR_WORKSPACE_ID"] = undefined;
   env["WOOF_RUN_DIR"] = undefined;
+  // The run index follows the child HOME above unless a test points it elsewhere.
+  env["WOOF_INDEX_DIR"] = undefined;
   Object.assign(env, overrides);
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) Reflect.deleteProperty(env, key);

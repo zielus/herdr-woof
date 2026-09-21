@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { agentCommand } from "./commands/agent.js";
-import { UsageError, parse, readStdin, required } from "./commands/common.js";
+import { UsageError, parse, readStdin, rejected, required } from "./commands/common.js";
 import { configCommand } from "./commands/config.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { eventsCommand } from "./commands/events.js";
@@ -18,6 +17,7 @@ import {
 } from "./commands/run.js";
 import { runsCommand } from "./commands/runs.js";
 import { statusCommand } from "./commands/status.js";
+import { TARGET_HELP, resolveTarget } from "./commands/target.js";
 import { uiCommand } from "./commands/ui.js";
 import { watchCommand } from "./commands/watch.js";
 import { isInfraReason } from "./contracts/reasons.js";
@@ -41,21 +41,23 @@ Declares an open attempt and its owner in the run journal and creates the
 attempt's artifact directory. --run-dir defaults to WOOF_RUN_DIR. Prints one JSON
 line; exits 0 when opened, 2 on conflict, 3 on journal failure.`;
 
-const RUN_SHOW_USAGE = `Usage: woof run show <run-dir> [--verify-artifacts]
+const RUN_SHOW_USAGE = `Usage: woof run show <run-dir|run-id> [--verify-artifacts]
 
-Prints one JSON line with a snapshot of the run journal in <run-dir>. It takes
+Prints one JSON line with a snapshot of the run journal of the run. It takes
 no journal lock, never contacts Herdr and works on terminated runs.
 --verify-artifacts re-hashes every accepted copy against its journal record.
 Exits 0 with the snapshot. Exits 3 with a rejection (outcome "rejected") when
 the run directory has no journal or records (run_dir_invalid), the journal is
 corrupt (journal_corrupt), or its line 1 changed during each of three
-consecutive reads (journal_replaced).`;
+consecutive reads (journal_replaced).
+${TARGET_HELP}`;
 
-const RUN_CANCEL_USAGE = `Usage: woof run cancel <run-dir> [--reason <text>]
+const RUN_CANCEL_USAGE = `Usage: woof run cancel <run-dir|run-id> [--reason <text>]
 
-Records that the run in <run-dir> is cancelled. A scheduler still running it
+Records that the run is cancelled. A scheduler still running it
 stops at its next tick; late submissions are refused. Prints one JSON line;
-exits 0 when recorded, 2 when the run is already terminated, 3 on journal failure.`;
+exits 0 when recorded, 2 when the run is already terminated, 3 on journal failure.
+${TARGET_HELP}`;
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -188,8 +190,10 @@ async function runCancelCommand(args: string[]): Promise<number> {
   }
   if (values.reason === "")
     throw new UsageError(`--reason must not be empty\n\n${RUN_CANCEL_USAGE}`);
+  const located = await resolveTarget(runDir);
+  if (!located.ok) return rejected(located.reason, located.message, [], 3);
   const outcome = await cancelRun({
-    runDir: resolve(runDir),
+    runDir: located.runDir,
     source: "cli",
     reason: values.reason ?? "cancelled via woof run cancel",
   });
@@ -287,7 +291,7 @@ async function attemptOpenCommand(args: string[]): Promise<number> {
   return isInfraReason(outcome.reason) ? 3 : 2;
 }
 
-function runShowCommand(args: string[]): number {
+async function runShowCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(
     () =>
       parseArgs({
@@ -309,7 +313,9 @@ function runShowCommand(args: string[]): number {
   if (runDir === undefined || runDir === "" || extra.length > 0) {
     throw new UsageError(`expected exactly one <run-dir>\n\n${RUN_SHOW_USAGE}`);
   }
-  const result = readSnapshot(resolve(runDir), {
+  const located = await resolveTarget(runDir);
+  if (!located.ok) return rejected(located.reason, located.message, [], 3);
+  const result = readSnapshot(located.runDir, {
     verifyArtifacts: values["verify-artifacts"] === true,
   });
   if (result.ok) {

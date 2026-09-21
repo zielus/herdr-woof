@@ -37,6 +37,17 @@ command and action below is an implemented surface.
   defaults to `WOOF_RUN_DIR`. `status --pretty` prints only that header. Colors
   only when stdout is a terminal and `NO_COLOR` is unset or empty. See
   [observability](../architecture/observability.md#implemented-now-p4).
+- Runs across directories: `status`, `events`, `watch`, `run show` and
+  `run cancel` take a run id wherever they take `<run-dir>` (an existing
+  directory wins, then the run index, then `<runs-dir>/<id>`; an unknown id is
+  `run_dir_invalid`, exit 3). `runs` without `--runs-dir` also lists every run
+  in the run index (`~/.woof/index`, or `WOOF_INDEX_DIR`), so a run started
+  with its own `--run-dir` shows up; `runs --reindex` repairs that index and is
+  the only inspection command that writes. `events --all [--follow]
+[--project <dir>] [--since <iso>] [--runs-dir <dir>] [--pretty]` streams the
+  events of every known run as NDJSON, and `watch --all` prints the same stream
+  as readable lines behind a short run id. See
+  [observability](../architecture/observability.md#implemented-now-central-index).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
   starts a workflow hosted in Herdr (`--host herdr-pane`, default) or in this
   process (`--host foreground`). Layout is one tab per participant: the first
