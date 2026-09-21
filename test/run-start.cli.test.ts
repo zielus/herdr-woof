@@ -162,6 +162,13 @@ const tabCreated = (paneId: string) =>
     },
   });
 
+/** `herdr pane get` output placing `paneId` in `workspaceId`. */
+const paneGot = (paneId: string, workspaceId: string) =>
+  JSON.stringify({
+    id: "cli:pane:get",
+    result: { pane: { pane_id: paneId, workspace_id: workspaceId }, type: "pane_info" },
+  });
+
 /**
  * The host's tab, the host typed into its root pane (spawned for real with `spawnHost`), and the
  * default watch pane: a split whose typed command is accepted but never spawned.
@@ -170,6 +177,8 @@ function writeScenario(ws: Workspace, paneId: string, spawnHost: boolean): void 
   writeFileSync(
     ws.scenario,
     JSON.stringify([
+      // Herdr places the launcher's pane (HERDR_PANE_ID w9:p1) in workspace w9.
+      { match: ["pane", "get", "w9:p1"], stdout: paneGot("w9:p1", "w9") },
       { match: ["tab", "create"], stdout: tabCreated(paneId) },
       {
         match: ["pane", "split"],
@@ -189,6 +198,7 @@ function writeScenario(ws: Workspace, paneId: string, spawnHost: boolean): void 
           : {}),
       },
       { match: ["pane", "run"], stdout: "{}" },
+      { match: ["tab", "close"], stdout: "{}" },
       { match: ["pane", "report-metadata"], stdout: "{}" },
       { match: ["notification", "show"], stdout: "{}" },
     ]),
@@ -323,8 +333,10 @@ describe("woof run start --host herdr-pane", () => {
   it("S1: launches the host in the root pane of a new tab (no pane split for the host), returns once it opened the run, and the host finishes it", async () => {
     const ws = workspace();
     const runDir = join(ws.root, "run");
+    // The launcher's HERDR_WORKSPACE_ID is stale: the workspace Herdr reports for its pane decides.
     const started = woofIn(ws, startArgs(ws, runDir, ["--run-id", "s1-run"]), {
       WOOF_TEST_SCRIPT: "slow",
+      HERDR_WORKSPACE_ID: "w-stale",
     });
     const launcherExitedAt = new Date().toISOString();
     expect(started.status, started.stdout + started.stderr).toBe(0);
@@ -349,7 +361,8 @@ describe("woof run start --host herdr-pane", () => {
     });
 
     const calls = fakeCalls(ws);
-    expect(calls[0]).toEqual([
+    expect(calls[0]).toEqual(["pane", "get", "w9:p1"]);
+    expect(calls[1]).toEqual([
       "tab",
       "create",
       "--workspace",
@@ -368,9 +381,12 @@ describe("woof run start --host herdr-pane", () => {
       host: { paneId: "w9:p2", tabId: "w9:t2" },
       watch: { paneId: "w9:p2w" },
     });
-    expect(calls[1]?.slice(0, 3)).toEqual(["pane", "run", "w9:p2"]);
-    expect(calls[1]?.slice(4)).toEqual([cliPath, "run", "host", runDir]);
-    expect(calls[1]?.[3]).toMatch(/^\/.*node[^/]*$/);
+    // The verified workspace of the created tab travels to the host process, over the stale value
+    // its pane inherited: the host's claim (and its runtime adapter's agent tabs) use it.
+    expect(calls[2]?.slice(0, 5)).toEqual(["pane", "run", "w9:p2", "env", "HERDR_WORKSPACE_ID=w9"]);
+    expect(calls[2]?.slice(6)).toEqual([cliPath, "run", "host", runDir]);
+    expect(calls[2]?.[5]).toMatch(/^\/.*node[^/]*$/);
+    expect(hostClaim(runDir)).toMatchObject({ workspaceId: "w9" });
 
     writeFileSync(ws.release, "go\n");
     const outcome = await waitForOutcome(runDir);
@@ -452,6 +468,11 @@ console.log(JSON.stringify({ result: deriveRunResult(read.snapshot, { runDir: pr
     expect(result.json?.["message"]).toContain(
       "the run directory is closed (abandoned) and no run will start there",
     );
+    // The host rejected before it owned anything, so the tab opened for it is closed, not leaked.
+    expect(result.json?.["message"]).toContain("the created tab w9:t2 was closed");
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "close")).toEqual([
+      ["tab", "close", "w9:t2"],
+    ]);
     // Promptly: well inside the 20 s host-start timeout the old launcher waited out.
     expect(elapsed).toBeLessThan(10_000);
     // The failed host removed its partial claim; the launcher's abandonment is the only claim.
@@ -673,15 +694,34 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
   });
 
   it("PR #6 (launch.ts:184, :200): a failed herdr tab create or pane run abandons the run directory, and a later run host is refused", () => {
-    for (const failing of ["create", "run"] as const) {
+    // "partial" and "foreign" are replies Herdr sent after it had already created a tab: one names
+    // the tab but no root pane, the other a root pane that belongs to a different tab.
+    const reply = (result: Json) => JSON.stringify({ id: "cli:tab:create", result });
+    const tabCreate = {
+      create: { stderr: "create refused\n", exit: 1 },
+      run: { stdout: tabCreated("w9:p2") },
+      partial: { stdout: reply({ tab: { tab_id: "w9:t2" }, type: "tab_created" }) },
+      foreign: {
+        stdout: reply({
+          tab: { tab_id: "w9:t2" },
+          root_pane: { pane_id: "w9:p2", tab_id: "w9:t7", workspace_id: "w9" },
+        }),
+      },
+    };
+    const expected = {
+      create: { calls: ["pane get", "tab create"], says: "create refused" },
+      run: { calls: ["pane get", "tab create", "pane run", "tab close"], says: "run refused" },
+      partial: { calls: ["pane get", "tab create", "tab close"], says: "no root pane_id" },
+      foreign: { calls: ["pane get", "tab create"], says: "a root pane of tab w9:t7" },
+    };
+    for (const failing of ["create", "run", "partial", "foreign"] as const) {
       const ws = workspace("w9:p2", false);
       writeFileSync(
         ws.scenario,
         JSON.stringify([
-          failing === "create"
-            ? { match: ["tab", "create"], stderr: "create refused\n", exit: 1 }
-            : { match: ["tab", "create"], stdout: tabCreated("w9:p2") },
+          { match: ["tab", "create"], ...tabCreate[failing] },
           { match: ["pane", "run"], stderr: "run refused\n", exit: 1 },
+          { match: ["tab", "close"], stdout: "{}" },
         ]),
       );
       const runDir = join(ws.root, "run");
@@ -694,7 +734,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
           "the run directory is closed (abandoned) and no run will start there",
         ),
       });
-      expect(result.json?.["message"], failing).toContain(`${failing} refused`);
+      expect(result.json?.["message"], failing).toContain(expected[failing].says);
       expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")), failing).toMatchObject({
         state: "abandoned",
         pid: null,
@@ -702,7 +742,16 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
       expect(
         fakeCalls(ws).map((argv) => argv.slice(0, 2).join(" ")),
         failing,
-      ).toEqual(failing === "create" ? ["tab create"] : ["tab create", "pane run"]);
+      ).toEqual(expected[failing].calls);
+      // The abandonment proved no host owns the directory, so the tab Herdr created for that host
+      // is closed and never leaked; a reply naming two tabs identifies none, and none is closed.
+      const closes = fakeCalls(ws).filter((argv) => argv[1] === "close");
+      if (failing === "run" || failing === "partial") {
+        expect(closes, failing).toEqual([["tab", "close", "w9:t2"]]);
+        expect(result.json?.["message"], failing).toContain("the created tab w9:t2 was closed");
+      } else {
+        expect(closes, failing).toEqual([]);
+      }
       // What the failed pane would have typed, run by hand later: refused, nothing opens.
       const late = woofIn(ws, ["run", "host", runDir]);
       expect(late.status, failing + late.stdout + late.stderr).toBe(2);
@@ -747,6 +796,9 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     expect(message).toContain("run refused after the pane had started it");
     expect(message).toContain("the run directory could not be closed (abandoned)");
     expect(message).toContain("already claimed by a run host");
+    // A live host owns the directory, so its tab is kept: closing it would kill that host.
+    expect(message).toContain("the created tab w9:t2 is left open");
+    expect(fakeCalls(ws).some((argv) => argv[0] === "tab" && argv[1] === "close")).toBe(false);
     // The claim is the live host's, not an abandonment: the launcher wrote nothing over it.
     expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
       state: "hosting",
@@ -765,6 +817,11 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     expect(result.status, result.stdout).toBe(3);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "host_not_started" });
     expect(Date.now() - started).toBeLessThan(10_000);
+    // No host claimed and none can any more: the tab opened for it does not outlive the launch.
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "close")).toEqual([
+      ["tab", "close", "w9:t2"],
+    ]);
+    expect(result.json?.["message"]).toContain("the created tab w9:t2 was closed");
     expect(JSON.parse(readFileSync(join(runDir, "host.json"), "utf8"))).toMatchObject({
       state: "abandoned",
     });
@@ -1341,15 +1398,18 @@ describe("woof run start watch pane (default; --watch accepted, --no-watch opts 
     const started = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-keep-panes"]));
     expect(started.status, started.stdout + started.stderr).toBe(0);
     const run = fakeCalls(ws).filter((argv) => argv[1] === "run")[1];
-    expect(run?.slice(-6)).toEqual(["--follow", "&&", fakeHerdr, "pane", "close", "w9:p3"]);
-    expect(started.json?.["watch"]["command"].slice(-6)).toEqual([
-      "--follow",
-      "&&",
-      fakeHerdr,
-      "pane",
-      "close",
-      "w9:p3",
-    ]);
+    // One `sh -c` script: the close follows watch unconditionally and watch's status is kept.
+    const command = started.json?.["watch"]["command"] as string[];
+    expect(command.slice(0, 2)).toEqual(["sh", "-c"]);
+    expect(command[2]).toMatch(/^\/\S*node\S* /);
+    expect(
+      command[2]?.endsWith(
+        ` ${cliPath} watch ${runDir} --follow; s=$?; ${fakeHerdr} pane close w9:p3; exit $s`,
+      ),
+      command[2],
+    ).toBe(true);
+    // The script is typed as a single quoted shell word.
+    expect(run?.slice(3)).toEqual(["sh", "-c", `'${command[2]}'`]);
     expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
     await waitFor(
       () => fakeCalls(ws).some((argv) => argv.join(" ") === "pane close w9:p3"),
@@ -1357,6 +1417,51 @@ describe("woof run start watch pane (default; --watch accepted, --no-watch opts 
       30_000,
     );
     expect(watchLog(ws)).toContain("-- end (terminated)");
+  }, 60_000);
+
+  it("S10b: with --no-keep-panes the watch pane also closes after a cancelled run, and the typed command keeps watch's non-zero exit status", async () => {
+    const ws = workspace();
+    writeWatchScenario(ws);
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-keep-panes"]), {
+      WOOF_TEST_SCRIPT: "slow",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    expect(woofIn(ws, ["run", "cancel", runDir, "--reason", "s10b"]).json).toMatchObject({
+      outcome: "recorded",
+    });
+    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "cancelled" } });
+    // Whatever `woof watch --follow` exits with for a cancelled run, the pane is closed all the same.
+    await waitFor(
+      () => fakeCalls(ws).some((argv) => argv.join(" ") === "pane close w9:p3"),
+      "the watch pane of a cancelled run to close itself",
+      30_000,
+    );
+    expect(watchLog(ws)).toContain("-- end (terminated)");
+    // The same typed words, run here against a journal watch cannot read, so that watch is certain
+    // to exit non-zero: the close still happens, and watch's own status survives it.
+    const typed = fakeCalls(ws).filter((argv) => argv[1] === "run")[1] ?? [];
+    const hostPid = hostClaim(runDir)?.["pid"];
+    await waitFor(
+      () => typeof hostPid !== "number" || !processAlive(hostPid),
+      "the host process to be gone before its journal is replaced",
+    );
+    rmSync(join(runDir, "journal.jsonl"));
+    writeFileSync(join(runDir, "journal.jsonl"), "not a journal record\n");
+    const watchOnly = spawnSync("node", [cliPath, "watch", runDir, "--follow"], {
+      env: env(ws),
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(watchOnly.status).not.toBe(0);
+    const closesBefore = fakeCalls(ws).filter((argv) => argv[1] === "close").length;
+    const rerun = spawnSync("sh", ["-c", typed.slice(3).join(" ")], {
+      env: env(ws),
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(rerun.status, rerun.stdout + rerun.stderr).toBe(watchOnly.status);
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "close")).toHaveLength(closesBefore + 1);
   }, 60_000);
 
   it("S11: --watch is refused before launch with --host foreground or outside Herdr", () => {

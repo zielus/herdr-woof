@@ -69,6 +69,8 @@ function runAdapter(
     bin?: string;
     graceMs?: number;
     workspaceId?: string;
+    /** The adapter process's own pane (HERDR_PANE_ID); unset by default. */
+    paneId?: string;
   } = { herdrEnv: "1" },
 ): { out: Record<string, unknown>; log: string[][]; elapsed: number } {
   runs += 1;
@@ -92,6 +94,7 @@ console.log(JSON.stringify({ out, elapsed: Date.now() - started }));
       env: {
         HERDR_ENV: "herdrEnv" in options ? options.herdrEnv : "1",
         HERDR_WORKSPACE_ID: options.workspaceId,
+        HERDR_PANE_ID: options.paneId,
         FAKE_HERDR_SCENARIO: scenarioPath,
         FAKE_HERDR_LOG: logPath,
       },
@@ -277,34 +280,136 @@ out = { opened, start, foreign, stopped, again };`,
     expect(out["again"]).toMatchObject({ ok: false, error: { code: "unsupported" } });
   });
 
-  it("creates the tab without --workspace when Herdr names none, and rejects a reply with no ids", () => {
+  it("creates the tab without --workspace when Herdr names none, and closes the tab of a reply that does not verify", () => {
     const reply = (result: unknown) => `${JSON.stringify({ id: "cli:tab:create", result })}\n`;
+    const create = ["tab", "create", "--cwd", "/tmp/run", "--no-focus"];
     const { out, log } = runAdapter(
       [
+        // No ids at all: nothing identifies a tab to close.
         {
           match: ["tab", "create"],
           call: 1,
           stdout: reply({ root_pane: { pane_id: PANE }, tab: { tab_id: "" } }),
         },
+        // Herdr created w9:t2 and the reply lost its root pane.
         { match: ["tab", "create"], call: 2, stdout: reply({ tab: { tab_id: "w9:t2" } }) },
-        { match: ["tab", "create"], call: 3, stdout: `${JSON.stringify({ result: {} })}\n` },
+        // Only the root pane names the created tab, and the close fails: still a protocol error.
+        {
+          match: ["tab", "create"],
+          call: 3,
+          stdout: reply({ root_pane: { pane_id: PANE, tab_id: "w9:t3", workspace_id: "w9" } }),
+        },
+        // The root pane belongs to another tab: neither tab is positively the created one.
+        {
+          match: ["tab", "create"],
+          call: 4,
+          stdout: reply({
+            tab: { tab_id: "w9:t4" },
+            root_pane: { pane_id: PANE, tab_id: "w9:t9", workspace_id: "w9" },
+          }),
+        },
+        // The tab and its root pane disagree about the workspace.
+        {
+          match: ["tab", "create"],
+          call: 5,
+          stdout: reply({
+            tab: { tab_id: "w9:t5", workspace_id: "w1" },
+            root_pane: { pane_id: PANE, tab_id: "w9:t5", workspace_id: "w9" },
+          }),
+        },
+        { match: ["tab", "create"], call: 6, stdout: `${JSON.stringify({ result: {} })}\n` },
+        { match: ["tab", "close", "w9:t3"], ...error("tab_not_found") },
+        {
+          match: ["tab", "close"],
+          stdout: `${JSON.stringify({ id: "cli:tab:close", result: { type: "ok" } })}\n`,
+        },
       ],
       `
-const noTab = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
-const noPane = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
-const noId = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
-// Nothing was recorded as owned: no tab is closed.
+const open = () => runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+const noTab = await open();
+const noPane = await open();
+const closeFails = await open();
+const foreignPane = await open();
+const workspaces = await open();
+const noId = await open();
+// Nothing was recorded as owned: stop closes nothing.
 const stopped = await runtime.stop(handle, { timeoutMs: 1000 });
-out = { noTab, noPane, noId, stopped };`,
+out = { noTab, noPane, closeFails, foreignPane, workspaces, noId, stopped };`,
     );
     expect(log).toEqual([
-      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
-      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
-      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
+      create,
+      create,
+      ["tab", "close", "w9:t2"],
+      create,
+      ["tab", "close", "w9:t3"],
+      create,
+      create,
+      ["tab", "close", "w9:t5"],
+      create,
     ]);
-    for (const key of ["noTab", "noPane", "noId"])
+    for (const key of ["noTab", "noPane", "closeFails", "foreignPane", "workspaces", "noId"])
       expect(out[key], key).toMatchObject({ ok: false, error: { code: "protocol_error" } });
+    expect(out["noPane"]).toMatchObject({
+      error: { message: expect.stringContaining("the created tab w9:t2 was closed") },
+    });
+    expect(out["closeFails"]).toMatchObject({
+      error: { message: expect.stringContaining("the created tab w9:t3 could not be closed") },
+    });
     expect(out["stopped"]).toMatchObject({ ok: false, error: { code: "unsupported" } });
+  });
+
+  it("creates tabs in the workspace Herdr reports for its own pane, over a stale HERDR_WORKSPACE_ID, and falls back to it when the pane cannot be read", () => {
+    const tab = (workspaceId: string) =>
+      `${JSON.stringify({
+        id: "cli:tab:create",
+        result: {
+          root_pane: { pane_id: PANE, tab_id: "w9:t2", workspace_id: workspaceId },
+          tab: { tab_id: "w9:t2", workspace_id: workspaceId },
+          type: "tab_created",
+        },
+      })}\n`;
+    const paneGet = `${JSON.stringify({
+      id: "cli:pane:get",
+      result: { pane: { pane_id: "w9:p1", workspace_id: "w9" }, type: "pane_info" },
+    })}\n`;
+    const body = `
+const first = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+const second = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+out = { first, second };`;
+    const resolved = runAdapter(
+      [
+        { match: ["pane", "get", "w9:p1"], stdout: paneGet },
+        { match: ["tab", "create"], stdout: tab("w9") },
+      ],
+      body,
+      { workspaceId: "w-stale", paneId: "w9:p1" },
+    );
+    // The pane is read once per runtime, and its workspace wins over the environment's.
+    expect(resolved.log).toEqual([
+      ["pane", "get", "w9:p1"],
+      ["tab", "create", "--workspace", "w9", "--cwd", "/tmp/run", "--no-focus"],
+      ["tab", "create", "--workspace", "w9", "--cwd", "/tmp/run", "--no-focus"],
+    ]);
+    expect(resolved.out["first"]).toEqual({ ok: true, value: { paneId: PANE, tabId: "w9:t2" } });
+
+    const fallback = runAdapter(
+      [
+        { match: ["pane", "get"], ...error("pane_not_found") },
+        { match: ["tab", "create"], stdout: tab("w7") },
+      ],
+      body,
+      { workspaceId: "w7", paneId: "w9:p1" },
+    );
+    expect(fallback.log[1]).toEqual([
+      "tab",
+      "create",
+      "--workspace",
+      "w7",
+      "--cwd",
+      "/tmp/run",
+      "--no-focus",
+    ]);
+    expect(fallback.out["first"]).toMatchObject({ ok: true });
   });
 
   it("observes a vanished agent and pane as gone", () => {

@@ -134,6 +134,8 @@ async function start(project: Project): Promise<number> {
     input: input.value,
     flags: {},
     launcherPaneId: paneId ?? null,
+    // The tab joins the workspace of the pane the action was invoked from, not Herdr's default.
+    workspacePaneId: project.focusedPaneId ?? paneId ?? null,
     herdrBin: herdrBin(),
     env: process.env,
     nodePath: process.execPath,
