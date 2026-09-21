@@ -318,3 +318,10 @@ node scripts/live/tabs-observability.mjs --part C --evidence-dir <dir>/live-C
 Each part re-initializes the shared fixture, so never run two at once. Exit 0
 means every gate passed; `run.log` in the evidence directory is what was
 committed here.
+
+### Re-run on the final branch code
+
+After the index review fixes and the module-boundary refactor, the whole script
+(`--part all`) was run again live at `40788db` on 2026-09-21: **28/28 gates passed**
+(log: [tabs-observability-live-final.log](../research/tabs-observability-live-final.log)).
+`bun run verify` passed at the same commit (58 files, 930 tests, package smoke).
