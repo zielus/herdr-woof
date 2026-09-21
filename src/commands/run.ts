@@ -487,6 +487,7 @@ function baseHostOptions(runtimeModule: string | undefined) {
     createRuntime: runtimeFactory(runtimeModule),
     submitCommand: [process.execPath, cliPath],
     workspaceId: nonEmpty(process.env["HERDR_WORKSPACE_ID"]) ?? null,
+    tabId: nonEmpty(process.env["WOOF_HOST_TAB_ID"]) ?? null,
     metadata:
       process.env["HERDR_ENV"] === "1" && hostPaneId !== undefined
         ? { bin: herdrBin(), env: process.env, hostPaneId }

@@ -124,6 +124,11 @@ describe("deriveSnapshot status", () => {
 });
 
 describe("deriveSnapshot documents", () => {
+  it("projects an agent's journaled tab id on its assignment", () => {
+    const snapshot = snapshotOf(opened(), { ...assigned("builder", "w1:p7"), tabId: "w1:t3" });
+    expect(snapshot.agents[0]?.assignment).toMatchObject({ paneId: "w1:p7", tabId: "w1:t3" });
+  });
+
   it("lists planned agents and stages with plan metadata, limits and counters", () => {
     const snapshot = snapshotOf(
       opened(),
@@ -155,6 +160,7 @@ describe("deriveSnapshot documents", () => {
           paneId: "w1:p7",
           terminalId: null,
           sessionId: null,
+          tabId: null,
           at: expect.any(String),
         },
         activeAttempt: { stageId: "build", visit: 1, attempt: 1 },

@@ -1198,4 +1198,20 @@ describe("lifecycle record rules", () => {
     expect(line({ ...observationLost("builder"), code: "" })).toMatch(/code is not a non-empty/);
     expect(line({ ...observationRecovered("builder", 0) })).toMatch(/lostSeq is invalid/);
   });
+
+  it("tab ids are additive: optional on host.claimed and agent.assigned, validated when present", () => {
+    const line = (body: Json) =>
+      parseRecordLine(
+        JSON.stringify({ schemaVersion: 1, seq: 2, ts: "2026-09-14T10:00:00.000Z", ...body }),
+      );
+    // A journal written before tab ids has neither field and still reads.
+    expect(line(hostClaimed())).toMatchObject({ type: "host.claimed" });
+    expect(line(assigned("builder"))).toMatchObject({ type: "agent.assigned" });
+    expect(line({ ...hostClaimed(), tabId: "w1:t1" })).toMatchObject({ tabId: "w1:t1" });
+    expect(line({ ...hostClaimed(), tabId: null })).toMatchObject({ tabId: null });
+    expect(line({ ...assigned("builder"), tabId: "w1:t2" })).toMatchObject({ tabId: "w1:t2" });
+    expect(line({ ...hostClaimed(), tabId: 7 })).toMatch(/tabId/);
+    expect(line({ ...assigned("builder"), tabId: "" })).toMatch(/tabId/);
+    expect(line({ ...assigned("builder"), tabId: null })).toMatch(/tabId/);
+  });
 });

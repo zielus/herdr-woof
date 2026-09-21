@@ -578,6 +578,7 @@ export async function runWorkflow<Input>(
             runtime: { adapter: runtime.adapter, runtimeName, paneId: handle.paneId },
             terminalId: handle.terminalId,
             sessionId: handle.sessionId,
+            tabId: handle.tabId ?? pane.value.tabId ?? null,
             ...lockWithin(snapshot),
           }),
         );

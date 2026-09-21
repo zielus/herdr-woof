@@ -102,6 +102,12 @@ describe("formatEventLine", () => {
     );
   });
 
+  it("agent.assigned: names the journaled tab; a journal without one reads as before", () => {
+    expect(lastLine(opened(), { ...assigned("builder", "w1:p4"), tabId: "w1:t3" })).toBe(
+      `${time(1)} agent.assigned       builder  runtime w-builder pane w1:p4 tab w1:t3`,
+    );
+  });
+
   it("attempt.opened: the artifact directory", () => {
     expect(lastLine(opened(), attempt("build", "builder"))).toBe(
       `${time(1)} attempt.opened       builder build v1 a1  artifacts artifacts/build/visit-1/attempt-1`,
@@ -365,6 +371,14 @@ describe("formatHeader, formatEnd, formatProblem", () => {
       "agent    builder  role builder kind claude model - pane w1:p4",
       "agent    reviewer  role reviewer kind claude model opus",
     ]);
+  });
+
+  it("names an agent's journaled tab next to its pane", () => {
+    expect(
+      headerOf(opened(), { ...assigned("builder", "w1:p4"), tabId: "w1:t3" }).filter((line) =>
+        line.startsWith("agent    builder"),
+      ),
+    ).toEqual(["agent    builder  role builder kind claude model - pane w1:p4 tab w1:t3"]);
   });
 
   it("adds the outcome once the run ended", () => {

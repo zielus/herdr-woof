@@ -24,6 +24,8 @@ export interface HostClaimedRecord extends RecordBase {
   heartbeatMs: number;
   paneId: string | null;
   workspaceId: string | null;
+  /** The Herdr tab the launcher created for the host (additive; absent in older journals). */
+  tabId?: string | null;
 }
 
 /** Written by the run host on its way out, before it releases the claim. */
@@ -105,13 +107,18 @@ function sourceProblem(value: unknown, field: string): string | undefined {
 
 export function hostClaimedProblem(value: Record<string, unknown>): string | undefined {
   return (
-    keysProblem(value, ["pid", "hostname", "startedAt", "heartbeatMs", "paneId", "workspaceId"]) ??
+    keysProblem(
+      value,
+      ["pid", "hostname", "startedAt", "heartbeatMs", "paneId", "workspaceId"],
+      ["tabId"],
+    ) ??
     check(isPositiveInteger(value["pid"]), "pid is not a positive integer") ??
     nonEmptyStringProblem(value, "hostname") ??
     nonEmptyStringProblem(value, "startedAt") ??
     check(isPositiveInteger(value["heartbeatMs"]), "heartbeatMs is not a positive integer") ??
     nullableStringProblem(value, "paneId") ??
-    nullableStringProblem(value, "workspaceId")
+    nullableStringProblem(value, "workspaceId") ??
+    (value["tabId"] === undefined ? undefined : nullableStringProblem(value, "tabId"))
   );
 }
 

@@ -503,9 +503,13 @@ unchanged. They are transitions, never poll samples.
   `record` plus `cancelRequest` and `hostLost`. `terminateRun` with
   `outcome: "cancelled"` still works and writes no request.
 - **`host.claimed {pid, hostname, startedAt, heartbeatMs, paneId,
-workspaceId}`** — written by the run host right after the run opens (the
+workspaceId, tabId?}`** — written by the run host right after the run opens (the
   claim file itself precedes the journal), read back from its own
-  `host.json`. **`host.exited {pid, exitCode, reason}`** — written by the
+  `host.json`. The optional `tabId` is the host tab the launcher created
+  (it reaches the host as `WOOF_HOST_TAB_ID`); `agent.assigned` likewise
+  carries an optional `tabId`, the tab opened for that agent, projected as
+  `agents[].assignment.tabId` (null when absent). Both are additive at
+  schemaVersion 1: journals written before them read unchanged. **`host.exited {pid, exitCode, reason}`** — written by the
   host on every awaited exit path, before it writes `host-exit.json`;
   `reason` is the run outcome or `rejected:<reason>`. It is the one record
   the reducer allows after `run.terminated`, because a host exits after the

@@ -892,6 +892,11 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       }
       const started = report.calls.filter((call) => call.method === "startAgent");
       expect(panes).toHaveLength(started.length);
+      // The journal proves it: every assignment carries the tab its pane was opened in, all distinct.
+      const tabIds = ofType(report, "agent.assigned").map((record) => record["tabId"]);
+      expect(tabIds).toHaveLength(panes.length);
+      for (const tabId of tabIds) expect(tabId).toMatch(/^scripted:t\d+$/);
+      expect(new Set(tabIds).size).toBe(tabIds.length);
     },
     SCENARIO_TIMEOUT,
   );

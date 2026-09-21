@@ -53,6 +53,8 @@ export interface SnapshotAgent {
     paneId: string;
     terminalId: string | null;
     sessionId: string | null;
+    /** The Herdr tab created for the agent's pane; null when none was journaled. */
+    tabId: string | null;
     at: string;
   } | null;
   /** Latest open attempt owned by this agent; null once the run terminated. */
@@ -437,6 +439,7 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
               paneId: assignment.runtime.paneId,
               terminalId: assignment.terminalId ?? null,
               sessionId: assignment.sessionId ?? null,
+              tabId: assignment.tabId ?? null,
               at: assignment.ts,
             },
       activeAttempt: active,

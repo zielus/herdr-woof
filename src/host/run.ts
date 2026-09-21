@@ -94,6 +94,8 @@ export interface HostWorkflowOptions {
   launch?: { sha256: string } | null;
   paneId: string | null;
   workspaceId: string | null;
+  /** The launcher-created host tab (WOOF_HOST_TAB_ID); journaled on host.claimed only. */
+  tabId?: string | null;
   /** Herdr metadata projection; null outside a Herdr pane. */
   metadata: { bin: string; env: NodeJS.ProcessEnv; hostPaneId: string } | null;
   homeDir?: string;
@@ -418,6 +420,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         heartbeatMs: claim.heartbeatMs,
         paneId: claim.paneId,
         workspaceId: claim.workspaceId,
+        tabId: options.tabId ?? null,
       });
       if (claimed.outcome === "recorded") journaled = true;
       else log(`cannot journal host.claimed: ${claimed.reason}: ${claimed.message}`);

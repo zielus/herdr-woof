@@ -383,9 +383,17 @@ describe("woof run start --host herdr-pane", () => {
     });
     // The verified workspace of the created tab travels to the host process, over the stale value
     // its pane inherited: the host's claim (and its runtime adapter's agent tabs) use it.
-    expect(calls[2]?.slice(0, 5)).toEqual(["pane", "run", "w9:p2", "env", "HERDR_WORKSPACE_ID=w9"]);
-    expect(calls[2]?.slice(6)).toEqual([cliPath, "run", "host", runDir]);
-    expect(calls[2]?.[5]).toMatch(/^\/.*node[^/]*$/);
+    // The created tab's id travels the same way, so host.claimed journals it.
+    expect(calls[2]?.slice(0, 6)).toEqual([
+      "pane",
+      "run",
+      "w9:p2",
+      "env",
+      "HERDR_WORKSPACE_ID=w9",
+      "WOOF_HOST_TAB_ID=w9:t2",
+    ]);
+    expect(calls[2]?.slice(7)).toEqual([cliPath, "run", "host", runDir]);
+    expect(calls[2]?.[6]).toMatch(/^\/.*node[^/]*$/);
     expect(hostClaim(runDir)).toMatchObject({ workspaceId: "w9" });
 
     writeFileSync(ws.release, "go\n");
@@ -393,6 +401,10 @@ describe("woof run start --host herdr-pane", () => {
     expect(outcome).toMatchObject({
       outcome: "run",
       result: { outcome: "completed", runId: "s1-run" },
+    });
+    expect(records(runDir).find((record) => record["type"] === "host.claimed")).toMatchObject({
+      paneId: "w9:p2",
+      tabId: "w9:t2",
     });
     // outcome.json is the host's stdout line. LV-004: the redirected stdout can reach host.log after
     // outcome.json exists, so the line is awaited (bounded) rather than read once.

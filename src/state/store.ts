@@ -112,6 +112,7 @@ export interface AssignAgentInput extends StoreInput {
   runtime: { adapter: string; runtimeName: string; paneId: string };
   terminalId?: string | null;
   sessionId?: string | null;
+  tabId?: string | null;
 }
 
 export interface RecordDispatchInput extends StoreInput {
@@ -197,6 +198,7 @@ export interface HostClaimedInput extends StoreInput {
   heartbeatMs: number;
   paneId: string | null;
   workspaceId: string | null;
+  tabId?: string | null;
 }
 
 export interface HostExitedInput extends StoreInput {
@@ -327,6 +329,7 @@ export async function assignAgent(
     ...(input.sessionId !== undefined && input.sessionId !== null
       ? { sessionId: input.sessionId }
       : {}),
+    ...(input.tabId !== undefined && input.tabId !== null ? { tabId: input.tabId } : {}),
   });
 }
 
@@ -581,6 +584,7 @@ export async function recordHostClaimed(
     heartbeatMs: input.heartbeatMs,
     paneId: input.paneId,
     workspaceId: input.workspaceId,
+    ...(input.tabId !== undefined && input.tabId !== null ? { tabId: input.tabId } : {}),
   });
 }
 
