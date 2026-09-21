@@ -77,7 +77,8 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
   // The run host claims runs, resolves configuration and drives the scheduler.
   host: {
     areas: ["host", "contracts", "domain", "state", "observe", "scheduler", "config"],
-    modules: ["runtime/herdr/exec.js"],
+    // parse.js is the pure Herdr response parser beside exec.js: no spawning, no file access.
+    modules: ["runtime/herdr/exec.js", "runtime/herdr/parse.js"],
   },
   // A pure file probe the snapshot reader may import.
   "host/probe.js": { areas: ["contracts"] },

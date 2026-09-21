@@ -580,7 +580,7 @@ seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest
 
 Real shipped behavior for finding runs across directories and streaming all of
 them — not design intent. Source: `src/inspect/{locator,runs,reindex,target}.ts`,
-`src/observe/{all,format-all}.ts`, `src/commands/{all,target,runs}.ts`.
+`src/inspect/all-events.ts`, `src/observe/format-all.ts`, `src/state/locator.ts`, `src/contracts/index-dir.ts`, `src/commands/{all,target,runs}.ts`.
 
 - **The per-run journal stays the only source of truth.** Nothing here stores
   status or events a second time. The run index is a set of locators; the

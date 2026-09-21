@@ -2,7 +2,11 @@ import { resolve } from "node:path";
 
 import { resolveConfiguration } from "../config/resolve.js";
 import { defaultIndexDir } from "../inspect/locator.js";
-import { streamAllEvents, type AllEventsSink, type AllStreamOptions } from "../observe/all.js";
+import {
+  streamAllEvents,
+  type AllEventsSink,
+  type AllStreamOptions,
+} from "../inspect/all-events.js";
 import { colorEnabled, type FormatOptions } from "../observe/format.js";
 import {
   formatAllEnd,

@@ -10,7 +10,7 @@ import {
   type RejectionDetail,
 } from "../contracts/envelope.js";
 import type { AttemptOpenReason } from "../contracts/reasons.js";
-import { registerRunLocator } from "../inspect/locator.js";
+import { registerRunLocator } from "../state/locator.js";
 import {
   JournalFileError,
   appendRecord,
