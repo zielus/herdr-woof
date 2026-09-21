@@ -12,7 +12,7 @@ import {
   type RunPlan,
 } from "../domain/types.js";
 import type { LockOptions } from "../journal/lock.js";
-import { openRun } from "../state/store.js";
+import { openRun, type OpenRunInput } from "../state/store.js";
 import type { WorkflowDefinition } from "./definition.js";
 import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
@@ -441,7 +441,14 @@ function invalidDefinition<Input>(callback: string, message: string): AdmissionR
  */
 export function openAdmittedRun<Input>(
   admitted: Extract<AdmissionResult<Input>, { ok: true }>,
-  options: { runDir: string; runId: string; lock?: LockOptions; configuration?: unknown },
+  options: {
+    runDir: string;
+    runId: string;
+    lock?: LockOptions;
+    configuration?: unknown;
+    /** The run host's claim, journaled as host.claimed under the same lock as run.opened. */
+    host?: OpenRunInput["host"];
+  },
 ): ReturnType<typeof openRun> {
   return openRun({
     runDir: options.runDir,
@@ -449,6 +456,7 @@ export function openAdmittedRun<Input>(
     plan: admitted.plan,
     input: admitted.input,
     ...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
+    ...(options.host !== undefined ? { host: options.host } : {}),
     ...(options.lock !== undefined ? { lock: options.lock } : {}),
   });
 }

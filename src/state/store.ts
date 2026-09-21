@@ -104,8 +104,21 @@ export interface OpenRunInput {
    * workflow; it records what the run was admitted with.
    */
   configuration?: unknown;
+  /**
+   * The run host's claim. `host.claimed` is then appended right after
+   * `run.opened` under the same journal lock, so no other writer (a cancel) can
+   * come between the two and leave a hosted run without its host records.
+   */
+  host?: Omit<HostClaimedInput, keyof StoreInput>;
   lock?: LockOptions;
 }
+
+/** `openRun`'s outcome: `run.opened` as `record`, plus the `host.claimed` written with it. */
+export type OpenRunOutcome =
+  | (Extract<StoreOutcome<RunOpenedRecord>, { outcome: "recorded" }> & {
+      hostClaimed: HostClaimedRecord | null;
+    })
+  | Extract<StoreOutcome<RunOpenedRecord>, { outcome: "rejected" }>;
 
 export interface AssignAgentInput extends StoreInput {
   agentId: string;
@@ -232,9 +245,10 @@ export interface TerminateRunInput extends StoreInput {
  * journal is opened. With `input`, `<runDir>/input.json` is created exclusively
  * (never through a symlink, mode 0444) before the record is appended, and the
  * record carries its sha256 and size; an existing `input.json` with other
- * content is `run_exists`.
+ * content is `run_exists`. With `host`, `host.claimed` follows `run.opened`
+ * under the same lock and is returned as `hostClaimed`.
  */
-export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpenedRecord>> {
+export async function openRun(input: OpenRunInput): Promise<OpenRunOutcome> {
   if (typeof input.runDir !== "string" || input.runDir === "") {
     throw new TypeError("runDir must be a non-empty path");
   }
@@ -243,6 +257,20 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
   if (!validated.ok) {
     return rejected("plan_invalid", "run plan is invalid", validated.details);
   }
+  const claim: NewJournalRecord | undefined =
+    input.host === undefined
+      ? undefined
+      : {
+          type: "host.claimed",
+          pid: input.host.pid,
+          hostname: input.host.hostname,
+          startedAt: input.host.startedAt,
+          heartbeatMs: input.host.heartbeatMs,
+          paneId: input.host.paneId,
+          workspaceId: input.host.workspaceId,
+        };
+  // Field contract first, outside the lock: a malformed fact is an engine bug.
+  if (claim !== undefined) candidateRecord([], claim);
   const runDir = resolve(input.runDir);
   try {
     mkdirSync(runDir, { recursive: true });
@@ -253,9 +281,9 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
     );
   }
 
-  const opened = await locked(
+  const result = await locked<[RunOpenedRecord, HostClaimedRecord | null]>(
     runDir,
-    (): StoreOutcome<RunOpenedRecord> => {
+    () => {
       const entry = inspectJournalPath(join(runDir, JOURNAL_FILE));
       if (entry instanceof JournalFileError) return rejected("journal_corrupt", entry.message);
       let records: JournalRecord[] = [];
@@ -290,22 +318,32 @@ export async function openRun(input: OpenRunInput): Promise<StoreOutcome<RunOpen
         plan: validated.plan,
         ...(inputRef !== undefined ? { input: inputRef } : {}),
         ...(configRef !== undefined ? { config: configRef } : {}),
-      });
-      return recorded(record as RunOpenedRecord);
+      }) as RunOpenedRecord;
+      // Same lock as run.opened: a cancel cannot close the run before its host is on record.
+      // A host record is never required for the run: a failed write leaves `hostClaimed` null.
+      let claimed: HostClaimedRecord | null = null;
+      if (claim !== undefined) {
+        try {
+          claimed = appendRecord(runDir, [record], claim) as HostClaimedRecord;
+        } catch {
+          claimed = null;
+        }
+      }
+      return { outcome: "recorded", record: [record, claimed], revision: (claimed ?? record).seq };
     },
     input.lock,
   );
+  if (result.outcome === "rejected") return result;
+  const [opened, hostClaimed] = result.record;
   // The locator index only helps inspectors find the run; it never fails the open.
-  if (opened.outcome === "recorded") {
-    registerRunLocator({
-      runDir,
-      runId: input.runId,
-      openedAt: opened.record.ts,
-      workflow: validated.plan.workflow,
-      configuration: input.configuration,
-    });
-  }
-  return opened;
+  registerRunLocator({
+    runDir,
+    runId: input.runId,
+    openedAt: opened.ts,
+    workflow: validated.plan.workflow,
+    configuration: input.configuration,
+  });
+  return { outcome: "recorded", record: opened, revision: result.revision, hostClaimed };
 }
 
 /** Records that an agent runs in a runtime pane. A later assignment on another pane is a replacement. */

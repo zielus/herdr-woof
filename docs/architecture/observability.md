@@ -429,7 +429,9 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   line, and exit 3, rather than the one locked read that decides it by
   default. Resumed with `--after <cursor>` at a terminated run's last
   cursor, `--follow` ends at once with `{"terminal":true,
-"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`; an
+"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`
+  (a hosted run first waits, bounded, for its host's `host.exited`: see
+  [lifecycle records](#implemented-now-lifecycle-records)); an
   earlier cursor still delivers the `run.terminated` event through the
   subscription first. `--stats` prints
   `{"kind":"woof.events.stats","polls","maxProjectionMs","pollMs","method":
@@ -503,14 +505,29 @@ unchanged. They are transitions, never poll samples.
   `record` plus `cancelRequest` and `hostLost`. `terminateRun` with
   `outcome: "cancelled"` still works and writes no request.
 - **`host.claimed {pid, hostname, startedAt, heartbeatMs, paneId,
-workspaceId}`** — written by the run host right after the run opens (the
-  claim file itself precedes the journal), read back from its own
-  `host.json`. **`host.exited {pid, exitCode, reason}`** — written by the
+workspaceId}`** — written by the run host together with `run.opened`, under
+  **one** journal lock (`openRun({host})`, returned as `hostClaimed`), so a
+  cancel racing the open can never close the run before its host is on
+  record and thereby suppress `host.exited` (the claim file itself precedes
+  the journal); read back from its own `host.json`. **`host.exited {pid, exitCode, reason}`** — written by the
   host on every awaited exit path, before it writes `host-exit.json`;
   `reason` is the run outcome or `rejected:<reason>`. It is the one record
   the reducer allows after `run.terminated`, because a host exits after the
-  run it hosted ended; `woof events --follow --after <cursor at or past the
-termination>` delivers it and ends at once. The synchronous second-signal
+  run it hosted ended. A host records the termination, drains, and only then
+  journals its exit, so a follower (`woof events --follow`, `woof watch
+--follow`, the Web UI's SSE stream — all one `streamEvents` loop) does not
+  end at `run.terminated`: it ends when the journal holds no `host.claimed`,
+  or the host's `host.exited`/`host.lost` is recorded, or the read-time probe
+  no longer sees a live host (exit marker, dead pid, stale heartbeat, no
+  claim file). A host that still looks alive is waited for at most three of
+  its heartbeats, so a host killed right after the termination never makes a
+  follower hang; `--timeout-ms` or a signal only cuts that wait short, and
+  the follow still ends `terminated` with exit 0. A late `submission.rejected`
+  between the two is delivered with the exit, never on its own. `--follow --after <cursor
+at or past the termination>` applies the same rule: it delivers the exit
+  whether it was written before or after the follower started. `woof status
+--wait` still returns on the recorded outcome at once — `host.exited` may
+  follow, and resuming from its `status.cursor` delivers it. The synchronous second-signal
   exit (130) cannot take the journal lock and leaves only `host-exit.json`.
   A refused or failed host record is logged and never affects the run. A
   scheduler driven without a host (`runWorkflow` from the SDK) journals no
@@ -531,8 +548,11 @@ termination>` delivers it and ends at once. The synchronous second-signal
   runtime error that fails the run at once) and `recovered` at the next
   successful observe. One record per outage: the second and third timeouts
   of a streak write nothing, and the third then fails the run with the
-  unresolved loss still in the snapshot. Individual samples stay
-  unjournaled.
+  unresolved loss still in the snapshot. Which losses are unresolved is
+  read from the snapshot's `lifecycle.observationLost`, never from the
+  scheduler's memory: a scheduler that meets a loss it did not write pairs
+  its recovery with that record and writes no second loss. Individual
+  samples stay unjournaled.
 - **Snapshot: `lifecycle {host, cancelRequested, observationLost}`** —
   `host` is the last journaled host fact (`{state: "claimed"|"exited"|"lost",
 seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest

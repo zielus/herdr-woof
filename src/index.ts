@@ -90,6 +90,7 @@ export type {
   CancelRunInput,
   CancelRunOutcome,
   OpenRunInput,
+  OpenRunOutcome,
   ReconcileDeliveryInput,
   RecordDispatchInput,
   RecordGateInput,

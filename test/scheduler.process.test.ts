@@ -980,6 +980,28 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
   );
 
   it(
+    "an unresolved observation.lost the scheduler did not write is paired from the journal: no second loss, and the recovery names it",
+    () => {
+      // The journal, never the scheduler's memory, says which losses are unresolved. A scheduler
+      // that meets a loss it never journaled (one started on such a journal) must not answer the
+      // next failed observe with a duplicate observation.lost (refused observation_lost, which was
+      // fatal) and must resolve that very record at the next successful observe.
+      const report = runScenario("observe-foreign-loss");
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "completed", limit: null });
+      const lost = ofType(report, "observation.lost");
+      expect(lost).toMatchObject([
+        { agentId: "builder", message: "journaled by an earlier scheduler" },
+      ]);
+      expect(ofType(report, "observation.recovered")).toMatchObject([
+        { agentId: "builder", lostSeq: lost[0]?.seq },
+      ]);
+      expect(report.snapshot["lifecycle"]).toMatchObject({ observationLost: [] });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
     "PR2-2. a failed pane stop keeps the recorded outcome and returns an infrastructure error",
     () => {
       const report = runScenario("stop-fails");

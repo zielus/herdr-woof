@@ -26,7 +26,9 @@ With --wait (poll every --poll-ms, default 1000; --timeout-ms default 540000):
     at least two heartbeats apart), or exited (a host interrupted before the run
     recorded its end; its outcome.json, when present, is printed as hostOutcome);
   9 the run is blocked and needs the operator (unless --allow-blocked).
-The last line printed is always the status at return time.
+The last line printed is always the status at return time. --wait returns on the
+recorded outcome without waiting for the host's own host.exited, which may follow;
+woof events --follow --after <status.cursor> delivers it and then ends.
 --pretty prints the human header of woof watch (run, workflow, current stage,
 owner, agents, outcome) instead of the JSON line, with the same exit codes; a
 run directory it cannot read prints "woof status: <reason>: <message>".
