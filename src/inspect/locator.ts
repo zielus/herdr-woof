@@ -1,141 +1,25 @@
-import { randomBytes } from "node:crypto";
-import {
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 
-import { isId } from "../contracts/envelope.js";
-import { readJsonFile } from "../host/files.js";
-import { readSnapshot } from "../state/snapshot.js";
+import { defaultIndexDir } from "../contracts/index-dir.js";
+import { locatorPath, locatorsDir, readLocatorFile, type RunLocator } from "../state/locator.js";
 
 /**
- * The run locator index: one small file per run id under
- * `<index>/runs/<runId>.json` that says where the run directory is, so runs
- * opened with an explicit `--run-dir` or `--runs-dir` can be found without
- * knowing the directory in advance.
- *
- * A locator is never state. It holds no status and no events: every reader
- * takes the run's status from `readSnapshot(runDir)` and its events from the
- * run's own `journal.jsonl`, and reports a locator whose directory is gone, has
- * no journal, or records another run id as skipped.
+ * The read, list and repair side of the run locator index. The locator shape,
+ * its paths and the write side live in `state/locator.ts` and are re-exported
+ * here for inspection callers.
  */
 
-export interface RunLocator {
-  schemaVersion: 1;
-  kind: "woof.run.locator";
-  runId: string;
-  /** Absolute, symlink-resolved run directory. */
-  runDir: string;
-  projectRoot: string | null;
-  workflow: { name: string; version: string } | null;
-  openedAt: string;
-  registeredAt: string;
-}
-
-/** The index root: `WOOF_INDEX_DIR` when set, else `~/.woof/index`. */
-export function defaultIndexDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env["WOOF_INDEX_DIR"];
-  if (override !== undefined && override !== "") return resolve(override);
-  return join(resolve(homedir()), ".woof", "index");
-}
-
-function locatorsDir(indexDir: string): string {
-  return join(indexDir, "runs");
-}
-
-export function locatorPath(indexDir: string, runId: string): string {
-  return join(locatorsDir(indexDir), `${runId}.json`);
-}
-
-/** `roots.project.root` of a resolved configuration document; null when it names none. */
-export function projectRootOf(configuration: unknown): string | null {
-  if (!isObject(configuration)) return null;
-  const roots = configuration["roots"];
-  const project = isObject(roots) ? roots["project"] : undefined;
-  return isObject(project) && typeof project["root"] === "string" ? project["root"] : null;
-}
-
-export interface RegisterRunLocatorInput {
-  runDir: string;
-  runId: string;
-  openedAt: string;
-  workflow?: { name: string; version: string } | null;
-  /** The run's resolved configuration, when it has one; only its project root is kept. */
-  configuration?: unknown;
-  indexDir?: string;
-}
-
-/** Writes the locator through a temporary file and a rename. Throws on failure. */
-export function writeRunLocator(input: RegisterRunLocatorInput): RunLocator {
-  if (!isId(input.runId)) throw new TypeError("runId must be a valid id");
-  const indexDir = input.indexDir ?? defaultIndexDir();
-  const locator: RunLocator = {
-    schemaVersion: 1,
-    kind: "woof.run.locator",
-    runId: input.runId,
-    runDir: realpathSync(input.runDir),
-    projectRoot: projectRootOf(input.configuration),
-    workflow:
-      input.workflow === undefined || input.workflow === null
-        ? null
-        : { name: input.workflow.name, version: input.workflow.version },
-    openedAt: input.openedAt,
-    registeredAt: new Date().toISOString(),
-  };
-  mkdirSync(locatorsDir(indexDir), { recursive: true });
-  const target = locatorPath(indexDir, input.runId);
-  const temporary = `${target}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  try {
-    writeFileSync(temporary, `${JSON.stringify(locator, null, 2)}\n`, { flag: "wx", mode: 0o644 });
-    renameSync(temporary, target);
-  } catch (error) {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // Nothing to remove, or it cannot be removed: readers ignore *.tmp either way.
-    }
-    throw error;
-  }
-  return locator;
-}
-
-/**
- * Registers a newly opened run in the index. The index only helps find runs:
- * a failure here is logged to stderr and never fails the run.
- *
- * A run id that is already indexed at another run directory which still holds
- * that run keeps its locator: a second run with the same id never takes over
- * the first one's id. The newcomer is logged to stderr and stays discoverable
- * by its directory and by a runs-directory listing.
- */
-export function registerRunLocator(input: RegisterRunLocatorInput): void {
-  try {
-    const indexDir = input.indexDir ?? defaultIndexDir();
-    const existing = readRunLocator(input.runId, indexDir);
-    if (existing !== null) {
-      const held = realpathOrNull(existing.runDir);
-      if (held !== null && held !== realpathSync(input.runDir) && holdsRun(held, input.runId)) {
-        process.stderr.write(
-          `woof: run id ${input.runId} is already indexed at ${held}; ` +
-            `${input.runDir} is not indexed (the run is unaffected; address it by its directory)\n`,
-        );
-        return;
-      }
-    }
-    writeRunLocator(input);
-  } catch (error) {
-    process.stderr.write(
-      `woof: cannot index run ${input.runId} (the run is unaffected): ${(error as Error).message}\n`,
-    );
-  }
-}
+export { defaultIndexDir } from "../contracts/index-dir.js";
+export {
+  locatorPath,
+  projectRootOf,
+  readRunLocator,
+  registerRunLocator,
+  writeRunLocator,
+  type RegisterRunLocatorInput,
+  type RunLocator,
+} from "../state/locator.js";
 
 export interface ReadLocatorsResult {
   indexDir: string;
@@ -158,7 +42,7 @@ export function readRunLocators(indexDir: string = defaultIndexDir()): ReadLocat
   for (const name of names) {
     if (name.startsWith(".") || !name.endsWith(".json")) continue;
     const path = join(dir, name);
-    const locator = parseLocator(readJsonFile(path, 64 * 1024));
+    const locator = readLocatorFile(path);
     if (locator === null || `${locator.runId}.json` !== name) {
       result.skipped.push({ path, reason: "locator_invalid" });
       continue;
@@ -166,16 +50,6 @@ export function readRunLocators(indexDir: string = defaultIndexDir()): ReadLocat
     result.locators.push(locator);
   }
   return result;
-}
-
-/** The locator of one run id; null when absent or invalid. */
-export function readRunLocator(
-  runId: string,
-  indexDir: string = defaultIndexDir(),
-): RunLocator | null {
-  if (!isId(runId)) return null;
-  const locator = parseLocator(readJsonFile(locatorPath(indexDir, runId), 64 * 1024));
-  return locator !== null && locator.runId === runId ? locator : null;
 }
 
 export function removeRunLocator(indexDir: string, runId: string): void {
@@ -202,52 +76,4 @@ export function staleTemporaryFiles(indexDir: string, olderThanMs: number): stri
     }
   }
   return stale;
-}
-
-function parseLocator(value: unknown): RunLocator | null {
-  if (!isObject(value)) return null;
-  if (value["schemaVersion"] !== 1 || value["kind"] !== "woof.run.locator") return null;
-  const { runId, runDir, projectRoot, workflow, openedAt, registeredAt } = value;
-  // A relative path would be followed against the inspector's working directory: never valid.
-  if (!isId(runId) || typeof runDir !== "string" || !isAbsolute(runDir)) return null;
-  if (projectRoot !== null && typeof projectRoot !== "string") return null;
-  if (typeof openedAt !== "string" || typeof registeredAt !== "string") return null;
-  let parsedWorkflow: RunLocator["workflow"] = null;
-  if (workflow !== null) {
-    if (
-      !isObject(workflow) ||
-      typeof workflow["name"] !== "string" ||
-      typeof workflow["version"] !== "string"
-    )
-      return null;
-    parsedWorkflow = { name: workflow["name"], version: workflow["version"] };
-  }
-  return {
-    schemaVersion: 1,
-    kind: "woof.run.locator",
-    runId,
-    runDir,
-    projectRoot,
-    workflow: parsedWorkflow,
-    openedAt,
-    registeredAt,
-  };
-}
-
-function realpathOrNull(path: string): string | null {
-  try {
-    return realpathSync(path);
-  } catch {
-    return null;
-  }
-}
-
-/** Whether `runDir` holds a readable journal that records `runId`. Read-only, lock-free. */
-function holdsRun(runDir: string, runId: string): boolean {
-  const read = readSnapshot(runDir);
-  return read.ok && read.snapshot.runId === runId;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

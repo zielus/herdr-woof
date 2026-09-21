@@ -22,7 +22,7 @@ import type {
   RunPlan,
   TerminalOutcome,
 } from "../domain/types.js";
-import { registerRunLocator } from "../inspect/locator.js";
+import { registerRunLocator } from "./locator.js";
 import type {
   CheckResultRecord,
   DeliveryReconciledRecord,

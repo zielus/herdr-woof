@@ -2,10 +2,10 @@ import { readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { readRunLocators } from "../inspect/locator.js";
-import { listRuns, locateRun, readRunEntry, type RunListEntry } from "../inspect/runs.js";
-import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "./events.js";
-import { streamEvents, type EventsSink } from "./stream.js";
+import { readRunLocators } from "./locator.js";
+import { listRuns, locateRun, readRunEntry, type RunListEntry } from "./runs.js";
+import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "../observe/events.js";
+import { streamEvents, type EventsSink } from "../observe/stream.js";
 
 /**
  * The cross-run event stream (`woof events --all`, `woof watch --all`): the
