@@ -38,11 +38,17 @@ command and action below is an implemented surface.
   only when stdout is a terminal and `NO_COLOR` is unset or empty. See
   [observability](../architecture/observability.md#implemented-now-p4).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
-  starts a workflow hosted in a Herdr pane (`--host herdr-pane`, default) or
-  in this process (`--host foreground`); with `--watch` (herdr-pane only;
-  refused with exit 2 under `--host foreground` or outside Herdr) it also
-  splits a pane below the host running `woof watch <run-dir> --follow` and
-  adds `watch: {paneId, command}` (or `watch: {problem}`) to its output. The
+  starts a workflow hosted in Herdr (`--host herdr-pane`, default) or in this
+  process (`--host foreground`). Layout is one tab per participant: the first
+  tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
+  holds the run host in its root pane, and every agent of the run gets its
+  own unfocused tab (`woof:<role>`); agents are never pane splits. Woof
+  closes only the tabs it created. By default (herdr-pane only; `--no-watch`
+  opts out, `--watch` is still accepted and is refused with exit 2 under
+  `--host foreground` or outside Herdr) it also splits a pane below the host,
+  inside the host's tab, running `woof watch <run-dir> --follow` and adds
+  `watch: {paneId, command}` (or `watch: {problem}`) to its output, next to
+  `host: {paneId, tabId, …}`. The
   watch pane closes when the run ends only with an explicit `--no-keep-panes`
   (its typed command is then `… --follow && herdr pane close <pane>`); unlike
   agent panes it otherwise stays, so its final lines remain readable;
@@ -87,9 +93,10 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
 - **`start`** — starts the project's default workflow with the input in
   `<project>/.woof/start.json` (a missing file, or one that is not a regular
   file — a FIFO, device or directory is `input_invalid` at once, without
-  blocking — is a notification and exit 2), hosted in a pane split from the
-  invocation's focused pane (an action process has no `HERDR_PANE_ID` of its
-  own).
+  blocking — is a notification and exit 2), hosted in the root pane of a new
+  tab with the `woof watch --follow` pane split below it (an action process
+  has no `HERDR_PANE_ID` of its own, and a new tab needs none; without
+  `HERDR_WORKSPACE_ID` the tab goes to Herdr's default workspace).
 - **`cancel`** — cancels the project's one non-terminal run. With none
   active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
 "message":"no active Woof run in <project>","details":[]}` (notification

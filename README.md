@@ -159,7 +159,7 @@ woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
   [--host herdr-pane|foreground] [--poll-ms <n>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
-  [--split-from <pane-id>] [--runtime-module <path>] [--watch]
+  [--split-from <pane-id>] [--runtime-module <path>] [--watch|--no-watch]
 woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
   [--poll-ms <n>] [--verify-artifacts] [--pretty]
 woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
@@ -407,13 +407,15 @@ subject and a summary. `--follow` keeps reading until the run's terminal
 record, with the exit codes of `woof events --follow`; `woof events --pretty`
 prints the same output, and `woof status <run-dir> --pretty` prints only the
 header instead of JSON. Colors appear only when stdout is a terminal and
-`NO_COLOR` is unset or empty. `woof run start --watch` opens that view in a
-pane below the run host; the pane stays open after the run so its last lines
-remain readable, unless `--no-keep-panes` is given (refused, exit 2, with `--host
-foreground` or outside Herdr):
+`NO_COLOR` is unset or empty. A pane-hosted `woof run start` opens the run
+host in its own Herdr tab and, by default, that view in a pane below the host
+inside the same tab (`--no-watch` opts out); every agent gets a tab of its
+own. The watch pane stays open after the run so its last lines remain
+readable, unless `--no-keep-panes` is given (an explicit `--watch` is refused,
+exit 2, with `--host foreground` or outside Herdr):
 
 ```sh
-woof run start --input input.json --watch
+woof run start --input input.json
 woof watch /abs --follow
 # run      br-…  build-review@1  running
 # …

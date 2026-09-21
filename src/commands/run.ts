@@ -35,7 +35,7 @@ import {
 export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workflow <name>] [--project <dir>] [--run-id <id>]
                       [--run-dir <dir> | --runs-dir <dir>] [--host herdr-pane|foreground]
                       [--poll-ms <n>] [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>]
-                      [--split-from <pane-id>] [--runtime-module <path>] [--watch]
+                      [--split-from <pane-id>] [--runtime-module <path>] [--watch|--no-watch]
 
 Starts a workflow run. The workflow is --workflow, else the configured default,
 else build-review. Built in: build-review (build, verify, review, repair) and
@@ -49,16 +49,21 @@ that project's git top level. The run directory is --run-dir, else
 <runs-dir>/<run-id> (default ~/.woof/runs).
 
 --host herdr-pane (default) needs HERDR_ENV=1 and HERDR_PANE_ID (or
---split-from): it runs the scheduler in a new Herdr pane next to this one and
-returns once that host has opened the run, printing {"outcome":"started"} with
-the run directory; follow it with woof status <run-dir> --wait.
+--split-from, which only stands in for HERDR_PANE_ID: nothing is split): it
+runs the scheduler in the root pane of a new, unfocused Herdr tab
+(woof:<workflow>) and returns once that host has opened the run, printing
+{"outcome":"started"} with the run directory and the host's paneId and tabId;
+follow it with woof status <run-dir> --wait. Every agent of the run gets its
+own tab (woof:<role>).
 --host foreground runs the scheduler in this process and prints
 {"outcome":"run","result"} when the run ends.
---watch (herdr-pane only): once the host opened the run, splits a pane below
-the host running woof watch <run-dir> --follow and adds "watch" ({paneId,
-command}, or {problem} when that pane could not be opened) to the output. The
-watch pane stays open after the run unless --no-keep-panes is given. Refused
-(exit 2) with --host foreground or outside Herdr.
+Watch (herdr-pane only, on by default; --no-watch opts out, --watch is still
+accepted): once the host opened the run, splits a pane below the host inside
+the host's tab running woof watch <run-dir> --follow and adds "watch"
+({paneId, command}, or {problem} when that pane could not be opened) to the
+output. The watch pane stays open after the run unless --no-keep-panes is
+given. An explicit --watch is refused (exit 2) with --host foreground or
+outside Herdr.
 
 Exits 0 started (or completed in the foreground), 4 failed, 5 exhausted,
 6 cancelled, 2 rejected before launch, 3 runtime, host or journal failure
@@ -117,6 +122,7 @@ export async function runStartCommand(args: string[]): Promise<number> {
           "split-from": { type: "string" },
           "runtime-module": { type: "string" },
           watch: { type: "boolean" },
+          "no-watch": { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -163,7 +169,12 @@ export async function runStartCommand(args: string[]): Promise<number> {
   const projectDir = resolve(values.project ?? process.cwd());
   const runDir = values["run-dir"] !== undefined ? resolve(values["run-dir"]) : undefined;
 
+  if (values.watch === true && values["no-watch"] === true)
+    throw new UsageError(`--watch and --no-watch cannot be combined\n\n${RUN_START_USAGE}`);
+  // An explicit --watch is refused where no watch pane can open; the default only applies
+  // to a pane-hosted run.
   const watch = values.watch === true;
+  const opensWatch = host === "herdr-pane" && values["no-watch"] !== true;
   const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
   const splitFrom = values["split-from"] ?? (paneId !== undefined ? "current" : undefined);
   // Refused before any input is read, any Herdr call is made or any run directory exists.
@@ -200,7 +211,6 @@ export async function runStartCommand(args: string[]): Promise<number> {
       projectDir,
       input: input.value,
       flags: { ...flags, ...(runtimeModule !== undefined ? { runtimeModule } : {}) },
-      splitFrom,
       launcherPaneId: paneId ?? null,
       herdrBin: herdrBin(),
       env: process.env,
@@ -209,7 +219,7 @@ export async function runStartCommand(args: string[]): Promise<number> {
     });
     const hostPaneId = hostPaneOf(launched.output);
     if (
-      watch &&
+      opensWatch &&
       launched.code === 0 &&
       launched.output["outcome"] === "started" &&
       hostPaneId !== undefined

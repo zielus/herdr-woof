@@ -71,8 +71,6 @@ export interface RunWorkflowOptions<Input> {
   pollMs?: number;
   /** Leave agent panes open when the run ends. */
   keepPanes?: boolean;
-  /** Pane to split for agents (default "current"). */
-  paneNear?: string;
   clock?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Called with every action before it runs (progress reporting). */
@@ -452,14 +450,16 @@ export async function runWorkflow<Input>(
           break;
         }
         const paneTimeoutMs = capped(snapshot, ADAPTER_COMMAND_CAP_MS);
+        // Every workflow agent gets its own unfocused tab; the agent runs in that tab's root pane.
         const pane = await runtime.openPane({
-          near: options.paneNear ?? "current",
+          placement: "tab",
+          label: `woof:${spec?.role ?? action.agentId}`,
           cwd: repository,
           env: { WOOF_RUN_DIR: runDir },
           timeoutMs: paneTimeoutMs,
         });
         const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
-        // A split that timed out on a budget-capped bound, or any split that returns after the
+        // A tab open that timed out on a budget-capped bound, or any open that returns after the
         // deadline, is the run timeout rather than a failed start.
         const paneBudgetTimeout =
           !pane.ok && pane.error.code === "timeout" && paneTimeoutMs < ADAPTER_COMMAND_CAP_MS;
@@ -469,7 +469,7 @@ export async function runWorkflow<Input>(
               runtime,
               runtimeName,
               planAgent.kind,
-              pane.value.paneId,
+              pane.value,
             );
           }
           written = await runTimedOut(snapshot);
@@ -488,7 +488,7 @@ export async function runWorkflow<Input>(
             runtime,
             runtimeName,
             planAgent.kind,
-            pane.value.paneId,
+            pane.value,
           );
           written = await runTimedOut(snapshot);
           break;
@@ -505,12 +505,12 @@ export async function runWorkflow<Input>(
         if (remainingMs(snapshot) <= 0) {
           view.handle = started.ok
             ? started.value
-            : handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+            : handleFor(runtime, runtimeName, planAgent.kind, pane.value);
           written = await runTimedOut(snapshot);
           break;
         }
         if (!started.ok && started.error.code !== "agent_not_ready") {
-          view.handle = handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+          view.handle = handleFor(runtime, runtimeName, planAgent.kind, pane.value);
           written = await end(
             "failed",
             `agent_start_failed: ${action.agentId}: ${started.error.code}: ${started.error.message}`,
@@ -519,7 +519,7 @@ export async function runWorkflow<Input>(
         }
         const handle = started.ok
           ? started.value
-          : handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+          : handleFor(runtime, runtimeName, planAgent.kind, pane.value);
         view.handle = handle;
         written = await write(() =>
           assignAgent({
@@ -537,7 +537,7 @@ export async function runWorkflow<Input>(
               runDir,
               agentId: action.agentId,
               reason: "startup_blocked",
-              requiredAction: `Agent ${action.agentId} (runtime agent ${runtimeName}) is blocked while starting in pane ${handle.paneId}. Answer its prompt in that pane, or cancel the run with: woof run cancel ${runDir}`,
+              requiredAction: `Agent ${action.agentId} (runtime agent ${runtimeName}) is blocked while starting in pane ${handle.paneId}${handle.tabId != null ? ` (tab ${handle.tabId})` : ""}. Answer its prompt in that pane, or cancel the run with: woof run cancel ${runDir}`,
               observed: { runtimeStatus: null, terminalId: null, stateChangeSeq: null },
               ...lockWithin(snapshot),
             }),
@@ -1001,14 +1001,16 @@ function handleFor(
   runtime: RuntimeAdapter,
   runtimeName: string,
   kind: string,
-  paneId: string,
+  pane: { paneId: string; tabId?: string | null },
 ): AgentHandle {
   return {
     adapter: runtime.adapter,
     runtimeName,
     kind,
-    paneId,
+    paneId: pane.paneId,
     paneOwned: true,
+    // A runtime module written before tab placement may return no tabId.
+    tabId: pane.tabId ?? null,
     terminalId: null,
     sessionId: null,
   };

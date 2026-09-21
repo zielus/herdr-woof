@@ -2,8 +2,8 @@ import { DISPATCH_REASONS } from "../domain/types.js";
 
 /**
  * Runtime adapter contract (p2, unstable until v1). A runtime starts agents in
- * panes, reports their observed lifecycle, delivers one prompt and stops panes
- * it opened. It never writes the run journal: runtime observations are lossy
+ * panes (a split, or the root pane of a new tab), reports their observed
+ * lifecycle, delivers one prompt and stops the panes or tabs it opened. It never writes the run journal: runtime observations are lossy
  * samples, and no lifecycle value completes, accepts or fails an attempt.
  */
 
@@ -39,6 +39,11 @@ export interface AgentHandle {
    * from `openPane`.
    */
   paneOwned: boolean;
+  /**
+   * Display only: the tab `openPane` created for this pane (placement "tab"), when known.
+   * `stop` never trusts it; the adapter keeps its own record of the tabs it created.
+   */
+  tabId?: string | null;
   terminalId: string | null;
   sessionId: string | null;
 }
@@ -113,14 +118,34 @@ export function isAmbiguousCode(code: RuntimeErrorCode): code is AmbiguousCode {
   return (AMBIGUOUS_CODES as readonly string[]).includes(code);
 }
 
-export interface OpenPaneInput {
-  /** A pane id to split, or "current" for the caller's pane. */
-  near: string;
+interface OpenPaneCommon {
   cwd: string;
   env?: Record<string, string>;
-  direction?: "right" | "down";
-  /** Upper bound for the split; an adapter uses its own command timeout when absent. */
+  /** Upper bound for the command; an adapter uses its own command timeout when absent. */
   timeoutMs?: number;
+}
+
+/** Splits an existing pane (the default placement). */
+export interface OpenSplitPaneInput extends OpenPaneCommon {
+  placement?: "split";
+  /** A pane id to split, or "current" for the caller's pane. */
+  near: string;
+  direction?: "right" | "down";
+}
+
+/** Creates a new, unfocused tab; the opened pane is that tab's root pane. */
+export interface OpenTabPaneInput extends OpenPaneCommon {
+  placement: "tab";
+  /** Tab label shown by the runtime. */
+  label?: string;
+}
+
+export type OpenPaneInput = OpenSplitPaneInput | OpenTabPaneInput;
+
+export interface OpenedPane {
+  paneId: string;
+  /** The tab this call created (placement "tab"); null for a split. */
+  tabId: string | null;
 }
 
 export interface ObserveOptions {
@@ -140,7 +165,7 @@ export interface StartAgentInput {
 
 export interface RuntimeAdapter {
   readonly adapter: "herdr" | "scripted";
-  openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>>;
+  openPane(input: OpenPaneInput): Promise<RuntimeResult<OpenedPane>>;
   startAgent(input: StartAgentInput): Promise<RuntimeResult<AgentHandle>>;
   /**
    * A pane or agent that no longer exists is the `gone` lifecycle, not an error.
@@ -161,11 +186,15 @@ export interface RuntimeAdapter {
     text: string,
     options: { timeoutMs: number },
   ): Promise<DeliveryResult>;
-  /** Closes the handle's pane only when this instance opened it; otherwise `unsupported`. */
+  /**
+   * Closes the handle's pane only when this instance opened it; otherwise `unsupported`.
+   * A pane opened with placement "tab" is closed by closing the tab this instance created
+   * (`tabClosed`); a tab the instance did not create is never closed.
+   */
   stop(
     handle: AgentHandle,
     options: { timeoutMs: number },
-  ): Promise<RuntimeResult<{ paneClosed: true }>>;
+  ): Promise<RuntimeResult<{ paneClosed: true; tabClosed?: true }>>;
 }
 
 /**

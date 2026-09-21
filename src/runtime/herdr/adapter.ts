@@ -8,6 +8,7 @@ import {
   type Lifecycle,
   type LifecycleObservation,
   type ObserveOptions,
+  type OpenedPane,
   type OpenPaneInput,
   type RuntimeAdapter,
   type RuntimeError,
@@ -71,8 +72,10 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
   const requireHerdrEnv = options.requireHerdrEnv ?? true;
   const commandTimeoutMs = options.commandTimeoutMs ?? 10_000;
   const graceMs = options.spawnGraceMs ?? 2000;
-  /** Panes this instance split; the only panes `stop` may close. */
+  /** Panes this instance opened (a split, or a created tab's root pane); only these are stopped. */
   const ownedPanes = new Set<string>();
+  /** Root pane id → the tab this instance created for it; `stop` closes that tab, never another. */
+  const ownedTabs = new Map<string, string>();
 
   async function run(args: string[], timeoutMs: number): Promise<HerdrOutcome> {
     if (FORBIDDEN_SUBCOMMANDS.has(args[1] ?? "")) {
@@ -181,7 +184,34 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       return run([...args], timeoutMs);
     },
 
-    async openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>> {
+    async openPane(input: OpenPaneInput): Promise<RuntimeResult<OpenedPane>> {
+      const envArgs = Object.entries(input.env ?? {}).flatMap(([key, value]) => [
+        "--env",
+        `${key}=${value}`,
+      ]);
+      if (input.placement === "tab") {
+        // The tab goes to the caller's workspace when Herdr names it, else Herdr's default.
+        const workspaceId = env["HERDR_WORKSPACE_ID"];
+        const args = [
+          "tab",
+          "create",
+          ...(workspaceId !== undefined && workspaceId !== "" ? ["--workspace", workspaceId] : []),
+          "--cwd",
+          input.cwd,
+          ...(input.label !== undefined && input.label !== "" ? ["--label", input.label] : []),
+          "--no-focus",
+          ...envArgs,
+        ];
+        const created = await run(args, input.timeoutMs ?? commandTimeoutMs);
+        if (!created.ok) return created;
+        const tabId = stringField(created.result["tab"], "tab_id");
+        const paneId = stringField(created.result["root_pane"], "pane_id");
+        if (tabId === undefined) return protocol(args, "tab create returned no tab_id");
+        if (paneId === undefined) return protocol(args, "tab create returned no root pane_id");
+        ownedPanes.add(paneId);
+        ownedTabs.set(paneId, tabId);
+        return { ok: true, value: { paneId, tabId } };
+      }
       const args = [
         "pane",
         "split",
@@ -191,19 +221,14 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
         "--cwd",
         input.cwd,
         "--no-focus",
-        ...Object.entries(input.env ?? {}).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
+        ...envArgs,
       ];
       const split = await run(args, input.timeoutMs ?? commandTimeoutMs);
       if (!split.ok) return split;
-      const pane = split.result["pane"];
-      const paneId =
-        typeof pane === "object" && pane !== null
-          ? (pane as Record<string, unknown>)["pane_id"]
-          : undefined;
-      if (typeof paneId !== "string" || paneId === "")
-        return protocol(args, "pane split returned no pane_id");
+      const paneId = stringField(split.result["pane"], "pane_id");
+      if (paneId === undefined) return protocol(args, "pane split returned no pane_id");
       ownedPanes.add(paneId);
-      return { ok: true, value: { paneId } };
+      return { ok: true, value: { paneId, tabId: null } };
     },
 
     async startAgent(input: StartAgentInput): Promise<RuntimeResult<AgentHandle>> {
@@ -226,6 +251,7 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       const info = parseAgentInfo(started.result["agent"]);
       if (info === undefined) return protocol(args, "agent start returned no agent");
       const paneId = info.paneId ?? input.paneId;
+      const ownedTab = ownedTabs.get(paneId);
       return {
         ok: true,
         value: {
@@ -234,6 +260,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
           kind: input.kind,
           paneId,
           paneOwned: ownedPanes.has(paneId),
+          // Only a pane opened as a tab carries a tab id; a split's handle is unchanged.
+          ...(ownedTab !== undefined ? { tabId: ownedTab } : {}),
           terminalId: info.terminalId,
           sessionId: info.sessionId,
         },
@@ -398,21 +426,34 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
       }
       const bad = invalidName(handle.runtimeName);
       if (bad !== undefined) return { ok: false as const, error: bad };
-      const closed = await run(["pane", "close", handle.paneId], stopping.timeoutMs);
+      // A pane opened as a new tab is closed with the tab this instance created; the handle's
+      // tabId is caller data and is never used.
+      const tabId = ownedTabs.get(handle.paneId);
+      const closed = await run(
+        tabId !== undefined ? ["tab", "close", tabId] : ["pane", "close", handle.paneId],
+        stopping.timeoutMs,
+      );
       if (!closed.ok) return closed;
       // The pane is closed: it is no longer ours whatever the verification read reports,
-      // so a retry can never close a reused pane id.
+      // so a retry can never close a reused pane or tab id.
       ownedPanes.delete(handle.paneId);
+      ownedTabs.delete(handle.paneId);
       const after = await run(["agent", "get", handle.runtimeName], commandTimeoutMs);
       if (!after.ok && after.error.runtimeCode === "agent_not_found") {
-        return { ok: true as const, value: { paneClosed: true as const } };
+        return {
+          ok: true as const,
+          value: {
+            paneClosed: true as const,
+            ...(tabId !== undefined ? { tabClosed: true as const } : {}),
+          },
+        };
       }
       return {
         ok: false as const,
         error: after.ok
           ? runtimeError(
               "runtime_error",
-              `agent ${handle.runtimeName} is still reported after pane close`,
+              `agent ${handle.runtimeName} is still reported after ${tabId !== undefined ? "tab" : "pane"} close`,
               {
                 command: ["agent", "get", handle.runtimeName],
                 exitCode: 0,
@@ -468,6 +509,13 @@ function notInspectable(args: readonly string[]): RuntimeError | undefined {
         `inspect runs only agent list, agent get <target>, pane get <id>, pane list and workspace list; refused: herdr ${args.join(" ")}`,
         { command: [...args] },
       );
+}
+
+/** A non-empty string field of an object value, else undefined. */
+function stringField(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" && field !== "" ? field : undefined;
 }
 
 function protocol(command: string[], message: string): { ok: false; error: RuntimeError } {

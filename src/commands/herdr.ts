@@ -5,6 +5,7 @@ import { discoverRoots } from "../config/discover.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { isInfraReason } from "../contracts/reasons.js";
 import { launchInPane } from "../host/launch.js";
+import { openWatchPane } from "../host/watch-pane.js";
 import { clip } from "../host/metadata.js";
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
@@ -23,8 +24,9 @@ working directory.
 Each action shows a Herdr notification and prints one JSON line.
 
   status  the project's runs that have not ended; exits 0
-  start   start the default workflow with <project>/.woof/start.json in a pane
-          split from the focused pane; exits like woof run start
+  start   start the default workflow with <project>/.woof/start.json in a new
+          tab (the run host, with woof watch --follow split below it); exits
+          like woof run start
   cancel  cancel the project's single active run; exits 0 with outcome noop when
           none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
@@ -124,29 +126,37 @@ async function start(project: Project): Promise<number> {
   }
   const input = await readWorkflowInput(inputPath);
   if (!input.ok) return refuse("input_invalid", input.message, 2);
-  // An action process has no pane of its own; a pane Herdr names for it wins.
+  // The run host opens in a new tab, so the action needs no pane to split.
   const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
-  const splitFrom = paneId !== undefined ? "current" : project.focusedPaneId;
-  if (splitFrom === null) {
-    return refuse(
-      "runtime_unavailable",
-      "the invocation context names no focused pane to split the run host from",
-      3,
-    );
-  }
   const launched = await launchInPane({
     runId: defaultRunId(undefined),
     projectDir: project.root,
     input: input.value,
     flags: {},
-    splitFrom,
     launcherPaneId: paneId ?? null,
     herdrBin: herdrBin(),
     env: process.env,
     nodePath: process.execPath,
     cliPath,
   });
-  const out = launched.output;
+  let out = launched.output;
+  // The live watch is part of a pane-hosted run's tab: a down split of the host's root pane.
+  // Failing to open it never fails the started run; the problem is reported next to it.
+  const host = out["host"];
+  const hostPaneId = isObject(host) ? host["paneId"] : undefined;
+  if (out["outcome"] === "started" && typeof hostPaneId === "string" && hostPaneId !== "") {
+    const watching = await openWatchPane({
+      runDir: String(out["runDir"]),
+      hostPaneId,
+      cwd: project.root,
+      closeOnEnd: false,
+      herdrBin: herdrBin(),
+      env: process.env,
+      nodePath: process.execPath,
+      cliPath,
+    });
+    out = { ...out, watch: watching };
+  }
   if (out["outcome"] === "started") {
     await notify(`Woof: started ${String(out["runId"])}`, `run directory ${String(out["runDir"])}`);
   } else {

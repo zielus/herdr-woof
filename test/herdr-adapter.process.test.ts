@@ -64,7 +64,12 @@ let runs = 0;
 function runAdapter(
   scenario: Entry[],
   body: string,
-  options: { herdrEnv?: string | undefined; bin?: string; graceMs?: number } = { herdrEnv: "1" },
+  options: {
+    herdrEnv?: string | undefined;
+    bin?: string;
+    graceMs?: number;
+    workspaceId?: string;
+  } = { herdrEnv: "1" },
 ): { out: Record<string, unknown>; log: string[][]; elapsed: number } {
   runs += 1;
   const scenarioPath = join(workDir, `scenario-${runs}.json`);
@@ -86,6 +91,7 @@ console.log(JSON.stringify({ out, elapsed: Date.now() - started }));
     {
       env: {
         HERDR_ENV: "herdrEnv" in options ? options.herdrEnv : "1",
+        HERDR_WORKSPACE_ID: options.workspaceId,
         FAKE_HERDR_SCENARIO: scenarioPath,
         FAKE_HERDR_LOG: logPath,
       },
@@ -184,7 +190,7 @@ out = { current, near, start, observed, waited, delivered, stopped };`,
       ["pane", "close", PANE],
       ["agent", "get", NAME],
     ]);
-    expect(out["current"]).toEqual({ ok: true, value: { paneId: PANE } });
+    expect(out["current"]).toEqual({ ok: true, value: { paneId: PANE, tabId: null } });
     expect(out["start"]).toEqual({
       ok: true,
       value: {
@@ -214,6 +220,91 @@ out = { current, near, start, observed, waited, delivered, stopped };`,
       observation: { lifecycle: "working", order: { stateChangeSeq: 13 } },
     });
     expect(out["stopped"]).toEqual({ ok: true, value: { paneClosed: true } });
+  });
+
+  it("opens a pane as a new unfocused tab and stops it by closing the tab it created", () => {
+    const tabCreated = (tabId: string, paneId: string) =>
+      `${JSON.stringify({
+        id: "cli:tab:create",
+        result: {
+          root_pane: { pane_id: paneId, tab_id: tabId, terminal_id: "term_0", workspace_id: "w9" },
+          tab: { tab_id: tabId, label: "woof:builder", number: 2, pane_count: 1 },
+          type: "tab_created",
+        },
+      })}\n`;
+    const { out, log } = runAdapter(
+      [
+        { match: ["tab", "create"], stdout: tabCreated("w9:t2", PANE) },
+        { match: ["agent", "start"], stdout: agentJson("idle", 10, "agent_started") },
+        {
+          match: ["tab", "close"],
+          stdout: `${JSON.stringify({ id: "cli:tab:close", result: { type: "ok" } })}\n`,
+        },
+        { match: ["agent", "get"], ...error("agent_not_found") },
+      ],
+      `
+const opened = await runtime.openPane({ placement: "tab", label: "woof:builder", cwd: "/tmp/run", env: { WOOF_RUN_DIR: "/tmp/run" } });
+const start = await runtime.startAgent({ runtimeName: handle.runtimeName, kind: "claude", paneId: ${JSON.stringify(PANE)}, timeoutMs: 30000 });
+// A forged tab id on the handle is never what gets closed, and a pane this instance did not open is refused.
+const foreign = await runtime.stop({ ...handle, paneId: "w9:p999", tabId: "w9:t2" }, { timeoutMs: 4000 });
+const stopped = await runtime.stop({ ...handle, tabId: "w9:t777" }, { timeoutMs: 4000 });
+const again = await runtime.stop(handle, { timeoutMs: 4000 });
+out = { opened, start, foreign, stopped, again };`,
+      { workspaceId: "w9" },
+    );
+    expect(log).toEqual([
+      [
+        "tab",
+        "create",
+        "--workspace",
+        "w9",
+        "--cwd",
+        "/tmp/run",
+        "--label",
+        "woof:builder",
+        "--no-focus",
+        "--env",
+        "WOOF_RUN_DIR=/tmp/run",
+      ],
+      expect.arrayContaining(["agent", "start", NAME, "--pane", PANE]),
+      ["tab", "close", "w9:t2"],
+      ["agent", "get", NAME],
+    ]);
+    expect(out["opened"]).toEqual({ ok: true, value: { paneId: PANE, tabId: "w9:t2" } });
+    expect(out["start"]).toMatchObject({ ok: true, value: { paneOwned: true, tabId: "w9:t2" } });
+    expect(out["foreign"]).toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(out["stopped"]).toEqual({ ok: true, value: { paneClosed: true, tabClosed: true } });
+    expect(out["again"]).toMatchObject({ ok: false, error: { code: "unsupported" } });
+  });
+
+  it("creates the tab without --workspace when Herdr names none, and rejects a reply with no ids", () => {
+    const reply = (result: unknown) => `${JSON.stringify({ id: "cli:tab:create", result })}\n`;
+    const { out, log } = runAdapter(
+      [
+        {
+          match: ["tab", "create"],
+          call: 1,
+          stdout: reply({ root_pane: { pane_id: PANE }, tab: { tab_id: "" } }),
+        },
+        { match: ["tab", "create"], call: 2, stdout: reply({ tab: { tab_id: "w9:t2" } }) },
+        { match: ["tab", "create"], call: 3, stdout: `${JSON.stringify({ result: {} })}\n` },
+      ],
+      `
+const noTab = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+const noPane = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+const noId = await runtime.openPane({ placement: "tab", cwd: "/tmp/run" });
+// Nothing was recorded as owned: no tab is closed.
+const stopped = await runtime.stop(handle, { timeoutMs: 1000 });
+out = { noTab, noPane, noId, stopped };`,
+    );
+    expect(log).toEqual([
+      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
+      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
+      ["tab", "create", "--cwd", "/tmp/run", "--no-focus"],
+    ]);
+    for (const key of ["noTab", "noPane", "noId"])
+      expect(out[key], key).toMatchObject({ ok: false, error: { code: "protocol_error" } });
+    expect(out["stopped"]).toMatchObject({ ok: false, error: { code: "unsupported" } });
   });
 
   it("observes a vanished agent and pane as gone", () => {
