@@ -2,16 +2,31 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { resolveConfiguration } from "../config/resolve.js";
+import { defaultIndexDir } from "../inspect/locator.js";
+import { reindexRuns } from "../inspect/reindex.js";
 import { listRuns } from "../inspect/runs.js";
 import { UsageError, parse } from "./common.js";
 
-export const RUNS_USAGE = `Usage: woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
+export const RUNS_USAGE = `Usage: woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>] [--reindex]
 
 Lists the runs under the runs directory (--runs-dir, else the user setting
 defaults.runsDir in ~/.woof/woof.json, else ~/.woof/runs) as one JSON line:
 every run that has not ended plus the 20 most recent ended runs, newest first
 (--all lists every run, --limit caps the list). --project keeps only runs whose
-recorded configuration names that project root. Read-only: no journal lock, no
+recorded configuration names that project root.
+
+Without --runs-dir the listing also includes every run in the run index
+(~/.woof/index, or WOOF_INDEX_DIR), wherever its directory is: a run opened with
+its own --run-dir or --runs-dir is registered there when it opens. The index only
+locates runs; status always comes from the run journal, and an indexed run whose
+directory is gone, has no journal or records another run id is listed under
+"skipped", never as a run. With --runs-dir only that directory is listed.
+
+--reindex repairs the index instead of listing: it writes the missing locators
+of the runs under the runs directory and removes locators whose run directory no
+longer exists, printing {"outcome":"reindexed","written","pruned","kept",...}.
+It is the only inspection command that writes, and it never touches a run
+directory. Otherwise read-only: no journal lock, no
 workflow loading, no Herdr. Exits 0 (a missing runs directory lists nothing),
 2 when the user configuration is invalid, 3 when the runs directory cannot be read.`;
 
@@ -27,6 +42,7 @@ export async function runsCommand(args: string[]): Promise<number> {
           project: { type: "string" },
           all: { type: "boolean" },
           limit: { type: "string" },
+          reindex: { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -36,6 +52,11 @@ export async function runsCommand(args: string[]): Promise<number> {
     console.log(RUNS_USAGE);
     return 0;
   }
+  if (
+    values.reindex === true &&
+    (values.project !== undefined || values.all === true || values.limit !== undefined)
+  )
+    throw new UsageError(`--reindex takes only --runs-dir\n\n${RUNS_USAGE}`);
   if (values.limit !== undefined && !/^[1-9][0-9]{0,5}$/.test(values.limit))
     throw new UsageError(`--limit must be an integer between 1 and 999999\n\n${RUNS_USAGE}`);
   let runsDir: string;
@@ -58,8 +79,15 @@ export async function runsCommand(args: string[]): Promise<number> {
     runsDir = resolved.configuration.settings.runsDir.value;
   }
   try {
+    if (values.reindex === true) {
+      const reindexed = reindexRuns({ runsDir, indexDir: defaultIndexDir() });
+      console.log(JSON.stringify({ outcome: "reindexed", ...reindexed }));
+      return 0;
+    }
     const listed = listRuns({
       runsDir,
+      // An explicit --runs-dir scopes the listing to that directory.
+      ...(values["runs-dir"] === undefined ? { indexDir: defaultIndexDir() } : {}),
       ...(values.project !== undefined ? { project: resolve(values.project) } : {}),
       ...(values.all === true ? { all: true } : {}),
       ...(values.limit !== undefined ? { limit: Number(values.limit) } : {}),

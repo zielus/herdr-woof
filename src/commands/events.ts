@@ -1,12 +1,15 @@
-import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { UsageError, milliseconds, parse } from "./common.js";
+import { ALL_HELP, allEventsCommand } from "./all.js";
+import { UsageError, milliseconds, parse, rejected } from "./common.js";
 import { streamEvents, type EventsSink, type StreamOptions } from "../observe/stream.js";
+import { TARGET_HELP, resolveTarget } from "./target.js";
 import { watchRun } from "./watch.js";
 
-export const EVENTS_USAGE = `Usage: woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] [--poll-ms <n>]
+export const EVENTS_USAGE = `Usage: woof events <run-dir|run-id> [--after <cursor>] [--follow] [--timeout-ms <n>] [--poll-ms <n>]
                    [--stats] [--pretty]
+       woof events --all [--follow] [--project <dir>] [--since <iso>] [--runs-dir <dir>]
+                   [--timeout-ms <n>] [--poll-ms <n>] [--pretty]
 
 Prints the run's lifecycle events as NDJSON, one event per line, resuming after
 --after when given. Without --follow it prints the events recorded so far; with
@@ -19,7 +22,14 @@ final journal line unchanged for 2 s ends a follow with a journal_corrupt error.
 Exits 0 end or terminated, 7 timeout, 2 resync_required (the cursor cannot
 resume; the reason is printed before the end line), 3 journal error, 130 SIGINT.
 --pretty prints the same as woof watch (a header and one readable line per
-event) with the same exit codes.`;
+event) with the same exit codes.
+${TARGET_HELP}
+
+${ALL_HELP}
+Each run is introduced once by {"kind":"woof.events.run","runId","runDir","project"}
+before its first event; the last line is {"kind":"woof.events.end","scope":"all",
+"runs","reason"}. Exits 0 end, 7 timeout, 130 SIGINT, 2 invalid user
+configuration, 3 unreadable runs directory.`;
 
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -46,6 +56,10 @@ export async function eventsCommand(args: string[]): Promise<number> {
           "poll-ms": { type: "string" },
           stats: { type: "boolean" },
           pretty: { type: "boolean" },
+          all: { type: "boolean" },
+          project: { type: "string" },
+          since: { type: "string" },
+          "runs-dir": { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -55,16 +69,39 @@ export async function eventsCommand(args: string[]): Promise<number> {
     console.log(EVENTS_USAGE);
     return 0;
   }
-  const [target, ...extra] = positionals;
-  if (target === undefined || target === "" || extra.length > 0)
-    throw new UsageError(`expected exactly one <run-dir>\n\n${EVENTS_USAGE}`);
-  const runDir = resolve(target);
   const pollMs =
     values["poll-ms"] === undefined ? 250 : milliseconds(values["poll-ms"], "--poll-ms", 1);
   const timeoutMs =
     values["timeout-ms"] === undefined
       ? undefined
       : milliseconds(values["timeout-ms"], "--timeout-ms", 1, 604_800_000);
+  if (values.all === true) {
+    if (positionals.length > 0 || values.after !== undefined || values.stats === true)
+      throw new UsageError(`--all takes no <run-dir>, --after or --stats\n\n${EVENTS_USAGE}`);
+    return allEventsCommand(
+      {
+        "runs-dir": values["runs-dir"],
+        project: values.project,
+        since: values.since,
+        follow: values.follow === true,
+        pollMs,
+        timeoutMs,
+        pretty: values.pretty === true,
+      },
+      EVENTS_USAGE,
+    );
+  }
+  if (
+    values.project !== undefined ||
+    values.since !== undefined ||
+    values["runs-dir"] !== undefined
+  )
+    throw new UsageError(`--project, --since and --runs-dir need --all\n\n${EVENTS_USAGE}`);
+  const [target, ...extra] = positionals;
+  if (target === undefined || target === "" || extra.length > 0)
+    throw new UsageError(`expected exactly one <run-dir|run-id>\n\n${EVENTS_USAGE}`);
+  const located = await resolveTarget(target);
+  if (!located.ok) return rejected(located.reason, located.message, [], 3);
   const options: StreamOptions = {
     ...(values.after !== undefined ? { after: values.after } : {}),
     follow: values.follow === true,
@@ -72,6 +109,6 @@ export async function eventsCommand(args: string[]): Promise<number> {
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     stats: values.stats === true,
   };
-  if (values.pretty === true) return watchRun(runDir, options);
-  return streamEvents(runDir, options, JSON_SINK);
+  if (values.pretty === true) return watchRun(located.runDir, options);
+  return streamEvents(located.runDir, options, JSON_SINK);
 }

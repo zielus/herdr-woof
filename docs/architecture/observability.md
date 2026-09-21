@@ -486,3 +486,66 @@ report-metadata`, `herdr notification show`); nothing in Woof reads a
 - **Still not covered:** crash resume or re-hosting a lost run (a `lost`
   owner is reported and only ever cancelled), parallel scheduling, and a
   second built-in workflow.
+
+## Implemented now (central index)
+
+Real shipped behavior for finding runs across directories and streaming all of
+them — not design intent. Source: `src/inspect/{locator,runs,reindex,target}.ts`,
+`src/observe/{all,format-all}.ts`, `src/commands/{all,target,runs}.ts`.
+
+- **The per-run journal stays the only source of truth.** Nothing here stores
+  status or events a second time. The run index is a set of locators; the
+  cross-run stream reads each run's own `journal.jsonl` through `readEvents`
+  and the single-run follow loop.
+- **Locator index.** `<index>/runs/<runId>.json`, where `<index>` is
+  `WOOF_INDEX_DIR` when set, else `~/.woof/index`. A locator is
+  `{schemaVersion: 1, kind: "woof.run.locator", runId, runDir, projectRoot,
+workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
+  `projectRoot` and `workflow` `null` for a plan-less run — and never carries
+  status or events. It is written when `run.opened` is recorded (`openRun`,
+  and the implicit plan-less open of `openAttempt`) through a `*.tmp` file and
+  a `rename`; readers ignore `*.tmp`. A failed index write is one stderr line
+  and never fails the run. A later run with the same id replaces the locator.
+- **Readers never trust a locator as state.** Status always comes from
+  `readSnapshot(runDir)`. A locator whose directory is gone
+  (`run_dir_missing`), whose journal cannot be read (the snapshot's own reason,
+  e.g. `run_dir_invalid`) or whose journal records another run id
+  (`run_id_mismatch`) is reported under `skipped` with its `runId`, and a
+  locator file that does not parse as `locator_invalid` — never as a run.
+- **`listRuns({runsDir, indexDir})` is the union** of the runs-directory scan
+  and the index, listed once per resolved directory. `woof runs` with no
+  `--runs-dir` passes the index (its output gains `indexDir`), so a run opened
+  with its own `--run-dir` or `--runs-dir` is listed; an explicit `--runs-dir`
+  lists that directory only. `--project`, `--all` and `--limit` apply to the
+  union. `woof ui` follows the same rule for `/api/runs` and for resolving a
+  run id. There is no `GET /api/events` for all runs.
+- **`woof runs --reindex`** is the only inspection command that writes: it
+  writes a locator for each readable run under the runs directory that has
+  none (or one that can no longer be followed), removes locators whose run
+  directory no longer exists, and prints `{"outcome":"reindexed","written",
+"pruned","kept","conflicts","skipped"}`. A run id already indexed at another
+  readable directory is left alone and listed under `conflicts`. It never
+  touches a run directory.
+- **Run addressing by id.** `woof status|events|watch|run show|run cancel`
+  resolve their argument in order: an existing directory; else, for a bare run
+  id, the locator (which must still lead to that run); else `<runs-dir>/<id>`.
+  A bare id found nowhere is `run_dir_invalid` (exit 3). Any other path that
+  does not exist is still treated as a run directory, so `events --follow` keeps
+  waiting for a directory that is about to be created.
+- **`woof events --all [--follow] [--project <dir>] [--since <iso>]`** emits the
+  unchanged `RunEvent`s of every known run. Each run is introduced once, before
+  its first event, by `{"kind":"woof.events.run","runId","runDir","project"}`.
+  Recorded events are merged by `ts`, then `runId`, then `seq`. With `--follow`
+  each run is then followed from the cursor its backlog ended at, and runs
+  that appear later (a new locator or runs-directory entry, checked at least
+  every 500 ms) are followed from their start; live lines of different runs
+  are not re-ordered against each other. `--timeout-ms` (exit 7) and SIGINT
+  (130) bound it. A run's `resync_required`/`error` item, or an entry that
+  holds no readable run (`type: "skipped"`), is printed with `runId` and
+  `runDir` and does not end the stream. The last line is
+  `{"kind":"woof.events.end","scope":"all","runs","cursor":null,"terminal":
+false,"reason"}`. There is no cross-run cursor: `--after` is single-run only.
+- **`woof watch --all`** (and `events --all --pretty`) is the human projection
+  of that stream: a `== <short id>  run <id>  <run-dir>` line per run and the
+  single-run event line behind the short run id (the id, or `~` and its last 11
+  characters).

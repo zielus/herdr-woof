@@ -416,6 +416,8 @@ describe("woof runs", () => {
     expect(missing.json).toEqual({
       outcome: "runs",
       runsDir: join(home, ".woof", "runs"),
+      // Without --runs-dir the run index is read too (test/index.cli.test.ts).
+      indexDir: join(home, ".woof", "index"),
       exists: false,
       runs: [],
       skipped: [],
