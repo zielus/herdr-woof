@@ -89,7 +89,12 @@ export type StoreReason =
   | "not_blocked"
   | "dispatch_not_ambiguous"
   | "reconcile_exists"
-  | "assignment_mismatch";
+  | "assignment_mismatch"
+  | "host_exists"
+  | "host_unknown"
+  | "host_gone"
+  | "observation_lost"
+  | "observation_not_lost";
 
 /**
  * Reasons workflow admission refuses a run with, before any pane or journal

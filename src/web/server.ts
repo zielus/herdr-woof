@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
-import { terminateRun } from "../state/store.js";
+import { cancelRun } from "../state/store.js";
 import {
   admit,
   isLoopback,
@@ -23,7 +23,7 @@ import { bundleIndex, MISSING_SPA_MESSAGE, serveSpa } from "./static.js";
  * Every GET is a passthrough to `listRuns` / `readRunStatus` / the event
  * stream, which take no journal lock and never contact Herdr, so the UI is
  * never a second journal writer or a parallel lock holder. The only mutating
- * route is cancel, which calls the same `terminateRun` that `woof run cancel`
+ * route is cancel, which calls the same `cancelRun` that `woof run cancel`
  * calls. Actions the engine has no call for are reported as unsupported with
  * the engine's reason; they are never simulated.
  *
@@ -327,7 +327,7 @@ async function handleCancel(
 ): Promise<void> {
   // A JSON content type is required, not merely accepted: it is the header that
   // forces a cross-origin request into a preflight this server never answers,
-  // so a form post from another page cannot reach terminateRun at all.
+  // so a form post from another page cannot reach cancelRun at all.
   const contentType = (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     rejected(
@@ -387,7 +387,7 @@ async function handleCancel(
   // The same call `woof run cancel` makes: it takes the journal lock, replays
   // state and refuses an invalid transition, so cancelling a run a scheduler is
   // actively hosting is safe without any liveness check first.
-  const outcome = await terminateRun({ runDir: entry.runDir, outcome: "cancelled", reason });
+  const outcome = await cancelRun({ runDir: entry.runDir, source: "web", reason });
   send(response, outcome.outcome === "recorded" ? 200 : 409, outcome);
 }
 

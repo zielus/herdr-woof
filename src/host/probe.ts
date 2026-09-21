@@ -77,6 +77,9 @@ export interface HostProbe {
   problem?: string;
 }
 
+/** A probe with, exactly when the owner is `lost`, the evidence a locked writer journals as host.lost. */
+export type HostProbeEvidence = HostProbe & { lostReason?: string };
+
 /** Reads the claim with the exit marker applied, re-reading an invalid one after short delays. */
 export function readHostClaim(runDir: string, options: ClaimReadOptions = {}): HostClaim {
   let read = readClaimOnce(runDir);
@@ -257,18 +260,47 @@ export function parseHostExit(
 }
 
 export function probeHost(runDir: string, options: ProbeOptions = {}): HostProbe {
+  const { lostReason: _evidence, ...probe } = probeHostEvidence(runDir, options);
+  return probe;
+}
+
+/** `probeHost` plus why a lost owner counts as lost: `host_process_gone`, `heartbeat_stale` or `claim_invalid: …`. */
+export function probeHostEvidence(runDir: string, options: ProbeOptions = {}): HostProbeEvidence {
   const claim = readHostClaim(runDir);
   if (claim.kind === "none") return { owner: "unhosted", host: null };
-  if (claim.kind === "invalid") return { owner: "lost", host: null, problem: claim.problem };
-  const owner = ownerOf(claim.host, options);
-  if (claim.problem === undefined) return { owner, host: claim.host };
-  return { owner: owner === "alive" ? "alive" : "lost", host: claim.host, problem: claim.problem };
+  if (claim.kind === "invalid") {
+    return {
+      owner: "lost",
+      host: null,
+      problem: claim.problem,
+      lostReason: `claim_invalid: ${claim.problem}`,
+    };
+  }
+  const { owner, evidence } = livenessOf(claim.host, options);
+  if (claim.problem === undefined) {
+    return { owner, host: claim.host, ...(owner === "lost" ? { lostReason: evidence } : {}) };
+  }
+  if (owner === "alive") return { owner, host: claim.host, problem: claim.problem };
+  return {
+    owner: "lost",
+    host: claim.host,
+    problem: claim.problem,
+    lostReason: owner === "lost" ? evidence : `claim_invalid: ${claim.problem}`,
+  };
 }
 
 /** The owner state of a parsed claim (pure except for the same-host pid check). */
 export function ownerOf(host: HostInfo, options: ProbeOptions = {}): HostOwner {
-  if (host.state === "abandoned") return "unhosted";
-  if (host.state === "exited") return "exited";
+  return livenessOf(host, options).owner;
+}
+
+function livenessOf(
+  host: HostInfo,
+  options: ProbeOptions,
+): { owner: HostOwner; evidence: "host_process_gone" | "heartbeat_stale" } {
+  const evidence = "heartbeat_stale";
+  if (host.state === "abandoned") return { owner: "unhosted", evidence };
+  if (host.state === "exited") return { owner: "exited", evidence };
   const now = options.now ?? Date.now();
   const beat = host.heartbeatAt === null ? Number.NaN : Date.parse(host.heartbeatAt);
   const stale =
@@ -278,9 +310,9 @@ export function ownerOf(host: HostInfo, options: ProbeOptions = {}): HostOwner {
   // (p5 C3 — asserted in test/host.process.test.ts, not merely implied).
   const dead = host.hostname === hostname() && host.pid !== null && !processExists(host.pid);
   // A host process that is gone without recording its exit was lost, even on a terminated run.
-  if (dead) return "lost";
-  if (!stale) return "alive";
-  return options.terminal === true ? "exited" : "lost";
+  if (dead) return { owner: "lost", evidence: "host_process_gone" };
+  if (!stale) return { owner: "alive", evidence };
+  return { owner: options.terminal === true ? "exited" : "lost", evidence };
 }
 
 function sleepSync(ms: number): void {

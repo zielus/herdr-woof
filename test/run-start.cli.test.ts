@@ -516,7 +516,21 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     });
     await hostExited;
     // The host ran the launch to its end; it could not replace the foreign file.
-    expect(records(runDir).at(-1)).toMatchObject({ type: "run.terminated", outcome: "completed" });
+    // The host journals its own lifecycle around the run: its claim once the run is open, and its
+    // exit (the one record that follows a termination) before it releases the claim.
+    const journal = records(runDir);
+    expect(journal.slice(0, 2).map((record) => record["type"])).toEqual([
+      "run.opened",
+      "host.claimed",
+    ]);
+    expect(journal[1]).toMatchObject({ pid: host.pid, paneId: "w9:p2" });
+    expect(journal.at(-2)).toMatchObject({ type: "run.terminated", outcome: "completed" });
+    expect(journal.at(-1)).toMatchObject({
+      type: "host.exited",
+      pid: host.pid,
+      exitCode: 0,
+      reason: "completed",
+    });
     expect(readFileSync(join(runDir, "outcome.json"), "utf8")).toBe(foreign);
 
     // A normal launch: the host's outcome.json carries the digest of the launch request it served.
@@ -763,11 +777,34 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     ]);
     expect(waitedLost.status, waitedLost.stdout).toBe(8);
     expect(waitedLost.json?.["status"]["liveness"]).toMatchObject({ owner: "lost" });
+    // Inspection never writes: the probe said lost, but nothing journaled it yet.
+    expect(records(runDir).some((record) => record["type"] === "host.lost")).toBe(false);
     const cancelled = woofIn(ws, ["run", "cancel", runDir]);
     expect(cancelled.status, cancelled.stdout).toBe(0);
+    // The cancel is the first locked writer to act on the lost run: it journals the evidence, then
+    // the request, then the termination, under one lock.
+    expect(
+      records(runDir)
+        .slice(-3)
+        .map((record) => record["type"]),
+    ).toEqual(["host.lost", "run.cancel_requested", "run.terminated"]);
+    expect(records(runDir).at(-3)).toMatchObject({
+      pid,
+      reason: "host_process_gone",
+      heartbeatAt: expect.any(String),
+      detectedBy: "cli",
+    });
+    expect(records(runDir).at(-2)).toMatchObject({ source: "cli" });
+    expect(cancelled.json).toMatchObject({
+      outcome: "recorded",
+      record: { type: "run.terminated", outcome: "cancelled" },
+      cancelRequest: { type: "run.cancel_requested" },
+      hostLost: { type: "host.lost", pid },
+    });
     expect(show(ws, runDir)).toMatchObject({
       status: "cancelled",
       liveness: { owner: "lost", host: { state: "hosting", pid } },
+      lifecycle: { host: { state: "lost", pid }, cancelRequested: { source: "cli" } },
     });
     // A recorded outcome wins over a lost owner.
     expect(woofIn(ws, ["status", runDir, "--wait"]).status).toBe(6);

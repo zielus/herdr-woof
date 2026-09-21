@@ -257,12 +257,9 @@ records}`) is the proof of this by construction: it re-derives the
 
 - **Gate evaluation, blocking/unblocking and delivery reconciliation are
   implemented (p3).** See "Implemented now (p3)" below for the snapshot and
-  event shapes. **Still not covered:** a cancellation request distinct from
-  plain termination (`runWorkflow({signal})` and `woof run cancel` both
-  produce the same `run.terminated{outcome:"cancelled"}`), and observation
-  loss/owner liveness recovery (still needs a run owner, which does not
-  exist — every snapshot's `liveness.owner` stays `"unhosted"` (p2;
-  superseded by p4, see [Implemented now (p4)](#implemented-now-p4))).
+  event shapes. A cancellation request distinct from termination, host
+  lifecycle and observation loss/recovery are journaled too — see
+  [Implemented now (lifecycle records)](#implemented-now-lifecycle-records).
 
 ## Implemented now (p3)
 
@@ -484,5 +481,68 @@ report-metadata`, `herdr notification show`); nothing in Woof reads a
   finalizing stays prompt even when Herdr is slow to respond. See
   [plugins](../integrations/plugins.md#herdr-plugin).
 - **Still not covered:** crash resume or re-hosting a lost run (a `lost`
-  owner is reported and only ever cancelled), parallel scheduling, and a
-  second built-in workflow.
+  owner is reported and only ever cancelled) and parallel scheduling.
+
+## Implemented now (lifecycle records)
+
+Real shipped behavior — not design intent. Source:
+`src/journal/lifecycle-records.ts`, `src/state/{reducer,store,snapshot}.ts`,
+`src/host/run.ts`, `src/scheduler/driver.ts`, `src/observe/format.ts`. Every
+record below is an ordinary journal record and therefore an event, one-to-one;
+all are additive at `schemaVersion: 1`, and a journal without them reads
+unchanged. They are transitions, never poll samples.
+
+- **`run.cancel_requested {source, reason}`** — who asked, distinct from the
+  termination it leads to. `source` is `cli` (`woof run cancel`), `web` (the
+  UI's cancel route), `herdr_action` (`woof herdr cancel`), `signal` (a run
+  host's SIGINT/SIGTERM) or `abort_signal` (`runWorkflow({signal})`, the
+  default; `cancelSource` overrides it). All of them go through
+  `cancelRun`, which appends the request and then
+  `run.terminated{outcome:"cancelled"}` under **one** journal lock, so no
+  other writer comes between the two. It prints/returns the termination as
+  `record` plus `cancelRequest` and `hostLost`. `terminateRun` with
+  `outcome: "cancelled"` still works and writes no request.
+- **`host.claimed {pid, hostname, startedAt, heartbeatMs, paneId,
+workspaceId}`** — written by the run host right after the run opens (the
+  claim file itself precedes the journal), read back from its own
+  `host.json`. **`host.exited {pid, exitCode, reason}`** — written by the
+  host on every awaited exit path, before it writes `host-exit.json`;
+  `reason` is the run outcome or `rejected:<reason>`. It is the one record
+  the reducer allows after `run.terminated`, because a host exits after the
+  run it hosted ended; `woof events --follow --after <cursor at or past the
+termination>` delivers it and ends at once. The synchronous second-signal
+  exit (130) cannot take the journal lock and leaves only `host-exit.json`.
+  A refused or failed host record is logged and never affects the run. A
+  scheduler driven without a host (`runWorkflow` from the SDK) journals no
+  host record.
+- **`host.lost {pid, heartbeatAt, reason, detectedBy}`** — a dead host cannot
+  write it, and inspectors never write anything: `cancelRun` (the only
+  mutating path that acts on a lost run) probes the host under the lock and,
+  when the probe says `lost` and the journal holds no `host.exited`/
+  `host.lost` yet, appends the evidence first — `host_process_gone`,
+  `heartbeat_stale` or `claim_invalid: <problem>` (`probeHostEvidence`) — then
+  the request and the termination. A `host.claimed` is not required (a host
+  can die before journaling it); a later `host.exited` is still accepted,
+  since `host.lost` records a suspicion.
+- **`observation.lost {agentId, code, message, terminalId}`** /
+  **`observation.recovered {agentId, lostSeq, terminalId}`** — the scheduler
+  writes `lost` at the first failed observe of an outage (the point where its
+  observation stops being current: the first timeout of a streak, or the
+  runtime error that fails the run at once) and `recovered` at the next
+  successful observe. One record per outage: the second and third timeouts
+  of a streak write nothing, and the third then fails the run with the
+  unresolved loss still in the snapshot. Individual samples stay
+  unjournaled.
+- **Snapshot: `lifecycle {host, cancelRequested, observationLost}`** —
+  `host` is the last journaled host fact (`{state: "claimed"|"exited"|"lost",
+seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest
+  request (`{seq, at, source, reason}` or `null`), `observationLost` every
+  loss no recovery resolved. It is derived by the one reducer, so
+  `foldEvents` reproduces it; `liveness` stays the separate read-time probe.
+- **Reducer refusals:** `host_exists`, `host_unknown`, `host_gone`,
+  `observation_lost`, `observation_not_lost`, plus `run_closed` for every
+  lifecycle record but `host.exited`.
+- **Still not covered:** per-agent runtime lifecycle transitions
+  (ready/working/blocked/gone, a replaced pane occupant) are not journaled;
+  they stay the in-memory overlay. Format repair and work retry are not
+  records of their own: the reducer derives an attempt's `cause`.

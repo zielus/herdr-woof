@@ -247,3 +247,49 @@ export function reconciled(
     evidence,
   };
 }
+
+export const hostClaimed = (pid = 4242): Json => ({
+  type: "host.claimed",
+  pid,
+  hostname: "test-host",
+  startedAt: "2026-09-14T10:00:00.000Z",
+  heartbeatMs: 2000,
+  paneId: "w1:host",
+  workspaceId: null,
+});
+
+export const hostExited = (pid = 4242, exitCode = 0, reason = "completed"): Json => ({
+  type: "host.exited",
+  pid,
+  exitCode,
+  reason,
+});
+
+export const hostLost = (pid: number | null = 4242, reason = "host_process_gone"): Json => ({
+  type: "host.lost",
+  pid,
+  heartbeatAt: "2026-09-14T10:00:05.000Z",
+  reason,
+  detectedBy: "cli",
+});
+
+export const cancelRequested = (source = "cli", reason = "test"): Json => ({
+  type: "run.cancel_requested",
+  source,
+  reason,
+});
+
+export const observationLost = (agentId: string, code = "timeout"): Json => ({
+  type: "observation.lost",
+  agentId,
+  code,
+  message: `${code} observing ${agentId}`,
+  terminalId: null,
+});
+
+export const observationRecovered = (agentId: string, lostSeq: number): Json => ({
+  type: "observation.recovered",
+  agentId,
+  lostSeq,
+  terminalId: "term-1",
+});

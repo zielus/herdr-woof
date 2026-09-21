@@ -6,11 +6,17 @@ import {
   assigned,
   attempt,
   blocked,
+  cancelRequested,
   checkGate,
   dispatched,
   duplicate,
   gate,
+  hostClaimed,
+  hostExited,
+  hostLost,
   journalOf,
+  observationLost,
+  observationRecovered,
   opened,
   reconciled,
   rejected,
@@ -210,6 +216,27 @@ describe("formatEventLine", () => {
     );
     expect(lastLine(...base, reconciled(4, "build", "builder"))).toBe(
       `${time(4)} delivery.reconciled  builder build v1 a1  delivered (observed_activity) dispatch #4`,
+    );
+  });
+
+  it("host lifecycle, cancellation request and observation loss/recovery", () => {
+    expect(lastLine(opened(), hostClaimed())).toBe(
+      `${time(1)} host.claimed         -  pid 4242 on test-host pane w1:host heartbeat 2000 ms`,
+    );
+    expect(lastLine(opened(), hostExited(4242, 6, "cancelled"))).toBe(
+      `${time(1)} host.exited          -  pid 4242 exit 6 (cancelled)`,
+    );
+    expect(lastLine(opened(), hostLost())).toBe(
+      `${time(1)} host.lost            -  pid 4242 host_process_gone, last heartbeat 2026-09-14T10:00:05.000Z (found by cli)`,
+    );
+    expect(lastLine(opened(), cancelRequested("web", "stop"))).toBe(
+      `${time(1)} run.cancel_requested -  by web: stop`,
+    );
+    expect(lastLine(opened(), observationLost("builder"))).toBe(
+      `${time(1)} observation.lost     builder  timeout: timeout observing builder`,
+    );
+    expect(lastLine(opened(), observationRecovered("builder", 2))).toBe(
+      `${time(1)} observation.recovered builder  after loss #2`,
     );
   });
 

@@ -605,8 +605,8 @@ const SCENARIOS = {
       workers: { builder: builderEdits, reviewer: () => ({ submit: false }) },
       onObserve: (_handle, context) => {
         if (context.agentId !== "reviewer" || !once(context, "terminate")) return;
-        const script = `const { terminateRun } = await import(${JSON.stringify(distUrl("state/store.js"))});
-const out = await terminateRun({ runDir: process.argv[1], outcome: "cancelled", reason: "cancelled from another process" });
+        const script = `const { cancelRun } = await import(${JSON.stringify(distUrl("state/store.js"))});
+const out = await cancelRun({ runDir: process.argv[1], source: "cli", reason: "cancelled from another process" });
 if (out.outcome !== "recorded") process.exit(1);`;
         const child = spawnSync(
           process.execPath,

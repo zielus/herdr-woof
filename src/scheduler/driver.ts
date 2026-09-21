@@ -13,9 +13,12 @@ import { readSnapshot, type RunSnapshot } from "../state/snapshot.js";
 import {
   assignAgent,
   blockRun,
+  cancelRun,
   reconcileDelivery,
   recordDispatch,
   recordGate,
+  recordObservationLost,
+  recordObservationRecovered,
   terminateRun,
   unblockRun,
   type StoreOutcome,
@@ -67,6 +70,11 @@ export interface RunWorkflowOptions<Input> {
   /** Command that runs `woof`, placed before `submit` in worker requests. */
   submitCommand: readonly string[];
   signal?: AbortSignal;
+  /**
+   * What aborting `signal` stands for on the journaled `run.cancel_requested`
+   * (default "abort_signal"); a run host that aborts on SIGINT/SIGTERM passes "signal".
+   */
+  cancelSource?: "signal" | "abort_signal";
   /** Sleep between ticks that wait (default 1000 ms). */
   pollMs?: number;
   /** Leave agent panes open when the run ends. */
@@ -133,6 +141,8 @@ export async function runWorkflow<Input>(
   let evidence: GateEvidence | null = null;
   /** Consecutive observe timeouts per agent; any successful observation resets it. */
   const observeTimeouts: Record<string, number> = Object.create(null);
+  /** Seq of the unresolved observation.lost this scheduler journaled, per agent. */
+  const observationLost: Record<string, number> = Object.create(null);
   /** openedAt + runTimeoutMs, known after the first snapshot read. */
   let deadlineAt: number | null = null;
   let observeNext: string | null = null;
@@ -370,11 +380,42 @@ export async function runWorkflow<Input>(
         if (observed.ok) {
           observeTimeouts[agentId] = 0;
           accept(view, observed.value);
+          const lostSeq = observationLost[agentId];
+          if (lostSeq !== undefined) {
+            // The first successful observation after a journaled loss, never every sample.
+            const recovered = await write(() =>
+              recordObservationRecovered({
+                runDir,
+                agentId,
+                lostSeq,
+                terminalId: observed.value.order.terminalId,
+                ...lock,
+              }),
+            );
+            if (!recovered.ok && !recovered.closed) return fatal(recovered);
+            delete observationLost[agentId];
+          }
         } else {
           view.readyStreak = 0;
           const error = observed.error;
           const timeouts = error.code === "timeout" ? (observeTimeouts[agentId] ?? 0) + 1 : 0;
           observeTimeouts[agentId] = timeouts;
+          if (observationLost[agentId] === undefined) {
+            // Observation stops being current at the first failed observe of an outage: one record
+            // per outage, whether it then recovers or fails the run below.
+            const lost = await write<{ record: { seq: number } }>(() =>
+              recordObservationLost({
+                runDir,
+                agentId,
+                code: error.code,
+                message: error.message.slice(0, 2000),
+                terminalId: view.handle?.terminalId ?? null,
+                ...lock,
+              }),
+            );
+            if (!lost.ok && !lost.closed) return fatal(lost);
+            if (lost.ok) observationLost[agentId] = lost.value.record.seq;
+          }
           // A runtime error is a structured failure; a timeout only after consecutive repeats.
           if (error.code !== "timeout" || timeouts >= OBSERVE_TIMEOUT_LIMIT) {
             const ended = await end(
@@ -418,13 +459,22 @@ export async function runWorkflow<Input>(
 
       case "terminate":
         written = await write(() =>
-          terminateRun({
-            runDir,
-            outcome: action.outcome,
-            reason: action.reason,
-            ...(action.limit !== undefined ? { limit: action.limit } : {}),
-            ...lock,
-          }),
+          action.outcome === "cancelled"
+            ? // The request and its termination, under one lock. This scheduler is the live host.
+              cancelRun({
+                runDir,
+                source: options.cancelSource ?? "abort_signal",
+                reason: action.reason,
+                probeHost: false,
+                ...lock,
+              })
+            : terminateRun({
+                runDir,
+                outcome: action.outcome,
+                reason: action.reason,
+                ...(action.limit !== undefined ? { limit: action.limit } : {}),
+                ...lock,
+              }),
         );
         break;
 

@@ -540,6 +540,50 @@ console.log(JSON.stringify(readEvents(process.argv[1], { limit: 10000 })));`,
     });
   });
 
+  it("--follow --after a terminated run's cursor delivers the host's later host.exited and ends at once", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    // A host journals its claim, the run ends, and the host's own exit follows the termination.
+    const written = runSdk<{ outcomes: string[] }>(
+      runDir,
+      `const claimed = await store.recordHostClaimed({ runDir, pid: 4242, hostname: "test-host",
+  startedAt: "2026-09-15T10:00:00.000Z", heartbeatMs: 2000, paneId: null, workspaceId: null });
+const cancelled = await store.cancelRun({ runDir, source: "cli", reason: "stop", probeHost: false });
+const stranger = await store.recordHostExited({ runDir, pid: 7, exitCode: 0, reason: "cancelled" });
+const exited = await store.recordHostExited({ runDir, pid: 4242, exitCode: 6, reason: "cancelled" });
+out = { outcomes: [claimed, cancelled, stranger, exited].map((item) => item.reason ?? item.outcome) };`,
+    );
+    expect(written.outcomes).toEqual(["recorded", "recorded", "host_unknown", "recorded"]);
+    const recorded = lines(woof(["events", runDir]).stdout);
+    expect(recorded.map((line) => line["type"] ?? line["kind"])).toEqual([
+      "run.opened",
+      "host.claimed",
+      "run.cancel_requested",
+      "run.terminated",
+      "host.exited",
+      "woof.events.end",
+    ]);
+    const terminated = recorded[3] as Json;
+    const started = Date.now();
+    const resumed = woof(
+      ["events", runDir, "--follow", "--after", terminated["cursor"], "--timeout-ms", "5000"],
+      { timeoutMs: 20_000 },
+    );
+    expect(resumed.status, resumed.stdout + resumed.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(lines(resumed.stdout)).toMatchObject([
+      { type: "host.exited", data: { pid: 4242, exitCode: 6 } },
+      { kind: "woof.events.end", cursor: recorded[4]?.["cursor"], terminal: true },
+    ]);
+    // The host's exit never reopens the run, and the snapshot shows it as the last host fact.
+    expect(woof(["run", "show", runDir]).json).toMatchObject({
+      snapshot: {
+        status: "cancelled",
+        lifecycle: { host: { state: "exited", pid: 4242, exitCode: 6 } },
+      },
+    });
+  });
+
   it("PR #6 (events.ts:118): --follow never takes the journal lock; a persistent torn tail ends with journal_corrupt after the grace period", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);

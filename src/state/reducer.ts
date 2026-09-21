@@ -5,10 +5,16 @@ import {
   type AttemptOpenedRecord,
   type DeliveryReconciledRecord,
   type GateRecordedRecord,
+  type HostClaimedRecord,
+  type HostExitedRecord,
+  type HostLostRecord,
   type JournalRecord,
   type NewJournalRecord,
+  type ObservationLostRecord,
+  type ObservationRecoveredRecord,
   type RequestDispatchedRecord,
   type RunBlockedRecord,
+  type RunCancelRequestedRecord,
   type RunTerminatedRecord,
   type RunUnblockedRecord,
   type SubmissionAcceptedRecord,
@@ -43,6 +49,13 @@ export interface AttemptState {
 export interface BlockState {
   blocked: RunBlockedRecord;
   unblocked?: RunUnblockedRecord;
+}
+
+/** The journaled host facts; each is recorded at most once per run. */
+export interface HostFacts {
+  claimed?: HostClaimedRecord;
+  exited?: HostExitedRecord;
+  lost?: HostLostRecord;
 }
 
 export interface Counters {
@@ -90,6 +103,12 @@ export interface RunState {
   blocks: BlockState[];
   /** Reconciliations by the seq of the ambiguous dispatch they resolve. */
   reconciliations: Map<number, DeliveryReconciledRecord>;
+  /** Host lifecycle facts the host (or the writer that found it lost) journaled. */
+  host: HostFacts;
+  /** Cancellation requests in journal order. */
+  cancelRequests: RunCancelRequestedRecord[];
+  /** Unresolved observation loss per agent; removed by observation.recovered. */
+  observationLost: Map<string, ObservationLostRecord>;
   status: RunStatus;
   counters: Counters;
 }
@@ -125,7 +144,12 @@ export type ReducerReason =
   | "not_blocked"
   | "dispatch_not_ambiguous"
   | "reconcile_exists"
-  | "assignment_mismatch";
+  | "assignment_mismatch"
+  | "host_exists"
+  | "host_unknown"
+  | "host_gone"
+  | "observation_lost"
+  | "observation_not_lost";
 
 export interface ReplayFailure {
   ok: false;
@@ -169,6 +193,9 @@ export function emptyRunState(): RunState {
     gates: [],
     blocks: [],
     reconciliations: new Map(),
+    host: {},
+    cancelRequests: [],
+    observationLost: new Map(),
     status: "created",
     counters: {
       attemptsOpened: 0,
@@ -246,6 +273,20 @@ export function emptyRunState(): RunState {
  * - delivery.reconciled: run_closed, dispatch_not_ambiguous (dispatchSeq is not
  *   an ambiguous dispatch of exactly this agent and attempt), reconcile_exists.
  * - run.terminated is allowed while blocked; the block stays in history.
+ *
+ * Lifecycle rules, in check order per record:
+ * - host.claimed: run_closed, host_exists (a host already claimed this run).
+ * - host.exited: host_unknown (no host.claimed, or another pid's), host_gone (an
+ *   exit is already recorded). It is the one record allowed after
+ *   run.terminated, because a host exits after the run it hosted ended; it is
+ *   also allowed after host.lost, which records a suspicion, not an exit.
+ * - host.lost: run_closed, host_gone (an exit or a loss is already recorded). A
+ *   host.claimed is not required: a host can die before it journals its claim.
+ * - run.cancel_requested: run_closed. It never ends the run by itself.
+ * - observation.lost: run_closed, agent_unknown (plan), agent_unassigned,
+ *   observation_lost (the agent already has an unresolved loss).
+ * - observation.recovered: run_closed, observation_not_lost (`lostSeq` is not
+ *   the agent's unresolved loss).
  *
  * A plan-less run skips every plan check. Limits are never enforced here.
  */
@@ -374,7 +415,82 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
       return applyUnblocked(state, record);
     case "delivery.reconciled":
       return applyReconciled(state, record);
+    case "host.claimed":
+      if (state.termination !== undefined) {
+        return ["run_closed", "host.claimed after run.terminated"];
+      }
+      if (state.host.claimed !== undefined) {
+        return ["host_exists", `pid ${state.host.claimed.pid} already claimed this run`];
+      }
+      state.host.claimed = record;
+      return undefined;
+    case "host.exited":
+      if (state.host.claimed?.pid !== record.pid) {
+        return ["host_unknown", `pid ${record.pid} never journaled a claim on this run`];
+      }
+      if (state.host.exited !== undefined) {
+        return ["host_gone", "the host's exit is already recorded"];
+      }
+      state.host.exited = record;
+      return undefined;
+    case "host.lost":
+      if (state.termination !== undefined) {
+        return ["run_closed", "host.lost after run.terminated"];
+      }
+      if (state.host.exited !== undefined || state.host.lost !== undefined) {
+        return ["host_gone", "the host's exit or loss is already recorded"];
+      }
+      state.host.lost = record;
+      return undefined;
+    case "run.cancel_requested":
+      if (state.termination !== undefined) {
+        return ["run_closed", "run.cancel_requested after run.terminated"];
+      }
+      state.cancelRequests.push(record);
+      return undefined;
+    case "observation.lost":
+      return applyObservationLost(state, record);
+    case "observation.recovered":
+      return applyObservationRecovered(state, record);
   }
+}
+
+function applyObservationLost(state: RunState, record: ObservationLostRecord): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "observation.lost after run.terminated"];
+  }
+  if (state.plan !== null && !state.plan.agents.some((agent) => agent.agentId === record.agentId)) {
+    return ["agent_unknown", `agent ${record.agentId} is not in the run plan`];
+  }
+  if (!state.assignments.has(record.agentId)) {
+    return ["agent_unassigned", `agent ${record.agentId} has no runtime assignment`];
+  }
+  const current = state.observationLost.get(record.agentId);
+  if (current !== undefined) {
+    return [
+      "observation_lost",
+      `observation of agent ${record.agentId} is already lost since seq ${current.seq}`,
+    ];
+  }
+  state.observationLost.set(record.agentId, record);
+  return undefined;
+}
+
+function applyObservationRecovered(
+  state: RunState,
+  record: ObservationRecoveredRecord,
+): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "observation.recovered after run.terminated"];
+  }
+  if (state.observationLost.get(record.agentId)?.seq !== record.lostSeq) {
+    return [
+      "observation_not_lost",
+      `seq ${record.lostSeq} is not an unresolved observation loss of agent ${record.agentId}`,
+    ];
+  }
+  state.observationLost.delete(record.agentId);
+  return undefined;
 }
 
 function applyAttemptOpened(state: RunState, record: AttemptOpenedRecord): Refusal | undefined {
