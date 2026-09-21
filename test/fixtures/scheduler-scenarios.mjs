@@ -27,7 +27,7 @@ const { runWorkflow } = await load("scheduler/driver.js");
 const { admitWorkflow } = await load("scheduler/admission.js");
 const { loadWorkflowDefinition } = await load("scheduler/loader.js");
 const { buildReviewWorkflow } = await load("workflows/build-review.js");
-const { openRun } = await load("state/store.js");
+const { openRun, recordObservationLost } = await load("state/store.js");
 const { readSnapshot } = await load("state/snapshot.js");
 const { submitResult } = await load("submission/submit.js");
 const { herdrRuntimeName } = await load("runtime/names.js");
@@ -902,6 +902,38 @@ await withJournalLock(runDir, async () => {
       observeError: (agentId, count) =>
         agentId === "builder" && (count === 2 || count === 3) ? "timeout" : undefined,
     }),
+
+  // The journal holds an unresolved loss this scheduler never wrote (what a scheduler started on
+  // such a journal finds): it is journaled from outside during a successful builder observe. The
+  // builder's next observe then times out and the one after succeeds.
+  "observe-foreign-loss": () => {
+    let count = 0;
+    let lostAt = null;
+    return scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      observeError: (agentId, seen) => {
+        if (agentId !== "builder") return undefined;
+        count = seen;
+        return lostAt !== null && seen === lostAt + 1 ? "timeout" : undefined;
+      },
+      onObserve: async (handle, context) => {
+        if (context.agentId !== "builder" || lostAt !== null) return;
+        const assigned = (record) =>
+          record.type === "agent.assigned" && record.agentId === "builder";
+        if (!context.journal().some(assigned)) return;
+        lostAt = count;
+        const lost = await recordObservationLost({
+          runDir: context.runDir,
+          agentId: "builder",
+          code: "timeout",
+          message: "journaled by an earlier scheduler",
+          terminalId: handle.terminalId ?? null,
+        });
+        if (lost.outcome !== "recorded") throw new Error(JSON.stringify(lost));
+      },
+    });
+  },
 
   "null-seq-agents": () =>
     scenario({

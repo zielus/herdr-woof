@@ -17,7 +17,7 @@ import { validateWorkflowDefinition, type WorkflowDefinition } from "../schedule
 import { runWorkflow } from "../scheduler/driver.js";
 import { loadWorkflowDefinition } from "../scheduler/loader.js";
 import { readSnapshot } from "../state/snapshot.js";
-import { recordHostClaimed, recordHostExited } from "../state/store.js";
+import { recordHostExited, type OpenRunInput } from "../state/store.js";
 import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
@@ -119,7 +119,7 @@ export interface HostWorkflowResult {
  * the scheduler records the cancellation; a second signal finalizes
  * synchronously and exits without waiting for the runtime to settle.
  *
- * The host also journals its own lifecycle: `host.claimed` once the run is open
+ * The host also journals its own lifecycle: `host.claimed` with `run.opened`, under one journal lock
  * (the claim itself precedes the journal), and `host.exited` on every awaited
  * exit path, before the claim is released. The synchronous second-signal exit
  * cannot take the journal lock, so it leaves only `host-exit.json`. Neither
@@ -319,9 +319,18 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
 
     // From here a signal cancels through the scheduler: the journal may already be written.
     opening = true;
-    const opened = await openAdmittedRun(admitted, { runDir, runId, configuration: recorded });
+    // run.opened and host.claimed go in under one journal lock: a cancel that arrives while the run
+    // opens cannot close it before its host is on record (and so before host.exited may follow).
+    const hostRecord = hostClaim();
+    const opened = await openAdmittedRun(admitted, {
+      runDir,
+      runId,
+      configuration: recorded,
+      ...(hostRecord !== undefined ? { host: hostRecord } : {}),
+    });
     if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
-    await journalClaim();
+    if (opened.hostClaimed !== null) journaled = true;
+    else if (hostRecord !== undefined) log("cannot journal host.claimed: the journal write failed");
     for (const warning of recorded.warnings)
       log(
         `warning ${warning.code}: ${warning.message}${warning.path !== undefined ? ` (${warning.path})` : ""}`,
@@ -394,9 +403,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     });
   }
 
-  /** Journals this process's claim, read back from host.json so the record is what observers probe. */
-  async function journalClaim(): Promise<void> {
-    if (release === undefined) return;
+  /** This process's claim, read back from host.json so the record is what observers probe. */
+  function hostClaim(): OpenRunInput["host"] {
+    if (release === undefined) return undefined;
     const claim = readHostInfo(runDir);
     if (
       claim === undefined ||
@@ -407,23 +416,16 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       claim.heartbeatMs === null
     ) {
       log("cannot journal host.claimed: host.json does not hold this process's claim");
-      return;
+      return undefined;
     }
-    try {
-      const claimed = await recordHostClaimed({
-        runDir,
-        pid: claim.pid,
-        hostname: claim.hostname,
-        startedAt: claim.startedAt,
-        heartbeatMs: claim.heartbeatMs,
-        paneId: claim.paneId,
-        workspaceId: claim.workspaceId,
-      });
-      if (claimed.outcome === "recorded") journaled = true;
-      else log(`cannot journal host.claimed: ${claimed.reason}: ${claimed.message}`);
-    } catch (error) {
-      log(`cannot journal host.claimed: ${(error as Error).message}`);
-    }
+    return {
+      pid: claim.pid,
+      hostname: claim.hostname,
+      startedAt: claim.startedAt,
+      heartbeatMs: claim.heartbeatMs,
+      paneId: claim.paneId,
+      workspaceId: claim.workspaceId,
+    };
   }
 }
 

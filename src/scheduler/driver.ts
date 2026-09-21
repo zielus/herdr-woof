@@ -139,8 +139,14 @@ export async function runWorkflow<Input>(
   let evidence: GateEvidence | null = null;
   /** Consecutive observe timeouts per agent; any successful observation resets it. */
   const observeTimeouts: Record<string, number> = Object.create(null);
-  /** Seq of the unresolved observation.lost this scheduler journaled, per agent. */
-  const observationLost: Record<string, number> = Object.create(null);
+  /**
+   * `lifecycle.observationLost` of the latest snapshot read. The journal is the authority on
+   * which losses are unresolved, never this process's memory: a scheduler started on a journal
+   * that already holds a loss pairs its recovery with that record and writes no second loss. It
+   * stays exact between reads because only this scheduler writes observation records, always
+   * before the tick's read; `null` until the first read.
+   */
+  let unresolvedLosses: RunSnapshot["lifecycle"]["observationLost"] | null = null;
   /** openedAt + runTimeoutMs, known after the first snapshot read. */
   let deadlineAt: number | null = null;
   let observeNext: string | null = null;
@@ -151,6 +157,7 @@ export async function runWorkflow<Input>(
     const started = performance.now();
     const result = readSnapshot(runDir);
     stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, performance.now() - started);
+    if (result.ok) unresolvedLosses = result.snapshot.lifecycle.observationLost;
     return result.ok ? result : { ok: false, message: `${result.reason}: ${result.message}` };
   };
 
@@ -375,10 +382,11 @@ export async function runWorkflow<Input>(
         const observed = await runtime.observe(view.handle, {
           timeoutMs: Math.floor(Math.min(ADAPTER_COMMAND_CAP_MS, left)),
         });
+        if (unresolvedLosses === null) read();
+        const lostSeq = unresolvedLosses?.find((loss) => loss.agentId === agentId)?.seq;
         if (observed.ok) {
           observeTimeouts[agentId] = 0;
           accept(view, observed.value);
-          const lostSeq = observationLost[agentId];
           if (lostSeq !== undefined) {
             // The first successful observation after a journaled loss, never every sample.
             const recovered = await write(() =>
@@ -391,17 +399,16 @@ export async function runWorkflow<Input>(
               }),
             );
             if (!recovered.ok && !recovered.closed) return fatal(recovered);
-            delete observationLost[agentId];
           }
         } else {
           view.readyStreak = 0;
           const error = observed.error;
           const timeouts = error.code === "timeout" ? (observeTimeouts[agentId] ?? 0) + 1 : 0;
           observeTimeouts[agentId] = timeouts;
-          if (observationLost[agentId] === undefined) {
+          if (lostSeq === undefined) {
             // Observation stops being current at the first failed observe of an outage: one record
             // per outage, whether it then recovers or fails the run below.
-            const lost = await write<{ record: { seq: number } }>(() =>
+            const lost = await write(() =>
               recordObservationLost({
                 runDir,
                 agentId,
@@ -412,7 +419,6 @@ export async function runWorkflow<Input>(
               }),
             );
             if (!lost.ok && !lost.closed) return fatal(lost);
-            if (lost.ok) observationLost[agentId] = lost.value.record.seq;
           }
           // A runtime error is a structured failure; a timeout only after consecutive repeats.
           if (error.code !== "timeout" || timeouts >= OBSERVE_TIMEOUT_LIMIT) {
