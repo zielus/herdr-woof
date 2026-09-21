@@ -33,6 +33,8 @@ export interface AgentAssignedRecord extends RecordBase {
   runtime: { adapter: string; runtimeName: string; paneId: string };
   terminalId?: string;
   sessionId?: string;
+  /** The Herdr tab created for the agent's pane, when the runtime reported one (additive; absent in older journals). */
+  tabId?: string;
 }
 
 export interface RequestDispatchedRecord extends RecordBase {
@@ -68,7 +70,7 @@ export interface RunTerminatedRecord extends RecordBase {
 
 export function agentAssignedProblem(value: Record<string, unknown>): string | undefined {
   const problem =
-    keysProblem(value, ["agentId", "runtime"], ["terminalId", "sessionId"]) ??
+    keysProblem(value, ["agentId", "runtime"], ["terminalId", "sessionId", "tabId"]) ??
     check(isId(value["agentId"]), "agentId is invalid");
   if (problem !== undefined) return problem;
   const runtime = value["runtime"];
@@ -79,7 +81,8 @@ export function agentAssignedProblem(value: Record<string, unknown>): string | u
     nonEmptyStringProblem(runtime, "runtimeName", "runtime.") ??
     nonEmptyStringProblem(runtime, "paneId", "runtime.") ??
     (value["terminalId"] === undefined ? undefined : nonEmptyStringProblem(value, "terminalId")) ??
-    (value["sessionId"] === undefined ? undefined : nonEmptyStringProblem(value, "sessionId"))
+    (value["sessionId"] === undefined ? undefined : nonEmptyStringProblem(value, "sessionId")) ??
+    (value["tabId"] === undefined ? undefined : nonEmptyStringProblem(value, "tabId"))
   );
 }
 

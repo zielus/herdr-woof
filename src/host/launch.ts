@@ -232,6 +232,7 @@ export async function launchInPane(
     paneId,
     "env",
     shellQuote(`HERDR_WORKSPACE_ID=${tab.workspaceId}`),
+    shellQuote(`WOOF_HOST_TAB_ID=${tabId}`),
     shellQuote(options.nodePath),
     shellQuote(options.cliPath),
     "run",

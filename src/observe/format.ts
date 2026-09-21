@@ -92,7 +92,12 @@ export function formatHeader(input: HeaderInput, options: FormatOptions): string
     `${label("owner")}${ownerOf(status.liveness)}`,
   ];
   for (const agent of input.agents) {
-    const pane = agent.assignment === null ? "" : ` pane ${text(agent.assignment.paneId)}`;
+    const pane =
+      agent.assignment === null
+        ? ""
+        : ` pane ${text(agent.assignment.paneId)}${
+            agent.assignment.tabId == null ? "" : ` tab ${text(agent.assignment.tabId)}`
+          }`;
     lines.push(
       `${label("agent")}${text(agent.agentId)}  role ${orDash(agent.role)} kind ${orDash(agent.kind)} model ${orDash(agent.model)}${pane}`,
     );
@@ -149,7 +154,9 @@ function summaryOf(type: string, raw: unknown): string {
       }
       case "agent.assigned": {
         const runtime = isObject(data["runtime"]) ? data["runtime"] : {};
-        return `runtime ${text(runtime["runtimeName"])} pane ${text(runtime["paneId"])}`;
+        return `runtime ${text(runtime["runtimeName"])} pane ${text(runtime["paneId"])}${
+          data["tabId"] == null ? "" : ` tab ${text(data["tabId"])}`
+        }`;
       }
       case "attempt.opened":
         return `artifacts ${text(data["artifactDir"])}`;

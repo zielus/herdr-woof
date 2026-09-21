@@ -474,7 +474,7 @@ metadata}.ts`, `src/commands/{run,herdr}.ts`, `src/scheduler/admission.ts`,
   the raw input and flags, creates the host's own tab (`herdr tab create
 [--workspace <id>] --cwd <project root> --label
 woof:<workflow> --no-focus`; nothing is split, and `--split-from` only
-  stands in for `HERDR_PANE_ID`) and types `env HERDR_WORKSPACE_ID=<id> woof
+  stands in for `HERDR_PANE_ID`) and types `env HERDR_WORKSPACE_ID=<id> WOOF_HOST_TAB_ID=<tab> woof
 run host <run-dir>` into that tab's root pane. The workspace is the one
   Herdr reports for the launcher's pane (`herdr pane get`; for a Herdr action,
   the focused pane), else `HERDR_WORKSPACE_ID`, else none (Herdr's default).
