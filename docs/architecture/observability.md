@@ -528,6 +528,15 @@ events`**, **`woof watch`** and **`woof run show`** are read-only and never take
   `<run-dir>/host.log`, one ISO-timestamped line per entry, appended as it
   happens; `--plain` prints that log to stdout instead of the human view
   (`--ascii` and `--input summary|json` shape the view like `woof watch`'s).
+  The log never blocks or fails the host: agents can write into the run
+  directory, so `host.log` is opened once, non-blocking and without following
+  a symlink, kept only when it is a regular file (a FIFO or symlink there is
+  refused with one stderr notice and the lines are dropped), and every line is
+  sanitized (control characters become spaces) before it reaches the file or
+  stdout. A journal the host's own follower cannot read (corrupt, replaced,
+  resync required) ends the view with one subdued `-- view: <reason>: …` line,
+  also logged; the outcome and exit code come from the scheduler alone, and a
+  closed pane (EPIPE on stdout) only silences the view.
   Errors that abort the host still go to stderr; nothing else does, so a
   Herdr pane shows one coherent view. `outcome.json`, exit codes,
   `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are

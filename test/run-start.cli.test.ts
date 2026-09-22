@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1530,6 +1531,99 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
     const plainLog = readFileSync(join(plainDir, "host.log"), "utf8").trim().split("\n");
     expect(plain.stdout.trim().split("\n").slice(0, -1)).toEqual(plainLog);
   }, 120_000);
+
+  it("host.log replaced by a FIFO before the pane host starts: the host never blocks on it, completes the run with outcome.json and host.exited, and names the problem once on stderr", async () => {
+    // A worker agent has write access to the run directory: a FIFO at host.log with no reader
+    // would block the first appendFileSync forever, and with it the scheduler.
+    const ws = workspace();
+    writeHostScenario(ws);
+    const runDir = join(ws.root, "run");
+    mkdirSync(runDir);
+    expect(spawnSync("mkfifo", [join(runDir, "host.log")]).status).toBe(0);
+    const started = woofIn(ws, startArgs(ws, runDir, ["--run-id", "fifo-run"]));
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    const outcome = await waitForOutcome(runDir);
+    expect(outcome).toMatchObject({
+      outcome: "run",
+      result: { outcome: "completed", runId: "fifo-run" },
+    });
+    expect(records(runDir).at(-1)).toMatchObject({ type: "host.exited", exitCode: 0 });
+    await waitFor(() => paneLog(ws).includes("✓ Completed"), "the pane's summary", 15_000);
+    const pane = paneLog(ws);
+    // The pane (stdout and stderr) still carries the human view; the refusal is said exactly once.
+    const notices = pane.split("\n").filter((line) => line.startsWith("woof: "));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain(join(runDir, "host.log"));
+    expect(notices[0]).toMatch(/cannot be opened \(ENXIO\)|is not a regular file/);
+    expect(notices[0]).toContain("the technical log is dropped");
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d → builder {2}build {3}Task dispatched$/m);
+    // The FIFO was neither followed, written through nor replaced.
+    expect(statSync(join(runDir, "host.log")).isFIFO()).toBe(true);
+  }, 60_000);
+
+  it("a check argv carrying ESC, CR and LF reaches host.log and the --plain stdout with those characters as spaces", () => {
+    const ws = workspace();
+    const hostile = "\u001B[31mred\ninjected\rline";
+    writeFileSync(
+      ws.inputPath,
+      JSON.stringify(
+        input(ws.repo, {
+          verify: { command: ["node", "-e", "process.exit(0)", hostile], timeoutMs: 20_000 },
+        }),
+      ),
+    );
+    const runDir = join(ws.root, "run");
+    const plain = woofIn(ws, startArgs(ws, runDir, ["--host", "foreground", "--plain"]), {
+      HERDR_ENV: undefined,
+      HERDR_PANE_ID: undefined,
+    });
+    expect(plain.status, plain.stdout + plain.stderr).toBe(0);
+    expect(plain.json).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    const sanitized = "check verify: node -e process.exit(0)  [31mred injected line";
+    expect(plain.stdout).toContain(sanitized);
+    const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
+    expect(hostLog).toContain(sanitized);
+    // No ESC, CR or other control character anywhere; LF only between lines.
+    // oxlint-disable-next-line no-control-regex
+    const control = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/u;
+    expect(hostLog).not.toMatch(control);
+    const stdoutLines = plain.stdout.trim().split("\n");
+    for (const line of stdoutLines.slice(0, -1)) expect(line).not.toMatch(control);
+    expect(stdoutLines.slice(0, -1)).toEqual(hostLog.trim().split("\n"));
+    expect(plain.stderr).toBe("");
+  }, 60_000);
+
+  it("a foreground host whose stdout reader goes away (EPIPE) finishes the run and exits with its code", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const child = spawn("node", [cliPath, ...startArgs(ws, runDir, ["--host", "foreground"])], {
+      cwd: ws.root,
+      env: env(ws, { HERDR_ENV: undefined, HERDR_PANE_ID: undefined, WOOF_TEST_SCRIPT: "slow" }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    const exited = new Promise<number | null>((resolve) =>
+      child.on("close", (code) => resolve(code)),
+    );
+    // The pane closes once the view has started printing; every later view write hits EPIPE.
+    await new Promise<void>((resolve) => child.stdout.once("data", () => resolve()));
+    child.stdout.destroy();
+    await waitFor(
+      () => records(runDir).some((record) => record["type"] === "request.dispatched"),
+      "a dispatch",
+    );
+    writeFileSync(ws.release, "go\n");
+    expect(await exited).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8"))).toMatchObject({
+      exitCode: 0,
+    });
+    expect(records(runDir).at(-2)).toMatchObject({ type: "run.terminated", outcome: "completed" });
+    const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
+    expect(hostLog).toMatch(/Z gate review pass \(approved\)$/m);
+    expect(hostLog).toMatch(/Z run ended$/m);
+  }, 60_000);
 
   it("S14: the Herdr runtime opens an agent in its own new tab (no pane split) and closes that tab when the run ends", () => {
     const ws = workspace("w9:p2", false);

@@ -1,6 +1,7 @@
 import { readRunStatus } from "../inspect/status.js";
 import { MAX_EVENTS_LIMIT, readEvents } from "../observe/events.js";
 import type { RunRenderer } from "../observe/render.js";
+import { paintFor, sanitize } from "../observe/render-text.js";
 import { rendererFor, type RunViewOptions } from "../observe/run-view.js";
 import { streamEvents, type EventsSink } from "../observe/stream.js";
 
@@ -13,6 +14,11 @@ import { streamEvents, type EventsSink } from "../observe/stream.js";
  *
  * The follow never delays the host's exit: `finish` aborts it, prints whatever rows it had not
  * read yet from one more direct read, and renders the summary from the final snapshot.
+ *
+ * A journal the host's own follower cannot read (corrupt, replaced, resync required) is reported
+ * once, as one subdued diagnostic line in the view and one line in the technical log, and the
+ * follow stops. The view is presentation only: whatever it meets, it never throws into the host,
+ * so the run's outcome and exit code come from the scheduler alone.
  */
 
 export interface HostView {
@@ -28,15 +34,33 @@ export interface HostViewOptions extends RunViewOptions {
   runDir: string;
   pollMs: number;
   write: (line: string) => void;
+  /** The technical log; a journal problem the view meets is logged there as well. */
+  log?: (line: string) => void;
 }
 
 export function createHostView(options: HostViewOptions): HostView {
   const { runDir, write } = options;
+  const paint = paintFor(options.color);
   const controller = new AbortController();
   let renderer: RunRenderer | undefined;
   let following: Promise<unknown> | undefined;
   let cursor: string | undefined;
   let finished = false;
+  let reported = false;
+
+  /** One diagnostic per view: the pane learns why its rows stopped, and where the outcome is. */
+  const problem = (reason: string, message: string) => {
+    controller.abort();
+    if (reported) return;
+    reported = true;
+    const line = `view: ${sanitize(reason)}: ${sanitize(message)}; the run's outcome is in the result line and outcome.json`;
+    try {
+      options.log?.(line);
+      write(paint(`-- ${line}`, "dim"));
+    } catch {
+      // The pane and the log are both gone; the outcome still reaches the result line.
+    }
+  };
 
   const sink: EventsSink = {
     event: (event) => {
@@ -44,9 +68,7 @@ export function createHostView(options: HostViewOptions): HostView {
       if (renderer === undefined) return;
       for (const line of renderer.row(event)) write(line);
     },
-    // A read problem in the host's own journal is a host concern; the summary below still comes
-    // from the snapshot, so nothing is printed here.
-    problem: () => {},
+    problem: (item) => problem(item.reason, item.message),
     end: () => {},
     stats: () => {},
   };
@@ -69,36 +91,19 @@ export function createHostView(options: HostViewOptions): HostView {
           handleSigint: false,
         },
         sink,
-      ).catch(() => undefined);
+      ).catch((error: unknown) => problem("view_failed", (error as Error).message));
     },
 
     async finish() {
       if (finished) return;
       finished = true;
       controller.abort();
-      await following;
-      // Rows the follow had not read when it was stopped; the renderer drops any repeat by seq.
-      for (;;) {
-        const read = readEvents(runDir, {
-          ...(cursor !== undefined ? { after: cursor } : {}),
-          limit: MAX_EVENTS_LIMIT,
-        });
-        if (!read.ok) break;
-        for (const event of read.events) sink.event(event);
-        if (read.events.length < MAX_EVENTS_LIMIT) break;
+      try {
+        await following;
+        catchUp();
+      } catch (error) {
+        problem("view_failed", (error as Error).message);
       }
-      const final = readRunStatus(runDir);
-      if (!final.ok) return;
-      if (renderer === undefined) {
-        renderer = rendererFor(runDir, final, options);
-        for (const line of renderer.opening()) write(line);
-      }
-      for (const line of renderer.summary({
-        status: final.status,
-        result: final.result,
-        snapshot: final.snapshot,
-      }))
-        write(line);
     },
 
     close() {
@@ -106,4 +111,35 @@ export function createHostView(options: HostViewOptions): HostView {
       controller.abort();
     },
   };
+
+  /** Rows the follow had not read when it was stopped (the renderer drops any repeat by seq), then the summary. */
+  function catchUp(): void {
+    for (;;) {
+      const read = readEvents(runDir, {
+        ...(cursor !== undefined ? { after: cursor } : {}),
+        limit: MAX_EVENTS_LIMIT,
+      });
+      if (!read.ok) {
+        problem(read.reason, read.message);
+        break;
+      }
+      for (const event of read.events) sink.event(event);
+      if (read.events.length < MAX_EVENTS_LIMIT) break;
+    }
+    const final = readRunStatus(runDir);
+    if (!final.ok) {
+      problem(final.reason, final.message);
+      return;
+    }
+    if (renderer === undefined) {
+      renderer = rendererFor(runDir, final, options);
+      for (const line of renderer.opening()) write(line);
+    }
+    for (const line of renderer.summary({
+      status: final.status,
+      result: final.result,
+      snapshot: final.snapshot,
+    }))
+      write(line);
+  }
 }

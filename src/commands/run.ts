@@ -526,20 +526,29 @@ function hostOutput(
   view: HostViewFlags,
   pollMs: number | undefined,
 ): Pick<HostWorkflowOptions, "log" | "view"> {
-  // A reader that went away must not crash the host: the result still reaches outcome.json and
-  // the exit code, and the log file keeps the technical lines.
+  // A reader that went away (EPIPE: the pane closed) must not crash the host: the first write
+  // error, reported on the stream or to the write callback, ends the view's output for good. The
+  // result still reaches outcome.json and the exit code, and the log file keeps the technical lines.
   let stdoutGone = false;
   process.stdout.on("error", () => {
     stdoutGone = true;
   });
   const write = (line: string) => {
-    if (!stdoutGone) process.stdout.write(`${line}\n`);
+    if (stdoutGone) return;
+    try {
+      process.stdout.write(`${line}\n`, (error) => {
+        if (error) stdoutGone = true;
+      });
+    } catch {
+      stdoutGone = true;
+    }
   };
   const log = createHostLog(runDir, { echo: view.plain, write });
   if (view.plain) return { log, view: null };
   const hostView: HostView = createHostView({
     runDir,
     write,
+    log,
     pollMs: Math.max(1, Math.min(pollMs ?? VIEW_POLL_MS, VIEW_POLL_MS)),
     color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }),
     ascii: view.ascii || !unicodeEnabled(process.env),
