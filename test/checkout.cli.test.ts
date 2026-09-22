@@ -397,7 +397,7 @@ describe("checkout policy in the run input", () => {
     const pretty = woof(ws, ["status", runDir, "--pretty"]);
     expect(pretty.stdout).toContain(`checkout worktree ${path} branch woof/k3-run workspace w7`);
     const view = woof(ws, ["watch", runDir]);
-    expect(view.stdout).toContain("checkout worktree · woof/k3-run");
+    expect(view.stdout).toContain("checkout worktree · woof/k3-run · from");
     const snapshot = await expectFoldEqualsSnapshot(runDir, launched.env);
     expect(snapshot["checkout"]).toEqual(expected);
   }, 120_000);

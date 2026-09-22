@@ -67,6 +67,7 @@ export type AttemptOpenReason =
 export type StoreReason =
   | InfraReason
   | "plan_invalid"
+  | "input_invalid"
   | "run_exists"
   | "run_mismatch"
   | "run_closed"

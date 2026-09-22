@@ -12,7 +12,8 @@ import {
 export type ValidateRunPlanResult =
   { ok: true; plan: RunPlan } | { ok: false; details: RejectionDetail[] };
 
-const PLAN_KEYS = ["workflow", "agents", "stages", "limits", "checks"];
+const PLAN_KEYS = ["workflow", "agents", "stages", "limits", "checks", "workflows"];
+const WORKFLOW_STAGE_KEYS = ["stageId", "workflow"];
 const WORKFLOW_KEYS = ["name", "version"];
 const AGENT_KEYS = ["agentId", "role", "kind", "model", "args"];
 const STAGE_KEYS = ["stageId", "agentId", "verdicts"];
@@ -49,9 +50,12 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
     }
   }
 
+  // A plan whose steps are all workflow stages has no agents of its own (composition).
+  const workflows = value["workflows"];
+  const composite = Array.isArray(workflows) && workflows.length > 0;
   const agentIds = new Set<string>();
   const agents = value["agents"];
-  if (!Array.isArray(agents) || agents.length === 0) {
+  if (!Array.isArray(agents) || (agents.length === 0 && !composite)) {
     fail("agents", "must be a non-empty array");
   } else {
     for (const [index, agent] of agents.entries()) {
@@ -89,7 +93,7 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
 
   const stageIds = new Set<string>();
   const stages = value["stages"];
-  if (!Array.isArray(stages) || stages.length === 0) {
+  if (!Array.isArray(stages) || (stages.length === 0 && !composite)) {
     fail("stages", "must be a non-empty array");
   } else {
     for (const [index, stage] of stages.entries()) {
@@ -160,6 +164,33 @@ export function validateRunPlan(input: unknown): ValidateRunPlanResult {
     }
   }
 
+  if (workflows !== undefined) {
+    if (!Array.isArray(workflows)) {
+      fail("workflows", "must be an array of workflow stages");
+    } else {
+      for (const [index, stage] of workflows.entries()) {
+        const path = `workflows[${index}]`;
+        if (!isPlainObject(stage)) {
+          fail(path, "must be an object");
+          continue;
+        }
+        exactKeys(stage, WORKFLOW_STAGE_KEYS, `${path}.`, fail);
+        const stageId = stage["stageId"];
+        if (!isId(stageId)) {
+          fail(`${path}.stageId`, "must be a valid id");
+        } else if (
+          stageIds.has(stageId) ||
+          (Array.isArray(checks) && (checks as unknown[]).includes(stageId))
+        ) {
+          fail(`${path}.stageId`, `duplicates stage or check ${stageId}`);
+        } else {
+          stageIds.add(stageId);
+        }
+        if (!isId(stage["workflow"])) fail(`${path}.workflow`, "must be a valid workflow name");
+      }
+    }
+  }
+
   if (details.length > 0) return { ok: false, details };
   return { ok: true, plan: copyPlan(value as unknown as RunPlan) };
 }
@@ -182,6 +213,11 @@ function copyPlan(plan: RunPlan): RunPlan {
     })),
     limits: { ...plan.limits },
     ...(plan.checks !== undefined ? { checks: [...plan.checks] } : {}),
+    ...(plan.workflows !== undefined
+      ? {
+          workflows: plan.workflows.map(({ stageId, workflow }) => ({ stageId, workflow })),
+        }
+      : {}),
   };
 }
 

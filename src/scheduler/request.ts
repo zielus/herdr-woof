@@ -34,6 +34,10 @@ export interface ResolvedInput {
   accepted?: { stageId: string; visit: number; attempt: number; receiptId: string };
   /** Check id for check evidence. */
   checkId?: string;
+  /** The run's input artifact label, for an input artifact (composition). */
+  inputLabel?: string;
+  /** The child stage whose copied artifact this is, for a workflow step's artifact. */
+  childStage?: string;
 }
 
 export interface RenderRequestInput {
@@ -150,8 +154,10 @@ export function renderRequest(input: RenderRequestInput): RenderRequestResult {
       for (const item of input.inputs) {
         const origin =
           item.accepted !== undefined
-            ? `stage ${item.accepted.stageId} visit ${item.accepted.visit} attempt ${item.accepted.attempt}, receipt ${item.accepted.receiptId}, sha256 ${item.sha256}`
-            : `check ${item.checkId ?? "?"} evidence, sha256 ${item.sha256}`;
+            ? `stage ${item.accepted.stageId}${item.childStage !== undefined ? ` (child stage ${item.childStage})` : ""} visit ${item.accepted.visit} attempt ${item.accepted.attempt}, receipt ${item.accepted.receiptId}, sha256 ${item.sha256}`
+            : item.inputLabel !== undefined
+              ? `run input artifact, sha256 ${item.sha256}`
+              : `check ${item.checkId ?? "?"} evidence, sha256 ${item.sha256}`;
         lines.push(`- ${item.label}: ${item.path} (${origin})`);
       }
     }

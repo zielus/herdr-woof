@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 import {
@@ -8,6 +8,7 @@ import {
   type CheckoutSpec,
   type ResolvedCheckout,
 } from "../contracts/checkout.js";
+import { sha256Hex } from "../contracts/canonical-json.js";
 import type { RejectionDetail } from "../contracts/envelope.js";
 import type { AdmissionReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
@@ -20,7 +21,7 @@ import {
 } from "../domain/types.js";
 import type { LockOptions } from "../journal/lock.js";
 import { openRun, type OpenRunInput } from "../state/store.js";
-import type { WorkflowDefinition } from "./definition.js";
+import type { InputArtifact, WorkflowDefinition } from "./definition.js";
 import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
 import { revisionOf, treeStatus, type RevisionResult } from "./revision.js";
@@ -82,6 +83,8 @@ export type AdmissionResult<Input> =
       revision: Revision;
       provenance: AdmissionProvenance;
       checkout: ResolvedCheckout;
+      /** Input artifacts whose digests admission checked; the run open copies them in. */
+      inputArtifacts: InputArtifact[];
     }
   | {
       ok: false;
@@ -328,6 +331,16 @@ export async function admitWorkflow<Input>(options: {
     ),
     limits: composed,
     checks: definition.stages.flatMap((stage) => (stage.kind === "check" ? [stage.checkId] : [])),
+    // Only a definition with workflow stages lists them, so every other plan keeps its shape.
+    ...(definition.stages.some((stage) => stage.kind === "workflow")
+      ? {
+          workflows: definition.stages.flatMap((stage) =>
+            stage.kind === "workflow"
+              ? [{ stageId: stage.stageId, workflow: stage.workflow.name }]
+              : [],
+          ),
+        }
+      : {}),
   };
   const checked = validateRunPlan(plan);
   if (!checked.ok) {
@@ -340,6 +353,9 @@ export async function admitWorkflow<Input>(options: {
     });
     return reject("plan_invalid", "the resolved run plan is invalid", details);
   }
+  const artifacts = inputArtifactsOf(definition, input);
+  if (!artifacts.ok) return artifacts;
+
   const settled = await resolveCheckout(
     options.checkout,
     spec,
@@ -400,8 +416,77 @@ export async function admitWorkflow<Input>(options: {
     revision: runRevision,
     provenance,
     checkout,
+    inputArtifacts: artifacts.value,
   };
 }
+
+/**
+ * The definition's input artifacts, each an existing file whose bytes hash to the sha256 the
+ * input names: a missing or changed file is `input_invalid` naming its label.
+ */
+function inputArtifactsOf<Input>(
+  definition: WorkflowDefinition<Input>,
+  input: Input,
+): { ok: true; value: InputArtifact[] } | Refused {
+  if (definition.inputArtifacts === undefined) return { ok: true, value: [] };
+  const listed = call("inputArtifacts", () => definition.inputArtifacts?.(input));
+  if (!listed.ok) return invalidDefinition<never>("inputArtifacts", listed.message) as Refused;
+  const value: unknown = listed.value;
+  if (!Array.isArray(value))
+    return invalidDefinition<never>(
+      "inputArtifacts",
+      "returned no array of { label, path, sha256 }",
+    ) as Refused;
+  const labels = new Set<string>();
+  const details: RejectionDetail[] = [];
+  const artifacts: InputArtifact[] = [];
+  for (const item of value) {
+    if (
+      !isObject(item) ||
+      typeof item["label"] !== "string" ||
+      item["label"] === "" ||
+      labels.has(item["label"]) ||
+      typeof item["path"] !== "string" ||
+      !isAbsolute(item["path"]) ||
+      typeof item["sha256"] !== "string" ||
+      !/^[0-9a-f]{64}$/.test(item["sha256"])
+    ) {
+      return invalidDefinition<never>(
+        "inputArtifacts",
+        "returned an entry that is not { label: unique non-empty string, path: absolute, sha256: hex }",
+      ) as Refused;
+    }
+    const artifact = { label: item["label"], path: item["path"], sha256: item["sha256"] };
+    labels.add(artifact.label);
+    let actual: string;
+    try {
+      actual = sha256Hex(readFileSync(artifact.path));
+    } catch (error) {
+      details.push({
+        field: `inputArtifacts.${artifact.label}`,
+        message: `${artifact.path} is unreadable: ${(error as Error).message}`,
+      });
+      continue;
+    }
+    if (actual !== artifact.sha256) {
+      details.push({
+        field: `inputArtifacts.${artifact.label}`,
+        message: `${artifact.path} has sha256 ${actual}, not ${artifact.sha256}`,
+      });
+      continue;
+    }
+    artifacts.push(artifact);
+  }
+  if (details.length > 0)
+    return reject<never>(
+      "input_invalid",
+      "an input artifact is missing or changed",
+      details,
+    ) as Refused;
+  return { ok: true, value: artifacts };
+}
+
+type Refused = Extract<AdmissionResult<never>, { ok: false }>;
 
 type CheckoutResolution =
   { ok: true; checkout: ResolvedCheckout } | Extract<AdmissionResult<never>, { ok: false }>;
@@ -626,6 +711,8 @@ export function openAdmittedRun<Input>(
     configuration?: unknown;
     /** The run host's claim, journaled as host.claimed under the same lock as run.opened. */
     host?: OpenRunInput["host"];
+    /** The parent's workflow step, for a child run (composition). */
+    parent?: OpenRunInput["parent"];
   },
 ): ReturnType<typeof openRun> {
   return openRun({
@@ -634,6 +721,8 @@ export function openAdmittedRun<Input>(
     plan: admitted.plan,
     input: admitted.input,
     checkout: admitted.checkout,
+    ...(admitted.inputArtifacts.length > 0 ? { inputArtifacts: admitted.inputArtifacts } : {}),
+    ...(options.parent !== undefined ? { parent: options.parent } : {}),
     ...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
     ...(options.host !== undefined ? { host: options.host } : {}),
     ...(options.lock !== undefined ? { lock: options.lock } : {}),

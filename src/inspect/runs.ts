@@ -23,6 +23,8 @@ export interface RunListEntry {
   updatedAt: string;
   /** `roots.project.root` of the recorded configuration; null for runs without one. */
   project: string | null;
+  /** Present only on a child run: the parent run and the workflow step it is (composition). */
+  parent?: { runId: string; stageId: string; visit: number };
 }
 
 export interface ListRunsResult {
@@ -183,6 +185,15 @@ export function readRunEntry(path: string): LocateRunResult {
       openedAt: snapshot.openedAt,
       updatedAt: snapshot.updatedAt,
       project: projectRootOf(recorded),
+      ...(snapshot.parent !== null
+        ? {
+            parent: {
+              runId: snapshot.parent.runId,
+              stageId: snapshot.parent.stageId,
+              visit: snapshot.parent.visit,
+            },
+          }
+        : {}),
     },
   };
 }

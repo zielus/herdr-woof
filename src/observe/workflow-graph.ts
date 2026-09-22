@@ -9,10 +9,13 @@
 
 export interface GraphNode {
   id: string;
-  kind: "agent" | "check";
+  kind: "agent" | "check" | "workflow";
   /** The gate compares the reviewed revision with the current one (a review). */
   bindsRevision: boolean;
-  /** The check command as one line; null for agent stages or when it cannot be resolved. */
+  /**
+   * The check command as one line, or the workflow a workflow stage runs; null for agent stages
+   * or when it cannot be resolved.
+   */
   command: string | null;
 }
 

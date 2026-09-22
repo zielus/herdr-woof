@@ -20,6 +20,8 @@ import {
   type RunCancelRequestedRecord,
   type RunTerminatedRecord,
   type RunUnblockedRecord,
+  type StageChildOpenedRecord,
+  type StageChildResultRecord,
   type SubmissionAcceptedRecord,
 } from "../journal/records.js";
 
@@ -36,10 +38,20 @@ import {
 /** Reducer-level attempt status; `abandoned` is derived only in snapshots. */
 export type AttemptStatus = "open" | "superseded" | "accepted";
 
+/** What opens an attempt: an agent's `attempt.opened`, or a workflow step's `stage.child_opened`. */
+export type AttemptOpening = AttemptOpenedRecord | StageChildOpenedRecord;
+/** What accepts one: a worker's `submission.accepted`, or a workflow step's `stage.child_result`. */
+export type AttemptAcceptance = SubmissionAcceptedRecord | StageChildResultRecord;
+
+/** The agent that owns an attempt; null for a workflow step, which no agent owns. */
+export function attemptOwner(opened: AttemptOpening): string | null {
+  return opened.type === "attempt.opened" ? opened.agentId : null;
+}
+
 export interface AttemptState {
-  opened: AttemptOpenedRecord;
+  opened: AttemptOpening;
   status: AttemptStatus;
-  accepted?: SubmissionAcceptedRecord;
+  accepted?: AttemptAcceptance;
   /** Journaled submission rejections that named this attempt, by reason. */
   rejections: Record<string, number>;
   /** The same rejections in journal order, with their messages. */
@@ -102,7 +114,7 @@ export interface RunState {
   assignments: Map<string, AgentAssignedRecord[]>;
   /** Dispatch per attempt key; at most one. */
   dispatches: Map<string, RequestDispatchedRecord>;
-  acceptedBySeq: Map<number, SubmissionAcceptedRecord>;
+  acceptedBySeq: Map<number, AttemptAcceptance>;
   termination: RunTerminatedRecord | undefined;
   /** Gate decisions in journal order. */
   gates: GateRecordedRecord[];
@@ -396,7 +408,7 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
       }
       const accepted = state.acceptedBySeq.get(record.acceptedSeq);
       if (
-        accepted === undefined ||
+        accepted?.type !== "submission.accepted" ||
         accepted.receiptId !== record.receiptId ||
         accepted.envelopeDigest !== record.envelopeDigest
       ) {
@@ -488,7 +500,85 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
       return applyLifecycleChanged(state, record);
     case "run.activity":
       return applyActivity(state, record);
+    case "stage.child_opened":
+      return applyChildOpened(state, record);
+    case "stage.child_result":
+      return applyChildResult(state, record);
   }
+}
+
+/**
+ * A workflow step opens like an agent attempt (composition): run_closed; with a plan,
+ * stage_unknown unless the plan lists it as a workflow stage; attempt_open_conflict unless it is
+ * newer than the stage's latest attempt. It supersedes the stage's still-open attempts and counts
+ * as a visit and an attempt.
+ */
+function applyChildOpened(state: RunState, record: StageChildOpenedRecord): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "stage.child_opened after run.terminated"];
+  }
+  if (
+    state.plan !== null &&
+    !(state.plan.workflows ?? []).some((stage) => stage.stageId === record.stageId)
+  ) {
+    return ["stage_unknown", `stage ${record.stageId} is not a workflow stage of the run plan`];
+  }
+  const latest = state.latestByStage.get(record.stageId);
+  if (latest !== undefined && compareAttempts(record, latest) <= 0) {
+    return [
+      "attempt_open_conflict",
+      `stage.child_opened visit ${record.visit} attempt ${record.attempt} is not newer than visit ${latest.visit} attempt ${latest.attempt}`,
+    ];
+  }
+  for (const existing of state.attempts.values()) {
+    if (existing.opened.stageId === record.stageId && existing.status === "open") {
+      existing.status = "superseded";
+    }
+  }
+  const sameVisit = latest?.visit === record.visit;
+  state.attempts.set(attemptKey(record.stageId, record.visit, record.attempt), {
+    opened: record,
+    status: "open",
+    rejections: dict(),
+    rejectionLog: [],
+    cause: sameVisit ? "work_retry" : "initial",
+  });
+  const counters = state.counters;
+  counters.attemptsOpened += 1;
+  if (!sameVisit) increment(counters.visitsByStage, record.stageId);
+  const visitKey = `${record.stageId}/${record.visit}`;
+  increment(counters.attemptsByVisit, visitKey);
+  if (sameVisit) increment(counters.workRetriesByVisit, visitKey);
+  state.latestByStage.set(record.stageId, { visit: record.visit, attempt: record.attempt });
+  return undefined;
+}
+
+/**
+ * A workflow step's acceptance (composition): run_closed; invalid_transition unless it names an
+ * open step attempt of the same child run.
+ */
+function applyChildResult(state: RunState, record: StageChildResultRecord): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "stage.child_result after run.terminated"];
+  }
+  const key = attemptKey(record.stageId, record.visit, record.attempt);
+  const attempt = state.attempts.get(key);
+  if (attempt === undefined || attempt.opened.type !== "stage.child_opened") {
+    return ["invalid_transition", `stage.child_result for ${key}, which opened no child run`];
+  }
+  if (attempt.opened.child.runId !== record.child.runId) {
+    return [
+      "invalid_transition",
+      `stage.child_result names child run ${record.child.runId}, but ${key} opened ${attempt.opened.child.runId}`,
+    ];
+  }
+  if (attempt.status !== "open") {
+    return ["invalid_transition", `stage.child_result for ${key}, which is ${attempt.status}`];
+  }
+  attempt.status = "accepted";
+  attempt.accepted = record;
+  state.acceptedBySeq.set(record.seq, record);
+  return undefined;
 }
 
 function applyLifecycleChanged(
@@ -662,6 +752,9 @@ function applyAccepted(state: RunState, record: SubmissionAcceptedRecord): Refus
     return ["invalid_transition", "submission.accepted for an attempt that was never opened"];
   }
   const opened = attempt.opened;
+  if (opened.type !== "attempt.opened") {
+    return ["invalid_transition", "submission.accepted for a workflow step, which no agent owns"];
+  }
   if (record.runId !== opened.runId || record.agentId !== opened.agentId) {
     return ["invalid_transition", "submission.accepted identity disagrees with the opened attempt"];
   }
@@ -731,10 +824,10 @@ function applyDispatched(state: RunState, record: RequestDispatchedRecord): Refu
   if (attempt === undefined) {
     return ["attempt_unknown", `request.dispatched for attempt ${key}, which was never opened`];
   }
-  if (attempt.opened.agentId !== record.agentId) {
+  if (attemptOwner(attempt.opened) !== record.agentId) {
     return [
       "owner_mismatch",
-      `attempt ${key} is owned by ${attempt.opened.agentId}, not ${record.agentId}`,
+      `attempt ${key} is owned by ${attemptOwner(attempt.opened) ?? "no agent (a workflow step)"}, not ${record.agentId}`,
     ];
   }
   if (state.dispatches.has(key)) {
@@ -781,7 +874,7 @@ function openDispatchedAttempt(state: RunState, agentId: string): string | undef
   for (const [key, attempt] of state.attempts) {
     if (
       attempt.status === "open" &&
-      attempt.opened.agentId === agentId &&
+      attemptOwner(attempt.opened) === agentId &&
       state.dispatches.has(key)
     ) {
       return key;
@@ -837,7 +930,7 @@ function applyGate(state: RunState, record: GateRecordedRecord): Refusal | undef
         `stage gate ${record.gate} must name stage ${subject.stageId} and its accepted verdict`,
       ];
     }
-  } else if (plan !== null && plan.stages.some((stage) => stage.stageId === record.gate)) {
+  } else if (plan !== null && planStageIds(plan).includes(record.gate)) {
     return ["gate_mismatch", `check gate ${record.gate} names a plan stage`];
   }
   if (
@@ -858,7 +951,7 @@ function applyGate(state: RunState, record: GateRecordedRecord): Refusal | undef
     if (
       "stageId" in record.next &&
       !checks.includes(record.next.stageId) &&
-      !plan.stages.some((stage) => stage.stageId === (record.next as { stageId: string }).stageId)
+      !planStageIds(plan).includes(record.next.stageId)
     ) {
       return [
         "stage_unknown",
@@ -901,10 +994,10 @@ function applyBlocked(state: RunState, record: RunBlockedRecord): Refusal | unde
     if (attempt === undefined || attempt.status !== "open") {
       return ["attempt_unknown", `run.blocked names attempt ${key}, which is not open`];
     }
-    if (attempt.opened.agentId !== record.agentId) {
+    if (attemptOwner(attempt.opened) !== record.agentId) {
       return [
         "owner_mismatch",
-        `attempt ${key} is owned by ${attempt.opened.agentId}, not ${record.agentId}`,
+        `attempt ${key} is owned by ${attemptOwner(attempt.opened) ?? "no agent (a workflow step)"}, not ${record.agentId}`,
       ];
     }
   }
@@ -947,6 +1040,14 @@ function applyReconciled(state: RunState, record: DeliveryReconciledRecord): Ref
   state.reconciliations.set(record.dispatchSeq, record);
   state.counters.reconciliations[record.resolution] += 1;
   return undefined;
+}
+
+/** Agent and workflow stage ids of a plan, in plan order. */
+export function planStageIds(plan: RunPlan): string[] {
+  return [
+    ...plan.stages.map((stage) => stage.stageId),
+    ...(plan.workflows ?? []).map((stage) => stage.stageId),
+  ];
 }
 
 /** The unresolved block, if any. */

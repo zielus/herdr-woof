@@ -278,7 +278,7 @@ start` inputs for (a) and (b) are documented in
 1. (done) Checkout: validator and resolver, Herdr worktree parser and fake-Herdr
    support, admission `checkout` parameter and dirty rule, launcher/host
    wiring, `run.opened.checkout`, snapshot/status/run view, docs, changeset.
-2. Workflow stage: definition and plan validation, input artifacts, records,
+2. (done) Workflow stage: definition and plan validation, input artifacts, records,
    reducer, snapshot, events, core actions, driver, host child hosting,
    cancellation, run view and `woof runs`, docs, changeset.
 3. `plan` and `auto-build` built-ins, scripted-runtime tests, docs,

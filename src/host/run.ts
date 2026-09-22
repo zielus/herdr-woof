@@ -25,6 +25,7 @@ import {
   topLevelCheckout,
   type HerdrAccess,
 } from "./checkout.js";
+import { createChildHost } from "./child.js";
 import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
@@ -473,6 +474,17 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       cancelSource: "signal",
       pollMs,
       keepPanes: recorded.settings.keepPanes.value,
+      // Workflow steps run as child runs this same process hosts (composition).
+      children: createChildHost({
+        projectDir: options.projectDir,
+        flags: options.flags,
+        ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+        createRuntime: options.createRuntime,
+        submitCommand: options.submitCommand,
+        paneId: options.paneId,
+        workspaceId: options.workspaceId,
+        log,
+      }),
       onAction: (action) => {
         const line = describeAction(action);
         if (action.type === "wait" && line === lastWait) return;
@@ -571,5 +583,9 @@ export function describeAction(action: Action): string {
       return `reconcile ${action.stageId} attempt ${action.attempt}: ${action.resolution}`;
     case "settle":
       return "run ended";
+    case "open_child":
+      return `open child run: ${action.stageId} visit ${action.visit} runs workflow ${action.workflow}`;
+    case "record_child":
+      return `child run of ${action.stageId} visit ${action.visit} ended: ${action.end.result?.outcome ?? `no result (${action.end.error ?? "unknown"})`}`;
   }
 }

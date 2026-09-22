@@ -329,3 +329,60 @@ export function activity(
     ...extra,
   };
 }
+
+/** A composite plan (composition): one workflow step `plan` and no agents of its own. */
+export const COMPOSITE_PLAN = {
+  workflow: { name: "auto-build", version: "1" },
+  agents: [],
+  stages: [],
+  limits: PLAN.limits,
+  checks: [],
+  workflows: [{ stageId: "plan", workflow: "plan" }],
+};
+
+export const childOpened = (stageId: string, visit = 1, attemptNo = 1, runId = "run-1"): Json => ({
+  type: "stage.child_opened",
+  stageId,
+  visit,
+  attempt: attemptNo,
+  child: {
+    runId: `${runId}.${stageId}.${visit}`,
+    runDir: `/runs/${runId}.${stageId}.${visit}`,
+    workflow: { name: "plan", version: "1" },
+  },
+  input: { sha256: HEX, bytes: 10 },
+});
+
+/** A workflow step's acceptance landing at `seq` (composition). */
+export function childResult(
+  seq: number,
+  stageId: string,
+  outcome = "completed",
+  visit = 1,
+  attemptNo = 1,
+  runId = "run-1",
+): Json {
+  const dir = `accepted/${stageId}/visit-${visit}/attempt-${attemptNo}`;
+  return {
+    type: "stage.child_result",
+    stageId,
+    visit,
+    attempt: attemptNo,
+    child: {
+      runId: `${runId}.${stageId}.${visit}`,
+      outcome,
+      reason: "done",
+      ...(outcome === "exhausted" ? { limit: "maxRounds" } : {}),
+    },
+    status: outcome === "completed" ? "completed" : "failed",
+    verdict: outcome,
+    receiptId: `rcpt-${seq}-${HEX.slice(0, 12)}`,
+    artifact: {
+      path: `${dir}/result.json`,
+      acceptedPath: `${dir}/result.json`,
+      sha256: HEX,
+      bytes: 10,
+    },
+    artifacts: [{ stageId: "plan", acceptedPath: `${dir}/plan/plan.md`, sha256: HEX, bytes: 5 }],
+  };
+}

@@ -15,6 +15,9 @@ import {
   blocked,
   cancelRequested,
   checkGate,
+  childOpened,
+  childResult,
+  COMPOSITE_PLAN,
   dispatched,
   duplicate,
   gate,
@@ -1433,5 +1436,65 @@ describe("activity record rules", () => {
       type: "agent.lifecycle_changed",
     });
     expect(line(activity("revision_check", "started"))).toMatchObject({ type: "run.activity" });
+  });
+});
+
+describe("workflow steps (composition)", () => {
+  it("folds a step's child_opened and child_result into an accepted attempt that a stage gate can name", () => {
+    const records = journalOf(
+      opened(COMPOSITE_PLAN),
+      childOpened("plan"),
+      childResult(3, "plan"),
+      gate(3, "plan", 1, 1, { verdict: "completed", next: { outcome: "completed" } }),
+    );
+    const replayed = replay(records);
+    expect(replayed.ok, JSON.stringify(replayed)).toBe(true);
+    if (!replayed.ok) return;
+    const step = replayed.state.attempts.get("plan/1/1");
+    expect(step?.status).toBe("accepted");
+    expect(step?.cause).toBe("initial");
+    expect(replayed.state.counters["visitsByStage"]).toEqual({ plan: 1 });
+    expect(replayed.state.gates).toHaveLength(1);
+  });
+
+  it("refuses what no workflow step may take: agent attempts, submissions, foreign or unopened results", () => {
+    const base = journalOf(opened(COMPOSITE_PLAN), childOpened("plan"));
+    expect(refuseAppend(base, attempt("plan", "builder"))).toMatchObject({
+      reason: "stage_unknown",
+    });
+    expect(refuseAppend(base, accepted(3, "plan", "builder", null))).toMatchObject({
+      reason: "invalid_transition",
+      message: "submission.accepted for a workflow step, which no agent owns",
+    });
+    const foreign = childResult(3, "plan");
+    (foreign["child"] as Json)["runId"] = "other";
+    expect(refuseAppend(base, foreign)).toMatchObject({ reason: "invalid_transition" });
+    expect(refuseAppend(journalOf(opened(COMPOSITE_PLAN)), childResult(2, "plan"))).toMatchObject({
+      reason: "invalid_transition",
+    });
+    expect(refuseAppend(journalOf(opened(COMPOSITE_PLAN)), childOpened("build"))).toMatchObject({
+      reason: "stage_unknown",
+    });
+    // A step whose stage the plan does not list as a workflow is unknown even in a normal plan.
+    expect(refuseAppend(journalOf(opened()), childOpened("build"))).toMatchObject({
+      reason: "stage_unknown",
+    });
+    expect(
+      refuseAppend(
+        journalOf(opened(COMPOSITE_PLAN), childOpened("plan"), childOpened("plan")),
+        childOpened("plan"),
+      ),
+    ).toMatchObject({ reason: "attempt_open_conflict" });
+  });
+
+  it("checks the step records' field contracts", () => {
+    const bad = { ...childResult(3, "plan"), verdict: "failed" };
+    expect(() => journalOf(opened(COMPOSITE_PLAN), childOpened("plan"), bad)).toThrow(
+      /verdict is not the child's outcome/,
+    );
+    const receipt = { ...childResult(3, "plan"), receiptId: `rcpt-9-${HEX.slice(0, 12)}` };
+    expect(() => journalOf(opened(COMPOSITE_PLAN), childOpened("plan"), receipt)).toThrow(
+      /receiptId does not match/,
+    );
   });
 });

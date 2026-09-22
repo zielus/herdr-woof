@@ -101,9 +101,13 @@ export function createRunRenderer(input: RunRendererInput): RunRenderer {
         },
       ]),
     ),
+    // A workflow step's verdict is its child's outcome, not a review.
     verdictStages: new Set(
       snapshot.stages
-        .filter((stage) => stage.verdicts !== null && stage.verdicts.length > 0)
+        .filter(
+          (stage) =>
+            stage.workflow === undefined && stage.verdicts !== null && stage.verdicts.length > 0,
+        )
         .map((stage) => stage.stageId),
     ),
   };
@@ -244,8 +248,12 @@ function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string
   }
   const openedAt = Date.parse(snapshot.openedAt);
   const endedAt = Date.parse(outcome.at);
+  const steps = snapshot.stages
+    .filter((stage) => stage.workflow !== undefined)
+    .reduce((count, stage) => count + stage.visits.length, 0);
   const facts = [
     duration(endedAt - openedAt),
+    ...(steps > 0 ? [plural(steps, "workflow step")] : []),
     plural(reviewCount(snapshot, opening), "review"),
     plural(repairCount(snapshot), "repair"),
   ];
@@ -263,7 +271,7 @@ function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string
     );
   }
   lines.push("");
-  lines.push(...artifactLines(result, status.runDir, layout));
+  lines.push(...artifactLines(result, status.runDir, layout, snapshot));
   return lines;
 }
 
@@ -272,7 +280,12 @@ function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string
  * the result names one: a review that approved an earlier revision is not
  * presented as the run's review, and no line stands in for it.
  */
-function artifactLines(result: RunResult | null, runDir: string, layout: Layout): string[] {
+function artifactLines(
+  result: RunResult | null,
+  runDir: string,
+  layout: Layout,
+  snapshot: RunSnapshot,
+): string[] {
   const { paint, options } = layout;
   const items: Array<[string, string]> = [];
   if (result !== null) {
@@ -280,6 +293,14 @@ function artifactLines(result: RunResult | null, runDir: string, layout: Layout)
     if (completion !== null) items.push(["changes", relative(runDir, completion.acceptedPath)]);
     if (review !== null) items.push(["review", relative(runDir, review.acceptedPath)]);
     if (verification !== null) items.push(["checks", relative(runDir, verification.path)]);
+    // Each workflow step's accepted result (the child's RunResult).
+    for (const stage of snapshot.stages) {
+      const step =
+        stage.workflow === undefined
+          ? undefined
+          : result.artifacts.lastAcceptedByStage[stage.stageId];
+      if (step !== undefined) items.push([stage.stageId, relative(runDir, step.acceptedPath)]);
+    }
   }
   if (items.length === 0) return [paint("ARTIFACTS · none accepted", "dim")];
   const width = Math.max(...items.map(([label]) => label.length));
@@ -298,7 +319,10 @@ function artifactLines(result: RunResult | null, runDir: string, layout: Layout)
 function reviewCount(snapshot: RunSnapshot, opening: RunSnapshot): number {
   const verdictStages = new Set(
     [...snapshot.stages, ...opening.stages]
-      .filter((stage) => stage.verdicts !== null && stage.verdicts.length > 0)
+      .filter(
+        (stage) =>
+          stage.workflow === undefined && stage.verdicts !== null && stage.verdicts.length > 0,
+      )
       .map((stage) => stage.stageId),
   );
   let count = 0;

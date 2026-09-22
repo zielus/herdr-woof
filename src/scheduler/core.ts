@@ -10,16 +10,21 @@ import type {
   SnapshotGate,
 } from "../state/snapshot.js";
 import type { GateNext, GateSubject } from "../journal/control-records.js";
+import { jsonValueProblem } from "../contracts/json-value.js";
+import type { RunResult } from "../state/result.js";
 import {
   agentStageOf,
   checkStageOf,
   stageRequestProblem,
   transitionProblem,
+  workflowStageOf,
   type AgentStage,
+  type ChildRef,
   type RunHistory,
   type StageRequest,
   type Transition,
   type WorkflowDefinition,
+  type WorkflowStage,
 } from "./definition.js";
 
 /**
@@ -74,6 +79,16 @@ export interface GateEvidence {
   };
 }
 
+/** How a child run the scheduler started ended: its result, or why there is none. */
+export interface ChildEnd {
+  result: RunResult | null;
+  /** Set when the child ended without a result (its journal could not be read or written). */
+  error: string | null;
+}
+
+/** The driver's in-memory view of a workflow step's child run, by `stage/visit/attempt`. */
+export type ChildView = { state: "running" } | { state: "ended"; end: ChildEnd };
+
 export interface SchedulerView<Input = unknown> {
   snapshot: RunSnapshot;
   definition: WorkflowDefinition<Input>;
@@ -81,6 +96,8 @@ export interface SchedulerView<Input = unknown> {
   /** Absolute run directory. */
   runDir: string;
   agents: Record<string, AgentRuntimeView>;
+  /** Child runs this scheduler started, by `stage/visit/attempt` (composition). */
+  children?: Record<string, ChildView>;
   evidence: GateEvidence | null;
   now: number;
   aborted: boolean;
@@ -154,6 +171,19 @@ export type Action =
       attempt: { stageId: string; visit: number; attempt: number } | null;
     }
   | { type: "unblock"; agentId: string; observed: ObservedFields }
+  /** Start a workflow step's child run and journal `stage.child_opened` (composition). */
+  | {
+      type: "open_child";
+      stageId: string;
+      visit: number;
+      attempt: number;
+      round: number;
+      workflow: string;
+      /** The child's raw input, from the stage's `input(ctx)`. */
+      input: unknown;
+    }
+  /** Accept a workflow step with its ended child run's result (composition). */
+  | { type: "record_child"; stageId: string; visit: number; attempt: number; end: ChildEnd }
   | {
       type: "reconcile";
       agentId: string;
@@ -328,6 +358,9 @@ function decideRun<Input>(
       timeoutMs: command.timeoutMs,
     };
   }
+
+  const step = workflowStageOf(definition, targetId);
+  if (step !== undefined) return decideStep(view, limits, step, lastGate ?? null, history);
 
   const stage = agentStageOf(definition, targetId);
   if (stage === undefined)
@@ -523,6 +556,134 @@ function decideRun<Input>(
     );
   }
   return { type: "wait", reason: "awaiting_result", observe: agentId };
+}
+
+/**
+ * A workflow step (composition): one child run per visit. A new visit is bounded like an agent
+ * stage's (`maxVisitsPerStage`, and `maxRounds` when it is the round stage); the child's input
+ * comes from the stage's `input(ctx)` and must be a JSON value. An open step waits for its child;
+ * an ended child's result is recorded; an accepted step is gated by `next` on the child's outcome.
+ */
+function decideStep<Input>(
+  view: SchedulerView<Input>,
+  limits: Limits & { maxFormatRepairs: number },
+  step: WorkflowStage<Input>,
+  lastGate: SnapshotGate | null,
+  history: RunHistory,
+): Action {
+  const { snapshot, definition } = view;
+  const stageId = step.stageId;
+  const enteredSeq = lastGate?.seq ?? 0;
+  const visits = snapshot.stages.find((item) => item.stageId === stageId)?.visits ?? [];
+  const latestVisit = visits.at(-1);
+  const current =
+    latestVisit !== undefined && (latestVisit.attempts[0]?.seq ?? 0) > enteredSeq
+      ? latestVisit
+      : undefined;
+  const roundsUsed =
+    definition.roundStage === null
+      ? 0
+      : (snapshot.counters.visitsByStage[definition.roundStage] ?? 0);
+
+  if (current === undefined) {
+    const visit = (latestVisit?.visit ?? 0) + 1;
+    if (visit > limits.maxVisitsPerStage) {
+      return exhausted(
+        "maxVisitsPerStage",
+        `stage ${stageId} would need visit ${visit} beyond maxVisitsPerStage (${limits.maxVisitsPerStage})`,
+      );
+    }
+    if (definition.roundStage === stageId && roundsUsed >= limits.maxRounds) {
+      return exhausted("maxRounds", `a new round would exceed maxRounds (${limits.maxRounds})`);
+    }
+    const round = definition.roundStage === stageId ? roundsUsed + 1 : roundsUsed;
+    const input: unknown = callDefinition(stageId, () =>
+      step.input({
+        input: view.input,
+        runId: snapshot.runId,
+        history,
+        stageId,
+        visit,
+        attempt: 1,
+        round,
+        enteredBy: lastGate,
+      }),
+    );
+    const problem = jsonValueProblem(input, "input");
+    if (problem !== undefined) {
+      return terminate(
+        "failed",
+        `definition_contract_violated: ${stageId}: input() ${problem.field} ${problem.message}`,
+      );
+    }
+    return {
+      type: "open_child",
+      stageId,
+      visit,
+      attempt: 1,
+      round,
+      workflow: step.workflow.name,
+      input,
+    };
+  }
+
+  const attempt = current.attempts.at(-1) as SnapshotAttempt;
+  const located = { ...attempt, stageId, visit: current.visit };
+  if (attempt.accepted === null) {
+    const child = view.children?.[`${stageId}/${current.visit}/${attempt.attempt}`];
+    if (child === undefined) {
+      return terminate(
+        "failed",
+        `engine_invariant: ${attemptLabel(located)} opened a child run this scheduler does not host`,
+      );
+    }
+    if (child.state === "running") return { type: "wait", reason: "awaiting_child", observe: null };
+    return {
+      type: "record_child",
+      stageId,
+      visit: current.visit,
+      attempt: attempt.attempt,
+      end: child.end,
+    };
+  }
+  const evidence = view.evidence;
+  if (
+    evidence === null ||
+    evidence.check !== undefined ||
+    evidence.gate !== stageId ||
+    evidence.acceptedSeq !== attempt.accepted.seq
+  ) {
+    return {
+      type: "compute_revision",
+      gate: stageId,
+      acceptedSeq: attempt.accepted.seq,
+      subject: { stageId, visit: current.visit, attempt: attempt.attempt },
+    };
+  }
+  const acceptedRef = acceptedRefOf(snapshot, view.runDir, located) as AcceptedRef;
+  const accepted = attempt.accepted;
+  const transition = callDefinition(stageId, () =>
+    step.next({
+      input: view.input,
+      runId: snapshot.runId,
+      history,
+      accepted: { ...acceptedRef, status: accepted.status, verdict: accepted.verdict },
+      revision: { reviewed: null, current: evidence.revision },
+    }),
+  );
+  return gateAction(view, limits, stageId, transition, {
+    gate: stageId,
+    kind: "stage",
+    subject: {
+      stageId,
+      visit: current.visit,
+      attempt: attempt.attempt,
+      acceptedSeq: accepted.seq,
+      receiptId: accepted.receiptId,
+    },
+    revision: evidence.revision,
+    verdict: accepted.verdict,
+  });
 }
 
 function nextAttempt<Input>(
@@ -727,7 +888,35 @@ export function historyOf(snapshot: RunSnapshot, runDir: string): RunHistory {
     const ref = acceptedRefOf(snapshot, runDir, latest);
     if (ref !== null) latestAccepted[stageId] = ref;
   }
-  return { gates: snapshot.gates, latestAccepted };
+  const children = Object.create(null) as Record<string, ChildRef>;
+  for (const stage of snapshot.stages) {
+    if (stage.workflow === undefined) continue;
+    const latest = snapshot.outputs.latestAcceptedByStage[stage.stageId];
+    if (latest === undefined) continue;
+    const attempt = attemptOf(snapshot, latest);
+    const child = attempt?.child;
+    if (attempt?.accepted == null || child === undefined || child.outcome === null) continue;
+    const artifacts = Object.create(null) as Record<string, AcceptedRef>;
+    for (const copy of child.artifacts) {
+      artifacts[copy.stageId] = {
+        stageId: latest.stageId,
+        visit: latest.visit,
+        attempt: latest.attempt,
+        receiptId: attempt.accepted.receiptId,
+        acceptedPath: join(runDir, copy.acceptedPath),
+        sha256: copy.sha256,
+      };
+    }
+    children[stage.stageId] = {
+      runId: child.runId,
+      runDir: child.runDir,
+      workflow: { ...child.workflow },
+      outcome: child.outcome,
+      reason: child.reason ?? "",
+      artifacts,
+    };
+  }
+  return { gates: snapshot.gates, latestAccepted, children };
 }
 
 export function acceptedRefOf(

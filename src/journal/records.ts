@@ -53,6 +53,12 @@ import {
   paneProblem,
 } from "./record-fields.js";
 import {
+  stageChildOpenedProblem,
+  stageChildResultProblem,
+  type StageChildOpenedRecord,
+  type StageChildResultRecord,
+} from "./child-records.js";
+import {
   agentAssignedProblem,
   requestDispatchedProblem,
   runTerminatedProblem,
@@ -77,6 +83,8 @@ export type {
   RunCancelRequestedRecord,
   RunTerminatedRecord,
   RunUnblockedRecord,
+  StageChildOpenedRecord,
+  StageChildResultRecord,
 };
 
 /** Persisted run input, relative to the run directory (p3). */
@@ -102,6 +110,31 @@ export interface RunOpenedRecord extends RecordBase {
   config?: { path: "config.json"; sha256: string; bytes: number };
   /** The checkout the run works in (composition, optional; absent in older journals). */
   checkout?: ResolvedCheckout;
+  /** The workflow step this child run is (composition, optional; only on a child run). */
+  parent?: RunParent;
+  /** Artifacts copied into the run at open, by label (composition, optional). */
+  inputArtifacts?: RunInputArtifact[];
+}
+
+/** The parent's workflow step a child run is. */
+export interface RunParent {
+  runId: string;
+  /** Absolute run directory of the parent run. */
+  runDir: string;
+  stageId: string;
+  visit: number;
+  attempt: number;
+}
+
+/** An input artifact the run open copied into `inputs/<n>/<file>`. */
+export interface RunInputArtifact {
+  label: string;
+  /** Relative to the run directory: `inputs/<n>/<file>`. */
+  path: string;
+  sha256: string;
+  bytes: number;
+  /** The absolute path it was copied from. */
+  source: string;
 }
 
 export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
@@ -167,7 +200,9 @@ export type JournalRecord =
   | ObservationLostRecord
   | ObservationRecoveredRecord
   | AgentLifecycleChangedRecord
-  | RunActivityRecord;
+  | RunActivityRecord
+  | StageChildOpenedRecord
+  | StageChildResultRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -230,7 +265,11 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
   switch (value["type"]) {
     case "run.opened":
       return (
-        keysProblem(value, ["runId"], ["plan", "input", "config", "checkout"]) ??
+        keysProblem(
+          value,
+          ["runId"],
+          ["plan", "input", "config", "checkout", "parent", "inputArtifacts"],
+        ) ??
         check(isId(value["runId"]), "runId is invalid") ??
         planProblem(value["plan"]) ??
         (value["input"] === undefined
@@ -239,7 +278,13 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
         (value["config"] === undefined
           ? undefined
           : fileRefProblem(value["config"], "config", CONFIG_FILE)) ??
-        (value["checkout"] === undefined ? undefined : resolvedCheckoutProblem(value["checkout"]))
+        (value["checkout"] === undefined
+          ? undefined
+          : resolvedCheckoutProblem(value["checkout"])) ??
+        (value["parent"] === undefined ? undefined : parentProblem(value["parent"])) ??
+        (value["inputArtifacts"] === undefined
+          ? undefined
+          : inputArtifactsProblem(value["inputArtifacts"]))
       );
     case "attempt.opened":
       return attemptOpenedProblem(value);
@@ -279,9 +324,64 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return agentLifecycleChangedProblem(value);
     case "run.activity":
       return runActivityProblem(value);
+    case "stage.child_opened":
+      return stageChildOpenedProblem(value);
+    case "stage.child_result":
+      return stageChildResultProblem(value, seq);
     default:
       return "unknown record type";
   }
+}
+
+function parentProblem(parent: unknown): string | undefined {
+  if (!isPlainObject(parent)) return "parent is not an object";
+  return (
+    exactKeysProblem(parent, ["runId", "runDir", "stageId", "visit", "attempt"], [], "parent.") ??
+    check(isId(parent["runId"]), "parent.runId is invalid") ??
+    check(
+      typeof parent["runDir"] === "string" && posix.isAbsolute(parent["runDir"]),
+      "parent.runDir is not absolute",
+    ) ??
+    check(isId(parent["stageId"]), "parent.stageId is invalid") ??
+    check(isPositiveInteger(parent["visit"]), "parent.visit is invalid") ??
+    check(isPositiveInteger(parent["attempt"]), "parent.attempt is invalid")
+  );
+}
+
+function inputArtifactsProblem(list: unknown): string | undefined {
+  if (!Array.isArray(list)) return "inputArtifacts is not an array";
+  const labels = new Set<string>();
+  for (const [index, item] of list.entries()) {
+    const field = `inputArtifacts[${index}]`;
+    if (!isPlainObject(item)) return `${field} is not an object`;
+    const label = item["label"];
+    const path = item["path"];
+    const bytes = item["bytes"];
+    const problem =
+      exactKeysProblem(item, ["label", "path", "sha256", "bytes", "source"], [], `${field}.`) ??
+      check(
+        typeof label === "string" && label !== "" && !labels.has(label),
+        `${field}.label is not a unique non-empty string`,
+      ) ??
+      check(
+        typeof path === "string" &&
+          posix.dirname(path) === `inputs/${index + 1}` &&
+          isId(posix.basename(path)),
+        `${field}.path is not inputs/${index + 1}/<file>`,
+      ) ??
+      hashProblem(item, "sha256", `${field}.`) ??
+      check(
+        typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0,
+        `${field}.bytes is not a non-negative safe integer`,
+      ) ??
+      check(
+        typeof item["source"] === "string" && posix.isAbsolute(item["source"]),
+        `${field}.source is not absolute`,
+      );
+    if (problem !== undefined) return problem;
+    labels.add(label as string);
+  }
+  return undefined;
 }
 
 function planProblem(plan: unknown): string | undefined {

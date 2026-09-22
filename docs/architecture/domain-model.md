@@ -706,3 +706,55 @@ path, source, branch, base, workspaceId, created, keep, inherited}`; the
   completed run, as its very last act, and says so in `host.log`; the branch
   stays. Removal is not journaled: only `host.exited` may follow
   `run.terminated`.
+
+## Implemented now (composition: workflow steps)
+
+"A workflow can be a step" — shipped behavior. Source: `src/scheduler/{definition,core,driver}.ts`,
+`src/host/child.ts`, `src/state/{reducer,store}.ts`, `src/domain/plan.ts`.
+
+- **Stage kind `workflow`.** `{kind: "workflow", stageId, workflow: {name},
+input(ctx), next(ctx)}` runs the named workflow — resolved like `--workflow`,
+  project, user or built-in — as a child run. `start` and `roundStage` may name a
+  workflow stage; a definition whose steps are all workflows may declare no
+  agents. The plan lists such stages as `workflows: [{stageId, workflow}]`
+  (optional; `agents` and `stages` may then be empty).
+- **One child run per visit.** The core opens a visit (bounded by
+  `maxVisitsPerStage`, and `maxRounds` for the round stage), calls `input(ctx)`
+  — the child's raw input, which must be a JSON value (else
+  `definition_contract_violated`) — and emits `open_child`. The host admits the
+  child (a refusal ends the parent `failed` with `child_rejected: <stage>:
+<reason>: <message>`), opens it and drives its scheduler in the background;
+  the parent journals `stage.child_opened` and keeps ticking (`wait
+awaiting_child`), so its deadline, cancellation and agent observation go on.
+  When the child ends, `record_child` publishes its `RunResult` as
+  `accepted/<stage>/visit-<v>/attempt-1/result.json`, copies each child stage's
+  latest accepted artifact (checked against the child's digest) to
+  `accepted/<stage>/visit-<v>/attempt-1/<childStage>/<file>`, and journals
+  `stage.child_result`. The step is then gated like an agent stage: a revision
+  is computed and `next(ctx)` routes on `ctx.accepted.verdict`, the child's
+  outcome (`completed`, `failed`, `exhausted`, `cancelled`); `status` is
+  `completed` exactly when the child completed. A child that ended without a
+  result fails the parent `child_error`.
+- **Identity and checkout.** The child is `<parentRunId>.<stageId>.<visit>` in
+  the parent's runs directory, with `run.opened.parent` pointing back and its
+  own journal, locator, `config.json`, `input.json`, `host.log` and host claim
+  (held by the same process, which also journals its `host.claimed` and
+  `host.exited`). It is admitted into the parent's repository with
+  `checkout.inherited: true`; its input may only say `{"mode":"current"}`.
+- **Data between steps.** `ctx.history.children[stageId]` is the latest child
+  result of each step: `{runId, runDir, workflow, outcome, reason, artifacts}`,
+  the artifacts being `AcceptedRef`s to the parent's copies. An `InputRef` may
+  name `{stageId}` (the step's `result.json`), `{stageId, artifact:
+"<childStage>"}` (one copied child artifact) or `{input: "<label>"}` (an input
+  artifact); every input is re-hashed before a request is rendered. A definition
+  may declare `inputArtifacts(input) → [{label, path, sha256}]`: admission
+  checks each digest (`input_invalid` naming `inputArtifacts.<label>`), and the
+  run open copies each file into `inputs/<n>/<file>` (read-only), recorded on
+  `run.opened.inputArtifacts`.
+- **Cancellation and limits.** Aborting the parent (a signal, or `woof run
+cancel <parent>`, which its next tick settles) aborts the running child, which
+  cancels itself with the reason `parent run cancelled` or `parent run ended`;
+  the parent's settle waits (at most 60 s) for it to record that. Cancelling only
+  the child is the step's result (`cancelled`) and the parent's `next` decides.
+  The child's limits are its own; the parent bounds the step with its own visit
+  and round limits and `runTimeoutMs`.

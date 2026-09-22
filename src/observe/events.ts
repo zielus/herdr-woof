@@ -104,6 +104,9 @@ function subjectOf(
         visit: record.subject.visit,
         attempt: record.subject.attempt,
       };
+    case "stage.child_opened":
+    case "stage.child_result":
+      return { stageId: record.stageId, visit: record.visit, attempt: record.attempt };
     case "attempt.opened":
     case "submission.accepted":
     case "request.dispatched":

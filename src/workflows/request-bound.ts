@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { MAX_COUNT_LIMIT } from "../domain/types.js";
 import {
   agentStageOf,
@@ -82,7 +84,7 @@ export function largestRequestBytes<Input>(
     const request = stage.request({
       input,
       runId: "r".repeat(128),
-      history: { gates: [historyGate], latestAccepted: {} },
+      history: { gates: [historyGate], latestAccepted: {}, children: {} },
       stageId: item.stageId,
       visit: counter,
       attempt: counter,
@@ -98,12 +100,30 @@ export function largestRequestBytes<Input>(
           checkId: ref.from.checkId,
         };
       }
+      if ("input" in ref.from) {
+        // An input artifact is copied to inputs/<n>/<its own file name>.
+        const label = ref.from.input;
+        const artifacts = definition.inputArtifacts?.(input) ?? [];
+        const index = artifacts.findIndex((artifact) => artifact.label === label);
+        const file = index < 0 ? "x".repeat(128) : basename(artifacts[index]?.path ?? "");
+        return {
+          label: ref.label,
+          path: `${runDir}/inputs/${Math.max(index + 1, 1)}/${file}`,
+          sha256: hex,
+          inputLabel: label,
+        };
+      }
       const source = agentStageOf(definition, ref.from.stageId);
+      const childStage = ref.from.artifact;
       return {
         label: ref.label,
-        path: `${runDir}/accepted/${ref.from.stageId}/visit-${counter}/attempt-${counter}/${source?.artifactFile ?? "artifact"}`,
+        path:
+          childStage === undefined
+            ? `${runDir}/accepted/${ref.from.stageId}/visit-${counter}/attempt-${counter}/${source?.artifactFile ?? "result.json"}`
+            : `${runDir}/accepted/${ref.from.stageId}/visit-${counter}/attempt-${counter}/${childStage}/${"x".repeat(128)}`,
         sha256: hex,
         accepted: { stageId: ref.from.stageId, visit: counter, attempt: counter, receiptId },
+        ...(childStage !== undefined ? { childStage } : {}),
       };
     });
     const rendered = renderRequest({

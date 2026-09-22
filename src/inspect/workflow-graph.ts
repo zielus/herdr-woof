@@ -57,6 +57,14 @@ export function graphOf(
         command: null,
       };
     }
+    if (stage.kind === "workflow") {
+      return {
+        id: stage.stageId,
+        kind: "workflow",
+        bindsRevision: false,
+        command: stage.workflow.name,
+      };
+    }
     let command: string | null = null;
     if (inputOk) {
       try {
