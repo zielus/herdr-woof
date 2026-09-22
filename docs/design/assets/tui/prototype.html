@@ -1,0 +1,2663 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Woof Tui.fragment</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        background: light-dark(rgb(255 255 255), rgb(24 24 24));
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        box-sizing: border-box;
+        padding: 1rem;
+        background: inherit;
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        height: calc(100vh - 2rem);
+        margin: 0 auto;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe
+      id="codex-visualization"
+      sandbox="allow-scripts"
+      referrerpolicy="no-referrer"
+      title="Woof Tui.fragment"
+      data-srcdoc='&lt;!doctype html&gt;
+&lt;html lang="en" data-visualize-standalone&gt;
+&lt;head&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+&lt;meta name="referrer" content="no-referrer"&gt;
+&lt;meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;"&gt;
+&lt;title&gt;Woof Tui.fragment&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, "Segoe UI", sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --icon-size: 16px;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --corner-shape: round;
+  --radius: var(--border-radius-lg, 10px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url("data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E");
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: var(--visualize-paint-gutter, 0px);
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+.cursor-interaction {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: var(--cursor-interaction, pointer);
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align="right"]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align="center"]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: var(--corner-shape);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin-block: 6px;
+  border: 0;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  display: flex;
+  height: 8px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 8px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar:only-child {
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.nav-link,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn,
+.nav-link {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover,
+.nav-link:not(:disabled):not([aria-disabled="true"]):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.nav-pills .nav-link {
+  min-width: 0;
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.nav-justified .nav-link {
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.nav-pills .nav-link.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.btn:disabled,
+.nav-link:disabled,
+.nav-link[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type="file"] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type="file"]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type="file"]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: var(--corner-shape);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type="checkbox"] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type="checkbox"]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type="checkbox"]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: "";
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type="radio"]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: "";
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed="true"],
+  [aria-selected="true"],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed="true"], [aria-selected="true"], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible,
+.nav-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .nav-link,
+  .form-control,
+  .form-select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Keep small-screen WebKit from zooming when a text field receives focus. */
+  .form-control,
+  .form-select {
+    font-size: max(16px, var(--font-size-normal));
+  }
+
+  .form-control[type="file"]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type="color"] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type="date"],
+    [type="datetime-local"],
+    [type="month"],
+    [type="time"],
+    [type="week"]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: "";
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+
+  .form-range::-webkit-slider-runnable-track {
+    height: 44px;
+  }
+
+  .form-range::-moz-range-track {
+    height: 44px;
+  }
+
+  .form-range::-webkit-slider-thumb {
+    margin-top: 12px;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;script type="application/json" id="codex-visualization-widget-state"&gt;__CODEX_VISUALIZATION_WIDGET_STATE__&lt;/script&gt;
+&lt;script&gt;(() =&gt; {
+  const root = document.documentElement;
+  const mediaQuery = globalThis.matchMedia("(prefers-color-scheme: dark)");
+  const apply = Reflect.apply;
+  const isArray = Array.isArray;
+  const hasOwn = Object.hasOwn;
+  const parentWindow = globalThis.parent;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+  const initialStateElement = document.getElementById(
+    "codex-visualization-widget-state",
+  );
+  const initialGlobals = parse(initialStateElement?.textContent ?? "{}");
+  initialStateElement?.remove();
+  /** @type {Record&lt;string, unknown&gt; | null} */
+  let state = initialGlobals.widgetState ?? null;
+  const statePersistence = initialGlobals.statePersistence ?? "none";
+  let nextStateRequestId = 0;
+  /** @type {Map&lt;number, { resolve: () =&gt; void; reject: (error: Error) =&gt; void; timeout: ReturnType&lt;typeof globalThis.setTimeout&gt;; serializedState: string }&gt;} */
+  const pendingStateWrites = new Map();
+  const persistenceError = () =&gt;
+    Object.assign(
+      new Error("The host could not persist the widget state update"),
+      {
+        code: -32000,
+        data: { code: "widget_state_persistence_failed", retryable: false },
+      },
+    );
+  /**
+   * @param {object} prototype
+   * @param {string} property
+   */
+  const getPrototypeGetter = (prototype, property) =&gt; {
+    // oxlint-disable-next-line typescript/unbound-method -- invoked through captured Reflect.apply
+    const getter = Object.getOwnPropertyDescriptor(prototype, property)?.get;
+    if (getter == null) {
+      throw new Error(`Missing ${property} getter`);
+    }
+    return getter;
+  };
+  const getMessageData = getPrototypeGetter(MessageEvent.prototype, "data");
+  const getMessagePorts = getPrototypeGetter(MessageEvent.prototype, "ports");
+  const getMessageSource = getPrototypeGetter(MessageEvent.prototype, "source");
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const addHostMessageListener = MessagePort.prototype.addEventListener;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const postHostMessage = MessagePort.prototype.postMessage;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const startHostPort = MessagePort.prototype.start;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const stopMessagePropagation = Event.prototype.stopImmediatePropagation;
+  /** @type {MessagePort | null} */
+  let hostPort = null;
+  const postToHost = (type, payload) =&gt; {
+    if (hostPort != null) {
+      apply(postHostMessage, hostPort, [{ type, ...payload }]);
+    }
+  };
+  const openExternal = ({ href }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost("open-external", { href });
+    }
+  };
+  const sendFollowUpMessage = ({ context, prompt, title }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost("follow-up", { context, prompt, title });
+    }
+    return Promise.resolve();
+  };
+  /**
+   * @param {Record&lt;string, unknown&gt; | ((previous: Record&lt;string, unknown&gt; | null) =&gt; Record&lt;string, unknown&gt;)} next
+   * @returns {Promise&lt;void&gt;}
+   */
+  const setWidgetState = async (next) =&gt; {
+    const nextState = typeof next === "function" ? next(state) : next;
+    if (
+      nextState == null ||
+      typeof nextState !== "object" ||
+      isArray(nextState)
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const inputState = stringify(
+      nextState,
+      (_key, /** @type {unknown} */ value) =&gt; {
+        if (
+          typeof value === "undefined" ||
+          typeof value === "function" ||
+          typeof value === "symbol" ||
+          (typeof value === "number" &amp;&amp; !Number.isFinite(value))
+        ) {
+          throw new TypeError("Widget state must be a JSON object");
+        }
+        return value;
+      },
+    );
+    const parsedState = parse(inputState);
+    if (
+      parsedState == null ||
+      typeof parsedState !== "object" ||
+      isArray(parsedState)
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = {
+      modelContent: null,
+      privateContent: null,
+      ...parsedState,
+    };
+    const serializedState = stringify(storedState);
+    if (encode(serializedState).length &gt; 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    if (
+      hasOwn(storedState, "imageIds") &amp;&amp;
+      (!isArray(storedState.imageIds) ||
+        storedState.imageIds.some(
+          (/** @type {unknown} */ id) =&gt; typeof id !== "string",
+        ))
+    ) {
+      throw new TypeError("Widget state imageIds must be an array of strings");
+    }
+    if (storedState.imageIds?.length &gt; 0) {
+      throw Object.assign(
+        new TypeError("Visualization state does not support image attachments"),
+        { code: -32602, data: { code: "images_unsupported" } },
+      );
+    }
+    state = storedState;
+    globalThis.openai.widgetState = state;
+    globalThis.dispatchEvent(
+      new CustomEvent("openai:set_globals", {
+        detail: { globals: { widgetState: state } },
+      }),
+    );
+    if (statePersistence === "none") {
+      throw persistenceError();
+    }
+    const id = ++nextStateRequestId;
+    return new Promise((resolve, reject) =&gt; {
+      const timeout = globalThis.setTimeout(() =&gt; {
+        pendingStateWrites.delete(id);
+        reject(persistenceError());
+      }, 30_000);
+      pendingStateWrites.set(id, { resolve, reject, timeout, serializedState });
+      postToHost("widget-state-write", { id, state: serializedState });
+    });
+  };
+  const syncTheme = () =&gt; {
+    const theme = mediaQuery.matches ? "dark" : "light";
+    root.dataset.theme = theme;
+    globalThis.openai = {
+      ...globalThis.openai,
+      openExternal,
+      sendFollowUpMessage,
+      setWidgetState,
+      theme,
+      visualizationStyleVariables: {},
+      visualizationTheme: theme,
+      widgetState: state,
+      statePersistence,
+      stateModelContext: "none",
+    };
+    globalThis.dispatchEvent(
+      new CustomEvent("openai:set_globals", {
+        detail: { globals: globalThis.openai },
+      }),
+    );
+  };
+  const sendHeight = () =&gt; {
+    postToHost("height", {
+      height: Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.body.getBoundingClientRect().height,
+        ),
+      ),
+    });
+  };
+
+  globalThis.addEventListener(
+    "message",
+    (event) =&gt; {
+      const data = apply(getMessageData, event, []);
+      const ports = apply(getMessagePorts, event, []);
+      const source = apply(getMessageSource, event, []);
+      if (
+        hostPort != null ||
+        source !== parentWindow ||
+        typeof data !== "object" ||
+        data?.type !== "codex-visualization-initialize" ||
+        !isArray(ports) ||
+        ports.length !== 1
+      ) {
+        return;
+      }
+      apply(stopMessagePropagation, event, []);
+      const nextHostPort = ports[0];
+      try {
+        apply(addHostMessageListener, nextHostPort, [
+          "message",
+          (event) =&gt; {
+            const data = apply(getMessageData, event, []);
+            if (typeof data === "object" &amp;&amp; data?.type === "measure") {
+              sendHeight();
+            } else if (
+              typeof data === "object" &amp;&amp;
+              data?.type === "widget-state-result"
+            ) {
+              /** @type {unknown} */
+              const id = data.id;
+              if (typeof id !== "number") {
+                return;
+              }
+              const pending = pendingStateWrites.get(id);
+              if (pending != null) {
+                pendingStateWrites.delete(id);
+                globalThis.clearTimeout(pending.timeout);
+                if (data.ok === true) {
+                  pending.resolve();
+                } else {
+                  pending.reject(persistenceError());
+                }
+              }
+            }
+          },
+        ]);
+        apply(startHostPort, nextHostPort, []);
+      } catch {
+        return;
+      }
+      hostPort = nextHostPort;
+      for (const [id, { serializedState }] of pendingStateWrites) {
+        postToHost("widget-state-write", { id, state: serializedState });
+      }
+      sendHeight();
+    },
+    { capture: true },
+  );
+  document.currentScript?.remove();
+  mediaQuery.addEventListener("change", syncTheme);
+  globalThis.addEventListener("click", (event) =&gt; {
+    if (event.defaultPrevented) {
+      return;
+    }
+    let element = null;
+    if (event.target instanceof globalThis.Element) {
+      element = event.target;
+    } else if (event.target instanceof globalThis.Node) {
+      element = event.target.parentElement;
+    }
+    const link = element?.closest("a[href]");
+    const href = link?.getAttribute("href");
+    if (href == null) {
+      return;
+    }
+    if (href.startsWith("#")) {
+      let id;
+      try {
+        id = decodeURIComponent(href.slice(1));
+      } catch {
+        return;
+      }
+      const target = id.length === 0 ? root : document.getElementById(id);
+      if (
+        target == null ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      postToHost("scroll-to", {
+        top: target.getBoundingClientRect().top + globalThis.scrollY,
+      });
+      return;
+    }
+    event.preventDefault();
+    openExternal({ href });
+  });
+  new ResizeObserver(sendHeight).observe(document.body);
+  syncTheme();
+})();
+&lt;/script&gt;
+&lt;div id="woof-native" aria-label="Woof · terminal-native design"&gt;
+  &lt;style&gt;
+    #woof-native {
+      --bg: light-dark(#fafbf8, #131612);
+      --fg: light-dark(#273026, #d7dfd1);
+      --dim: light-dark(#697264, #8b9984);
+      --line: light-dark(#cbd3c5, #34402e);
+      --cyan: light-dark(#086971, #83c7c8);
+      --green: light-dark(#2d702b, #9ec785);
+      --amber: light-dark(#905b03, #e6bc73);
+      --red: light-dark(#af3036, #ed9494);
+      --reverse: light-dark(#263922, #c5d5bb);
+      --reverse-fg: light-dark(#f5f9f0, #141b10);
+      background: var(--bg);
+      color: var(--fg);
+      font:
+        13px/1.65 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Consolas,
+        monospace;
+      padding: 12px 16px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    #woof-native * {
+      box-sizing: border-box;
+    }
+    #woof-native button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      border-radius: 0;
+      margin: 0;
+      padding: 0;
+      text-align: left;
+    }
+    #woof-native button:focus-visible {
+      outline: 1px solid var(--cyan);
+      outline-offset: 1px;
+    }
+    #woof-native strong {
+      font-weight: 600;
+    }
+    #woof-native .dim {
+      color: var(--dim);
+    }
+    #woof-native .cyan {
+      color: var(--cyan);
+    }
+    #woof-native .green {
+      color: var(--green);
+    }
+    #woof-native .amber {
+      color: var(--amber);
+    }
+    #woof-native .red {
+      color: var(--red);
+    }
+    #woof-native .head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 2ch;
+    }
+    #woof-native .end {
+      margin-left: auto;
+    }
+    #woof-native .rule {
+      border-top: 1px solid var(--line);
+      margin: 5px 0;
+    }
+    #woof-native .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 3ch;
+      padding: 2px 0;
+    }
+    #woof-native .tabs button {
+      white-space: pre;
+    }
+    #woof-native .tabs button[aria-selected="true"] {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .screen {
+      min-height: 385px;
+      padding: 5px 0;
+    }
+    #woof-native .line {
+      white-space: pre-wrap;
+    }
+    #woof-native .step {
+      display: grid;
+      grid-template-columns:
+        2ch 2ch minmax(9ch, 1fr) 11ch minmax(16ch, 1.5fr)
+        6ch 11ch;
+      gap: 0 1ch;
+      width: 100%;
+      min-height: 22px;
+      align-items: baseline;
+    }
+    #woof-native .step[aria-expanded="true"] &gt; .step-name {
+      color: var(--cyan);
+    }
+    #woof-native .step[aria-current="true"] &gt; .cursor {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .indent {
+      padding-left: 5ch;
+    }
+    #woof-native .tree {
+      color: var(--dim);
+      white-space: pre-wrap;
+    }
+    #woof-native .tree button {
+      color: var(--cyan);
+    }
+    #woof-native .tree button:hover {
+      text-decoration: underline;
+    }
+    #woof-native .tree button[aria-current="true"] {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .spacer {
+      height: 1.65em;
+    }
+    #woof-native .feed {
+      display: grid;
+      grid-template-columns: 8ch 1ch 10ch 8ch minmax(0, 1fr);
+      gap: 0 1.5ch;
+    }
+    #woof-native .foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 2ch;
+      color: var(--dim);
+    }
+    #woof-native .foot button {
+      color: var(--dim);
+    }
+    #woof-native kbd {
+      font: inherit;
+      background: none;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+      color: var(--fg);
+    }
+    #woof-native .runrow {
+      width: 100%;
+      display: grid;
+      grid-template-columns:
+        2ch 12ch minmax(20ch, 1.5fr) minmax(16ch, 1fr)
+        9ch 7ch;
+      gap: 0 1ch;
+      align-items: baseline;
+    }
+    #woof-native .runrow[aria-current="true"] .runname {
+      background: var(--reverse);
+      color: var(--reverse-fg);
+    }
+    #woof-native .right {
+      text-align: right;
+    }
+    #woof-native .kv {
+      display: grid;
+      grid-template-columns: 13ch minmax(0, 1fr);
+      gap: 0 2ch;
+    }
+    #woof-native pre {
+      font: inherit;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: 0;
+      color: var(--fg);
+    }
+    #woof-native .label {
+      color: var(--dim);
+    }
+    #woof-native .agentrow {
+      display: grid;
+      grid-template-columns: 11ch 9ch 9ch minmax(0, 1fr);
+      gap: 0 2ch;
+    }
+    #woof-native[data-color="false"] .cyan,
+    #woof-native[data-color="false"] .green,
+    #woof-native[data-color="false"] .amber,
+    #woof-native[data-color="false"] .red {
+      color: var(--fg);
+    }
+    @media (max-width: 760px) {
+      #woof-native {
+        font-size: 12px;
+        padding: 10px;
+      }
+      #woof-native .step {
+        grid-template-columns:
+          2ch 2ch minmax(8ch, 1fr) 10ch minmax(15ch, 1.5fr)
+          6ch;
+        gap: 0 0.6ch;
+      }
+      #woof-native .step-output {
+        display: none;
+      }
+      #woof-native .runrow {
+        grid-template-columns: 2ch 11ch minmax(17ch, 1fr) 8ch 7ch;
+      }
+      #woof-native .workflow {
+        display: none;
+      }
+    }
+    @media (max-width: 520px) {
+      #woof-native .step {
+        grid-template-columns: 2ch 2ch minmax(8ch, 1fr) 6ch;
+      }
+      #woof-native .step-owner {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      #woof-native .step-status {
+        grid-column: 3 / -1;
+        grid-row: 3;
+      }
+      #woof-native .step-time {
+        grid-column: 4;
+        grid-row: 1;
+      }
+      #woof-native .feed {
+        grid-template-columns: 8ch 1ch minmax(0, 1fr);
+        gap: 0 1ch;
+      }
+      #woof-native .feed .stage {
+        display: none;
+      }
+      #woof-native .feed .msg {
+        grid-column: 3;
+      }
+      #woof-native .runrow {
+        grid-template-columns: 2ch minmax(0, 1fr) 7ch;
+      }
+      #woof-native .runname {
+        grid-column: 2;
+        grid-row: 1;
+      }
+      #woof-native .runstatus {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      #woof-native .runstage {
+        display: none;
+      }
+      #woof-native .runtime {
+        grid-column: 3;
+        grid-row: 1;
+      }
+      #woof-native .indent {
+        padding-left: 2ch;
+      }
+      #woof-native .screen {
+        min-height: 0;
+      }
+      #woof-native .agentrow {
+        grid-template-columns: 10ch 8ch minmax(0, 1fr);
+        gap: 0 1ch;
+      }
+      #woof-native .agentstage {
+        grid-column: 1 / -1;
+        color: var(--dim);
+      }
+      #woof-native .kv {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      #woof-native .end {
+        margin-left: 0;
+      }
+    }
+    @media (pointer: coarse) {
+      #woof-native button {
+        min-height: 44px;
+      }
+    }
+  &lt;/style&gt;
+  &lt;div id="wn-top"&gt;&lt;/div&gt;
+  &lt;div class="rule"&gt;&lt;/div&gt;
+  &lt;div id="wn-tabs" class="tabs"&gt;&lt;/div&gt;
+  &lt;div class="rule"&gt;&lt;/div&gt;
+  &lt;div id="wn-body" class="screen"&gt;&lt;/div&gt;
+  &lt;div class="rule"&gt;&lt;/div&gt;
+  &lt;div id="wn-footer" class="foot"&gt;&lt;/div&gt;
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById("woof-native");
+      const s = {
+        screen: "run",
+        tab: "steps",
+        expanded: "review",
+        cursor: 2,
+        node: "step",
+        run: 0,
+        file: null,
+        color: true,
+      };
+      const rows = [
+        {
+          id: "build",
+          title: "build",
+          mark: "✓",
+          who: "builder",
+          status: "accepted",
+          tone: "green",
+          time: "18s",
+          file: "completion.md",
+          lines: [
+            "attempt 1   dispatched 09:12:54 → accepted 09:13:12",
+            "gate        passed → verify",
+          ],
+        },
+        {
+          id: "verify",
+          title: "verify",
+          mark: "✓",
+          who: "check",
+          status: "passed",
+          tone: "green",
+          time: "&lt;1s",
+          file: "output.log",
+          lines: ["command     bun test", "result      exit 0 → review"],
+        },
+        {
+          id: "review",
+          title: "review",
+          mark: "↻",
+          who: "reviewer",
+          status: "changes requested",
+          tone: "amber",
+          time: "21s",
+          file: "review.md",
+          lines: [
+            "attempt 1   dispatched 09:13:20 → accepted 09:13:41",
+            "verdict     fail",
+            "gate        changes requested → repair",
+            "handoff     accepted review → builder (same agent)",
+          ],
+        },
+        {
+          id: "repair",
+          title: "repair",
+          mark: "●",
+          who: "builder",
+          status: "awaiting result",
+          tone: "cyan",
+          time: "42s",
+          file: null,
+          lines: [
+            "attempt 1   dispatched 09:13:45 · same builder",
+            "input       accepted review from review / visit 1",
+            "waiting     no accepted result yet",
+          ],
+        },
+        {
+          id: "verify2",
+          title: "verify",
+          mark: "·",
+          who: "check",
+          status: "pending repair",
+          tone: "dim",
+          time: "—",
+          file: null,
+          lines: ["conditional on the repair gate passing", "no check has started"],
+        },
+        {
+          id: "review2",
+          title: "review 2",
+          mark: "·",
+          who: "reviewer",
+          status: "pending checks",
+          tone: "dim",
+          time: "—",
+          file: null,
+          lines: ["conditional on repaired work passing verification", "no attempt has started"],
+        },
+      ];
+      const runlist = [
+        ["Fix empty-state rendering", "build-review", "running", "repair", "1m 40s", "cyan"],
+        ["Add retry backoff", "plan-build-review", "blocked", "build", "5m 55s", "amber"],
+        ["Normalize run summaries", "build-review", "completed", "review 2", "1m 27s", "green"],
+        ["Document role overrides", "build-review", "host lost", "build", "unknown", "red"],
+      ];
+      const feed = [
+        ["09:12:47", "·", "run", "", "Started", "dim"],
+        ["09:12:52", "+", "builder", "", "Agent started · claude / sonnet", "cyan"],
+        ["09:12:54", "→", "builder", "build", "Task dispatched", "cyan"],
+        ["09:13:12", "✓", "builder", "build", "Completion report accepted", "green"],
+        ["09:13:13", "✓", "gate", "verify", "Checks passed → review", "green"],
+        ["09:13:18", "+", "reviewer", "", "Agent started · claude / sonnet", "cyan"],
+        ["09:13:20", "→", "reviewer", "review", "Task dispatched", "cyan"],
+        ["09:13:41", "↓", "reviewer", "review", "Review received · changes requested", "dim"],
+        ["09:13:42", "↻", "gate", "review", "Changes requested → repair", "amber"],
+        ["09:13:45", "→", "builder", "repair", "Task dispatched · same agent", "cyan"],
+      ];
+      const esc = (x) =&gt;
+        String(x ?? "").replace(
+          /[&amp;&lt;&gt;"&#x27;]/g,
+          (c) =&gt;
+            ({
+              "&amp;": "&amp;amp;",
+              "&lt;": "&amp;lt;",
+              "&gt;": "&amp;gt;",
+              &#x27;"&#x27;: "&amp;quot;",
+              "&#x27;": "&amp;#39;",
+            })[c],
+        );
+      function save() {
+        window.openai
+          ?.setWidgetState?.({
+            modelContent: {
+              design: "terminal-native",
+              screen: s.screen,
+              tab: s.tab,
+              expanded: s.expanded,
+              file: s.file,
+            },
+            privateContent: { ...s },
+          })
+          .catch(() =&gt; {});
+      }
+      function update(fn, focus) {
+        fn();
+        render();
+        save();
+        if (focus)
+          root
+            .querySelector(typeof focus === "function" ? focus() : focus)
+            ?.focus({ preventScroll: true });
+      }
+      const tabs = ["steps", "activity", "config"];
+      const selected = () =&gt; `[data-${s.node}="${work()[s.cursor].id}"]`;
+      function openRun(index) {
+        update(() =&gt; {
+          s.run = index;
+          s.screen = "run";
+          s.tab = "steps";
+          s.file = null;
+          s.expanded = null;
+          s.cursor = 0;
+          s.node = "step";
+        }, selected);
+      }
+      function closeFile() {
+        update(() =&gt; {
+          s.file = null;
+        }, selected);
+      }
+      function openFile(id) {
+        update(() =&gt; {
+          s.file = id;
+        }, &#x27;[data-action="close"]&#x27;);
+      }
+      function visibleNodes() {
+        return work().flatMap((r, cursor) =&gt; [
+          { cursor, node: "step" },
+          ...(s.expanded === r.id &amp;&amp; r.file ? [{ cursor, node: "file" }] : []),
+        ]);
+      }
+      function work() {
+        if (s.run === 0) return rows;
+        if (s.run === 2)
+          return rows.map((r, i) =&gt; ({
+            ...r,
+            status: i === 2 ? "changes requested" : i === 5 ? "approved" : "passed",
+            tone: i === 2 ? "amber" : "green",
+            mark: i === 2 ? "↻" : "✓",
+            time: i === 3 ? "11s" : i === 4 ? "&lt;1s" : i === 5 ? "13s" : r.time,
+            file:
+              i === 3 ? "completion.md" : i === 4 ? "output.log" : i === 5 ? "review.md" : r.file,
+            lines:
+              i &gt;= 3
+                ? [
+                    "attempt 1   recorded result accepted",
+                    "gate        " + (i === 5 ? "approved → completed" : "passed"),
+                  ]
+                : r.lines,
+          }));
+        if (s.run === 1)
+          return [
+            {
+              ...rows[0],
+              id: "plan",
+              title: "plan",
+              who: "planner",
+              status: "accepted",
+              file: null,
+              lines: ["plan accepted → builder"],
+            },
+            {
+              ...rows[0],
+              status: "permission required",
+              tone: "amber",
+              mark: "!",
+              file: null,
+              lines: [
+                "attempt 1   dispatched",
+                "action      answer the permission prompt in builder’s tab",
+              ],
+            },
+          ];
+        return [
+          {
+            ...rows[0],
+            status: "outcome unknown",
+            tone: "red",
+            mark: "?",
+            file: null,
+            lines: [
+              "last action   build request dispatched",
+              "host          lost · no terminal outcome recorded",
+            ],
+          },
+        ];
+      }
+      function steps() {
+        return `&lt;div class="step dim"&gt;&lt;span&gt;&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;span&gt;STEP&lt;/span&gt;&lt;span class="step-owner"&gt;OWNER&lt;/span&gt;&lt;span class="step-status"&gt;STATE&lt;/span&gt;&lt;span class="step-time right"&gt;TIME&lt;/span&gt;&lt;span class="step-output"&gt;OUTPUT&lt;/span&gt;&lt;/div&gt;${work()
+          .map(
+            (r, i) =&gt;
+              `&lt;button class="step cursor-interaction" data-step="${r.id}" aria-current="${s.cursor === i &amp;&amp; s.node === "step"}" aria-expanded="${s.expanded === r.id}"&gt;&lt;span class="cursor"&gt;${s.cursor === i &amp;&amp; s.node === "step" ? "›" : " "}&lt;/span&gt;&lt;span class="dim"&gt;${s.expanded === r.id ? "▾" : "▸"}&lt;/span&gt;&lt;span class="step-name"&gt;&lt;span class="${r.tone}"&gt;${r.mark}&lt;/span&gt; ${r.title}&lt;/span&gt;&lt;span class="step-owner dim"&gt;${r.who}&lt;/span&gt;&lt;span class="step-status ${r.tone}"&gt;${r.status}&lt;/span&gt;&lt;span class="step-time right dim"&gt;${r.time}&lt;/span&gt;&lt;span class="step-output dim"&gt;${r.file ? "1 artifact" : "—"}&lt;/span&gt;&lt;/button&gt;${s.expanded === r.id ? `&lt;div class="indent"&gt;${r.lines.map((t) =&gt; `&lt;div class="tree"&gt;│ ${esc(t)}&lt;/div&gt;`).join("")}&lt;div class="tree"&gt;└ ${r.file ? `artifact    &lt;button class="cursor-interaction" data-file="${r.id}" aria-current="${s.cursor === i &amp;&amp; s.node === "file"}"&gt;${r.file}&lt;/button&gt; &lt;span class="dim"&gt;[enter to read]&lt;/span&gt;` : "no accepted output"}&lt;/div&gt;&lt;/div&gt;` : ""}`,
+          )
+          .join(
+            "",
+          )}&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="dim"&gt;${s.run === 0 ? "next: verify → review, if each gate passes" : s.run === 2 ? "result: completed · approved" : s.run === 1 ? "action: answer the permission prompt in builder’s tab" : "host lost · outcome unknown"}&lt;/div&gt;`;
+      }
+      function activity() {
+        const events =
+          s.run === 0
+            ? feed
+            : s.run === 2
+              ? [
+                  ["09:00:05", "↻", "gate", "review", "Changes requested → repair", "amber"],
+                  ["09:00:08", "→", "builder", "repair", "Task dispatched · same agent", "cyan"],
+                  ["09:00:19", "✓", "builder", "repair", "Completion report accepted", "green"],
+                  ["09:00:20", "✓", "gate", "verify", "Checks passed → review", "green"],
+                  ["09:00:23", "→", "reviewer", "review 2", "Task dispatched", "cyan"],
+                  ["09:00:37", "✓", "gate", "review 2", "Approved → completed", "green"],
+                  ["09:00:38", "✓", "run", "", "Completed · approved", "green"],
+                ]
+              : s.run === 1
+                ? [
+                    ["09:09:15", "✓", "planner", "plan", "Plan accepted", "green"],
+                    ["09:09:22", "→", "builder", "build", "Task dispatched", "cyan"],
+                    ["09:13:50", "!", "builder", "build", "Permission required", "amber"],
+                  ]
+                : [["08:41:11", "→", "builder", "build", "Task dispatched", "cyan"]];
+        return (
+          events
+            .map(
+              (e) =&gt;
+                `&lt;div class="feed"&gt;&lt;span class="dim"&gt;${e[0]}&lt;/span&gt;&lt;span class="${e[5]}"&gt;${e[1]}&lt;/span&gt;&lt;span&gt;${e[2]}&lt;/span&gt;&lt;span class="stage dim"&gt;${e[3]}&lt;/span&gt;&lt;span class="msg ${e[5]}"&gt;${e[4]}&lt;/span&gt;&lt;/div&gt;`,
+            )
+            .join("") +
+          `&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="dim"&gt;${s.run === 0 ? "· waiting for builder / repair · 42s since dispatch" : s.run === 2 ? "✓ recorded outcome: completed" : s.run === 1 ? "! run blocked; answer in builder’s tab" : "! host lost; outcome unknown"}&lt;/div&gt;`
+        );
+      }
+      function config() {
+        return `&lt;div class="label"&gt;agents&lt;/div&gt;${s.run === 1 ? &#x27;&lt;div class="agentrow"&gt;&lt;span&gt;planner&lt;/span&gt;&lt;span&gt;claude&lt;/span&gt;&lt;span&gt;sonnet&lt;/span&gt;&lt;span class="agentstage"&gt;plan&lt;/span&gt;&lt;/div&gt;&#x27; : ""}&lt;div class="agentrow"&gt;&lt;span&gt;builder&lt;/span&gt;&lt;span&gt;claude&lt;/span&gt;&lt;span&gt;sonnet&lt;/span&gt;&lt;span class="agentstage"&gt;build, repair&lt;/span&gt;&lt;/div&gt;&lt;div class="agentrow"&gt;&lt;span&gt;reviewer&lt;/span&gt;&lt;span&gt;claude&lt;/span&gt;&lt;span&gt;sonnet&lt;/span&gt;&lt;span class="agentstage"&gt;review&lt;/span&gt;&lt;/div&gt;&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="label"&gt;input · task preview&lt;/div&gt;&lt;pre&gt;${esc(JSON.stringify({ title: runlist[s.run][0], acceptanceCriteria: ["Requested behavior works.", "Existing behavior remains covered."] }, null, 2))}&lt;/pre&gt;&lt;div class="dim"&gt;full input: input.json&lt;/div&gt;&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="label"&gt;context&lt;/div&gt;&lt;div class="kv"&gt;&lt;span class="dim"&gt;project&lt;/span&gt;&lt;span&gt;herdr-woof&lt;/span&gt;&lt;span class="dim"&gt;workflow&lt;/span&gt;&lt;span&gt;${runlist[s.run][1]}&lt;/span&gt;&lt;span class="dim"&gt;verify&lt;/span&gt;&lt;span&gt;bun test&lt;/span&gt;&lt;span class="dim"&gt;limits&lt;/span&gt;&lt;span&gt;3 review rounds · 2 attempts/visit · 2h timeout&lt;/span&gt;&lt;/div&gt;`;
+      }
+      function runs() {
+        return `&lt;div class="runrow dim"&gt;&lt;span&gt;&lt;/span&gt;&lt;span&gt;STATE&lt;/span&gt;&lt;span&gt;RUN&lt;/span&gt;&lt;span class="workflow"&gt;WORKFLOW&lt;/span&gt;&lt;span&gt;STEP&lt;/span&gt;&lt;span class="right"&gt;TIME&lt;/span&gt;&lt;/div&gt;${runlist.map((r, i) =&gt; `&lt;button class="runrow cursor-interaction" data-run="${i}" aria-current="${s.run === i}"&gt;&lt;span class="cyan"&gt;${s.run === i ? "›" : " "}&lt;/span&gt;&lt;span class="runstatus ${r[5]}"&gt;${r[2]}&lt;/span&gt;&lt;span class="runname"&gt;${r[0]}&lt;/span&gt;&lt;span class="workflow dim"&gt;${r[1]}&lt;/span&gt;&lt;span class="runstage dim"&gt;${r[3]}&lt;/span&gt;&lt;span class="runtime right dim"&gt;${r[4]}&lt;/span&gt;&lt;/button&gt;`).join("")}&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="dim"&gt;herdr-woof · 1 running · 2 need attention · 1 completed&lt;/div&gt;`;
+      }
+      function fileView() {
+        const r = work().find((x) =&gt; x.id === s.file);
+        return `&lt;div class="dim"&gt;${r.file} · accepted ${r.id.startsWith("verify") ? "verification evidence" : r.title} / visit ${r.id.endsWith("2") ? 2 : 1} · SAMPLE CONTENT&lt;/div&gt;&lt;div class="rule"&gt;&lt;/div&gt;&lt;pre&gt;${s.file === "review2" ? "Verdict: pass\n\nThe repaired implementation meets the acceptance criteria.\nThe review gate approved the matching revision." : s.file === "review" ? "Verdict: fail\n\nEmpty-state rendering\n\nThe populated list still renders correctly.\nThe empty-list path needs an explicit empty-state component.\n\nRequested change\nHandle items.length === 0 before rendering the list.\nAdd a check for the empty-list case.\n\nThis accepted review is passed to the builder for repair." : s.file.startsWith("verify") ? "Command: bun test\nExit code: 0\n\nVerification passed." : "Build report\n\nImplementation submitted for verification and review."}&lt;/pre&gt;&lt;div class="spacer"&gt;&lt;/div&gt;&lt;div class="dim"&gt;(END)&lt;/div&gt;`;
+      }
+      function render() {
+        root.dataset.color = String(s.color);
+        root.querySelector("#wn-top").innerHTML =
+          `&lt;div class="head"&gt;&lt;strong class="green"&gt;woof&lt;/strong&gt;&lt;span&gt;${s.screen === "runs" ? "runs / herdr-woof" : esc(runlist[s.run][0])}&lt;/span&gt;&lt;span class="end dim"&gt;SAMPLE&lt;/span&gt;&lt;/div&gt;${s.screen === "run" ? `&lt;div class="head"&gt;&lt;span class="dim"&gt;${runlist[s.run][1]}&lt;/span&gt;&lt;span class="${runlist[s.run][5]}"&gt;${runlist[s.run][2]} · ${runlist[s.run][3]}&lt;/span&gt;&lt;span class="dim"&gt;${runlist[s.run][4]}&lt;/span&gt;&lt;/div&gt;` : ""}`;
+        root.querySelector("#wn-tabs").innerHTML =
+          s.screen === "runs"
+            ? "&lt;span&gt; runs &lt;/span&gt;"
+            : s.file
+              ? &#x27;&lt;span class="cyan"&gt; artifact pager &lt;/span&gt;&#x27;
+              : ["steps", "activity", "config"]
+                  .map(
+                    (t, i) =&gt;
+                      `&lt;button class="cursor-interaction" id="wn-tab-${t}" data-tab="${t}" role="tab" aria-controls="wn-body" aria-selected="${s.tab === t}"&gt; ${i + 1} ${t} &lt;/button&gt;`,
+                  )
+                  .join("");
+        const hasTabs = s.screen === "run" &amp;&amp; !s.file;
+        root.querySelector("#wn-tabs").setAttribute("role", hasTabs ? "tablist" : "group");
+        root.querySelector("#wn-tabs").setAttribute("aria-label", "Run views");
+        root.querySelector("#wn-body").setAttribute("role", hasTabs ? "tabpanel" : "region");
+        if (hasTabs)
+          root.querySelector("#wn-body").setAttribute("aria-labelledby", `wn-tab-${s.tab}`);
+        else root.querySelector("#wn-body").removeAttribute("aria-labelledby");
+        root.querySelector("#wn-body").innerHTML =
+          s.screen === "runs"
+            ? runs()
+            : s.file
+              ? fileView()
+              : s.tab === "steps"
+                ? steps()
+                : s.tab === "activity"
+                  ? activity()
+                  : config();
+        root.querySelector("#wn-footer").innerHTML = s.file
+          ? &#x27;&lt;button class="cursor-interaction" data-action="close"&gt;&lt;kbd&gt;esc&lt;/kbd&gt; back to step&lt;/button&gt;&lt;span&gt;read-only&lt;/span&gt;&#x27;
+          : `${s.screen === "runs" ? "&lt;span&gt;&lt;kbd&gt;↑↓&lt;/kbd&gt; move&lt;/span&gt;&lt;span&gt;&lt;kbd&gt;→ / enter&lt;/kbd&gt; open&lt;/span&gt;" : `${s.tab === "steps" ? "&lt;span&gt;&lt;kbd&gt;↑↓&lt;/kbd&gt; move&lt;/span&gt;&lt;span&gt;&lt;kbd&gt;→&lt;/kbd&gt; expand / enter&lt;/span&gt;&lt;span&gt;&lt;kbd&gt;←&lt;/kbd&gt; parent / collapse&lt;/span&gt;&lt;span&gt;&lt;kbd&gt;o&lt;/kbd&gt; read&lt;/span&gt;" : "&lt;span&gt;&lt;kbd&gt;←→&lt;/kbd&gt; switch tab&lt;/span&gt;"}&lt;span&gt;&lt;kbd&gt;1/2/3&lt;/kbd&gt; tab&lt;/span&gt;&lt;button class="cursor-interaction" data-action="back"&gt;&lt;kbd&gt;esc&lt;/kbd&gt; runs&lt;/button&gt;`}&lt;span class="end dim"&gt;${s.run === 0 ? "snapshot 09:14:27" : "sample history"}&lt;/span&gt;`;
+      }
+      root.addEventListener("click", (e) =&gt; {
+        const d = e.target.closest("button")?.dataset;
+        if (!d) return;
+        if (d.run !== undefined) openRun(Number(d.run));
+        else if (d.tab)
+          update(() =&gt; {
+            s.tab = d.tab;
+            s.file = null;
+          }, `[data-tab="${d.tab}"]`);
+        else if (d.step)
+          update(() =&gt; {
+            s.expanded = s.expanded === d.step ? null : d.step;
+            s.cursor = work().findIndex((r) =&gt; r.id === d.step);
+            s.node = "step";
+          }, selected);
+        else if (d.file) {
+          s.cursor = work().findIndex((r) =&gt; r.id === d.file);
+          s.node = "file";
+          openFile(d.file);
+        } else if (d.action === "close") closeFile();
+        else if (d.action === "back")
+          update(() =&gt; {
+            s.screen = "runs";
+          }, `[data-run="${s.run}"]`);
+      });
+      root.addEventListener("keydown", (e) =&gt; {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const d = e.target.closest("button")?.dataset ?? {};
+        // Native Tab focus and pointer focus establish the navigation cursor too.
+        if (d.run !== undefined) s.run = Number(d.run);
+        if (d.step || d.file) {
+          s.cursor = work().findIndex((r) =&gt; r.id === (d.step || d.file));
+          s.node = d.file ? "file" : "step";
+        }
+        const key = e.key;
+        let used = true;
+        if (key === "Escape") {
+          if (s.file) closeFile();
+          else
+            update(() =&gt; {
+              s.screen = "runs";
+            }, `[data-run="${s.run}"]`);
+        } else if (s.file) used = false;
+        else if (s.screen === "run" &amp;&amp; ["1", "2", "3"].includes(key)) {
+          const tab = tabs[Number(key) - 1];
+          update(() =&gt; {
+            s.tab = tab;
+          }, `[data-tab="${tab}"]`);
+        } else if (
+          s.screen === "run" &amp;&amp;
+          (d.tab || s.tab !== "steps") &amp;&amp;
+          ["ArrowLeft", "ArrowRight"].includes(key)
+        ) {
+          const tab = tabs[(tabs.indexOf(s.tab) + (key === "ArrowRight" ? 1 : 2)) % 3];
+          update(() =&gt; {
+            s.tab = tab;
+          }, `[data-tab="${tab}"]`);
+        } else if (d.tab &amp;&amp; s.tab === "steps" &amp;&amp; ["ArrowDown", "Enter"].includes(key)) {
+          update(() =&gt; {}, selected);
+        } else if (s.screen === "runs" &amp;&amp; ["ArrowRight", "Enter"].includes(key)) {
+          openRun(s.run);
+        } else if (
+          (s.screen === "runs" || s.tab === "steps") &amp;&amp;
+          ["ArrowUp", "ArrowDown", "j", "k", "Home", "End"].includes(key)
+        ) {
+          const nodes = s.screen === "runs" ? runlist : visibleNodes();
+          const index =
+            s.screen === "runs"
+              ? s.run
+              : nodes.findIndex((n) =&gt; n.cursor === s.cursor &amp;&amp; n.node === s.node);
+          const delta = ["ArrowDown", "j"].includes(key) ? 1 : -1;
+          const next =
+            key === "Home"
+              ? 0
+              : key === "End"
+                ? nodes.length - 1
+                : Math.max(0, Math.min(nodes.length - 1, index + delta));
+          update(
+            () =&gt; {
+              if (s.screen === "runs") s.run = next;
+              else Object.assign(s, nodes[next]);
+            },
+            () =&gt; (s.screen === "runs" ? `[data-run="${s.run}"]` : selected()),
+          );
+        } else if (s.screen === "run" &amp;&amp; s.tab === "steps" &amp;&amp; !d.tab &amp;&amp; !d.action) {
+          const row = work()[s.cursor];
+          if (key === "o" &amp;&amp; row.file) openFile(row.id);
+          else if (key === "ArrowRight") {
+            if (s.node === "file") openFile(row.id);
+            else
+              update(() =&gt; {
+                if (s.expanded === row.id &amp;&amp; row.file) s.node = "file";
+                else s.expanded = row.id;
+              }, selected);
+          } else if (key === "ArrowLeft") {
+            update(() =&gt; {
+              if (s.node === "file") s.node = "step";
+              else if (s.expanded === row.id) s.expanded = null;
+            }, selected);
+          } else if (key === "Enter") {
+            if (s.node === "file") openFile(row.id);
+            else
+              update(() =&gt; {
+                s.expanded = s.expanded === row.id ? null : row.id;
+              }, selected);
+          } else used = false;
+        } else used = false;
+        if (used) e.preventDefault();
+      });
+      function restore(w) {
+        const p = w?.privateContent;
+        if (!p) return;
+        if (["runs", "run"].includes(p.screen)) s.screen = p.screen;
+        if (["steps", "activity", "config"].includes(p.tab)) s.tab = p.tab;
+        if (Number.isInteger(p.run) &amp;&amp; p.run &gt;= 0 &amp;&amp; p.run &lt; 4) s.run = p.run;
+        s.expanded = work().some((r) =&gt; r.id === p.expanded) ? p.expanded : null;
+        s.cursor = Number.isInteger(p.cursor)
+          ? Math.max(0, Math.min(work().length - 1, p.cursor))
+          : 0;
+        s.node =
+          p.node === "file" &amp;&amp; work()[s.cursor].id === s.expanded &amp;&amp; work()[s.cursor].file
+            ? "file"
+            : "step";
+        if (typeof p.color === "boolean") s.color = p.color;
+        s.file = null;
+      }
+      restore(window.openai?.widgetState);
+      render();
+      window.addEventListener("openai:set_globals", (e) =&gt; {
+        if (e.detail?.globals?.widgetState) {
+          restore(e.detail.globals.widgetState);
+          render();
+        }
+      });
+      if (globalThis.Tweak) {
+        const t = new Tweak({ container: root, onChange: render });
+        t.addSelect(s, "tab", {
+          label: "Run tab",
+          options: ["steps", "activity", "config"],
+        });
+        t.addToggle(s, "color", { label: "ANSI colors" });
+      }
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src="https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js"&gt;&lt;/script&gt;
+&lt;script src="https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set(["top", "right", "bottom", "left"]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest("[data-tooltip]")
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute("data-tooltip")?.trim() ?? "";
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute("data-tooltip-placement");
+    return tooltipPlacements.has(placement) ? placement : "top";
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement("div");
+      tooltip.id = tooltipId;
+      tooltip.className = "tooltip";
+      tooltip.setAttribute("role", "tooltip");
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute("aria-describedby") ?? "")
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute("aria-describedby");
+    } else {
+      trigger.setAttribute("aria-describedby", [...ids].join(" "));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              "--tooltip-available-width",
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              "--tooltip-available-height",
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: "fixed",
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = "visible";
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = "hidden";
+    floating.style.transform = "translate(0, 0)";
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === "touch") {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === "pointerdown" &amp;&amp; event.pointerType === "touch";
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === "touch" || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(":focus-visible")) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === "Escape") {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    document.removeEventListener("pointerover", handlePointerOpen);
+    document.removeEventListener("pointerdown", handlePointer);
+    document.removeEventListener("pointercancel", handlePointer);
+    document.removeEventListener("click", handleTouchClick);
+    document.removeEventListener("pointerout", handleLeave);
+    document.removeEventListener("focusin", handleFocusIn);
+    document.removeEventListener("focusout", handleLeave);
+    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("contextmenu", handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener("pointerover", handlePointerOpen);
+  document.addEventListener("pointerdown", handlePointer);
+  document.addEventListener("pointercancel", handlePointer);
+  document.addEventListener("click", handleTouchClick);
+  document.addEventListener("pointerout", handleLeave);
+  document.addEventListener("focusin", handleFocusIn);
+  document.addEventListener("focusout", handleLeave);
+  document.addEventListener("keydown", handleKeyDown);
+  document.addEventListener("contextmenu", handleContextMenu);
+  window.addEventListener("pagehide", destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id="codex-visualization-tabs"&gt;
+(() =&gt; {
+  const selector = &#x27;.nav[role="tablist"] [role="tab"]&#x27;;
+  const disabled = &#x27;:disabled,[aria-disabled="true"]&#x27;;
+  const selectTab = (selected) =&gt; {
+    const panelId = selected.getAttribute("aria-controls");
+    for (const tab of selected.closest(&#x27;[role="tablist"]&#x27;).querySelectorAll(&#x27;[role="tab"]&#x27;)) {
+      const active = tab === selected;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+      const id = tab.getAttribute("aria-controls");
+      const panel = id &amp;&amp; document.getElementById(id);
+      if (panel != null) {
+        panel.hidden = id !== panelId;
+        if (!panel.hidden &amp;&amp; selected.id) {
+          panel.setAttribute("aria-labelledby", selected.id);
+        }
+      }
+    }
+  };
+  const interact = (event) =&gt; {
+    const tab = event.target?.closest?.(selector);
+    if (event.defaultPrevented || tab == null || tab.matches(disabled)) {
+      return;
+    }
+    if (event.type === "click") {
+      selectTab(tab);
+      return;
+    }
+    const tabs = Array.from(
+      tab.closest(&#x27;[role="tablist"]&#x27;).querySelectorAll(&#x27;[role="tab"]&#x27;),
+    ).filter((candidate) =&gt; !candidate.matches(disabled));
+    const current = tabs.indexOf(tab);
+    let next;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = (current + 1) % tabs.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = (current + tabs.length - 1) % tabs.length;
+    } else if (event.key === "Home") {
+      next = 0;
+    } else if (event.key === "End") {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    tabs[next].focus();
+    selectTab(tabs[next]);
+  };
+
+  for (const list of document.querySelectorAll(&#x27;.nav[role="tablist"]&#x27;)) {
+    const selected =
+      list.querySelector(&#x27;[role="tab"][aria-selected="true"]&#x27;) ??
+      list.querySelector(&#x27;[role="tab"].active&#x27;) ??
+      list.querySelector(&#x27;[role="tab"]&#x27;);
+    if (selected != null) {
+      selectTab(selected);
+    }
+  }
+  document.addEventListener("click", interact);
+  document.addEventListener("keydown", interact);
+  window.addEventListener("pagehide", () =&gt; {
+    document.removeEventListener("click", interact);
+    document.removeEventListener("keydown", interact);
+  }, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id="codex-visualization-lucide" async src="https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById("codex-visualization-lucide")
+    ?.addEventListener("load", initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+'
+    ></iframe>
+    <script>
+      (() => {
+        const frame = document.getElementById("codex-visualization");
+        if (!(frame instanceof HTMLIFrameElement)) {
+          return;
+        }
+        let viewportHeight = globalThis.innerHeight;
+        const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+          globalThis.location.pathname,
+          globalThis.location.search,
+        ])}`;
+        const parseState = (serializedState) => {
+          if (
+            typeof serializedState !== "string" ||
+            new TextEncoder().encode(serializedState).length > 16 * 1024
+          ) {
+            throw new TypeError("Widget state must be a JSON object of at most 16 KiB");
+          }
+          /** @type {unknown} */
+          const state = JSON.parse(serializedState);
+          if (
+            state == null ||
+            typeof state !== "object" ||
+            Array.isArray(state) ||
+            ("imageIds" in state && (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+          ) {
+            throw new TypeError("Widget state must be a JSON object");
+          }
+          const storedState = { modelContent: null, privateContent: null, ...state };
+          const canonicalState = JSON.stringify(
+            storedState,
+            (_key, /** @type {unknown} */ value) => {
+              if (typeof value === "number" && !Number.isFinite(value)) {
+                throw new TypeError("Widget state must contain finite numbers");
+              }
+              return value;
+            },
+          );
+          if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+            throw new TypeError("Widget state must be a JSON object of at most 16 KiB");
+          }
+          return storedState;
+        };
+        let storage = null;
+        let state = null;
+        try {
+          const localStorage = globalThis.localStorage;
+          const probeKey = `${storageKey}:probe`;
+          localStorage.setItem(probeKey, "1");
+          localStorage.removeItem(probeKey);
+          storage = localStorage;
+          const savedState = storage.getItem(storageKey);
+          if (savedState != null) {
+            try {
+              state = parseState(savedState);
+            } catch {
+              // Invalid saved state does not disable future writes.
+            }
+          }
+        } catch {
+          storage = null;
+        }
+        const initialGlobals = {
+          widgetState: state,
+          statePersistence: storage == null ? "none" : "local",
+        };
+
+        const channel = new MessageChannel();
+        channel.port1.addEventListener("message", (event) => {
+          const data = event.data;
+          if (typeof data !== "object" || data == null) {
+            return;
+          }
+          if (data.type === "widget-state-write") {
+            if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+              return;
+            }
+            let ok = false;
+            try {
+              if (storage != null) {
+                const state = parseState(data.state);
+                storage.setItem(storageKey, JSON.stringify(state));
+                ok = true;
+              }
+            } catch {
+              // Storage denial, quota limits, and invalid state return a failed receipt.
+            }
+            channel.port1.postMessage({
+              type: "widget-state-result",
+              id: data.id,
+              ok,
+            });
+            return;
+          }
+          if (data.type === "height") {
+            const height = data.height;
+            if (
+              typeof height === "number" &&
+              Number.isFinite(height) &&
+              height >= 0 &&
+              height <= 10_000
+            ) {
+              frame.style.height = Math.ceil(height) + "px";
+            }
+            return;
+          }
+          if (data.type === "scroll-to") {
+            const top = data.top;
+            if (
+              typeof top === "number" &&
+              Number.isFinite(top) &&
+              top >= 0 &&
+              globalThis.navigator.userActivation?.isActive === true
+            ) {
+              globalThis.scrollTo({
+                top: Math.ceil(globalThis.scrollY + frame.getBoundingClientRect().top + top),
+              });
+            }
+            return;
+          }
+          if (data.type === "open-external") {
+            const rawHref = data.href;
+            if (typeof rawHref !== "string") {
+              return;
+            }
+            let href;
+            try {
+              const url = new URL(rawHref, document.baseURI);
+              if (url.protocol !== "https:") {
+                return;
+              }
+              href = url.href;
+            } catch {
+              return;
+            }
+            if (globalThis.navigator.userActivation?.isActive === true) {
+              const anchor = document.createElement("a");
+              anchor.href = href;
+              anchor.rel = "noopener noreferrer";
+              anchor.target = "_blank";
+              document.body.appendChild(anchor);
+              anchor.click();
+              anchor.remove();
+            }
+            return;
+          }
+          if (data.type === "follow-up") {
+            const prompt = data.prompt;
+            if (
+              typeof prompt !== "string" ||
+              globalThis.navigator.userActivation?.isActive !== true
+            ) {
+              return;
+            }
+            const title = data.title;
+            globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+          }
+        });
+        channel.port1.start();
+        const srcdoc = frame.dataset.srcdoc;
+        if (srcdoc == null) {
+          return;
+        }
+        globalThis.addEventListener("resize", () => {
+          const height = Number.parseFloat(frame.style.height);
+          if (!Number.isFinite(height) || height <= viewportHeight) {
+            frame.style.removeProperty("height");
+          }
+          viewportHeight = globalThis.innerHeight;
+          channel.port1.postMessage({ type: "measure" });
+        });
+        frame.addEventListener(
+          "load",
+          () => {
+            frame.contentWindow?.postMessage({ type: "codex-visualization-initialize" }, "*", [
+              channel.port2,
+            ]);
+          },
+          { once: true },
+        );
+        // Match the trusted bootstrap element, not the same text in an authored title.
+        frame.srcdoc = srcdoc.replace(
+          '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+          () =>
+            '<script type="application/json" id="codex-visualization-widget-state">' +
+            JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+            "<\/script>",
+        );
+        delete frame.dataset.srcdoc;
+      })();
+    </script>
+  </body>
+</html>

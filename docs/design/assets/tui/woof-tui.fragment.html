@@ -1,0 +1,758 @@
+<div id="woof-native" aria-label="Woof · terminal-native design">
+  <style>
+    #woof-native {
+      --bg: light-dark(#fafbf8, #131612);
+      --fg: light-dark(#273026, #d7dfd1);
+      --dim: light-dark(#697264, #8b9984);
+      --line: light-dark(#cbd3c5, #34402e);
+      --cyan: light-dark(#086971, #83c7c8);
+      --green: light-dark(#2d702b, #9ec785);
+      --amber: light-dark(#905b03, #e6bc73);
+      --red: light-dark(#af3036, #ed9494);
+      --reverse: light-dark(#263922, #c5d5bb);
+      --reverse-fg: light-dark(#f5f9f0, #141b10);
+      background: var(--bg);
+      color: var(--fg);
+      font:
+        13px/1.65 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Consolas,
+        monospace;
+      padding: 12px 16px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    #woof-native * {
+      box-sizing: border-box;
+    }
+    #woof-native button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      border-radius: 0;
+      margin: 0;
+      padding: 0;
+      text-align: left;
+    }
+    #woof-native button:focus-visible {
+      outline: 1px solid var(--cyan);
+      outline-offset: 1px;
+    }
+    #woof-native strong {
+      font-weight: 600;
+    }
+    #woof-native .dim {
+      color: var(--dim);
+    }
+    #woof-native .cyan {
+      color: var(--cyan);
+    }
+    #woof-native .green {
+      color: var(--green);
+    }
+    #woof-native .amber {
+      color: var(--amber);
+    }
+    #woof-native .red {
+      color: var(--red);
+    }
+    #woof-native .head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 2ch;
+    }
+    #woof-native .end {
+      margin-left: auto;
+    }
+    #woof-native .rule {
+      border-top: 1px solid var(--line);
+      margin: 5px 0;
+    }
+    #woof-native .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 3ch;
+      padding: 2px 0;
+    }
+    #woof-native .tabs button {
+      white-space: pre;
+    }
+    #woof-native .tabs button[aria-selected="true"] {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .screen {
+      min-height: 385px;
+      padding: 5px 0;
+    }
+    #woof-native .line {
+      white-space: pre-wrap;
+    }
+    #woof-native .step {
+      display: grid;
+      grid-template-columns:
+        2ch 2ch minmax(9ch, 1fr) 11ch minmax(16ch, 1.5fr)
+        6ch 11ch;
+      gap: 0 1ch;
+      width: 100%;
+      min-height: 22px;
+      align-items: baseline;
+    }
+    #woof-native .step[aria-expanded="true"] > .step-name {
+      color: var(--cyan);
+    }
+    #woof-native .step[aria-current="true"] > .cursor {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .indent {
+      padding-left: 5ch;
+    }
+    #woof-native .tree {
+      color: var(--dim);
+      white-space: pre-wrap;
+    }
+    #woof-native .tree button {
+      color: var(--cyan);
+    }
+    #woof-native .tree button:hover {
+      text-decoration: underline;
+    }
+    #woof-native .tree button[aria-current="true"] {
+      color: var(--reverse-fg);
+      background: var(--reverse);
+    }
+    #woof-native .spacer {
+      height: 1.65em;
+    }
+    #woof-native .feed {
+      display: grid;
+      grid-template-columns: 8ch 1ch 10ch 8ch minmax(0, 1fr);
+      gap: 0 1.5ch;
+    }
+    #woof-native .foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 2ch;
+      color: var(--dim);
+    }
+    #woof-native .foot button {
+      color: var(--dim);
+    }
+    #woof-native kbd {
+      font: inherit;
+      background: none;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+      color: var(--fg);
+    }
+    #woof-native .runrow {
+      width: 100%;
+      display: grid;
+      grid-template-columns:
+        2ch 12ch minmax(20ch, 1.5fr) minmax(16ch, 1fr)
+        9ch 7ch;
+      gap: 0 1ch;
+      align-items: baseline;
+    }
+    #woof-native .runrow[aria-current="true"] .runname {
+      background: var(--reverse);
+      color: var(--reverse-fg);
+    }
+    #woof-native .right {
+      text-align: right;
+    }
+    #woof-native .kv {
+      display: grid;
+      grid-template-columns: 13ch minmax(0, 1fr);
+      gap: 0 2ch;
+    }
+    #woof-native pre {
+      font: inherit;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: 0;
+      color: var(--fg);
+    }
+    #woof-native .label {
+      color: var(--dim);
+    }
+    #woof-native .agentrow {
+      display: grid;
+      grid-template-columns: 11ch 9ch 9ch minmax(0, 1fr);
+      gap: 0 2ch;
+    }
+    #woof-native[data-color="false"] .cyan,
+    #woof-native[data-color="false"] .green,
+    #woof-native[data-color="false"] .amber,
+    #woof-native[data-color="false"] .red {
+      color: var(--fg);
+    }
+    @media (max-width: 760px) {
+      #woof-native {
+        font-size: 12px;
+        padding: 10px;
+      }
+      #woof-native .step {
+        grid-template-columns:
+          2ch 2ch minmax(8ch, 1fr) 10ch minmax(15ch, 1.5fr)
+          6ch;
+        gap: 0 0.6ch;
+      }
+      #woof-native .step-output {
+        display: none;
+      }
+      #woof-native .runrow {
+        grid-template-columns: 2ch 11ch minmax(17ch, 1fr) 8ch 7ch;
+      }
+      #woof-native .workflow {
+        display: none;
+      }
+    }
+    @media (max-width: 520px) {
+      #woof-native .step {
+        grid-template-columns: 2ch 2ch minmax(8ch, 1fr) 6ch;
+      }
+      #woof-native .step-owner {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      #woof-native .step-status {
+        grid-column: 3 / -1;
+        grid-row: 3;
+      }
+      #woof-native .step-time {
+        grid-column: 4;
+        grid-row: 1;
+      }
+      #woof-native .feed {
+        grid-template-columns: 8ch 1ch minmax(0, 1fr);
+        gap: 0 1ch;
+      }
+      #woof-native .feed .stage {
+        display: none;
+      }
+      #woof-native .feed .msg {
+        grid-column: 3;
+      }
+      #woof-native .runrow {
+        grid-template-columns: 2ch minmax(0, 1fr) 7ch;
+      }
+      #woof-native .runname {
+        grid-column: 2;
+        grid-row: 1;
+      }
+      #woof-native .runstatus {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      #woof-native .runstage {
+        display: none;
+      }
+      #woof-native .runtime {
+        grid-column: 3;
+        grid-row: 1;
+      }
+      #woof-native .indent {
+        padding-left: 2ch;
+      }
+      #woof-native .screen {
+        min-height: 0;
+      }
+      #woof-native .agentrow {
+        grid-template-columns: 10ch 8ch minmax(0, 1fr);
+        gap: 0 1ch;
+      }
+      #woof-native .agentstage {
+        grid-column: 1 / -1;
+        color: var(--dim);
+      }
+      #woof-native .kv {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      #woof-native .end {
+        margin-left: 0;
+      }
+    }
+    @media (pointer: coarse) {
+      #woof-native button {
+        min-height: 44px;
+      }
+    }
+  </style>
+  <div id="wn-top"></div>
+  <div class="rule"></div>
+  <div id="wn-tabs" class="tabs"></div>
+  <div class="rule"></div>
+  <div id="wn-body" class="screen"></div>
+  <div class="rule"></div>
+  <div id="wn-footer" class="foot"></div>
+  <script>
+    (() => {
+      const root = document.getElementById("woof-native");
+      const s = {
+        screen: "run",
+        tab: "steps",
+        expanded: "review",
+        cursor: 2,
+        node: "step",
+        run: 0,
+        file: null,
+        color: true,
+      };
+      const rows = [
+        {
+          id: "build",
+          title: "build",
+          mark: "✓",
+          who: "builder",
+          status: "accepted",
+          tone: "green",
+          time: "18s",
+          file: "completion.md",
+          lines: [
+            "attempt 1   dispatched 09:12:54 → accepted 09:13:12",
+            "gate        passed → verify",
+          ],
+        },
+        {
+          id: "verify",
+          title: "verify",
+          mark: "✓",
+          who: "check",
+          status: "passed",
+          tone: "green",
+          time: "<1s",
+          file: "output.log",
+          lines: ["command     bun test", "result      exit 0 → review"],
+        },
+        {
+          id: "review",
+          title: "review",
+          mark: "↻",
+          who: "reviewer",
+          status: "changes requested",
+          tone: "amber",
+          time: "21s",
+          file: "review.md",
+          lines: [
+            "attempt 1   dispatched 09:13:20 → accepted 09:13:41",
+            "verdict     fail",
+            "gate        changes requested → repair",
+            "handoff     accepted review → builder (same agent)",
+          ],
+        },
+        {
+          id: "repair",
+          title: "repair",
+          mark: "●",
+          who: "builder",
+          status: "awaiting result",
+          tone: "cyan",
+          time: "42s",
+          file: null,
+          lines: [
+            "attempt 1   dispatched 09:13:45 · same builder",
+            "input       accepted review from review / visit 1",
+            "waiting     no accepted result yet",
+          ],
+        },
+        {
+          id: "verify2",
+          title: "verify",
+          mark: "·",
+          who: "check",
+          status: "pending repair",
+          tone: "dim",
+          time: "—",
+          file: null,
+          lines: ["conditional on the repair gate passing", "no check has started"],
+        },
+        {
+          id: "review2",
+          title: "review 2",
+          mark: "·",
+          who: "reviewer",
+          status: "pending checks",
+          tone: "dim",
+          time: "—",
+          file: null,
+          lines: ["conditional on repaired work passing verification", "no attempt has started"],
+        },
+      ];
+      const runlist = [
+        ["Fix empty-state rendering", "build-review", "running", "repair", "1m 40s", "cyan"],
+        ["Add retry backoff", "plan-build-review", "blocked", "build", "5m 55s", "amber"],
+        ["Normalize run summaries", "build-review", "completed", "review 2", "1m 27s", "green"],
+        ["Document role overrides", "build-review", "host lost", "build", "unknown", "red"],
+      ];
+      const feed = [
+        ["09:12:47", "·", "run", "", "Started", "dim"],
+        ["09:12:52", "+", "builder", "", "Agent started · claude / sonnet", "cyan"],
+        ["09:12:54", "→", "builder", "build", "Task dispatched", "cyan"],
+        ["09:13:12", "✓", "builder", "build", "Completion report accepted", "green"],
+        ["09:13:13", "✓", "gate", "verify", "Checks passed → review", "green"],
+        ["09:13:18", "+", "reviewer", "", "Agent started · claude / sonnet", "cyan"],
+        ["09:13:20", "→", "reviewer", "review", "Task dispatched", "cyan"],
+        ["09:13:41", "↓", "reviewer", "review", "Review received · changes requested", "dim"],
+        ["09:13:42", "↻", "gate", "review", "Changes requested → repair", "amber"],
+        ["09:13:45", "→", "builder", "repair", "Task dispatched · same agent", "cyan"],
+      ];
+      const esc = (x) =>
+        String(x ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      function save() {
+        window.openai
+          ?.setWidgetState?.({
+            modelContent: {
+              design: "terminal-native",
+              screen: s.screen,
+              tab: s.tab,
+              expanded: s.expanded,
+              file: s.file,
+            },
+            privateContent: { ...s },
+          })
+          .catch(() => {});
+      }
+      function update(fn, focus) {
+        fn();
+        render();
+        save();
+        if (focus)
+          root
+            .querySelector(typeof focus === "function" ? focus() : focus)
+            ?.focus({ preventScroll: true });
+      }
+      const tabs = ["steps", "activity", "config"];
+      const selected = () => `[data-${s.node}="${work()[s.cursor].id}"]`;
+      function openRun(index) {
+        update(() => {
+          s.run = index;
+          s.screen = "run";
+          s.tab = "steps";
+          s.file = null;
+          s.expanded = null;
+          s.cursor = 0;
+          s.node = "step";
+        }, selected);
+      }
+      function closeFile() {
+        update(() => {
+          s.file = null;
+        }, selected);
+      }
+      function openFile(id) {
+        update(() => {
+          s.file = id;
+        }, '[data-action="close"]');
+      }
+      function visibleNodes() {
+        return work().flatMap((r, cursor) => [
+          { cursor, node: "step" },
+          ...(s.expanded === r.id && r.file ? [{ cursor, node: "file" }] : []),
+        ]);
+      }
+      function work() {
+        if (s.run === 0) return rows;
+        if (s.run === 2)
+          return rows.map((r, i) => ({
+            ...r,
+            status: i === 2 ? "changes requested" : i === 5 ? "approved" : "passed",
+            tone: i === 2 ? "amber" : "green",
+            mark: i === 2 ? "↻" : "✓",
+            time: i === 3 ? "11s" : i === 4 ? "<1s" : i === 5 ? "13s" : r.time,
+            file:
+              i === 3 ? "completion.md" : i === 4 ? "output.log" : i === 5 ? "review.md" : r.file,
+            lines:
+              i >= 3
+                ? [
+                    "attempt 1   recorded result accepted",
+                    "gate        " + (i === 5 ? "approved → completed" : "passed"),
+                  ]
+                : r.lines,
+          }));
+        if (s.run === 1)
+          return [
+            {
+              ...rows[0],
+              id: "plan",
+              title: "plan",
+              who: "planner",
+              status: "accepted",
+              file: null,
+              lines: ["plan accepted → builder"],
+            },
+            {
+              ...rows[0],
+              status: "permission required",
+              tone: "amber",
+              mark: "!",
+              file: null,
+              lines: [
+                "attempt 1   dispatched",
+                "action      answer the permission prompt in builder’s tab",
+              ],
+            },
+          ];
+        return [
+          {
+            ...rows[0],
+            status: "outcome unknown",
+            tone: "red",
+            mark: "?",
+            file: null,
+            lines: [
+              "last action   build request dispatched",
+              "host          lost · no terminal outcome recorded",
+            ],
+          },
+        ];
+      }
+      function steps() {
+        return `<div class="step dim"><span></span><span></span><span>STEP</span><span class="step-owner">OWNER</span><span class="step-status">STATE</span><span class="step-time right">TIME</span><span class="step-output">OUTPUT</span></div>${work()
+          .map(
+            (r, i) =>
+              `<button class="step cursor-interaction" data-step="${r.id}" aria-current="${s.cursor === i && s.node === "step"}" aria-expanded="${s.expanded === r.id}"><span class="cursor">${s.cursor === i && s.node === "step" ? "›" : " "}</span><span class="dim">${s.expanded === r.id ? "▾" : "▸"}</span><span class="step-name"><span class="${r.tone}">${r.mark}</span> ${r.title}</span><span class="step-owner dim">${r.who}</span><span class="step-status ${r.tone}">${r.status}</span><span class="step-time right dim">${r.time}</span><span class="step-output dim">${r.file ? "1 artifact" : "—"}</span></button>${s.expanded === r.id ? `<div class="indent">${r.lines.map((t) => `<div class="tree">│ ${esc(t)}</div>`).join("")}<div class="tree">└ ${r.file ? `artifact    <button class="cursor-interaction" data-file="${r.id}" aria-current="${s.cursor === i && s.node === "file"}">${r.file}</button> <span class="dim">[enter to read]</span>` : "no accepted output"}</div></div>` : ""}`,
+          )
+          .join(
+            "",
+          )}<div class="spacer"></div><div class="dim">${s.run === 0 ? "next: verify → review, if each gate passes" : s.run === 2 ? "result: completed · approved" : s.run === 1 ? "action: answer the permission prompt in builder’s tab" : "host lost · outcome unknown"}</div>`;
+      }
+      function activity() {
+        const events =
+          s.run === 0
+            ? feed
+            : s.run === 2
+              ? [
+                  ["09:00:05", "↻", "gate", "review", "Changes requested → repair", "amber"],
+                  ["09:00:08", "→", "builder", "repair", "Task dispatched · same agent", "cyan"],
+                  ["09:00:19", "✓", "builder", "repair", "Completion report accepted", "green"],
+                  ["09:00:20", "✓", "gate", "verify", "Checks passed → review", "green"],
+                  ["09:00:23", "→", "reviewer", "review 2", "Task dispatched", "cyan"],
+                  ["09:00:37", "✓", "gate", "review 2", "Approved → completed", "green"],
+                  ["09:00:38", "✓", "run", "", "Completed · approved", "green"],
+                ]
+              : s.run === 1
+                ? [
+                    ["09:09:15", "✓", "planner", "plan", "Plan accepted", "green"],
+                    ["09:09:22", "→", "builder", "build", "Task dispatched", "cyan"],
+                    ["09:13:50", "!", "builder", "build", "Permission required", "amber"],
+                  ]
+                : [["08:41:11", "→", "builder", "build", "Task dispatched", "cyan"]];
+        return (
+          events
+            .map(
+              (e) =>
+                `<div class="feed"><span class="dim">${e[0]}</span><span class="${e[5]}">${e[1]}</span><span>${e[2]}</span><span class="stage dim">${e[3]}</span><span class="msg ${e[5]}">${e[4]}</span></div>`,
+            )
+            .join("") +
+          `<div class="spacer"></div><div class="dim">${s.run === 0 ? "· waiting for builder / repair · 42s since dispatch" : s.run === 2 ? "✓ recorded outcome: completed" : s.run === 1 ? "! run blocked; answer in builder’s tab" : "! host lost; outcome unknown"}</div>`
+        );
+      }
+      function config() {
+        return `<div class="label">agents</div>${s.run === 1 ? '<div class="agentrow"><span>planner</span><span>claude</span><span>sonnet</span><span class="agentstage">plan</span></div>' : ""}<div class="agentrow"><span>builder</span><span>claude</span><span>sonnet</span><span class="agentstage">build, repair</span></div><div class="agentrow"><span>reviewer</span><span>claude</span><span>sonnet</span><span class="agentstage">review</span></div><div class="spacer"></div><div class="label">input · task preview</div><pre>${esc(JSON.stringify({ title: runlist[s.run][0], acceptanceCriteria: ["Requested behavior works.", "Existing behavior remains covered."] }, null, 2))}</pre><div class="dim">full input: input.json</div><div class="spacer"></div><div class="label">context</div><div class="kv"><span class="dim">project</span><span>herdr-woof</span><span class="dim">workflow</span><span>${runlist[s.run][1]}</span><span class="dim">verify</span><span>bun test</span><span class="dim">limits</span><span>3 review rounds · 2 attempts/visit · 2h timeout</span></div>`;
+      }
+      function runs() {
+        return `<div class="runrow dim"><span></span><span>STATE</span><span>RUN</span><span class="workflow">WORKFLOW</span><span>STEP</span><span class="right">TIME</span></div>${runlist.map((r, i) => `<button class="runrow cursor-interaction" data-run="${i}" aria-current="${s.run === i}"><span class="cyan">${s.run === i ? "›" : " "}</span><span class="runstatus ${r[5]}">${r[2]}</span><span class="runname">${r[0]}</span><span class="workflow dim">${r[1]}</span><span class="runstage dim">${r[3]}</span><span class="runtime right dim">${r[4]}</span></button>`).join("")}<div class="spacer"></div><div class="dim">herdr-woof · 1 running · 2 need attention · 1 completed</div>`;
+      }
+      function fileView() {
+        const r = work().find((x) => x.id === s.file);
+        return `<div class="dim">${r.file} · accepted ${r.id.startsWith("verify") ? "verification evidence" : r.title} / visit ${r.id.endsWith("2") ? 2 : 1} · SAMPLE CONTENT</div><div class="rule"></div><pre>${s.file === "review2" ? "Verdict: pass\n\nThe repaired implementation meets the acceptance criteria.\nThe review gate approved the matching revision." : s.file === "review" ? "Verdict: fail\n\nEmpty-state rendering\n\nThe populated list still renders correctly.\nThe empty-list path needs an explicit empty-state component.\n\nRequested change\nHandle items.length === 0 before rendering the list.\nAdd a check for the empty-list case.\n\nThis accepted review is passed to the builder for repair." : s.file.startsWith("verify") ? "Command: bun test\nExit code: 0\n\nVerification passed." : "Build report\n\nImplementation submitted for verification and review."}</pre><div class="spacer"></div><div class="dim">(END)</div>`;
+      }
+      function render() {
+        root.dataset.color = String(s.color);
+        root.querySelector("#wn-top").innerHTML =
+          `<div class="head"><strong class="green">woof</strong><span>${s.screen === "runs" ? "runs / herdr-woof" : esc(runlist[s.run][0])}</span><span class="end dim">SAMPLE</span></div>${s.screen === "run" ? `<div class="head"><span class="dim">${runlist[s.run][1]}</span><span class="${runlist[s.run][5]}">${runlist[s.run][2]} · ${runlist[s.run][3]}</span><span class="dim">${runlist[s.run][4]}</span></div>` : ""}`;
+        root.querySelector("#wn-tabs").innerHTML =
+          s.screen === "runs"
+            ? "<span> runs </span>"
+            : s.file
+              ? '<span class="cyan"> artifact pager </span>'
+              : ["steps", "activity", "config"]
+                  .map(
+                    (t, i) =>
+                      `<button class="cursor-interaction" id="wn-tab-${t}" data-tab="${t}" role="tab" aria-controls="wn-body" aria-selected="${s.tab === t}"> ${i + 1} ${t} </button>`,
+                  )
+                  .join("");
+        const hasTabs = s.screen === "run" && !s.file;
+        root.querySelector("#wn-tabs").setAttribute("role", hasTabs ? "tablist" : "group");
+        root.querySelector("#wn-tabs").setAttribute("aria-label", "Run views");
+        root.querySelector("#wn-body").setAttribute("role", hasTabs ? "tabpanel" : "region");
+        if (hasTabs)
+          root.querySelector("#wn-body").setAttribute("aria-labelledby", `wn-tab-${s.tab}`);
+        else root.querySelector("#wn-body").removeAttribute("aria-labelledby");
+        root.querySelector("#wn-body").innerHTML =
+          s.screen === "runs"
+            ? runs()
+            : s.file
+              ? fileView()
+              : s.tab === "steps"
+                ? steps()
+                : s.tab === "activity"
+                  ? activity()
+                  : config();
+        root.querySelector("#wn-footer").innerHTML = s.file
+          ? '<button class="cursor-interaction" data-action="close"><kbd>esc</kbd> back to step</button><span>read-only</span>'
+          : `${s.screen === "runs" ? "<span><kbd>↑↓</kbd> move</span><span><kbd>→ / enter</kbd> open</span>" : `${s.tab === "steps" ? "<span><kbd>↑↓</kbd> move</span><span><kbd>→</kbd> expand / enter</span><span><kbd>←</kbd> parent / collapse</span><span><kbd>o</kbd> read</span>" : "<span><kbd>←→</kbd> switch tab</span>"}<span><kbd>1/2/3</kbd> tab</span><button class="cursor-interaction" data-action="back"><kbd>esc</kbd> runs</button>`}<span class="end dim">${s.run === 0 ? "snapshot 09:14:27" : "sample history"}</span>`;
+      }
+      root.addEventListener("click", (e) => {
+        const d = e.target.closest("button")?.dataset;
+        if (!d) return;
+        if (d.run !== undefined) openRun(Number(d.run));
+        else if (d.tab)
+          update(() => {
+            s.tab = d.tab;
+            s.file = null;
+          }, `[data-tab="${d.tab}"]`);
+        else if (d.step)
+          update(() => {
+            s.expanded = s.expanded === d.step ? null : d.step;
+            s.cursor = work().findIndex((r) => r.id === d.step);
+            s.node = "step";
+          }, selected);
+        else if (d.file) {
+          s.cursor = work().findIndex((r) => r.id === d.file);
+          s.node = "file";
+          openFile(d.file);
+        } else if (d.action === "close") closeFile();
+        else if (d.action === "back")
+          update(() => {
+            s.screen = "runs";
+          }, `[data-run="${s.run}"]`);
+      });
+      root.addEventListener("keydown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const d = e.target.closest("button")?.dataset ?? {};
+        // Native Tab focus and pointer focus establish the navigation cursor too.
+        if (d.run !== undefined) s.run = Number(d.run);
+        if (d.step || d.file) {
+          s.cursor = work().findIndex((r) => r.id === (d.step || d.file));
+          s.node = d.file ? "file" : "step";
+        }
+        const key = e.key;
+        let used = true;
+        if (key === "Escape") {
+          if (s.file) closeFile();
+          else
+            update(() => {
+              s.screen = "runs";
+            }, `[data-run="${s.run}"]`);
+        } else if (s.file) used = false;
+        else if (s.screen === "run" && ["1", "2", "3"].includes(key)) {
+          const tab = tabs[Number(key) - 1];
+          update(() => {
+            s.tab = tab;
+          }, `[data-tab="${tab}"]`);
+        } else if (
+          s.screen === "run" &&
+          (d.tab || s.tab !== "steps") &&
+          ["ArrowLeft", "ArrowRight"].includes(key)
+        ) {
+          const tab = tabs[(tabs.indexOf(s.tab) + (key === "ArrowRight" ? 1 : 2)) % 3];
+          update(() => {
+            s.tab = tab;
+          }, `[data-tab="${tab}"]`);
+        } else if (d.tab && s.tab === "steps" && ["ArrowDown", "Enter"].includes(key)) {
+          update(() => {}, selected);
+        } else if (s.screen === "runs" && ["ArrowRight", "Enter"].includes(key)) {
+          openRun(s.run);
+        } else if (
+          (s.screen === "runs" || s.tab === "steps") &&
+          ["ArrowUp", "ArrowDown", "j", "k", "Home", "End"].includes(key)
+        ) {
+          const nodes = s.screen === "runs" ? runlist : visibleNodes();
+          const index =
+            s.screen === "runs"
+              ? s.run
+              : nodes.findIndex((n) => n.cursor === s.cursor && n.node === s.node);
+          const delta = ["ArrowDown", "j"].includes(key) ? 1 : -1;
+          const next =
+            key === "Home"
+              ? 0
+              : key === "End"
+                ? nodes.length - 1
+                : Math.max(0, Math.min(nodes.length - 1, index + delta));
+          update(
+            () => {
+              if (s.screen === "runs") s.run = next;
+              else Object.assign(s, nodes[next]);
+            },
+            () => (s.screen === "runs" ? `[data-run="${s.run}"]` : selected()),
+          );
+        } else if (s.screen === "run" && s.tab === "steps" && !d.tab && !d.action) {
+          const row = work()[s.cursor];
+          if (key === "o" && row.file) openFile(row.id);
+          else if (key === "ArrowRight") {
+            if (s.node === "file") openFile(row.id);
+            else
+              update(() => {
+                if (s.expanded === row.id && row.file) s.node = "file";
+                else s.expanded = row.id;
+              }, selected);
+          } else if (key === "ArrowLeft") {
+            update(() => {
+              if (s.node === "file") s.node = "step";
+              else if (s.expanded === row.id) s.expanded = null;
+            }, selected);
+          } else if (key === "Enter") {
+            if (s.node === "file") openFile(row.id);
+            else
+              update(() => {
+                s.expanded = s.expanded === row.id ? null : row.id;
+              }, selected);
+          } else used = false;
+        } else used = false;
+        if (used) e.preventDefault();
+      });
+      function restore(w) {
+        const p = w?.privateContent;
+        if (!p) return;
+        if (["runs", "run"].includes(p.screen)) s.screen = p.screen;
+        if (["steps", "activity", "config"].includes(p.tab)) s.tab = p.tab;
+        if (Number.isInteger(p.run) && p.run >= 0 && p.run < 4) s.run = p.run;
+        s.expanded = work().some((r) => r.id === p.expanded) ? p.expanded : null;
+        s.cursor = Number.isInteger(p.cursor)
+          ? Math.max(0, Math.min(work().length - 1, p.cursor))
+          : 0;
+        s.node =
+          p.node === "file" && work()[s.cursor].id === s.expanded && work()[s.cursor].file
+            ? "file"
+            : "step";
+        if (typeof p.color === "boolean") s.color = p.color;
+        s.file = null;
+      }
+      restore(window.openai?.widgetState);
+      render();
+      window.addEventListener("openai:set_globals", (e) => {
+        if (e.detail?.globals?.widgetState) {
+          restore(e.detail.globals.widgetState);
+          render();
+        }
+      });
+      if (globalThis.Tweak) {
+        const t = new Tweak({ container: root, onChange: render });
+        t.addSelect(s, "tab", {
+          label: "Run tab",
+          options: ["steps", "activity", "config"],
+        });
+        t.addToggle(s, "color", { label: "ANSI colors" });
+      }
+    })();
+  </script>
+</div>

@@ -18,6 +18,7 @@ import {
 import { runsCommand } from "./commands/runs.js";
 import { statusCommand } from "./commands/status.js";
 import { TARGET_HELP, resolveTarget } from "./commands/target.js";
+import { tuiCommand } from "./commands/tui.js";
 import { uiCommand } from "./commands/ui.js";
 import { watchCommand } from "./commands/watch.js";
 import { isInfraReason } from "./contracts/reasons.js";
@@ -96,6 +97,8 @@ async function main(commandName: string | undefined, args: string[]): Promise<nu
       return watchCommand(args);
     case "ui":
       return uiCommand(args);
+    case "tui":
+      return tuiCommand(args);
     case "herdr":
       return herdrCommand(args);
     case "submit":
@@ -135,6 +138,9 @@ function printHelp(): void {
   console.log("  events        Print a run's lifecycle events as NDJSON; --follow to keep reading");
   console.log(
     "  watch         Follow a run in plain English (--plain for event lines); --follow to keep reading",
+  );
+  console.log(
+    "  tui           Browse the project's runs interactively: steps, activity, config, artifacts",
   );
   console.log("");
   console.log("Web UI (unstable):");
