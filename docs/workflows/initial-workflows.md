@@ -200,8 +200,9 @@ Two built-ins added with workflow composition — see
   Access `writable`: it never starts on a dirty `current` tree.
 - **`auto-build`**: two workflow steps and no agents. `plan` runs the `plan`
   workflow; `build` runs `build-review` with the accepted `plan.md` as the input
-  artifact `plan` (the builder is told to follow it, the reviewer to check the
-  change against it). Input: build-review's fields (`task`, `verify`,
+  artifact `plan` (the builder is told to follow it and to commit each turn's
+  change on the branch, never pushing; the reviewer to check the change against
+  it). Input: build-review's fields (`task`, `verify`,
   `instructions.{planner,builder,reviewer}`, `agents.{planner,builder,reviewer}`),
   plus `constraints` and `publish` for the plan step and `limits` for this run
   (default `runTimeoutMs` 4 h, one visit per step). Both children's inputs are

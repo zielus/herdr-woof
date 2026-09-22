@@ -11,8 +11,9 @@ import { planWorkflow, type PlanInput } from "./plan.js";
  * input artifact, on the same branch in the same checkout (scenario (c) of
  * docs/design/composition.md). The composition is declarative: each step's `input` maps this
  * workflow's input — and, for `build`, the plan step's copied artifact — to the child's input,
- * which the child's own definition validates. A step whose child does not complete fails the
- * run; there is no retry here, each child bounds its own work.
+ * which the child's own definition validates. The builder commits each turn's change, so the
+ * branch carries the plan commit and the reviewed change when the run completes. A step whose
+ * child does not complete fails the run; there is no retry here, each child bounds its own work.
  */
 
 type Agent = { kind: string; model: string | null; args: string[] };
@@ -45,7 +46,7 @@ export const AUTO_BUILD_DEFAULT_LIMITS: Required<Limits> = {
 };
 
 const FOLLOW_THE_PLAN =
-  "Follow the plan: it is the input labelled `plan`. Read the file itself; nothing restates it for you. Where the plan is wrong or incomplete, do the right thing and say so in your completion report.";
+  "Follow the plan: it is the input labelled `plan`. Read the file itself; nothing restates it for you. Where the plan is wrong or incomplete, do the right thing and say so in your completion report. When your change is complete, commit it on the current branch (all of it, one commit per turn, a message naming the task); never push, and never rewrite earlier commits.";
 const REVIEW_AGAINST_THE_PLAN =
   "The input labelled `plan` is the plan the builder followed: check the change against it as well as against the task.";
 
