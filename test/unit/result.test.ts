@@ -141,6 +141,58 @@ describe("deriveRunResult", () => {
     }
   });
 
+  describe("a stage after the review", () => {
+    // A custom workflow: review(pass) → publish → completed. The review approved
+    // revision A; whether it is the run's review depends on what publish did to the tree.
+    const PLAN_PUBLISH = {
+      ...PLAN_BR,
+      agents: [
+        ...PLAN.agents,
+        { agentId: "publisher", role: "publisher", kind: "codex", model: null },
+      ],
+      stages: [...PLAN_BR.stages, { stageId: "publish", agentId: "publisher", verdicts: [] }],
+    };
+    const REV_B = { head: "d".repeat(40), tree: "e".repeat(40) };
+    const published = (revision: Json): Json[] => [
+      ...reviewed("pass", { stageId: "publish" }, "pass").map((body) =>
+        body["type"] === "run.opened" ? opened(PLAN_PUBLISH) : body,
+      ),
+      assigned("publisher"),
+      attempt("publish", "publisher"),
+      dispatched("publish", "publisher"),
+      accepted(16, "publish", "publisher", null),
+      gate(16, "publish", 1, 1, {
+        reason: "published",
+        round: 1,
+        next: { outcome: "completed" },
+        revision,
+      }),
+      terminated("completed"),
+    ];
+
+    it("that changed the repository revision leaves the run without a review: the passing review covered an earlier tree", () => {
+      const result = deriveRunResult(snapshotOf(...published(REV_B)), { runDir: "/runs/r1" });
+      expect(result["outcome"]).toBe("completed");
+      expect(result["repository"]).toEqual({ path: null, revision: REV_B });
+      expect(result.artifacts["review"]).toBeNull();
+      // The review stays visible as an accepted output, just not as the run's approval.
+      expect(result.artifacts.lastAcceptedByStage["review"]).toMatchObject({
+        receiptId: receipt(11),
+      });
+      expect(result.artifacts.lastAcceptedByStage["publish"]).toMatchObject({
+        receiptId: receipt(16),
+      });
+    });
+
+    it("that left the reviewed revision in place keeps the review: it lies on the completing lineage", () => {
+      const result = deriveRunResult(snapshotOf(...published(REV)), { runDir: "/runs/r1" });
+      expect(result.artifacts["review"]).toMatchObject({
+        stageId: "review",
+        receiptId: receipt(11),
+      });
+    });
+  });
+
   it("reports a run with no gates and refuses a run that has not terminated", () => {
     const result = deriveRunResult(snapshotOf(opened(), terminated("cancelled")), { runDir: "/r" });
     expect(result).toMatchObject({

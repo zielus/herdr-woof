@@ -90,6 +90,8 @@ export interface LaunchOptions {
   env: NodeJS.ProcessEnv;
   nodePath: string;
   cliPath: string;
+  /** Arguments typed after `run host <run-dir>` (the host's view flags: `--plain`, `--ascii`, `--input json`). */
+  hostArgs?: readonly string[];
   homeDir?: string;
 }
 
@@ -238,6 +240,7 @@ export async function launchInPane(
     "run",
     "host",
     shellQuote(runDir),
+    ...(options.hostArgs ?? []).map(shellQuote),
   ]);
   if (typed.exitCode !== 0) {
     return paneFailed(`herdr pane run ${paneId} failed: ${failureOf(typed)}`, tabId);
@@ -397,16 +400,6 @@ function rejected(
     code: isHostInfraReason(reason) ? 3 : 2,
     output: { outcome: "rejected", reason, message, details },
   };
-}
-
-export function paneIdOf(stdout: string): string | undefined {
-  try {
-    const value = JSON.parse(stdout) as { result?: { pane?: { pane_id?: unknown } } };
-    const id = value.result?.pane?.pane_id;
-    return typeof id === "string" && id !== "" ? id : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function startedOutput(

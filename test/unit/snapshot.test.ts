@@ -10,6 +10,7 @@ import {
   PLAN,
   REV,
   accepted,
+  activity,
   assigned,
   attempt,
   blocked,
@@ -21,6 +22,7 @@ import {
   hostExited,
   hostLost,
   journalOf,
+  lifecycleChanged,
   observationLost,
   observationRecovered,
   opened,
@@ -164,6 +166,7 @@ describe("deriveSnapshot documents", () => {
           at: expect.any(String),
         },
         activeAttempt: { stageId: "build", visit: 1, attempt: 1 },
+        lifecycle: null,
         runtime: null,
       },
       {
@@ -174,6 +177,7 @@ describe("deriveSnapshot documents", () => {
         args: null,
         assignment: null,
         activeAttempt: null,
+        lifecycle: null,
         runtime: null,
       },
     ]);
@@ -215,6 +219,7 @@ describe("deriveSnapshot documents", () => {
         args: null,
         assignment: null,
         activeAttempt: null,
+        lifecycle: null,
         runtime: null,
       },
     ]);
@@ -677,6 +682,9 @@ describe("deriveSnapshot liveness and recorded configuration (p4)", () => {
         cancelRequested: null,
         observationLost: [],
       });
+      // Likewise before the activity records: no agent lifecycle, nothing open.
+      expect((snapshot as unknown as { activity: Json }).activity).toEqual({ open: [] });
+      for (const agent of snapshot.agents) expect(agent["lifecycle"]).toBeNull();
     }
   });
 
@@ -739,6 +747,65 @@ describe("deriveSnapshot liveness and recorded configuration (p4)", () => {
     const ended = snapshotOf(opened(), hostClaimed(), terminated("completed"), hostExited());
     expect(ended.status).toBe("completed");
     expect(ended.outcome).toMatchObject({ outcome: "completed", seq: 3 });
+  });
+
+  it("projects each agent's last journaled lifecycle and the open engine activities", () => {
+    const snapshot = snapshotOf(
+      opened(),
+      assigned("builder"),
+      lifecycleChanged("builder", null, "ready", { raw: "idle" }),
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      activity("readiness_wait", "ended", { agentId: "builder" }, { result: "ready" }),
+      attempt("build", "builder"),
+      dispatched("build", "builder", 1, 1, "ambiguous", "timeout"),
+      activity(
+        "delivery_check",
+        "started",
+        { agentId: "builder", attempt: ["build", 1, 1] },
+        { detail: "timeout" },
+      ),
+      lifecycleChanged("builder", "ready", "working", { raw: "working", terminalId: "term-2" }),
+      activity("check_run", "started", { attempt: ["build", 1, 1] }, { detail: "bun test" }),
+    ) as Snapshot & { activity: { open: Json[] } };
+    expect(snapshot.agents.map((agent) => [agent.agentId, agent["lifecycle"]])).toEqual([
+      ["builder", { state: "working", since: expect.any(String), seq: 9, terminalId: "term-2" }],
+      ["reviewer", null],
+    ]);
+    // Open activities in start order, the ended readiness wait gone; detail is the start's.
+    expect(snapshot.activity.open).toEqual([
+      {
+        seq: 8,
+        since: expect.any(String),
+        kind: "delivery_check",
+        agentId: "builder",
+        attempt: { stageId: "build", visit: 1, attempt: 1 },
+        detail: "timeout",
+      },
+      {
+        seq: 10,
+        since: expect.any(String),
+        kind: "check_run",
+        agentId: null,
+        attempt: { stageId: "build", visit: 1, attempt: 1 },
+        detail: "bun test",
+      },
+    ]);
+    expect(snapshot.counters["lifecycleChangesByAgent"]).toEqual({ builder: 2 });
+    expect(snapshot.counters["activitiesByKind"]).toEqual({
+      readiness_wait: 1,
+      delivery_check: 1,
+      check_run: 1,
+    });
+    // An activity still open at termination is closed by it: the run ended during it, and a
+    // journal whose writer could not end it (a killed host) shows nothing in progress after.
+    const ended = snapshotOf(
+      opened(),
+      assigned("builder"),
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      terminated("exhausted", "readinessWaitMs"),
+    ) as Snapshot & { activity: { open: Json[] } };
+    expect(ended.activity.open).toEqual([]);
+    expect(ended.counters["activitiesByKind"]).toEqual({ readiness_wait: 1 });
   });
 
   it("carries the config digest from run.opened and refuses a malformed one", () => {

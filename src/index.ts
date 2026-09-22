@@ -84,6 +84,14 @@ export {
   unblockRun,
 } from "./state/store.js";
 export type { CancelSource } from "./journal/lifecycle-records.js";
+export { ACTIVITY_KINDS, ACTIVITY_PHASES } from "./journal/activity-records.js";
+export type {
+  ActivityKind,
+  ActivityPhase,
+  ActivitySubject,
+  AgentLifecycleChangedRecord,
+  RunActivityRecord,
+} from "./journal/activity-records.js";
 export type {
   AssignAgentInput,
   BlockRunInput,
@@ -111,7 +119,9 @@ export type {
   ArtifactIntegrity,
   ReadSnapshotResult,
   RunSnapshot,
+  SnapshotActivity,
   SnapshotAgent,
+  SnapshotAgentLifecycle,
   SnapshotAttempt,
   SnapshotBlocked,
   SnapshotGate,
@@ -130,6 +140,10 @@ export type {
 export type { CursorProblem } from "./observe/cursor.js";
 export { subscribeEvents } from "./observe/subscribe.js";
 export type { SubscribeOptions, SubscriptionItem } from "./observe/subscribe.js";
+export { createRunRenderer } from "./observe/render.js";
+export type { RunEnd, RunRenderer, RunRendererInput } from "./observe/render.js";
+export type { RenderOptions } from "./observe/render-text.js";
+export type { GraphNode, WorkflowGraph } from "./observe/workflow-graph.js";
 
 export type {
   AgentHandle,
@@ -178,7 +192,11 @@ export type {
   AdmissionResult,
 } from "./scheduler/admission.js";
 export { runWorkflow } from "./scheduler/driver.js";
-export type { RunWorkflowOptions, RunWorkflowResult } from "./scheduler/driver.js";
+export type {
+  RunWorkflowOptions,
+  RunWorkflowResult,
+  SchedulerWarning,
+} from "./scheduler/driver.js";
 export type { Action, AgentRuntimeView } from "./scheduler/core.js";
 export { buildReviewWorkflow } from "./workflows/build-review.js";
 export type { BuildReviewInput } from "./workflows/build-review.js";

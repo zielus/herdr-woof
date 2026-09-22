@@ -24,6 +24,11 @@ import type {
 } from "../domain/types.js";
 import { registerRunLocator } from "./locator.js";
 import type {
+  ActivityKind,
+  AgentLifecycleChangedRecord,
+  RunActivityRecord,
+} from "../journal/activity-records.js";
+import type {
   CheckResultRecord,
   DeliveryReconciledRecord,
   GateNext,
@@ -42,6 +47,7 @@ import {
   inspectJournalPath,
   readJournal,
 } from "../journal/journal.js";
+import type { Lifecycle } from "../runtime/adapter.js";
 import type {
   CancelSource,
   HostClaimedRecord,
@@ -195,12 +201,29 @@ export interface CancelRunInput extends StoreInput {
    * is the host, and it is alive.
    */
   probeHost?: boolean;
+  /**
+   * End every engine activity the journal still holds open before the
+   * termination, under the same lock, with `cancelled` as each `result`. The
+   * scheduler passes true for the run it drives; an outside canceller leaves
+   * them to the reader, which closes them at `run.terminated` anyway.
+   */
+  endOpenActivities?: boolean;
 }
 
 export type CancelRunOutcome =
   | (Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "recorded" }> & {
       cancelRequest: RunCancelRequestedRecord;
       hostLost: HostLostRecord | null;
+      /** The `run.activity ended` records written before the termination (`endOpenActivities`). */
+      activitiesEnded: RunActivityRecord[];
+    })
+  | Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "rejected" }>;
+
+/** `terminateRun`'s outcome: `run.terminated` as `record`, plus the activity ends written with it. */
+export type TerminateRunOutcome =
+  | (Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "recorded" }> & {
+      /** The `run.activity ended` records written before the termination (`endOpenActivities`). */
+      activitiesEnded: RunActivityRecord[];
     })
   | Extract<StoreOutcome<RunTerminatedRecord>, { outcome: "rejected" }>;
 
@@ -233,11 +256,40 @@ export interface ObservationRecoveredInput extends StoreInput {
   terminalId: string | null;
 }
 
+export interface LifecycleChangedInput extends StoreInput {
+  agentId: string;
+  /** The agent's last journaled lifecycle; null for its first transition. */
+  from: Lifecycle | null;
+  to: Lifecycle;
+  terminalId: string | null;
+  /** The raw runtime status behind `to`; omitted from the record when null. */
+  raw?: string | null;
+  /** A pane occupant replacement; omitted from the record when false. */
+  replaced?: boolean;
+}
+
+export interface ActivityInput extends StoreInput {
+  kind: ActivityKind;
+  phase: "started" | "ended";
+  agentId?: string;
+  attempt?: { stageId: string; visit: number; attempt: number };
+  detail?: string;
+  /** Only for `ended`. */
+  result?: string;
+}
+
 export interface TerminateRunInput extends StoreInput {
   outcome: TerminalOutcome;
   reason: string;
   /** Required exactly when outcome is "exhausted". */
   limit?: keyof Limits;
+  /**
+   * End every engine activity the journal still holds open before the
+   * termination, under the same lock, with the outcome as each `result`. No
+   * other writer can come between the ends and the termination, and nothing
+   * stays open once the run is closed.
+   */
+  endOpenActivities?: boolean;
 }
 
 /**
@@ -551,16 +603,54 @@ function writeRunFile(runDir: string, name: string, bytes: Buffer): string | und
   return undefined;
 }
 
-/** Records the run's terminal outcome, once. The caller decides the outcome. */
-export async function terminateRun(
-  input: TerminateRunInput,
-): Promise<StoreOutcome<RunTerminatedRecord>> {
-  return appendFact<RunTerminatedRecord>(input, {
+/**
+ * Records the run's terminal outcome, once. The caller decides the outcome.
+ * With `endOpenActivities`, every activity still open in the journal is ended
+ * first, under the same lock, and returned as `activitiesEnded`.
+ */
+export async function terminateRun(input: TerminateRunInput): Promise<TerminateRunOutcome> {
+  const termination: NewJournalRecord = {
     type: "run.terminated",
     outcome: input.outcome,
     reason: input.reason,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
-  });
+  };
+  candidateRecord([], termination);
+  const outcome = await appendFacts(input, (state) => [
+    ...(input.endOpenActivities === true ? activityEndsFor(state, input.outcome) : []),
+    termination,
+  ]);
+  if (outcome.outcome === "rejected") return outcome;
+  const terminated = outcome.records.at(-1) as RunTerminatedRecord;
+  return {
+    outcome: "recorded",
+    record: terminated,
+    revision: terminated.seq,
+    activitiesEnded: outcome.records.filter(
+      (record): record is RunActivityRecord => record.type === "run.activity",
+    ),
+  };
+}
+
+/**
+ * One `run.activity ended` per activity the replayed state still holds open,
+ * in start order, each carrying the termination's outcome as its `result`.
+ */
+function activityEndsFor(state: RunState, outcome: TerminalOutcome): NewJournalRecord[] {
+  const ends: NewJournalRecord[] = [];
+  for (const open of [...state.activities.values()].toSorted((a, b) => a.seq - b.seq)) {
+    ends.push({
+      type: "run.activity",
+      kind: open.kind,
+      phase: "ended",
+      ...(open.agentId !== undefined ? { agentId: open.agentId } : {}),
+      ...(open.stageId !== undefined && open.visit !== undefined && open.attempt !== undefined
+        ? { stageId: open.stageId, visit: open.visit, attempt: open.attempt }
+        : {}),
+      result: outcome,
+    });
+  }
+  return ends;
 }
 
 /**
@@ -586,12 +676,12 @@ export async function cancelRun(input: CancelRunInput): Promise<CancelRunOutcome
   candidateRecord([], request);
   candidateRecord([], termination);
   const outcome = await appendFacts(input, (state, runDir) => {
-    if (state.termination !== undefined || input.probeHost === false) return [request, termination];
-    if (state.host.exited !== undefined || state.host.lost !== undefined) {
-      return [request, termination];
-    }
+    const ends = input.endOpenActivities === true ? activityEndsFor(state, "cancelled") : [];
+    const tail = [...ends, request, termination];
+    if (state.termination !== undefined || input.probeHost === false) return tail;
+    if (state.host.exited !== undefined || state.host.lost !== undefined) return tail;
     const probed = probeHostEvidence(runDir);
-    if (probed.owner !== "lost") return [request, termination];
+    if (probed.owner !== "lost") return tail;
     const lost: NewJournalRecord = {
       type: "host.lost",
       pid: probed.host?.pid ?? null,
@@ -599,7 +689,7 @@ export async function cancelRun(input: CancelRunInput): Promise<CancelRunOutcome
       reason: (probed.lostReason ?? "heartbeat_stale").slice(0, 500),
       detectedBy: input.source,
     };
-    return [lost, request, termination];
+    return [lost, ...tail];
   });
   if (outcome.outcome === "rejected") return outcome;
   const written = outcome.records;
@@ -609,7 +699,10 @@ export async function cancelRun(input: CancelRunInput): Promise<CancelRunOutcome
     record: terminated,
     revision: terminated.seq,
     cancelRequest: written.at(-2) as RunCancelRequestedRecord,
-    hostLost: written.length === 3 ? (written[0] as HostLostRecord) : null,
+    hostLost: (written.find((record) => record.type === "host.lost") as HostLostRecord) ?? null,
+    activitiesEnded: written.filter(
+      (record): record is RunActivityRecord => record.type === "run.activity",
+    ),
   };
 }
 
@@ -663,6 +756,55 @@ export async function recordObservationRecovered(
     agentId: input.agentId,
     lostSeq: input.lostSeq,
     terminalId: input.terminalId,
+  });
+}
+
+/**
+ * Records that an agent's observed lifecycle differs from its last journaled one
+ * (a transition, never a sample). `from` must be that journaled lifecycle
+ * (`lifecycle_mismatch`), and `to` must differ unless the pane occupant was
+ * replaced (`lifecycle_unchanged`).
+ */
+export async function recordLifecycleChanged(
+  input: LifecycleChangedInput,
+): Promise<StoreOutcome<AgentLifecycleChangedRecord>> {
+  return appendFact<AgentLifecycleChangedRecord>(input, {
+    type: "agent.lifecycle_changed",
+    agentId: input.agentId,
+    from: input.from,
+    to: input.to,
+    terminalId: input.terminalId,
+    ...(input.raw !== undefined && input.raw !== null ? { raw: input.raw.slice(0, 200) } : {}),
+    ...(input.replaced === true ? { replaced: true } : {}),
+  });
+}
+
+/**
+ * Records the start or end of an engine activity. A `started` for a kind and
+ * subject already open is `activity_open`; an `ended` for one that is not open
+ * is `activity_not_open`.
+ */
+export async function recordActivity(
+  input: ActivityInput,
+): Promise<StoreOutcome<RunActivityRecord>> {
+  return appendFact<RunActivityRecord>(input, {
+    type: "run.activity",
+    kind: input.kind,
+    phase: input.phase,
+    ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+    ...(input.attempt !== undefined
+      ? {
+          stageId: input.attempt.stageId,
+          visit: input.attempt.visit,
+          attempt: input.attempt.attempt,
+        }
+      : {}),
+    ...(input.detail !== undefined && input.detail !== ""
+      ? { detail: input.detail.slice(0, 500) }
+      : {}),
+    ...(input.result !== undefined && input.result !== ""
+      ? { result: input.result.slice(0, 500) }
+      : {}),
   });
 }
 

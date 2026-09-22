@@ -26,6 +26,8 @@ interface Report {
   calls: Array<{ method: string; runtimeName: string | null; args: Json }>;
   requests: Array<{ path: string; text: string; sha256: string }>;
   submissions: Array<Json & { outcome: string }>;
+  /** `onWarning` calls: observability records the scheduler could not journal. */
+  warnings: Array<{ record: string; reason: string; message: string }>;
   snapshot: Json & {
     counters: Json & Record<string, Record<string, number>>;
     attention: Json;
@@ -36,6 +38,8 @@ interface Report {
   names: { builder: string; reviewer: string };
   runDir: string;
   repo: string;
+  /** `foldEvents(null, readEvents(runDir))` reproduced `readSnapshot(runDir)` exactly. */
+  foldMatches: boolean;
 }
 
 // The acceptance matrix's journal predicates (F-012): a test the matrix cites for a row asserts
@@ -101,28 +105,62 @@ describe("scheduler scenarios (scripted runtime, real processes)", () => {
       });
       expect(report.types).toEqual([
         "run.opened",
+        // build: the builder starts, is seen ready, waited for (one poll), then dispatched.
         "agent.assigned",
+        "agent.lifecycle_changed",
+        "run.activity",
+        "run.activity",
         "attempt.opened",
         "request.dispatched",
+        "agent.lifecycle_changed",
         "submission.accepted",
+        "agent.lifecycle_changed",
+        // the build gate's revision check, then the verify check run and its gate
+        "run.activity",
+        "run.activity",
         "gate.recorded",
+        "run.activity",
+        "run.activity",
         "gate.recorded",
+        // review 1: the reviewer starts the same way and fails the review
         "agent.assigned",
+        "agent.lifecycle_changed",
+        "run.activity",
+        "run.activity",
+        "attempt.opened",
+        "request.dispatched",
+        "agent.lifecycle_changed",
+        "submission.accepted",
+        "agent.lifecycle_changed",
+        "run.activity",
+        "run.activity",
+        "gate.recorded",
+        // repair: the same builder, waited for one poll again (the scripted double repeats its
+        // stateChangeSeq after the second delivery, so its working/idle samples are stale and
+        // journal no transition)
+        "run.activity",
+        "run.activity",
         "attempt.opened",
         "request.dispatched",
         "submission.accepted",
+        "run.activity",
+        "run.activity",
         "gate.recorded",
+        "run.activity",
+        "run.activity",
+        "gate.recorded",
+        // review 2: approved
+        "run.activity",
+        "run.activity",
         "attempt.opened",
         "request.dispatched",
         "submission.accepted",
-        "gate.recorded",
-        "gate.recorded",
-        "attempt.opened",
-        "request.dispatched",
-        "submission.accepted",
+        "run.activity",
+        "run.activity",
         "gate.recorded",
         "run.terminated",
       ]);
+      expect(report.foldMatches).toBe(true);
 
       // One start and one assignment per agent.
       const starts = report.calls.filter((call) => call.method === "startAgent");
@@ -422,7 +460,15 @@ describe("scheduler bounds (each expired bound is exhausted with its limit)", ()
     () => {
       const report = runScenario("readiness-timeout");
       exhaustedBy(report, "readinessWaitMs");
-      expect(report.types).toEqual(["run.opened", "agent.assigned", "run.terminated"]);
+      // One observed lifecycle, one wait: started once and ended with the outcome, never per poll.
+      expect(report.types).toEqual([
+        "run.opened",
+        "agent.assigned",
+        "agent.lifecycle_changed",
+        "run.activity",
+        "run.activity",
+        "run.terminated",
+      ]);
     },
     SCENARIO_TIMEOUT,
   );
@@ -708,6 +754,38 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         reason: expect.stringMatching(/^agent_replaced/),
       });
       expect(ofType(replaced, "agent.assigned")).toHaveLength(1);
+
+      // A replacement observed during the delivery itself: the dispatch is refused
+      // (assignment_mismatch) and the replacement is journaled before the run fails for it.
+      const inDelivery = runScenario("agent-replaced-in-delivery");
+      expect(inDelivery.result).toMatchObject({
+        outcome: "failed",
+        reason: expect.stringMatching(/^agent_replaced/),
+      });
+      expect(ofType(inDelivery, "request.dispatched")).toEqual([]);
+      const changes = ofType(inDelivery, "agent.lifecycle_changed").filter(
+        (record) => record["agentId"] === "builder",
+      );
+      expect(
+        changes.map((record) => [
+          record["from"],
+          record["to"],
+          record["terminalId"],
+          record["replaced"],
+        ]),
+      ).toEqual([
+        [null, "ready", `term-${inDelivery.names.builder}`, undefined],
+        ["ready", "working", "term-intruder", true],
+      ]);
+      const terminated = ofType(inDelivery, "run.terminated")[0];
+      expect(changes[1]?.seq).toBeLessThan(terminated?.seq ?? 0);
+      expect(inDelivery.snapshot.agents[0]?.["lifecycle"]).toMatchObject({
+        state: "working",
+        terminalId: "term-intruder",
+      });
+      expect((inDelivery.snapshot["activity"] as Json)["open"]).toEqual([]);
+      expect(inDelivery.warnings).toEqual([]);
+      expect(inDelivery.foldMatches).toBe(true);
     },
     SCENARIO_TIMEOUT,
   );
@@ -1100,6 +1178,277 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         dispatches.find((record) => record["stageId"] === "review")?.["revision"],
       );
       expect(gatesOf(report).some((gate) => gate["reason"] === "revision_moved")).toBe(false);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-1. agent lifecycle transitions are journaled on change only: ready → working → ready, and one record across many polls",
+    () => {
+      const report = runScenario("happy");
+      const changes = ofType(report, "agent.lifecycle_changed");
+      const of = (agentId: string) => changes.filter((record) => record["agentId"] === agentId);
+      // The build: seen ready after start, working after the dispatch, ready again when done.
+      expect(of("builder").map((record) => [record["from"], record["to"], record["raw"]])).toEqual([
+        [null, "ready", "idle"],
+        ["ready", "working", "working"],
+        ["working", "ready", "idle"],
+      ]);
+      expect(of("reviewer").map((record) => [record["from"], record["to"]])).toEqual([
+        [null, "ready"],
+        ["ready", "working"],
+        ["working", "ready"],
+      ]);
+      // Every transition starts from the one journaled before it and names the agent's terminal.
+      for (const agentId of ["builder", "reviewer"] as const) {
+        let previous: unknown = null;
+        for (const record of of(agentId)) {
+          expect(record["from"]).toBe(previous);
+          expect(record["terminalId"]).toBe(`term-${report.names[agentId]}`);
+          expect(record["replaced"]).toBeUndefined();
+          previous = record["to"];
+        }
+      }
+      // The dispatch fact precedes the working transition its delivery observed.
+      const build = ofType(report, "request.dispatched")[0];
+      expect(of("builder")[1]?.seq).toBe((build?.seq ?? 0) + 1);
+      // The snapshot carries the last journaled transition per agent, not a sample.
+      expect(
+        report.snapshot.agents.map((agent) => [
+          agent.agentId,
+          (agent["lifecycle"] as Json | null)?.["state"],
+          (agent["lifecycle"] as Json | null)?.["seq"],
+        ]),
+      ).toEqual([
+        ["builder", "ready", of("builder").at(-1)?.seq],
+        ["reviewer", "ready", of("reviewer").at(-1)?.seq],
+      ]);
+      expect(report.snapshot.counters["lifecycleChangesByAgent"]).toEqual({
+        builder: 3,
+        reviewer: 3,
+      });
+
+      // A builder that stays working through a 300 ms wait at a 2 ms poll is observed many
+      // times and journaled once.
+      const waited = runScenario("readiness-timeout");
+      const observes = waited.calls.filter(
+        (call) => call.method === "observe" && call.runtimeName === waited.names.builder,
+      );
+      expect(observes.length).toBeGreaterThan(5);
+      expect(ofType(waited, "agent.lifecycle_changed")).toMatchObject([
+        { agentId: "builder", from: null, to: "working", raw: "working" },
+      ]);
+      expect(waited.snapshot.agents[0]?.["lifecycle"]).toMatchObject({ state: "working" });
+      expect(waited.foldMatches).toBe(true);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-2. a readiness wait is one started/ended pair, ending ready or with the run's outcome",
+    () => {
+      const report = runScenario("happy");
+      const waits = ofType(report, "run.activity").filter(
+        (record) => record["kind"] === "readiness_wait",
+      );
+      expect(waits.map((record) => [record["agentId"], record["phase"], record["result"]])).toEqual(
+        [
+          ["builder", "started", undefined],
+          ["builder", "ended", "ready"],
+          ["reviewer", "started", undefined],
+          ["reviewer", "ended", "ready"],
+          ["builder", "started", undefined],
+          ["builder", "ended", "ready"],
+          ["reviewer", "started", undefined],
+          ["reviewer", "ended", "ready"],
+        ],
+      );
+      // Each wait ends before the dispatch it was for, and carries no attempt (there is none yet).
+      const dispatches = ofType(report, "request.dispatched");
+      for (const [index, ended] of waits.filter((w) => w["phase"] === "ended").entries()) {
+        expect(ended.seq).toBeLessThan(dispatches[index]?.seq ?? 0);
+        expect(ended["stageId"]).toBeUndefined();
+      }
+      expect((report.snapshot["activity"] as Json)["open"]).toEqual([]);
+
+      const exhausted = runScenario("readiness-timeout");
+      const terminated = ofType(exhausted, "run.terminated")[0];
+      expect(ofType(exhausted, "run.activity")).toMatchObject([
+        { kind: "readiness_wait", phase: "started", agentId: "builder" },
+        { kind: "readiness_wait", phase: "ended", agentId: "builder", result: "exhausted" },
+      ]);
+      expect(ofType(exhausted, "run.activity")[1]?.seq).toBe((terminated?.seq ?? 0) - 1);
+      expect((exhausted.snapshot["activity"] as Json)["open"]).toEqual([]);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-3. a check stage journals check_run started/ended around the command, and a gate's revision check is journaled too",
+    () => {
+      const report = runScenario("happy");
+      const activities = ofType(report, "run.activity");
+      const checks = activities.filter((record) => record["kind"] === "check_run");
+      expect(
+        checks.map((record) => [
+          record["phase"],
+          record["stageId"],
+          record["visit"],
+          record["detail"],
+          record["result"],
+        ]),
+      ).toEqual([
+        ["started", "build", 1, "node -e process.exit(0)", undefined],
+        ["ended", "build", 1, undefined, "exit 0"],
+        ["started", "repair", 1, "node -e process.exit(0)", undefined],
+        ["ended", "repair", 1, undefined, "exit 0"],
+      ]);
+      // Each check ends before the check gate that records its result.
+      const checkGates = gatesOf(report).filter((gate) => gate["kind"] === "check");
+      expect(checkGates).toHaveLength(2);
+      for (const [index, gate] of checkGates.entries()) {
+        expect(checks[2 * index + 1]?.seq).toBeLessThan(gate.seq);
+        expect(gate["check"].command.join(" ")).toBe(checks[2 * index]?.["detail"]);
+      }
+      // A failing command ends with its exit code, before the rejecting gate.
+      const failing = runScenario("max-visits");
+      expect(
+        ofType(failing, "run.activity")
+          .filter((record) => record["kind"] === "check_run" && record["phase"] === "ended")
+          .map((record) => record["result"]),
+      ).toEqual(["exit 1", "exit 1", "exit 1"]);
+
+      // The revision check of every stage gate names the gate and ends with the tree it recorded.
+      const revisions = activities.filter((record) => record["kind"] === "revision_check");
+      const stageGates = gatesOf(report).filter((gate) => gate["kind"] === "stage");
+      expect(
+        revisions.filter((record) => record["phase"] === "started").map((r) => r["detail"]),
+      ).toEqual(stageGates.map((gate) => gate["gate"]));
+      for (const [index, gate] of stageGates.entries()) {
+        const started = revisions[2 * index];
+        const ended = revisions[2 * index + 1];
+        expect(started).toMatchObject({
+          phase: "started",
+          stageId: gate["subject"].stageId,
+          visit: gate["subject"].visit,
+          attempt: gate["subject"].attempt,
+        });
+        expect(ended).toMatchObject({ phase: "ended", result: `tree ${gate["revision"].tree}` });
+        expect(ended?.seq).toBeLessThan(gate.seq);
+      }
+      expect(report.snapshot.counters["activitiesByKind"]).toEqual({
+        readiness_wait: 4,
+        revision_check: 4,
+        check_run: 2,
+      });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-4. an ambiguous delivery is under a delivery_check from its dispatch to its reconciliation",
+    () => {
+      const delivered = runScenario("ambiguous-delivered");
+      const dispatch = ofType(delivered, "request.dispatched")[0];
+      const reconciled = ofType(delivered, "delivery.reconciled")[0];
+      const checks = ofType(delivered, "run.activity").filter(
+        (record) => record["kind"] === "delivery_check",
+      );
+      expect(checks).toMatchObject([
+        {
+          phase: "started",
+          agentId: "builder",
+          stageId: "build",
+          visit: 1,
+          attempt: 1,
+          detail: "timeout",
+        },
+        { phase: "ended", agentId: "builder", result: "delivered (observed_activity)" },
+      ]);
+      expect(checks[0]?.seq).toBe((dispatch?.seq ?? 0) + 1);
+      expect(checks[1]?.seq).toBe((reconciled?.seq ?? 0) + 1);
+      expect(delivered.foldMatches).toBe(true);
+
+      const abandoned = runScenario("delivery-timeout");
+      expect(
+        ofType(abandoned, "run.activity")
+          .filter((record) => record["kind"] === "delivery_check")
+          .map((record) => [record["phase"], record["detail"], record["result"]]),
+      ).toEqual([
+        ["started", "stalled", undefined],
+        ["ended", undefined, "abandoned (no_evidence_before_deadline)"],
+      ]);
+      expect((abandoned.snapshot["activity"] as Json)["open"]).toEqual([]);
+      expect(abandoned.foldMatches).toBe(true);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-5. a lifecycle or activity record that cannot be journaled is reported and never changes the run's course",
+    () => {
+      const report = runScenario("observability-append-fails");
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "completed" });
+      expect(gatesOf(report).map((gate) => [gate["gate"], gate["decision"]])).toEqual([
+        ["build", "pass"],
+        ["review", "pass"],
+      ]);
+      // Each failure was reported once, in order, and none reached the run's outcome.
+      expect(report.warnings).toEqual([
+        {
+          record: "agent.lifecycle_changed",
+          reason: "lifecycle_mismatch",
+          message: expect.stringContaining("builder"),
+        },
+        {
+          record: "run.activity",
+          reason: "journal_write_failed",
+          message: expect.stringContaining("injected EIO"),
+        },
+        {
+          record: "run.activity",
+          reason: "journal_write_failed",
+          message: expect.stringContaining("injected EIO"),
+        },
+      ]);
+      // The foreign transition stands; the scheduler's next transition starts from it.
+      const builder = ofType(report, "agent.lifecycle_changed").filter(
+        (record) => record["agentId"] === "builder",
+      );
+      expect(builder.map((record) => [record["from"], record["to"]])).toEqual([
+        [null, "unknown"],
+        ["unknown", "ready"],
+        ["ready", "working"],
+        ["working", "ready"],
+      ]);
+      // The build gate's check never started in the journal, yet its evidence gated the run;
+      // the review gate's check could not be ended by the scheduler, so the termination ended
+      // it: right before run.terminated, under the same lock.
+      const revisions = ofType(report, "run.activity").filter(
+        (record) => record["kind"] === "revision_check",
+      );
+      const terminated = ofType(report, "run.terminated")[0];
+      expect(
+        revisions.map((record) => [record["phase"], record["detail"], record["result"]]),
+      ).toEqual([
+        ["started", "review", undefined],
+        ["ended", undefined, "completed"],
+      ]);
+      expect(revisions[1]?.seq).toBe((terminated?.seq ?? 0) - 1);
+      expect((report.snapshot["activity"] as Json)["open"]).toEqual([]);
+      expect(report.foldMatches).toBe(true);
+
+      // A cancellation closes the open wait, records the request and terminates under one lock.
+      const aborted = runScenario("abort-in-sleep");
+      const cancelled = ofType(aborted, "run.terminated")[0];
+      expect(ofType(aborted, "run.activity")).toMatchObject([
+        { kind: "readiness_wait", phase: "started", agentId: "builder" },
+        { kind: "readiness_wait", phase: "ended", agentId: "builder", result: "cancelled" },
+      ]);
+      expect(ofType(aborted, "run.activity")[1]?.seq).toBe((cancelled?.seq ?? 0) - 2);
+      expect(ofType(aborted, "run.cancel_requested")[0]?.seq).toBe((cancelled?.seq ?? 0) - 1);
+      expect((aborted.snapshot["activity"] as Json)["open"]).toEqual([]);
     },
     SCENARIO_TIMEOUT,
   );

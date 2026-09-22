@@ -8,13 +8,17 @@ import {
   type RunSnapshot,
   type SnapshotAttempt,
   type SnapshotBlocked,
+  type SnapshotGate,
 } from "./snapshot.js";
 
 /**
  * Terminal outcome of a run (p3 contract, unstable until v1), derived only from
  * a terminated snapshot. It names no workflow stage: the approving review is
- * the subject of the last stage gate that bound a revision, and the completion
- * it approved is the subject of the latest other gate that led into that stage.
+ * the subject of the last stage gate that bound a revision, provided it passed
+ * and approved the completing revision (its `next` is the completion, or no
+ * later gate recorded a repository revision other than the one it reviewed);
+ * the completion it approved is the subject of the latest other gate that led
+ * into that stage.
  */
 
 export interface AcceptedRef {
@@ -56,7 +60,12 @@ export interface RunResult {
   blocked: SnapshotBlocked | null;
   artifacts: {
     completion: AcceptedRef | null;
-    /** Non-null only when the run completed. */
+    /**
+     * The review that approved the completing revision: the subject of the last
+     * revision-bound stage gate when that gate passed and either led straight to
+     * completion or was followed by no gate on another repository revision.
+     * Null on any other outcome, and when a later stage changed the tree.
+     */
     review: AcceptedRef | null;
     verification: EvidenceRef | null;
     lastAcceptedByStage: Record<string, AcceptedRef>;
@@ -126,6 +135,10 @@ export function deriveRunResult(snapshot: RunSnapshot, options: DeriveRunResultO
             gate.next.stageId === reviewGate.gate,
         );
   const checkGate = gates.findLast((gate) => gate.kind === "check");
+  const approvedCompletion =
+    outcome.outcome === "completed" &&
+    reviewGate !== undefined &&
+    approvesCompletion(reviewGate, gates);
 
   const lastAcceptedByStage = Object.create(null) as Record<string, AcceptedRef>;
   for (const [stageId, latest] of Object.entries(snapshot.outputs.latestAcceptedByStage)) {
@@ -154,10 +167,7 @@ export function deriveRunResult(snapshot: RunSnapshot, options: DeriveRunResultO
     blocked: snapshot.attention.blocked,
     artifacts: {
       completion: entering === undefined ? null : acceptedRef(entering.subject),
-      review:
-        outcome.outcome === "completed" && reviewGate !== undefined
-          ? acceptedRef(reviewGate.subject)
-          : null,
+      review: approvedCompletion ? acceptedRef(reviewGate.subject) : null,
       verification:
         checkGate?.check === null || checkGate === undefined
           ? null
@@ -169,4 +179,17 @@ export function deriveRunResult(snapshot: RunSnapshot, options: DeriveRunResultO
       lastAcceptedByStage,
     },
   };
+}
+
+/**
+ * Whether a revision-bound stage gate approved the revision the run completed
+ * on: it passed, and either its `next` is the completion itself or every later
+ * gate was recorded on the very revision it reviewed. A passing review that a
+ * later stage built on top of (a different tree) is not the run's review.
+ */
+function approvesCompletion(reviewGate: SnapshotGate, gates: readonly SnapshotGate[]): boolean {
+  if (reviewGate.decision !== "pass" || reviewGate.reviewed === null) return false;
+  if ("outcome" in reviewGate.next) return reviewGate.next.outcome === "completed";
+  const reviewedTree = reviewGate.reviewed.tree;
+  return gates.every((gate) => gate.seq <= reviewGate.seq || gate.revision.tree === reviewedTree);
 }

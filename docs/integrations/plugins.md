@@ -29,14 +29,19 @@ command and action below is an implemented surface.
 - Inspection (read-only; no journal lock, never contacts Herdr):
   `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
-[--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--after <cursor>]
-[--poll-ms <n>] [--timeout-ms <n>]`. `watch` (and `events --pretty`, which
-  prints exactly the same) is the human view: a header (run, workflow, current
-  stage, host owner, agents with role, kind, model and pane) and one line per
-  event, following like `events --follow` and with its exit codes; `<run-dir>`
-  defaults to `WOOF_RUN_DIR`. `status --pretty` prints only that header. Colors
-  only when stdout is a terminal and `NO_COLOR` is unset or empty. See
-  [observability](../architecture/observability.md#implemented-now-p4).
+[--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--input summary|json]
+[--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`.
+  `watch` is the human view of [run output](../design/run-output.md): an
+  opening block (workflow, repository, run id and directory, agent roster, stage
+  map with gates and repair routes, limits, input preview), one plain-English
+  row per meaningful fact (`time mark participant stage message`, the
+  participant an agent, `gate` or `run`) and an outcome summary with the
+  accepted artifact paths; it follows like `events --follow` and shares its exit
+  codes, and `<run-dir>` defaults to `WOOF_RUN_DIR`. `watch --plain` (and
+  `events --pretty`, which prints exactly the same) is the technical view: a
+  status header and one line per journal event; `status --pretty` prints only
+  that header. Colors only when stdout is a terminal and `NO_COLOR` is unset or
+  empty. See [observability](../architecture/observability.md#implemented-now-p4).
 - Runs across directories: `status`, `events`, `watch`, `run show` and
   `run cancel` take a run id wherever they take `<run-dir>` (an existing
   directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is
@@ -60,23 +65,26 @@ command and action below is an implemented surface.
   closes only the tabs it created, and it is the run host that closes the
   agent tabs when the run ends: a host killed mid-run leaves them open, and
   `run cancel` does not close them (close them with `herdr tab close`; the
-  tab ids are in the run's `agent.assigned` records). By default (herdr-pane only; `--no-watch`
-  opts out, `--watch` is still accepted and is refused with exit 2 under
-  `--host foreground` or outside Herdr) it also splits a pane below the host,
-  inside the host's tab, running `woof watch <run-dir> --follow` and adds
-  `watch: {paneId, command}` (or `watch: {problem}`) to its output, next to
-  `host: {paneId, tabId, …}`. The
-  watch pane closes when the run ends only with an explicit `--no-keep-panes`
-  (its typed command is then `sh -c '… --follow; s=$?; herdr pane close
-<pane>; exit $s'`: the close is unconditional, since `woof watch --follow`
-  may exit non-zero for a run that did not complete, and watch's status is
-  kept); unlike
-  agent panes it otherwise stays, so its final lines remain readable;
-  `run cancel <run-dir>`; `run
-build-review …` (foreground, kept as an alias for `run start --workflow
-build-review --host foreground`); `run host <run-dir>` (internal and
-  unstable — hosts a launch request in this process; `run start` types this
-  into the Herdr pane it opens).
+  tab ids are in the run's `agent.assigned` records). The host's tab holds
+  one pane: the run host prints the human view of its own run there (what
+  `woof watch <run-dir> --follow` prints — opening block, one row per fact
+  as the journal records land, outcome summary), followed by its result JSON
+  line, and writes its technical log (scheduler actions, warnings,
+  metadata-report failures, one timestamped line each) to
+  `<run-dir>/host.log`. `--plain` makes the host print that technical log to
+  stdout instead of the human view; `--ascii` and `--preview summary|json`
+  are `woof watch`'s `--ascii` and `--input` for the host's view, and all
+  three travel to the typed `run host` command (`--plain --ascii --input
+json`). The host's stdout is a TTY in a Herdr pane, so colors are on unless
+  `NO_COLOR` is set. The host tab stays open after the run so its last lines
+  remain readable; `--keep-panes`/`--no-keep-panes` (or `keepPanes`) decide
+  only whether the agent tabs close when the run ends. Nothing is split any
+  more, and the started output has no `watch` field; `run cancel <run-dir>`;
+  `run build-review …` (foreground, kept as an alias for `run start
+--workflow build-review --host foreground`, with the same view and log
+  behavior and flags); `run host <run-dir> [--plain] [--ascii] [--input
+summary|json]` (internal and unstable — hosts a launch request in this
+  process; `run start` types this into the Herdr pane it opens).
 - Herdr plugin actions (unstable; the project comes from
   `HERDR_PLUGIN_CONTEXT_JSON`, never the working directory): `herdr status`,
   `herdr start`, `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
@@ -114,7 +122,8 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
   `<project>/.woof/start.json` (a missing file, or one that is not a regular
   file — a FIFO, device or directory is `input_invalid` at once, without
   blocking — is a notification and exit 2), hosted in the root pane of a new
-  tab with the `woof watch --follow` pane split below it. An action process
+  tab, where the host prints the run's human view (see `run start` above; no
+  pane is split). An action process
   has no `HERDR_PANE_ID` of its own: the tab goes to the workspace Herdr
   reports for the context's `focused_pane_id` (`herdr pane get`), else to
   `HERDR_WORKSPACE_ID`, and only with neither to Herdr's default workspace.

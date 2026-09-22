@@ -17,6 +17,23 @@ export function builtinWorkflowDefinition(name: string): WorkflowDefinition<unkn
   return builtInWorkflow(name);
 }
 
+/**
+ * The definition behind a run's recorded workflow, for readers of the record (the human run
+ * view's stage map): the built-in one, only when the recorded `workflow.source` says the run used
+ * it (or no record exists) and the compiled version is the recorded version — a project's own
+ * module is never re-loaded to read a run, and a view never draws routes the run did not follow.
+ */
+export function recordedWorkflowDefinition(
+  workflow: { name: string; version: string },
+  source: string | null,
+): WorkflowDefinition<unknown> | undefined {
+  if (source !== null && source !== "builtin") return undefined;
+  const definition = builtInWorkflow(workflow.name);
+  return definition !== undefined && definition.version === workflow.version
+    ? definition
+    : undefined;
+}
+
 export function admissionConfiguration(
   configuration: ResolvedConfiguration,
 ): AdmissionConfiguration {

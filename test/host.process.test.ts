@@ -408,6 +408,222 @@ console.log(
   });
 });
 
+describe("run host view and log (inspect/host-view.ts, host/log.ts)", () => {
+  it("follows the host's own journal into the human rows, finishes at once from the final snapshot whatever its poll, and keeps the technical log in host.log", () => {
+    const runDir = join(temp(), "run");
+    const result = runNode(
+      `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
+const { openAttempt } = await import(${JSON.stringify(distUrl("submission/attempt.js"))});
+const { createHostView } = await import(${JSON.stringify(distUrl("inspect/host-view.js"))});
+const { createHostLog } = await import(${JSON.stringify(distUrl("host/log.js"))});
+const { readFileSync } = await import("node:fs");
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const runDir = process.argv[1];
+const collect = () => { const lines = []; return { lines, write: (line) => lines.push(line) }; };
+const [live, slow] = [collect(), collect()];
+const viewOf = (sink, pollMs) => createHostView({ runDir, write: sink.write, pollMs, color: false, ascii: true, input: "summary", width: 100 });
+const limits = { maxAttemptsPerVisit: 2, maxVisitsPerStage: 3, maxRounds: 3, runTimeoutMs: 600000, readinessWaitMs: 60000, blockedWaitMs: 60000, deliveryTimeoutMs: 10000 };
+await store.openRun({ runDir, runId: "run-view", plan: {
+  workflow: { name: "report-review", version: "1" },
+  agents: [{ agentId: "worker", role: "writer", kind: "claude", model: null }],
+  stages: [{ stageId: "report", agentId: "worker", verdicts: [] }], limits } });
+const views = [viewOf(live, 50), viewOf(slow, 5000)];
+for (const view of views) view.start();
+const opened = live.lines.length;
+await store.assignAgent({ runDir, agentId: "worker", runtime: { adapter: "herdr", runtimeName: "w-worker", paneId: "w1:p2" } });
+await openAttempt({ runDir, runId: "run-view", agentId: "worker", stageId: "report", visit: 1, attempt: 1 });
+await store.recordDispatch({ runDir, agentId: "worker", stageId: "report", visit: 1, attempt: 1, delivery: "started", reason: "observed_working" });
+await sleep(400);
+const liveRows = live.lines.length - opened;
+const slowRows = slow.lines.length - opened;
+await store.terminateRun({ runDir, outcome: "completed", reason: "done" });
+const started = performance.now();
+await Promise.all(views.map((view) => view.finish()));
+const finishMs = performance.now() - started;
+await views[1].finish(); // idempotent
+const echoed = [];
+const log = createHostLog(runDir, { echo: true, write: (line) => echoed.push(line) });
+log("dispatch report visit 1 attempt 1 (initial) to worker");
+const quiet = createHostLog(runDir, { echo: false, write: () => { throw new Error("never"); } });
+quiet("run ended");
+console.log(JSON.stringify({ opened, liveRows, slowRows, live: live.lines, slow: slow.lines, finishMs, echoed, hostLog: readFileSync(runDir + "/host.log", "utf8") }));`,
+      [runDir],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    const live = out["live"] as string[];
+    // The opening block came from the snapshot at start; rows landed live at the 50 ms poll.
+    expect(out["opened"]).toBeGreaterThan(0);
+    expect(live.slice(0, out["opened"] as number)).toContain("AGENTS");
+    expect(live).toContain("worker   claude   provider default   report   role writer");
+    expect(out["liveRows"]).toBeGreaterThan(0);
+    expect(live).toContainEqual(
+      expect.stringMatching(/^\d\d:\d\d:\d\d -> worker report {2}Task dispatched$/),
+    );
+    // The 5 s poll had read only the subscription's immediate first read (the Started row); finish
+    // still returned at once with every row and the summary, from one direct read and the final
+    // snapshot, so a host never waits on its view.
+    expect(out["slowRows"]).toBe(1);
+    expect((out["slow"] as string[])[out["opened"] as number]).toMatch(/ \. {2}run +Started$/);
+    expect(out["finishMs"]).toBeLessThan(1000);
+    expect(out["slow"]).toEqual(live);
+    expect(live.filter((line) => line.endsWith("Task dispatched"))).toHaveLength(1);
+    // ASCII: the marks and the middle dot are ASCII too.
+    expect(live.filter((line) => line === "v Completed - done")).toHaveLength(1);
+    expect(live.at(-1)).toBe("ARTIFACTS - none accepted");
+    // The log: one timestamped line per entry in host.log, echoed to stdout only when asked.
+    const hostLog = (out["hostLog"] as string).trim().split("\n");
+    expect(hostLog).toHaveLength(2);
+    expect(hostLog[0]).toMatch(
+      /^\d{4}-\d\d-\d\dT[\d:.]+Z dispatch report visit 1 attempt 1 \(initial\) to worker$/,
+    );
+    expect(hostLog[1]).toMatch(/Z run ended$/);
+    expect(out["echoed"]).toEqual([hostLog[0]]);
+  });
+
+  it("a journal corrupted after the run terminated: the view prints one subdued diagnostic, logs it, stops promptly and never rejects", () => {
+    const runDir = join(temp(), "run");
+    const result = runNode(
+      `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
+const { createHostView } = await import(${JSON.stringify(distUrl("inspect/host-view.js"))});
+const { appendFileSync } = await import("node:fs");
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const runDir = process.argv[1];
+const limits = { maxAttemptsPerVisit: 2, maxVisitsPerStage: 3, maxRounds: 3, runTimeoutMs: 600000, readinessWaitMs: 60000, blockedWaitMs: 60000, deliveryTimeoutMs: 10000 };
+const plan = { workflow: { name: "report-review", version: "1" }, agents: [{ agentId: "worker", role: "writer", kind: "claude", model: null }], stages: [{ stageId: "report", agentId: "worker", verdicts: [] }], limits };
+const out = {};
+// (a) The corruption lands while the view follows: the follower's own read reports it.
+{
+  const lines = []; const logs = [];
+  const view = createHostView({ runDir, write: (line) => lines.push(line), log: (line) => logs.push(line), pollMs: 20, color: true, ascii: true, input: "summary", width: 100 });
+  await store.openRun({ runDir, runId: "run-corrupt", plan });
+  view.start();
+  await store.terminateRun({ runDir, outcome: "completed", reason: "done" });
+  await sleep(150);
+  appendFileSync(runDir + "/journal.jsonl", '{"schemaVersion":1,"seq":2,"ts":"2026-09-16T00:00:00.000Z","type":"run.terminated","outcome":"completed","reason":"a duplicate seq"}\\n');
+  await sleep(300);
+  const started = performance.now();
+  let rejected = null;
+  await view.finish().catch((error) => { rejected = String(error); });
+  out.live = { lines, logs, finishMs: performance.now() - started, rejected };
+}
+// (b) The corruption lands after the follow stopped: the catch-up and the final read meet it.
+{
+  const dir = runDir + "-late";
+  const lines = []; const logs = [];
+  const view = createHostView({ runDir: dir, write: (line) => lines.push(line), log: (line) => logs.push(line), pollMs: 5000, color: false, ascii: true, input: "summary", width: 100 });
+  await store.openRun({ runDir: dir, runId: "run-corrupt-late", plan });
+  view.start();
+  await store.terminateRun({ runDir: dir, outcome: "completed", reason: "done" });
+  appendFileSync(dir + "/journal.jsonl", "not a journal record\\n");
+  let rejected = null;
+  await view.finish().catch((error) => { rejected = String(error); });
+  await view.finish();
+  out.late = { lines, logs, rejected };
+}
+console.log(JSON.stringify(out));`,
+      [runDir],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    for (const scenario of ["live", "late"] as const) {
+      const { lines, logs, rejected } = out[scenario] as {
+        lines: string[];
+        logs: string[];
+        rejected: string | null;
+      };
+      expect(rejected, scenario).toBeNull();
+      const diagnostics = lines.filter((line) => line.includes("view: journal_corrupt"));
+      expect(diagnostics, scenario).toHaveLength(1);
+      expect(diagnostics[0], scenario).toContain(
+        "the run's outcome is in the result line and outcome.json",
+      );
+      expect(logs, scenario).toHaveLength(1);
+      expect(logs[0], scenario).toMatch(/^view: journal_corrupt: \S*journal\.jsonl line 3: /);
+      // No summary: the final snapshot is unreadable, so nothing claims an outcome the run may not have.
+      expect(
+        lines.some((line) => line.startsWith("v Completed")),
+        scenario,
+      ).toBe(false);
+    }
+    const live = out["live"] as Json;
+    // With color the diagnostic is dim; the message itself carries no control characters.
+    expect((live["lines"] as string[]).at(-1)).toMatch(
+      // oxlint-disable-next-line no-control-regex
+      /^\u001B\[2m-- view: journal_corrupt: \S*journal\.jsonl line 3: .*\u001B\[0m$/u,
+    );
+    expect(live["finishMs"]).toBeLessThan(1000);
+    const late = out["late"] as Json;
+    expect((late["lines"] as string[]).at(-1)).toMatch(
+      /^-- view: journal_corrupt: \S*journal\.jsonl line 3: /,
+    );
+  });
+
+  it("createHostLog opens host.log once, refuses a FIFO or a symlink without blocking, and drops lines after a write failure", () => {
+    const root = temp();
+    const result = runNode(
+      `const { createHostLog } = await import(${JSON.stringify(distUrl("host/log.js"))});
+const { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } = await import("node:fs");
+const { spawnSync } = await import("node:child_process");
+const root = process.argv[1];
+const out = {};
+// A FIFO with no reader: appendFileSync would block here for good.
+mkdirSync(root + "/fifo");
+spawnSync("mkfifo", [root + "/fifo/host.log"]);
+{
+  const warnings = [];
+  const log = createHostLog(root + "/fifo", { echo: false, warn: (m) => warnings.push(m) });
+  const started = performance.now();
+  log("one"); log("two");
+  out.fifo = { warnings, ms: performance.now() - started };
+}
+// A symlink to a file elsewhere: never followed.
+mkdirSync(root + "/link");
+writeFileSync(root + "/elsewhere.log", "");
+symlinkSync(root + "/elsewhere.log", root + "/link/host.log");
+{
+  const warnings = [];
+  const log = createHostLog(root + "/link", { echo: false, warn: (m) => warnings.push(m) });
+  log("one");
+  out.link = { warnings, elsewhere: readFileSync(root + "/elsewhere.log", "utf8") };
+}
+// The name replaced after the open: the lines keep going to the inode opened first.
+mkdirSync(root + "/swap");
+{
+  const warnings = [];
+  const log = createHostLog(root + "/swap", { echo: false, warn: (m) => warnings.push(m) });
+  log("before \\u001b[31mred\\r\\nline");
+  renameSync(root + "/swap/host.log", root + "/swap/first.log");
+  spawnSync("mkfifo", [root + "/swap/host.log"]);
+  log("after");
+  out.swap = { warnings, first: readFileSync(root + "/swap/first.log", "utf8") };
+}
+console.log(JSON.stringify(out));`,
+      [root],
+      { timeoutMs: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.json as unknown as Json;
+    expect(out["fifo"]["warnings"]).toEqual([
+      expect.stringMatching(
+        /host\.log (cannot be opened \(ENXIO\)|is not a regular file); the technical log is dropped$/,
+      ),
+    ]);
+    expect(out["fifo"]["ms"]).toBeLessThan(1000);
+    expect(out["link"]["warnings"]).toEqual([
+      expect.stringMatching(/host\.log cannot be opened \((ELOOP|EMLINK)\)/),
+    ]);
+    expect(out["link"]["elsewhere"]).toBe("");
+    expect(out["swap"]["warnings"]).toEqual([]);
+    const first = (out["swap"]["first"] as string).trim().split("\n");
+    expect(first).toHaveLength(2);
+    expect(first[0]).toMatch(/Z before {2}\[31mred {2}line$/);
+    expect(first[1]).toMatch(/Z after$/);
+  });
+});
+
 describe("metadata refresh coalescing (PR #6 run.ts:293)", () => {
   it("runs one report at a time, folds a burst of requests into one follow-up each round and drains promptly", () => {
     const result = runNode(

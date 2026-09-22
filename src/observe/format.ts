@@ -43,7 +43,7 @@ const SGR = {
   yellow: "33",
   cyan: "36",
 } as const;
-type Style = keyof typeof SGR;
+export type Style = keyof typeof SGR;
 
 /** Colors only on a terminal, and never when NO_COLOR is set to a non-empty value (no-color.org). */
 export function colorEnabled(input: {
@@ -201,6 +201,16 @@ function summaryOf(type: string, raw: unknown): string {
         return `${text(data["code"])}: ${clipped(data["message"])}`;
       case "observation.recovered":
         return `after loss #${text(data["lostSeq"])}`;
+      case "agent.lifecycle_changed":
+        return `${data["from"] === null ? "-" : text(data["from"])} -> ${text(data["to"])}${
+          data["raw"] === undefined ? "" : ` (${text(data["raw"])})`
+        }${data["terminalId"] === null ? "" : ` terminal ${text(data["terminalId"])}`}${
+          data["replaced"] === true ? " [pane occupant replaced]" : ""
+        }`;
+      case "run.activity":
+        return `${text(data["kind"])} ${text(data["phase"])}${
+          data["detail"] === undefined ? "" : `: ${clipped(data["detail"])}`
+        }${data["result"] === undefined ? "" : ` -> ${clipped(data["result"])}`}`;
       default:
         return unknownSummary(raw);
     }
@@ -242,6 +252,14 @@ function typeStyle(type: string, data: Record<string, unknown>): Style | undefin
     case "request.dispatched":
     case "attempt.opened":
       return "cyan";
+    case "agent.lifecycle_changed":
+      return data["to"] === "blocked" || data["replaced"] === true
+        ? "yellow"
+        : data["to"] === "gone"
+          ? "red"
+          : undefined;
+    case "run.activity":
+      return "dim";
     default:
       return undefined;
   }
@@ -276,7 +294,8 @@ function ownerOf(liveness: RunStatusView["liveness"]): string {
 
 const TIME_FORMATS = new Map<string, Intl.DateTimeFormat>();
 
-function timeOf(ts: string, timeZone: string | undefined): string {
+/** Local (or `timeZone`) wall clock `HH:MM:SS` of an ISO timestamp; `??:??:??` when it does not parse. */
+export function timeOf(ts: string, timeZone: string | undefined): string {
   const date = new Date(ts);
   if (typeof ts !== "string" || Number.isNaN(date.getTime())) return "??:??:??";
   const key = timeZone ?? "";
@@ -294,13 +313,14 @@ function timeOf(ts: string, timeZone: string | undefined): string {
   return format.format(date);
 }
 
-function painter(color: boolean): (value: string, style: Style | undefined) => string {
+/** SGR painter: wraps `value` in the style's code when color is on; the identity otherwise. */
+export function painter(color: boolean): (value: string, style: Style | undefined) => string {
   return (value, style) =>
     color && style !== undefined ? `\u001B[${SGR[style]}m${value}\u001B[0m` : value;
 }
 
 /** A field as display text: strings sanitized, finite numbers and booleans as written, anything else `?`. */
-function text(value: unknown): string {
+export function text(value: unknown): string {
   if (typeof value === "string") return sanitize(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "boolean") return String(value);
@@ -323,7 +343,8 @@ function clip(value: string, max: number): string {
 // oxlint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001F\u007F-\u009F]/g;
 
-function sanitize(value: string): string {
+/** Control characters (ESC, CR, LF, DEL among them) become spaces. */
+export function sanitize(value: string): string {
   return value.replaceAll(CONTROL, " ");
 }
 

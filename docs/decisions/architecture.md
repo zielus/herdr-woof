@@ -57,8 +57,9 @@ agreement are defined in
 
 A hosted run has one heartbeat-tracked scheduler process in a Herdr pane, giving
 the run a visible owner that can outlive its caller. The layout is one Herdr tab
-per participant: the host in the root pane of its own tab (with the optional
-watch pane split below it) and every agent in its own tab, never a pane split;
+per participant: the host in the root pane of its own tab, where it prints the
+human view of its own run (the technical log goes to `<run-dir>/host.log`),
+and every agent in its own tab, never a pane split;
 the tab ids are journaled with `host.claimed` and `agent.assigned`. The scheduler uses the same
 derived snapshot an observer reads, performs one bounded action at a time and
 records control decisions before exposing them. Foreground runs remain available.

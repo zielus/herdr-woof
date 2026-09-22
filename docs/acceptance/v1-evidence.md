@@ -325,3 +325,22 @@ After the index review fixes and the module-boundary refactor, the whole script
 (`--part all`) was run again live at `40788db` on 2026-09-21: **28/28 gates passed**
 (log: [tabs-observability-live-final.log](../research/tabs-observability-live-final.log)).
 `bun run verify` passed at the same commit (58 files, 930 tests, package smoke).
+
+## Human-readable run output, one pane per run (feat/run-output)
+
+Live at `31cc099` on 2026-09-22 (herdr 0.9.1, real Claude agents), the whole
+`scripts/live/tabs-observability.mjs --part all` script passed **28/28 gates**
+(log: [run-output-live.log](../research/run-output-live.log)). What it proves
+on top of the tabs/observability run above:
+
+- The run host renders the human run view in its own pane; the host tab holds
+  exactly one pane (gate A7, no watch split) and `<run-dir>/host.log` carries
+  the technical dispatch lines.
+- The journal holds `agent.lifecycle_changed` and `run.activity` records
+  written only on change; `woof watch` and `woof events --all` project them
+  (parts A and C), and `foldEvents == readSnapshot` still holds with them.
+- The killed-host and reconnect procedures (parts B and C) are unchanged.
+
+Not proven live: a custom workflow whose completing revision differs from the
+reviewed one (unit-tested only); rendering at 80 columns inside a Herdr pane
+(unit-tested only); `plan-build-review` was not re-run live.

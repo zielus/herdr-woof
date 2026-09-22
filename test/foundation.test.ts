@@ -31,6 +31,8 @@ console.log(JSON.stringify({
     expect(entry.marker).toBe(true);
     // Module namespace keys are ordered by code unit, not by declaration.
     const expected: Record<string, string> = {
+      ACTIVITY_KINDS: "object",
+      ACTIVITY_PHASES: "object",
       BUILT_IN_WORKFLOWS: "object",
       DISPATCH_REASONS: "object",
       MAX_ARTIFACT_BYTES: "number",
@@ -47,6 +49,7 @@ console.log(JSON.stringify({
       claimHost: "function",
       claudeTrustStatus: "function",
       createHerdrCliRuntime: "function",
+      createRunRenderer: "function",
       deriveRunResult: "function",
       deriveSnapshot: "function",
       discoverRoots: "function",

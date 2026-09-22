@@ -66,6 +66,19 @@ export type RuntimeFactory = (
   context: RuntimeContext,
 ) => Promise<{ ok: true; runtime: RuntimeAdapter } | { ok: false; message: string }>;
 
+/**
+ * The human view a host prints to its stdout. The host only drives it; it is built above the host
+ * (`src/inspect/host-view.ts`, from the inspection reads `woof watch` uses) and handed in.
+ */
+export interface HostView {
+  /** Prints the opening block and starts following the journal. Call once the run is open. */
+  start(): void;
+  /** Stops the follow, prints the rows still unread and the outcome summary. Idempotent. */
+  finish(): Promise<void>;
+  /** Aborts the follow without printing anything more (a safety net for an aborted host). */
+  close(): void;
+}
+
 export interface HostWorkflowOptions {
   /** Absolute run directory. */
   runDir: string;
@@ -99,7 +112,20 @@ export interface HostWorkflowOptions {
   /** Herdr metadata projection; null outside a Herdr pane. */
   metadata: { bin: string; env: NodeJS.ProcessEnv; hostPaneId: string } | null;
   homeDir?: string;
+  /** The technical log (`<runDir>/host.log`, and stdout with `--plain`). */
   log: (line: string) => void;
+  /**
+   * Operator-facing warnings: what the recorded configuration warns about (a permission bypass in
+   * an agent's args, an unreadable Claude trust file). The caller puts them where the operator
+   * looks — stderr beside the human view — as well as in the log; defaults to `log`.
+   */
+  warn?: (line: string) => void;
+  /**
+   * The human view printed to the host's stdout (null with `--plain`): started once the run is
+   * open, finished — rows still unread, then the summary — as soon as the scheduler returns, and
+   * closed on every other exit path so a follow never keeps the host alive.
+   */
+  view?: HostView | null;
 }
 
 export interface HostWorkflowResult {
@@ -129,6 +155,7 @@ export interface HostWorkflowResult {
  */
 export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWorkflowResult> {
   const { runDir, runId, log } = options;
+  const warn = options.warn ?? log;
   let release = options.release;
   let result: HostWorkflowResult | undefined;
   let outcomeWritten = false;
@@ -244,6 +271,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     if (reportTimer !== undefined) clearInterval(reportTimer);
+    options.view?.close();
     releaseClaim(result?.code ?? 3);
   }
 
@@ -333,8 +361,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
     if (opened.hostClaimed !== null) journaled = true;
     else if (hostRecord !== undefined) log("cannot journal host.claimed: the journal write failed");
+    // Configuration warnings are for the operator, not only the log (PI-004).
     for (const warning of recorded.warnings)
-      log(
+      warn(
         `warning ${warning.code}: ${warning.message}${warning.path !== undefined ? ` (${warning.path})` : ""}`,
       );
 
@@ -363,6 +392,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     reportTimer?.unref();
 
     log(`run ${runId} in ${runDir}`);
+    // The human view follows the journal from here; the driver's callbacks feed only the log.
+    options.view?.start();
     let lastWait = "";
     const out = await runWorkflow({
       runDir,
@@ -381,8 +412,13 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         lastWait = action.type === "wait" ? line : "";
         log(line);
       },
+      // Observability records are best effort; a refused one is a log line, never a run failure.
+      onWarning: (warning) =>
+        log(`warning: ${warning.record}: ${warning.reason}: ${warning.message}`),
     });
     if (reportTimer !== undefined) clearInterval(reportTimer);
+    // The summary first, from the final snapshot: the metadata's last report may take seconds.
+    if (options.view != null) await options.view.finish();
     if (reporter !== null) {
       // Bounded: the report in flight (each Herdr call is capped) and then the final one.
       await refresh?.drain();

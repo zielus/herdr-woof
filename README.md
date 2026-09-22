@@ -159,7 +159,8 @@ woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
   [--host herdr-pane|foreground] [--poll-ms <n>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
-  [--split-from <pane-id>] [--runtime-module <path>] [--watch|--no-watch]
+  [--split-from <pane-id>] [--runtime-module <path>] \
+  [--plain] [--ascii] [--preview summary|json]
 woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
   [--poll-ms <n>] [--verify-artifacts] [--pretty]
 woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
@@ -170,7 +171,8 @@ woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] \
 woof ui [--port <n>] [--host <addr>] [--runs-dir <dir>] [--token <secret>] \
   [--allow-host <name>] [--allow-origin <origin>] [--poll-ms <n>] [--no-open]
 woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
-  [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
+  [--poll-ms <n>] [--keep-panes] [--runtime-module <path>] \
+  [--plain] [--ascii] [--preview summary|json]
 woof run cancel <run-dir> [--reason <text>]
 woof herdr status|start|cancel|doctor|watch
 woof agent start <role> [--split right|down | --pane <pane-id>] \
@@ -400,19 +402,21 @@ never silently as running, and its only resolution is still
 `woof watch` and `woof config show` are read-only and never take the journal
 lock or contact Herdr.
 
-To follow or debug a run in a terminal, `woof watch` prints a short header
-(run, workflow, current stage, host owner, each agent with role, kind, model
-and pane) and one readable line per journal event: local time, `#seq`, type,
-subject and a summary. `--follow` keeps reading until the run's terminal
-record, with the exit codes of `woof events --follow`; `woof events --pretty`
-prints the same output, and `woof status <run-dir> --pretty` prints only the
+To follow or debug a run in a terminal, `woof watch` prints one readable
+account of it: an opening block (workflow, repository, run id and directory,
+agent roster, stage map, limits, input preview), one plain-English row per
+meaningful fact and, when the run ends, an outcome summary with the accepted
+artifact paths. `--follow` keeps reading until the run's terminal record, with
+the exit codes of `woof events --follow`; `woof watch --plain` (and `woof
+events --pretty`) prints the technical view instead — a status header and one
+line per journal event — and `woof status <run-dir> --pretty` prints only that
 header instead of JSON. Colors appear only when stdout is a terminal and
 `NO_COLOR` is unset or empty. A pane-hosted `woof run start` opens the run
-host in its own Herdr tab and, by default, that view in a pane below the host
-inside the same tab (`--no-watch` opts out); every agent gets a tab of its
-own. The watch pane stays open after the run so its last lines remain
-readable, unless `--no-keep-panes` is given (an explicit `--watch` is refused,
-exit 2, with `--host foreground` or outside Herdr):
+host in its own Herdr tab, and the host prints that same human view in its
+pane as its own journal grows (its technical log goes to `<run-dir>/host.log`;
+`--plain` prints the log instead); every agent gets a tab of its own. The
+host's tab stays open after the run so its last lines remain readable;
+`--no-keep-panes` closes only the agent tabs:
 
 ```sh
 woof run start --input input.json

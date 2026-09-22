@@ -189,6 +189,18 @@ const journalTypes = (runDir: string): string[] =>
 /** A foreground host's own exit is the one record after the run's termination. */
 const RUN_END = ["run.terminated", "host.exited"];
 
+/**
+ * The host's result: exactly one stdout line is JSON (the last), the lines before it are the
+ * human view of the run (no view line starts with a brace).
+ */
+function resultLine(stdout: string): Json {
+  const lines = stdout.trim().split("\n");
+  const braced = lines.filter((line) => line.startsWith("{"));
+  expect(braced, stdout).toHaveLength(1);
+  expect(lines.at(-1)).toBe(braced[0]);
+  return JSON.parse(braced[0] ?? "null") as Json;
+}
+
 async function waitForRecord(runDir: string, type: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!journalTypes(runDir).includes(type)) {
@@ -394,13 +406,27 @@ describe("woof run build-review: runs", () => {
     );
     const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(result.status, result.stderr).toBe(0);
-    const printed = JSON.parse(result.stdout.trim()) as { outcome: string; result: Json };
-    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    const printed = resultLine(result.stdout) as { outcome: string; result: Json };
     expect(printed).toMatchObject({
       outcome: "run",
       result: { outcome: "completed", runId: "cli-run", limit: null },
     });
-    expect(result.stderr).toContain("woof: dispatch build visit 1 attempt 1");
+    // The host prints the human view of its own run to stdout (what woof watch prints), and its
+    // technical log to <run-dir>/host.log — no longer to stderr. Only the configuration warnings
+    // (here: the test HOME has no Claude trust file) still reach stderr.
+    expect(result.stdout).toMatch(/^\d\d:\d\d:\d\d → builder {2}build {3}Task dispatched$/m);
+    expect(result.stdout).toMatch(/^\d\d:\d\d:\d\d ✓ gate {5}verify {2}Checks passed → review$/m);
+    expect(result.stdout).toContain("\n✓ Completed · approved\n");
+    expect(result.stdout).not.toContain("dispatch build visit 1 attempt 1");
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringMatching(/^woof: warning claude_trust_unknown: /),
+    ]);
+    const hostLog = readFileSync(join(ws.runDir, "host.log"), "utf8");
+    expect(hostLog).toMatch(
+      /^\d{4}-\d\d-\d\dT\S+ dispatch build visit 1 attempt 1 \(initial\) to builder$/m,
+    );
+    expect(hostLog).toMatch(/ run ended$/m);
+    expect(hostLog).not.toContain("Task dispatched");
 
     const shown = woof(["run", "show", ws.runDir]);
     expect(shown.status).toBe(0);
@@ -456,9 +482,8 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     const expectEngineFileFailure = (ws: ReturnType<typeof workspace>, path: string) => {
       const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
       expect(result.status, result.stderr).toBe(4);
-      expect(result.stdout.trim().split("\n")).toHaveLength(1);
       expect(result.stderr).not.toContain("    at ");
-      const printed = JSON.parse(result.stdout.trim()) as { outcome: string; result: Json };
+      const printed = resultLine(result.stdout) as { outcome: string; result: Json };
       expect(printed).toMatchObject({ outcome: "run", result: { outcome: "failed" } });
       expect(String(printed.result["reason"])).toContain(`engine_file_error: ${path}`);
       expect(journalTypes(ws.runDir).slice(-2)).toEqual(RUN_END);
@@ -533,7 +558,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     );
     expect(Date.now() - began).toBeLessThan(15_000);
     expect(result.status, result.stderr).toBe(4);
-    const printed = JSON.parse(result.stdout.trim()) as { result: Json };
+    const printed = resultLine(result.stdout) as { result: Json };
     expect(printed.result).toMatchObject({ outcome: "failed" });
     expect(String(printed.result["reason"])).toContain(
       "engine_file_error: requests/build/visit-1/attempt-1/request.md",
@@ -551,9 +576,11 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
       scriptedEnv(ws.log, "always-fail"),
     );
     expect(result.status, result.stderr).toBe(5);
-    expect(JSON.parse(result.stdout.trim())).toMatchObject({
+    expect(resultLine(result.stdout)).toMatchObject({
       result: { outcome: "exhausted", limit: "maxRounds" },
     });
+    // The view's summary keeps an exhausted run visibly distinct from a completed one.
+    expect(result.stdout).toContain("\n! Exhausted · maxRounds (2)\n");
   }, 60_000);
 
   it("exits 6 on SIGTERM, records the cancellation and refuses a late submission", async () => {
@@ -568,9 +595,10 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     child.kill("SIGTERM");
     const done = await exited;
     expect(done.status, done.stderr).toBe(6);
-    expect(JSON.parse(done.stdout.trim())).toMatchObject({
+    expect(resultLine(done.stdout)).toMatchObject({
       result: { outcome: "cancelled", reason: "cancel requested" },
     });
+    expect(done.stdout).toContain("\n· Cancelled · cancel requested\n");
     // The signal is journaled as the request, distinct from the termination it leads to; the
     // host's claim and exit bracket the run.
     expect(journalTypes(ws.runDir)[1]).toBe("host.claimed");
@@ -615,7 +643,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     const done = await exited;
     expect(done.status, done.stderr).toBe(6);
     expect(done.at - cancelledAt).toBeLessThan(3 * pollMs);
-    expect(JSON.parse(done.stdout.trim())).toMatchObject({
+    expect(resultLine(done.stdout)).toMatchObject({
       result: { outcome: "cancelled", reason: "stop from the test" },
     });
     expect(journalTypes(ws.runDir).slice(-3)).toEqual(["run.cancel_requested", ...RUN_END]);

@@ -94,7 +94,11 @@ export type StoreReason =
   | "host_unknown"
   | "host_gone"
   | "observation_lost"
-  | "observation_not_lost";
+  | "observation_not_lost"
+  | "lifecycle_mismatch"
+  | "lifecycle_unchanged"
+  | "activity_open"
+  | "activity_not_open";
 
 /**
  * Reasons workflow admission refuses a run with, before any pane or journal

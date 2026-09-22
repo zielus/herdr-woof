@@ -229,10 +229,11 @@ records}`) is the proof of this by construction: it re-derives the
   classification falls back to receipt order (`new` unless the terminal,
   lifecycle and raw status all repeat, which is `duplicate`). A bounded
   watch helper yields only `new`/`replaced` items and exposes
-  dropped-stale/dropped-duplicate counts. None of this is
-  journaled, and none of it affects a derived snapshot. A Herdr sample is
-  lossy, and journaling every poll would make replay depend on sampling cadence
-  and wall clock.
+  dropped-stale/dropped-duplicate counts. No sample is journaled, and none
+  affects a derived snapshot. A Herdr sample is lossy, and journaling every
+  poll would make replay depend on sampling cadence and wall clock. What the
+  scheduler does journal is the _change_ between samples — see
+  [Implemented now (activity records)](#implemented-now-activity-records).
 
 - **The Herdr CLI runtime adapter and its scripted test double enforce
   narrow contracts.** `createHerdrCliRuntime`'s `inspect` runs only a
@@ -310,9 +311,14 @@ repository {path, revision}, counters, blocked, artifacts
 {completion, review, verification, lastAcceptedByStage}`. Every field is
   derived generically — no stage name appears in `deriveRunResult` itself:
   `artifacts.review` is the subject of the last stage gate that carried a
-  `reviewed` revision, and is `null` on any outcome except `completed`, so a
-  passing gate from an earlier revision is never reported as approval of
-  newer work even though it stays visible in `lastAcceptedByStage`.
+  `reviewed` revision, provided the run `completed`, that gate passed, and it
+  approved the completing revision: its `next` is the `completed` outcome, or
+  no later gate recorded a repository revision (`revision.tree`) other than
+  the one it reviewed. Otherwise it is `null`, so a passing review of an
+  earlier revision (say `review(pass) → publish` where publish changed the
+  tree) is never reported as approval of newer work even though it stays
+  visible in `lastAcceptedByStage`; the human summary then prints no review
+  line at all.
 - **Per-key maps in results and snapshots are null-prototype objects.**
   `RunSnapshot.counters`' id-keyed maps (`visitsByStage`, `attemptsByVisit`,
   `rejectionsByReason`, `replacementsByAgent`, `gatesByGate`,
@@ -439,18 +445,59 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   estimate from the iterator's own step time, not a measurement taken inside
   `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
   its first real consumer).
-- **`woof watch [<run-dir>]`** (and **`woof events --pretty`**, the same
-  output) is a human projection of the same stream, from the pure formatter
-  `src/observe/format.ts`: a header from one `readRunStatus` read (run,
-  workflow, active attempts, `liveness.owner`, each agent's role, kind,
-  model and assigned pane, the outcome once recorded), then one line per
-  event (local `HH:MM:SS`, `#seq`, type, subject and a type-specific
-  summary; an unknown type prints its data as compact JSON) and a
-  `-- end (<reason>) cursor <cursor>` line. It shares the read and follow
-  loop of `woof events`, so its exit codes are identical. Journal strings
-  are sanitized (control characters become spaces), and SGR colors are
-  added only when stdout is a TTY and `NO_COLOR` is unset or empty.
-  `woof status --pretty` prints that header instead of the JSON line.
+- **`woof watch [<run-dir>]`** is the human view of the same stream, the
+  presentation of [run output](../design/run-output.md), from the pure
+  renderer `src/observe/render.ts` (`createRunRenderer({snapshot, status,
+input, repository?, graph?, options})`; the run host prints the same lines
+  from the same facts, see below). From one `readRunStatus` read plus the
+  run's `input.json` and `config.json` it prints an opening block — `woof /
+<workflow>  <repo> · <branch>`, run id and version, the `~`-shortened run
+  directory, an AGENTS roster (kind, model or `provider default`, assigned
+  stages, the role when it differs from the name), a STEPS & GATES map drawn
+  from the built-in workflow's edge table when the plan's stages match it
+  (main path, `reject ↘` routes back to it, check commands, which gate binds a
+  revision) or else the plan's stage and check list, a `limits:` line and an
+  input preview (task title and criteria count by default, `--input json` for
+  indented JSON cut after 24 lines with an explicit `… (N more lines, …)`
+  marker) — then one row per meaningful event, `HH:MM:SS mark participant
+stage message`, the participant an agent id, `gate` or `run`, wrapped under
+  the message column (usable at 80 columns). Rows use the design's
+  vocabulary (`Agent started · claude / sonnet`, `Task dispatched · same
+agent`, `· visit 2`, `Completion report accepted`, `Review received · changes
+requested`, `Checks failed → repair`, `Approved → completed`, `Result rejected:
+<reason> · <field>`, `Fixing result format · attempt 2`, `Retrying work ·
+attempt 2`, `Delivery unconfirmed · checking`, `Blocked: <reason>` plus the
+  required action and tab, `Host lost · outcome unknown`); a blank line
+  separates stage visits, `run.terminated` and `host.claimed` are left to the
+  summary, and an unknown record type is a subdued `· <type>` row, never
+  dropped (the lifecycle and activity records render by their type string and
+  only when they say something: one `Waiting for agent to become ready` and one
+  `Agent ready` per readiness cycle, `Running checks · <cmd>` by `run`, no row
+  for a revision check or a check end the gate row already judges, `Agent not
+ready · <result>`, `Revision check failed`, `Checks aborted · <result>` when
+  the run ended around them, and an `Agent working` within 2 s of the dispatch
+  subdued as the expected pickup). A terminated run
+  ends with a summary — `✓ Completed · <reason>`, `! Failed · <reason>`, `!
+Exhausted · <limit>`, `· Cancelled · <reason>` — with duration, `N reviews ·
+M repairs` and ARTIFACTS (completion, review, verification from
+  `deriveRunResult`, relative to the run directory). An observer that stops
+  first prints the current block with `supported action: woof run cancel …`
+  when there is one and `-- observer stopped (<reason>); the run continues`.
+  Replayed history uses the same rows as live events (state folds from the
+  events, seqs dedupe), so attaching never invents or repeats narrative.
+  Colors sit on the mark and message only (SGR when stdout is a TTY and
+  `NO_COLOR` is unset or empty); `--ascii`, or a `LANG`/`LC_CTYPE`/`LC_ALL`
+  without UTF-8, uses `+ -> v ~ ! .`. **`woof watch --plain`** (and **`woof
+events --pretty`**, the same output) keeps the technical projection from
+  `src/observe/format.ts`: a header (run, workflow, active attempts,
+  `liveness.owner`, each agent's role, kind, model and assigned pane, the
+  outcome once recorded), one line per event (local `HH:MM:SS`, `#seq`,
+  type, subject and a type-specific summary; an unknown type prints its data
+  as compact JSON) and a `-- end (<reason>) cursor <cursor>` line. Both views
+  share the read and follow loop of `woof events`, so the exit codes are
+  identical, and both sanitize journal strings (control characters become
+  spaces). `woof status --pretty` prints the technical header instead of the
+  JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
 events`**, **`woof watch`** and **`woof run show`** are read-only and never take the journal
   lock or contact Herdr; see
@@ -467,11 +514,50 @@ events`**, **`woof watch`** and **`woof run show`** are read-only and never take
   `PATH`. Each external probe, in either mode, is bounded at 10 s
   (`PROBE_TIMEOUT_MS`); a probe that times out is reported as failed rather
   than hanging the command.
+- **The run host prints the human view of its own run.** `woof run host`
+  (the pane host `run start` types into the root pane of the host's tab) and
+  `--host foreground`/`run build-review` print to their stdout exactly what
+  `woof watch <run-dir> --follow` prints — the opening block once the run is
+  open, one history row per fact as the journal records land, the outcome
+  summary — followed by the result JSON line. The host follows its OWN
+  journal through the observe stream (`streamEvents` on the run directory:
+  read-only, lock-free, the same follow `woof watch` uses; `src/inspect/host-view.ts`
+  and the shared `src/inspect/run-view.ts`, which derives the stage map from
+  the built-in definition the record names and hands it to the pure renderer
+  in `src/observe/`), never the driver's callbacks, so
+  the host's pane and a separate observer agree by construction. The follow
+  never delays the host: when the scheduler returns, the host aborts it,
+  prints the rows it had not read yet from one direct read and renders the
+  summary from the final snapshot, and only then journals `host.exited`. The
+  technical log — the scheduler's actions (`dispatch build visit 1 attempt 1
+(initial) to builder`, `gate review pass (approved)`, `waiting (…)`),
+  configuration warnings and metadata-report failures — goes to
+  `<run-dir>/host.log`, one ISO-timestamped line per entry, appended as it
+  happens; `--plain` prints that log to stdout instead of the human view
+  (`--ascii` and `--input summary|json` shape the view like `woof watch`'s).
+  The log never blocks or fails the host: agents can write into the run
+  directory, so `host.log` is opened once, non-blocking and without following
+  a symlink, kept only when it is a regular file (a FIFO or symlink there is
+  refused with one stderr notice and the lines are dropped), and every line is
+  sanitized (control characters become spaces) before it reaches the file or
+  stdout. A journal the host's own follower cannot read (corrupt, replaced,
+  resync required) ends the view with one subdued `-- view: <reason>: …` line,
+  also logged; the outcome and exit code come from the scheduler alone, and a
+  closed pane (EPIPE on stdout) only silences the view.
+  Configuration warnings (`warning permission_bypass_configured: …`,
+  `warning claude_trust_unknown: …`) are for the operator: they go to stderr
+  as well as `host.log` in the foreground and pane hosts alike (with `--plain`
+  the echoed log already shows them, so they are printed once). Errors that
+  abort the host still go to stderr; nothing else does, so a Herdr pane shows
+  one coherent view. `outcome.json`, exit codes,
+  `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are
+  unchanged and do not depend on the host's stdout. There is no separate
+  watch pane any more: one pane per run.
 - **Metadata is a display-only projection, never a source.** The run host
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a
   token back, the journal stays authoritative, and a failed report is logged
-  to stderr and never affects the run. Reports are bounded: the host sends
+  to `host.log` and never affects the run. Reports are bounded: the host sends
   at most one metadata report at a time (`createCoalescer`), so a Herdr
   invocation slower than the poll interval never queues up an unbounded
   backlog of report calls behind it — a refresh requested while one is in
@@ -567,14 +653,106 @@ seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest
 - **Reducer refusals:** `host_exists`, `host_unknown`, `host_gone`,
   `observation_lost`, `observation_not_lost`, plus `run_closed` for every
   lifecycle record but `host.exited`.
-- **Still not covered:** per-agent runtime lifecycle transitions
-  (ready/working/blocked/gone, a replaced pane occupant) are not journaled;
-  they stay the in-memory overlay. Format repair and work retry are not
-  records of their own: the reducer derives an attempt's `cause`. The journaled
+- **Still not covered:** format repair and work retry are not records of
+  their own: the reducer derives an attempt's `cause`. Per-agent runtime
+  lifecycle transitions and engine activity are journaled since
+  [Implemented now (activity records)](#implemented-now-activity-records);
+  individual observation samples still are not. The journaled
   `tabId`s say which tabs a run opened, not whether they are still open: the
   run host closes its agent tabs when the run ends, so a host that was killed
   leaves them open, `host.lost` and `woof run cancel` close nothing, and no
   record says a tab was closed.
+
+## Implemented now (activity records)
+
+Real shipped behavior — not design intent. Source:
+`src/journal/activity-records.ts`, `src/state/{reducer,store,snapshot}.ts`,
+`src/scheduler/driver.ts`, `src/observe/{events,format}.ts`. Both records are
+ordinary journal records and therefore events, one-to-one, with a `subject`
+(the agent, and the stage/visit/attempt where present); both are additive at
+`schemaVersion: 1`, so a journal without them reads unchanged. They are
+written on **change**, never per poll: `woof watch`, the Web UI and the run
+host all read the same rows because there is nothing else to read.
+
+- **`agent.lifecycle_changed {agentId, from, to, terminalId, raw?, replaced?}`**
+  — written by the scheduler when a tracked observation's lifecycle
+  (`ready | working | blocked | unknown | gone`, the runtime enum) differs
+  from the agent's **last journaled** lifecycle (`from`; `null` for the first
+  transition). "Last journaled" is read from the snapshot
+  (`agents[].lifecycle`), never from the scheduler's memory, so a repeated
+  sample across any number of polls writes nothing. A pane occupant
+  replacement (the tracker's `replaced`) is a transition even to the same
+  lifecycle and carries `replaced: true`. `raw` is the runtime status behind
+  `to` when the runtime reported one (a `gone` agent has none). After a
+  started delivery the transition is written **after** its
+  `request.dispatched`, so the dispatch fact precedes the working state it
+  observed.
+- **`run.activity {kind, phase, agentId?, stageId?, visit?, attempt?, detail?,
+result?}`** — engine work with noticeable duration, one `started` when it
+  begins and one `ended` when it finishes, on the same kind and subject
+  (`stageId`/`visit`/`attempt` come together or not at all; `result` only on
+  `ended`). Exactly four kinds: `readiness_wait` (the scheduler waits for an
+  agent to become ready for a dispatch; `agentId`; ends `ready`),
+  `revision_check` (the repository fingerprint for a stage gate; subject is
+  the gated attempt, `detail` the gate id, `result` `tree <object id>`),
+  `check_run` (a verification command; subject is the gated attempt, `detail`
+  the argv joined by spaces, `result` `exit <code>`, `signal <name>` or
+  `timed out`) and `delivery_check` (an ambiguous delivery under
+  reconciliation, from right after its `request.dispatched` to right after
+  its `delivery.reconciled`; `detail` the ambiguous code, `result`
+  `<resolution> (<evidence>)`). The dispatch-time fingerprint and a
+  revision-bound gate's re-fingerprint are not activities of their own. A
+  failure end is still `ended`: every activity the journal still holds open
+  when the scheduler records a termination (`completed`, `failed`,
+  `exhausted`, `cancelled`, including its engine-failure path) is ended with
+  the outcome word as `result` **under the same journal lock** as
+  `run.terminated` (`terminateRun`/`cancelRun` with `endOpenActivities:
+true`, returned as `activitiesEnded`), so no other record comes between the
+  ends and the termination and nothing is open once the run is closed. An
+  activity its writer could not end (a killed host) is closed by the
+  termination on read; see the reducer rules.
+- **Best effort:** both records are observability, not control flow. An
+  append the store refuses or cannot complete (`journal_busy` after the
+  retries, `journal_write_failed`, `lifecycle_mismatch`, `activity_open`, ...)
+  is reported through `runWorkflow({onWarning})` as `{record, reason,
+message}` and changes nothing else: the fingerprint, check, gate or dispatch
+  it described still runs and is recorded, and the run's outcome never names
+  it. A `run_closed` refusal means someone else ended the run, and the
+  scheduler stops trying. An activity whose `ended` could not be written stays
+  open until the termination closes it. A pane replacement observed during a
+  delivery (the dispatch is refused `assignment_mismatch`) is journaled, best
+  effort, before the `agent_replaced` termination, so the journal shows who
+  occupied the pane when the run ended.
+- **Reducer rules:** `agent.lifecycle_changed` is refused after termination
+  (`run_closed`), for an unplanned (`agent_unknown`) or unassigned
+  (`agent_unassigned`) agent, when `from` is not the journaled lifecycle
+  (`lifecycle_mismatch`) and when `to` equals `from` without `replaced`
+  (`lifecycle_unchanged`). `run.activity` is refused after termination, as a
+  second `started` for a kind and subject still open (`activity_open`) and as
+  an `ended` for one that is not (`activity_not_open`) — two consecutive
+  starts are an impossible transition, not a warning. `run.terminated` closes
+  every activity still open (an `ended` for it afterwards is `run_closed`), so
+  a journal written by a host that was killed mid-activity never reads as
+  engine work in progress after the run ended.
+- **Snapshot:** `agents[].lifecycle: {state, since, seq, terminalId} | null`
+  (the last journaled transition; `null` when none) and `activity: {open:
+[{seq, since, kind, agentId, attempt, detail}]}` (open activities in start
+  order), plus the counters `lifecycleChangesByAgent {id: n}` and
+  `activitiesByKind {kind: n}` (starts only). All derived by the one reducer,
+  so `foldEvents(base, events)` reproduces them; `agents[].runtime` stays the
+  separate, non-journaled overlay. Old journals: `lifecycle: null`,
+  `activity.open: []`; a terminated run: `activity.open: []`, whoever wrote
+  the journal (the `started` events remain).
+- **Human formatter (`woof watch`, `--pretty`):** `agent.lifecycle_changed`
+  prints `<from|-> -> <to> (<raw>) terminal <id> [pane occupant replaced]`,
+  colored as attention only for `blocked`, `gone` or a replacement;
+  `run.activity` prints `<kind> <phase>: <detail> -> <result>` dimmed.
+- **Scripted-runtime caveat:** the test double reuses `stateChangeSeq`
+  across deliveries, so an agent's second dispatch yields `stale` samples and
+  journals no transition; Herdr's sequence is monotonic, so a live run does.
+  The `readiness_wait` around a dispatch to an already-ready agent lasts one
+  poll (the scheduler needs two consecutive ready samples) and is journaled
+  as such: it is a true, short wait, and a renderer may collapse it.
 
 ## Implemented now (central index)
 
