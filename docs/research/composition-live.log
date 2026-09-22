@@ -1,0 +1,590 @@
+
+== Woof live acceptance: checkout policy and workflow composition ==
+date: 2026-09-22T07:53:55.071Z
+HERDR_ENV=1 HERDR_PANE_ID=w9H:p1
+herdr --version: herdr 0.9.1
+claude --version: 2.1.278 (Claude Code)
+node --version: v26.7.0
+git --version: git version 2.51.2
+woof commit: fe4b5bb9b197429e8cdd0f082c38163a35cddc05
+
+== fixture ==
+build-review.mjs --fixture-only exit 0: ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+fixture HEAD: 494ccfd fixture
+
+== run 1: auto-build in a new worktree ==
+command: /opt/homebrew/Cellar/node/26.7.0/bin/node ~/.herdr/worktrees/herdr-woof/feat-composition/dist/cli.js run start --workflow auto-build --project ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo --input ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/live-ab-20260922-075355.json --runs-dir ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs --run-id live-ab-20260922-075355
+input (~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/live-ab-20260922-075355.json):
+{
+  "schemaVersion": 1,
+  "repo": "~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+  "task": {
+    "title": "Implement slugify",
+    "description": "Implement `slugify(text)` in `src/slugify.mjs`: lowercase; runs of characters other than a–z and 0–9 become one hyphen; no leading or trailing hyphens. Add tests in `test/slugify.test.mjs` using `node:test`.",
+    "acceptanceCriteria": [
+      "slugify lowercases its input",
+      "runs of characters other than a–z and 0–9 become one hyphen",
+      "the result has no leading or trailing hyphens",
+      "tests pass with `node --test`"
+    ]
+  },
+  "verify": {
+    "command": [
+      "node",
+      "--test"
+    ],
+    "timeoutMs": 120000
+  },
+  "publish": {
+    "path": "docs/plans/slugify.md"
+  },
+  "limits": {
+    "runTimeoutMs": 3600000
+  },
+  "checkout": {
+    "mode": "worktree",
+    "branch": "woof/live-ab-20260922-075355"
+  }
+}
+
+start exit 0: {"outcome":"started","runId":"live-ab-20260922-075355","runDir":"~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355","workflow":{"name":"auto-build","version":"1"},"host":{"mode":"herdr-pane","paneId":"w9N:p1","tabId":"w9N:t1","pid":57244},"checkout":{"source":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","branch":"woof/live-ab-20260922-075355","base":null,"workspaceId":"w9N","created":true,"keep":true,"inherited":false,"mode":"worktree","path":"~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355"},"configuration":{"sha256":"aba5d7dc0283e4762b84f43bb7abf90e60f8e46721923f805b2538ef3a52c9d0","agents":{},"warnings":[]},"next":{"status":["woof","status","~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355","--wait"],"cancel":["woof","run","cancel","~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355"]}}
+[sample] 2026-09-22T07:53:57.544Z parent=created live-ab-20260922-075355.plan.1=created
+[sample] 2026-09-22T07:54:02.641Z parent=running live-ab-20260922-075355.plan.1=starting
+[sample] 2026-09-22T07:54:07.740Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:12.862Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:17.965Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:23.098Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:28.235Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:33.352Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:38.445Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:43.576Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:48.690Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:53.813Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:54:58.905Z parent=running live-ab-20260922-075355.plan.1=running
+[sample] 2026-09-22T07:55:04.003Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=created
+[sample] 2026-09-22T07:55:09.095Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=starting
+[sample] 2026-09-22T07:55:14.195Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:19.322Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:24.414Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:29.532Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:34.628Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:39.746Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:44.858Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:49.950Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:55:55.039Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:00.161Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:05.280Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:10.370Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:15.464Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:20.577Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:25.710Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:30.812Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:35.898Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:40.988Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:46.085Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:51.212Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:56:56.308Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:01.402Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:06.493Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:11.623Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:16.723Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:21.845Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:26.934Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:32.025Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:37.122Z parent=running live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=running
+[sample] 2026-09-22T07:57:42.248Z parent=completed live-ab-20260922-075355.plan.1=completed live-ab-20260922-075355.build.1=completed
+
+== parent status and runs ==
+run      live-ab-20260922-075355  auto-build@1  completed
+dir      ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355
+now      -
+owner    exited pane w9N:p1 pid 57244
+checkout worktree ~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355 branch woof/live-ab-20260922-075355 workspace w9N
+outcome  completed: built
+[{"runId":"live-ab-20260922-075355.build.1","status":"completed","parent":{"runId":"live-ab-20260922-075355","stageId":"build","visit":1}},{"runId":"live-ab-20260922-075355.plan.1","status":"completed","parent":{"runId":"live-ab-20260922-075355","stageId":"plan","visit":1}},{"runId":"live-ab-20260922-075355","status":"completed","parent":null}]
+
+== parent run view ==
+woof / auto-build  woof-live-ab-20260922-075355 - woof/live-ab-20260922-075355
+run live-ab-20260922-075355 - workflow v1
+dir ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/
+    live-ab-20260922-075355
+checkout worktree - woof/live-ab-20260922-075355 - from
+~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+    ~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355
+
+AGENTS
+no planned agents
+
+STEPS & GATES
+plan -> build -> completed
+plan: runs workflow plan - build: runs workflow build-review
+limits: 1 rounds - 1 attempts/visit - 1 visits/stage - 1h run
+
+INPUT
+Implement slugify
+4 acceptance criteria - full input: input.json
+
+--------------------------------------------------------------------------------
+09:53:57 .  run         Started
+09:53:57 -> run  plan   Workflow started - plan v1 -> run
+                        live-ab-20260922-075355.plan.1
+09:55:01 v  run  plan   Workflow completed - run live-ab-20260922-075355.plan.1
+09:55:01 v  gate plan   Planned -> build
+
+09:55:01 -> run  build  Workflow started - build-review v1 -> run
+                        live-ab-20260922-075355.build.1
+09:57:39 v  run  build  Workflow completed - run live-ab-20260922-075355.build.1
+09:57:39 v  gate build  Passed -> completed
+
+--------------------------------------------------------------------------------
+v Completed - built
+3m 42s - 2 workflow steps - 0 reviews - 0 repairs
+
+ARTIFACTS - relative to run directory
+plan   accepted/plan/visit-1/attempt-1/result.json
+build  accepted/build/visit-1/attempt-1/result.json
+
+== child run view: ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355.plan.1 ==
+woof / plan  woof-live-ab-20260922-075355 - woof/live-ab-20260922-075355
+run live-ab-20260922-075355.plan.1 - workflow v1
+dir ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/
+    live-ab-20260922-075355.plan.1
+parent live-ab-20260922-075355 - step plan
+checkout current (inherited)
+    ~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355
+
+AGENTS
+planner   claude   sonnet   plan
+
+STEPS & GATES
+plan -> published -> completed
+published: git cat-file -e HEAD:docs/plans/slugify.md
+limits: 1 rounds - 2 attempts/visit - 2 visits/stage - 1h run
+
+INPUT
+Implement slugify
+4 acceptance criteria - full input: input.json
+
+--------------------------------------------------------------------------------
+09:53:57 .  run               Started
+09:54:02 +  planner           Agent started - claude / sonnet
+09:54:02 .  planner           Agent ready
+09:54:04 -> planner plan      Task dispatched
+09:54:04 .  planner           Agent working
+09:55:00 v  planner plan      Completion report accepted
+09:55:00 v  gate    plan      Planned -> published
+09:55:00 .  run     plan      Running checks - git cat-file -e
+                              HEAD:docs/plans/slugify.md
+09:55:00 v  gate    publi...  Published -> completed
+
+--------------------------------------------------------------------------------
+v Completed - published
+1m 3s - 0 reviews - 0 repairs
+
+ARTIFACTS - relative to run directory
+checks  checks/published/plan-v1-a1/output.log
+
+== child run view: ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-ab-20260922-075355.build.1 ==
+woof / build-review  woof-live-ab-20260922-075355 - woof/live-ab-20260922-075355
+run live-ab-20260922-075355.build.1 - workflow v1
+dir ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/
+    live-ab-20260922-075355.build.1
+parent live-ab-20260922-075355 - step build
+checkout current (inherited)
+    ~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355
+
+AGENTS
+builder    claude   sonnet   build, repair
+reviewer   claude   sonnet   review
+
+STEPS & GATES
+build -> verify -> review -> completed
+        reject -> repair -> verify
+                 reject -> repair -> verify -> review
+verify: node --test - review: verdict + matching revision
+limits: 3 review rounds - 2 attempts/visit - 3 visits/stage - 2h run
+
+INPUT
+Implement slugify
+4 acceptance criteria - full input: input.json
+
+--------------------------------------------------------------------------------
+09:55:01 .  run              Started
+09:55:07 +  builder          Agent started - claude / sonnet
+09:55:07 .  builder          Agent ready
+09:55:09 -> builder  build   Task dispatched
+09:55:09 .  builder          Agent working
+09:55:49 v  builder  build   Completion report accepted
+09:55:49 v  gate     build   Passed -> verify
+09:55:49 .  run      build   Running checks - node --test
+09:55:50 v  gate     verify  Checks passed -> review
+
+09:55:55 +  reviewer         Agent started - claude / sonnet
+09:55:55 .  reviewer         Agent ready
+09:55:57 -> reviewer review  Task dispatched
+09:55:57 .  reviewer         Agent working
+09:57:36 .  reviewer review  Review received - approval recommended
+09:57:37 v  gate     review  Approved -> completed
+
+--------------------------------------------------------------------------------
+v Completed - approved
+2m 35s - 1 review - 0 repairs
+
+ARTIFACTS - relative to run directory
+changes  accepted/build/visit-1/attempt-1/completion.md
+review   accepted/review/visit-1/attempt-1/review.md
+checks   checks/verify/build-v1-a1/output.log
+
+== event traces ==
+live-ab-20260922-075355 1 run.opened {}
+live-ab-20260922-075355 2 host.claimed {}
+live-ab-20260922-075355 3 stage.child_opened {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355 4 stage.child_result {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355 5 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355 6 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355 7 gate.recorded {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355 8 stage.child_opened {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355 9 stage.child_result {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355 10 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355 11 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355 12 gate.recorded {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355 13 run.terminated {}
+live-ab-20260922-075355 14 host.exited {}
+live-ab-20260922-075355.plan.1 1 run.opened {}
+live-ab-20260922-075355.plan.1 2 host.claimed {}
+live-ab-20260922-075355.plan.1 3 agent.assigned {"agentId":"planner"}
+live-ab-20260922-075355.plan.1 4 agent.lifecycle_changed {"agentId":"planner"}
+live-ab-20260922-075355.plan.1 5 run.activity {"agentId":"planner"}
+live-ab-20260922-075355.plan.1 6 run.activity {"agentId":"planner"}
+live-ab-20260922-075355.plan.1 7 attempt.opened {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 8 request.dispatched {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 9 agent.lifecycle_changed {"agentId":"planner"}
+live-ab-20260922-075355.plan.1 10 submission.accepted {"agentId":"planner","stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 11 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 12 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 13 gate.recorded {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 14 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 15 run.activity {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 16 gate.recorded {"stageId":"plan","visit":1,"attempt":1}
+live-ab-20260922-075355.plan.1 17 run.terminated {}
+live-ab-20260922-075355.plan.1 18 host.exited {}
+live-ab-20260922-075355.build.1 1 run.opened {}
+live-ab-20260922-075355.build.1 2 host.claimed {}
+live-ab-20260922-075355.build.1 3 agent.assigned {"agentId":"builder"}
+live-ab-20260922-075355.build.1 4 agent.lifecycle_changed {"agentId":"builder"}
+live-ab-20260922-075355.build.1 5 run.activity {"agentId":"builder"}
+live-ab-20260922-075355.build.1 6 run.activity {"agentId":"builder"}
+live-ab-20260922-075355.build.1 7 attempt.opened {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 8 request.dispatched {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 9 agent.lifecycle_changed {"agentId":"builder"}
+live-ab-20260922-075355.build.1 10 submission.accepted {"agentId":"builder","stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 11 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 12 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 13 gate.recorded {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 14 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 15 run.activity {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 16 gate.recorded {"stageId":"build","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 17 agent.assigned {"agentId":"reviewer"}
+live-ab-20260922-075355.build.1 18 agent.lifecycle_changed {"agentId":"reviewer"}
+live-ab-20260922-075355.build.1 19 run.activity {"agentId":"reviewer"}
+live-ab-20260922-075355.build.1 20 run.activity {"agentId":"reviewer"}
+live-ab-20260922-075355.build.1 21 attempt.opened {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 22 request.dispatched {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 23 agent.lifecycle_changed {"agentId":"reviewer"}
+live-ab-20260922-075355.build.1 24 submission.accepted {"agentId":"reviewer","stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 25 run.activity {"stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 26 run.activity {"stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 27 gate.recorded {"stageId":"review","visit":1,"attempt":1}
+live-ab-20260922-075355.build.1 28 run.terminated {}
+live-ab-20260922-075355.build.1 29 host.exited {}
+
+== worktree ==
+checkout: {"source":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","branch":"woof/live-ab-20260922-075355","base":null,"workspaceId":"w9N","created":true,"keep":true,"inherited":false,"mode":"worktree","path":"~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355"}
+git worktree list (fixture):
+~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo  494ccfd [master]
+~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355         5f35925 [woof/live-ab-20260922-075355]
+git log (worktree):
+5f35925 Implement slugify
+ src/slugify.mjs       |  5 ++++-
+ test/slugify.test.mjs | 23 +++++++++++++++++++++++
+ 2 files changed, 27 insertions(+), 1 deletion(-)
+aa09866 plan: Implement slugify
+ docs/plans/slugify.md | 134 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 134 insertions(+)
+494ccfd fixture
+ .woof/roles/builder.json   |  1 +
+ .woof/roles/planner.json   |  1 +
+ .woof/roles/reviewer.json  |  1 +
+ .woof/workflows/scribe.mjs | 74 ++++++++++++++++++++++++++++++++++++++++++++++
+ README.md                  |  1 +
+ package.json               |  1 +
+ src/slugify.mjs            |  3 ++
+ 7 files changed, 82 insertions(+)
+git status --porcelain (worktree):
+(clean)
+independent node --test in the worktree: exit 0
+
+== plan and requests ==
+accepted plan.md (accepted/plan/visit-1/attempt-1/plan.md):
+# Plan: Implement `slugify`
+
+## Goal
+
+Implement `slugify(text)` in `src/slugify.mjs` and add tests in
+`test/slugify.test.mjs` using `node:test`, so that:
+
+- input is lowercased
+- any run of one or more characters that are not `a`-`z` or `0`-`9` becomes a
+  single hyphen
+- the result has no leading or trailing hyphens
+- `node --test` passes
+
+## Current state
+
+- `src/slugify.mjs` exists and exports a stub:
+
+  ```js
+  export function slugify(text) {
+    throw new Error("not implemented");
+  }
+  ```
+
+- There is no `test/` directory yet.
+- `package.json` is `{"name":"slug-fixture","type":"module","private":true}`
+  — no `test` script and no test runner dependency declared. The repo is an
+  ESM package (`"type": "module"`), so all new files must use `import`/
+  `export` syntax and a `.mjs` (or `.js`, given `type: module`) extension.
+- Node available in this environment is v26.7.0, which has a built-in
+  `node:test` module — no dependency needs to be added.
+
+## Step-by-step implementation
+
+### 1. Implement `slugify` in `src/slugify.mjs`
+
+Replace the stub body with an implementation that:
+
+1. Converts `text` to a string and lowercases it (`String(text).toLowerCase()`).
+2. Replaces every maximal run of characters outside `[a-z0-9]` with a single
+   `-` (regex: `/[^a-z0-9]+/g` applied after lowercasing).
+3. Strips any leading and trailing `-` from the result
+   (regex: `/^-+|-+$/g`, or `.replace(/^-|-$/g, ...)` in a loop — the `+`
+   quantifier form handles it in one pass).
+
+Reference implementation:
+
+```js
+export function slugify(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+```
+
+Notes:
+- Order matters: lowercase first, then collapse non-alphanumeric runs, then
+  trim hyphens. Trimming must happen after collapsing so an original
+  leading/trailing run of punctuation (which collapses to a single `-`) is
+  removed rather than left as a boundary hyphen.
+- No external dependencies are needed; this is pure `String`/`RegExp` usage.
+- Keep the exported function signature `slugify(text)` unchanged so existing
+  imports (e.g., from tests) keep working.
+
+### 2. Add tests in `test/slugify.test.mjs`
+
+Create the `test/` directory and add a test file using `node:test` and
+`node:assert/strict`, covering each acceptance criterion explicitly:
+
+```js
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { slugify } from "../src/slugify.mjs";
+
+test("lowercases its input", () => {
+  assert.equal(slugify("HELLO"), "hello");
+});
+
+test("collapses runs of non a-z0-9 characters into one hyphen", () => {
+  assert.equal(slugify("Hello, World!!"), "hello-world");
+  assert.equal(slugify("a___b---c"), "a-b-c");
+  assert.equal(slugify("foo   bar"), "foo-bar");
+});
+
+test("has no leading or trailing hyphens", () => {
+  assert.equal(slugify("  Hello World  "), "hello-world");
+  assert.equal(slugify("---leading and trailing---"), "leading-and-trailing");
+  assert.equal(slugify("!!!"), "");
+});
+
+test("keeps digits and letters, mixed case and separators", () => {
+  assert.equal(slugify("Node.js 20 Release!"), "node-js-20-release");
+});
+```
+
+- Import path is relative (`../src/slugify.mjs`) since there's no package
+  export map; this matches the `type: module` ESM setup.
+- Cover: lowercasing, run-collapsing (spaces, punctuation, repeated
+  separators), leading/trailing trim (including the all-punctuation edge
+  case producing an empty string), and a combined realistic example.
+
+### 3. Verify
+
+Run the test suite directly against the file (no `package.json` script is
+required by the acceptance criteria, so none needs to be added):
+
+```
+node --test
+```
+
+This auto-discovers `test/slugify.test.mjs` under Node's default test glob.
+Confirm all tests pass with exit code 0.
+
+## Definition of done (mapped to acceptance criteria)
+
+- **slugify lowercases its input**: implemented via `.toLowerCase()`;
+  verified by the "lowercases its input" test.
+- **runs of characters other than a–z and 0–9 become one hyphen**:
+  implemented via `.replace(/[^a-z0-9]+/g, "-")`; verified by the
+  "collapses runs..." test with multiple consecutive separators and mixed
+  punctuation/whitespace.
+- **the result has no leading or trailing hyphens**: implemented via
+  `.replace(/^-+|-+$/g, "")` after collapsing; verified by the "has no
+  leading or trailing hyphens" test, including an all-punctuation input
+  that must slugify to an empty string.
+- **tests pass with `node --test`**: running `node --test` from the repo
+  root exits 0 with all test cases in `test/slugify.test.mjs` passing.
+
+## Files touched
+
+- `src/slugify.mjs` — replace stub with real implementation.
+- `test/slugify.test.mjs` — new file with `node:test` cases.
+
+No other files need to change; no new dependencies are required.
+
+build/1/1 requests/build/visit-1/attempt-1/request.md sha256 8fe8b4d718e06311865ed200fa10c5c5402771f49406dd93ca753a6df7e5e45f
+review/1/1 requests/review/visit-1/attempt-1/request.md sha256 8f032b895d1f4949b233f1fc7aed6745e52e8f16e6256019021eab8be3fb582d
+--- review 1.1 verdict pass
+Woof-Verdict: pass
+
+# Review — Implement slugify
+
+Reviewed tree at HEAD `5f359250f5c831274d9fdc858457e53856448c26` (matches the revision stated in the work request).
+
+## Scope check
+
+`git show --stat HEAD` confirms the commit touches exactly the two files the completion report claims:
+
+- `src/slugify.mjs` (5 insertions, 1 deletion)
+- `test/slugify.test.mjs` (new, 23 insertions)
+
+No unrelated files changed. Working tree is clean (`git status`).
+
+## Implementation vs. plan
+
+`src/slugify.mjs`:
+
+```js
+export function slugify(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+```
+
+This is byte-for-byte the reference implementation given in `plan.md`. Order of operations matches the plan's rationale (lowercase → collapse non-alphanumeric runs → trim leading/trailing hyphens), which correctly handles a leading/trailing punctuation run collapsing to a boundary hyphen before it gets trimmed.
+
+## Acceptance criteria
+
+- **Lowercases input**: `.toLowerCase()` applied first. ✅ Verified by test "lowercases its input".
+- **Runs of non a–z/0–9 characters become one hyphen**: `/[^a-z0-9]+/g` → `"-"`. ✅ Verified by test "collapses runs of non a-z0-9 characters into one hyphen" (spaces, punctuation, repeated `_`/`-`).
+- **No leading or trailing hyphens**: `/^-+|-+$/g` → `""`, applied after collapsing. ✅ Verified by test "has no leading or trailing hyphens", including the all-punctuation edge case (`"!!!"` → `""`).
+- **Tests pass with `node --test`**: ran it myself from the repo root:
+
+  ```
+  ✔ lowercases its input
+  ✔ collapses runs of non a-z0-9 characters into one hyphen
+  ✔ has no leading or trailing hyphens
+  ✔ keeps digits and letters, mixed case and separators
+  tests 4, pass 4, fail 0
+  ```
+
+  Exit code 0, matches the completion report.
+
+## Test file
+
+`test/slugify.test.mjs` uses `node:test` and `node:assert/strict`, imports `slugify` via a relative path (`../src/slugify.mjs`), consistent with the `"type": "module"` ESM package with no export map. Coverage maps cleanly onto each acceptance criterion plus a combined realistic case (`"Node.js 20 Release!"` → `"node-js-20-release"`).
+
+## Non-blocking observation
+
+Non-ASCII letters (e.g. `"CAFÉ"` → `"caf"`) are dropped rather than transliterated, since `É` is outside `[a-z0-9]` after lowercasing. This is correct per the literal spec ("a–z and 0–9"), not a defect — noting it only for completeness, not as a finding.
+
+## Conclusion
+
+No blocking findings. Implementation and tests match the plan and satisfy every acceptance criterion; verification reproduced independently.
+
+
+== agent workspaces seen while open ==
+live-ab-20260922-075355.plan.1/planner: {"paneId":"w9N:p2","tabId":"w9N:t2","workspaceId":"w9N"}
+live-ab-20260922-075355.build.1/builder: {"paneId":"w9N:p3","tabId":"w9N:t3","workspaceId":"w9N"}
+live-ab-20260922-075355.build.1/reviewer: {"paneId":"w9N:p4","tabId":"w9N:t4","workspaceId":"w9N"}
+
+== gates ==
+GATE 1 PASS: the launcher created a Herdr worktree on woof/<runId> and hosted the run in its workspace's root pane — host pane w9N:p1 in workspace w9N, checkout workspace w9N, path ~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355
+GATE 2 PASS: auto-build completed (plan step, then build step) — {"schemaVersion":1,"seq":13,"ts":"2026-09-22T07:57:39.419Z","type":"run.terminated","outcome":"completed","reason":"built"}
+GATE 3 PASS: the child runs are ordinary runs, listed and linked both ways — 2 opened, 2 results
+GATE 4 PASS: every agent tab of both children opened in the worktree's workspace (Herdr pane get while open) — 3 assignments, workspaces ["w9N","w9N","w9N"]
+GATE 5 PASS: the accepted plan.md flows by digest into build-review: its input, its run copy and every request — plan sha256 3acb38ffd19b4bfc973e32b05808ce8bb966ca7c899d703ee441d3e31aa67e17, 2 requests carry it true
+GATE 6 PASS: the plan and the reviewed change are committed on the worktree branch, and its tests pass — commits ["Implement slugify","plan: Implement slugify","fixture"], clean true, node --test 0
+GATE 7 PASS: both children worked in the parent's checkout (inherited), none created its own — [{"source":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","branch":null,"base":null,"workspaceId":null,"created":false,"keep":true,"inherited":true,"mode":"current","path":"~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355"},{"source":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","branch":null,"base":null,"workspaceId":null,"created":false,"keep":true,"inherited":true,"mode":"current","path":"~/.herdr/worktrees/fixture-repo/woof-live-ab-20260922-075355"}]
+GATE 8 PASS: journals consistent: foldEvents == readSnapshot for parent and both children — [true,true,true]
+GATE 9 PASS: the parent read as running while its children ran — 45 samples
+
+== run 2: cancelling the parent cancels its running child ==
+command: /opt/homebrew/Cellar/node/26.7.0/bin/node ~/.herdr/worktrees/herdr-woof/feat-composition/dist/cli.js run start --workflow auto-build --project ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo --input ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/live-abc-20260922-075355.json --runs-dir ~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs --run-id live-abc-20260922-075355
+input (~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/live-abc-20260922-075355.json):
+{
+  "schemaVersion": 1,
+  "repo": "~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo",
+  "task": {
+    "title": "Implement slugify",
+    "description": "Implement `slugify(text)` in `src/slugify.mjs`: lowercase; runs of characters other than a–z and 0–9 become one hyphen; no leading or trailing hyphens. Add tests in `test/slugify.test.mjs` using `node:test`.",
+    "acceptanceCriteria": [
+      "slugify lowercases its input",
+      "runs of characters other than a–z and 0–9 become one hyphen",
+      "the result has no leading or trailing hyphens",
+      "tests pass with `node --test`"
+    ]
+  },
+  "verify": {
+    "command": [
+      "node",
+      "--test"
+    ],
+    "timeoutMs": 120000
+  },
+  "publish": {
+    "path": "docs/plans/slugify.md"
+  },
+  "limits": {
+    "runTimeoutMs": 3600000
+  },
+  "checkout": {
+    "mode": "worktree",
+    "branch": "woof/live-abc-20260922-075355"
+  }
+}
+
+start exit 0: {"outcome":"started","runId":"live-abc-20260922-075355","runDir":"~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-abc-20260922-075355","workflow":{"name":"auto-build","version":"1"},"host":{"mode":"herdr-pane","paneId":"w9P:p1","tabId":"w9P:t1","pid":78499},"checkout":{"source":"~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo","branch":"woof/live-abc-20260922-075355","base":null,"workspaceId":"w9P","created":true,"keep":true,"inherited":false,"mode":"worktree","path":"~/.herdr/worktrees/fixture-repo/woof-live-abc-20260922-075355"},"configuration":{"sha256":"a89e7c501a05a9f8575b42b2fb6fc0dca9f5acf2f14570353c3ca321045172e4","agents":{},"warnings":[]},"next":{"status":["woof","status","~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-abc-20260922-075355","--wait"],"cancel":["woof","run","cancel","~/.herdr-dev/runs/herdr-woof/composition/20260922-075355/runs/live-abc-20260922-075355"]}}
+woof run cancel exit 0: {"outcome":"recorded","record":{"schemaVersion":1,"seq":5,"ts":"2026-09-22T07:57:53.094Z","type":"run.terminated","outcome":"cancelled","reason":"cancelled via woof run cancel"},"revision":5,"cancelRequest":{"schemaVersion":1,"seq":4,"ts":"2026-09-22T07:57:53.088Z","type":"run.cancel_requested","source":"cli","reason":"cancelled via woof run cancel"},"hostLost":null,"activitiesEnded":[]}
+parent end: {"schemaVersion":1,"seq":5,"ts":"2026-09-22T07:57:53.094Z","type":"run.terminated","outcome":"cancelled","reason":"cancelled via woof run cancel"}; child end: {"schemaVersion":1,"seq":11,"ts":"2026-09-22T07:57:53.134Z","type":"run.terminated","outcome":"cancelled","reason":"parent run ended"}
+GATE 10 PASS: cancelling a running auto-build cancels its plan child, which records why, before the host exits — dispatched before cancel true
+GATE 11 PASS: Woof worktree unchanged; the script never reads panes or sends keys — hits []
+GATE 12 PASS: the log records versions, inputs, commands, traces and artifacts — all recorded
+
+== cleanup ==
+herdr worktree remove --workspace w9N: exit 0; branch woof/live-ab-20260922-075355 stays in ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+herdr worktree remove --workspace w9P: exit 0; branch woof/live-abc-20260922-075355 stays in ~/.herdr-dev/runs/herdr-woof/p3-build-review-loop/live/fixture-repo
+
+== summary ==
+12/12 gates passed

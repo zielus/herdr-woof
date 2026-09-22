@@ -1,8 +1,11 @@
 # Checkout policy and workflow composition
 
-Status: implementation plan for `feat/composition`, updated as phases land. The
-"Implemented" notes at the end of each phase say what shipped; everything else
-is the plan.
+Status: implemented on `feat/composition` (phases 0–4); live-proven, see
+[composition evidence](../acceptance/composition-evidence.md) (12/12 gates).
+The shipped contracts are in the "Implemented now (composition…)" sections of
+the [domain model](../architecture/domain-model.md) and
+[observability](../architecture/observability.md) pages; this note keeps the
+decisions and their reasons.
 
 ## Goal
 
@@ -298,7 +301,7 @@ run's workspace, not the caller's.
    cancellation, run view and `woof runs`, docs, changeset.
 3. (done) `plan` and `auto-build` built-ins, scripted-runtime tests, docs,
    changeset.
-4. Live proof `scripts/live/composition.mjs` and recorded evidence.
+4. (done) Live proof `scripts/live/composition.mjs` and recorded evidence.
 
 Each phase is one commit (no push, no PR), verified with `bun run build` and
 targeted vitest files while iterating and one full `bun run verify` at the end

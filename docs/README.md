@@ -45,6 +45,8 @@ integrations behave, how to extend it, and which capabilities are not supported.
   visual reference for implementation
 - [Terminal UI](design/tui.md), terminal-native runs browser, expandable steps and
   keyboard navigation with an interactive prototype
+- [Checkout policy and workflow composition](design/composition.md): worktree
+  checkouts, workflows as steps, `plan` and `auto-build`
 
 ### Contribution and release
 
@@ -58,7 +60,9 @@ integrations behave, how to extend it, and which capabilities are not supported.
 [acceptance evidence](acceptance/v1-evidence.md), its machine-readable evidence
 and `research/*.log` files record results for the revisions named in those
 files. They are retained because tests and evidence tooling parse them; they do
-not claim fresh 0.2.x acceptance.
+not claim fresh 0.2.x acceptance. The
+[composition evidence](acceptance/composition-evidence.md) records the live
+proof of checkouts and workflow composition.
 
 The phase-labelled headings in some contract pages remain as compatibility
 anchors. A later documentation pass can consolidate those sections without
