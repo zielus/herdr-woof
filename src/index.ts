@@ -130,6 +130,11 @@ export type {
 export type { CursorProblem } from "./observe/cursor.js";
 export { subscribeEvents } from "./observe/subscribe.js";
 export type { SubscribeOptions, SubscriptionItem } from "./observe/subscribe.js";
+export { createRunRenderer } from "./observe/render.js";
+export type { RunEnd, RunRenderer, RunRendererInput } from "./observe/render.js";
+export type { RenderOptions } from "./observe/render-text.js";
+export { graphOf } from "./observe/workflow-graph.js";
+export type { GraphNode, WorkflowGraph } from "./observe/workflow-graph.js";
 
 export type {
   AgentHandle,
