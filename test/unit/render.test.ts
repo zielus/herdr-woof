@@ -800,6 +800,67 @@ describe("createRunRenderer: summary and observer stop", () => {
     ).toBe(true);
   });
 
+  it("a review that approved an earlier revision than the one the run completed on gets no review line", () => {
+    // review(pass) → publish (changes the tree) → completed: the review covered revision A, not B.
+    const plan = {
+      ...PLAN,
+      agents: [
+        ...PLAN.agents,
+        { agentId: "publisher", role: "publisher", kind: "codex", model: null },
+      ],
+      stages: [
+        ...PLAN.stages.slice(0, 2),
+        { stageId: "publish", agentId: "publisher", verdicts: [] },
+      ],
+    };
+    const REV_B = { head: "d".repeat(40), tree: "e".repeat(40) };
+    const built = build([
+      opened(plan),
+      assigned("builder"),
+      attempt("build", "builder"),
+      dispatched("build", "builder"),
+      accepted(5, "build", "builder", null),
+      gate(5, "build", 1, 1, { next: { stageId: "verify" } }),
+      checkGate(5, "verify", "build"),
+      assigned("reviewer"),
+      review(1),
+      dispatched("review", "reviewer"),
+      accepted(11, "review", "reviewer", "pass"),
+      reviewGate(11, 1, {
+        decision: "pass",
+        reason: "approved",
+        round: 1,
+        next: { stageId: "publish" },
+        verdict: "pass",
+      }),
+      assigned("publisher"),
+      attempt("publish", "publisher"),
+      dispatched("publish", "publisher"),
+      accepted(16, "publish", "publisher", null),
+      gate(16, "publish", 1, 1, {
+        reason: "published",
+        round: 1,
+        next: { outcome: "completed" },
+        revision: REV_B,
+      }),
+      { type: "run.terminated", outcome: "completed", reason: "published" },
+    ]);
+    const summary = rendererFor(built).summary({
+      status: built.status,
+      result: built.result,
+      snapshot: built.snapshot,
+    });
+    expect(summary.slice(2)).toEqual([
+      "✓ Completed · published",
+      "0s · 1 review · 0 repairs",
+      "",
+      "ARTIFACTS · relative to run directory",
+      "changes  accepted/build/visit-1/attempt-1/out.md",
+      "checks   checks/verify/build-v1-a1/output.log",
+    ]);
+    expect(summary.some((line) => line.startsWith("review"))).toBe(false);
+  });
+
   it("stopping the observer is not the end of the run", () => {
     const built = build(DESIGN_RUN, 1);
     const renderer = rendererFor(built);
@@ -810,5 +871,178 @@ describe("createRunRenderer: summary and observer stop", () => {
     expect(rendererFor(built, { color: true }).observerStopped("end")).toBe(
       "\u001B[2m-- observer stopped (end); the run continues\u001B[0m",
     );
+  });
+});
+
+describe("createRunRenderer: long ids and paths fit the terminal width", () => {
+  // A valid 64-char agent id, a 128-char run id, a 40-char model and a 120-char artifact path.
+  const BUILDER = `builder-${"x".repeat(56)}`;
+  const RUN_ID = `run-${"1234567890".repeat(12)}abcd`;
+  const MODEL = `claude-sonnet-4-5-20250929-${"m".repeat(13)}`;
+  // An accepted copy always lands at accepted/<stage>/visit-N/attempt-M/<basename>.
+  const BASENAME = `completion-report-${"x".repeat(66)}.md`;
+  const ARTIFACT = `accepted/build/visit-1/attempt-1/${BASENAME}`;
+  const LONG_DIR = `/tmp/woof-home/${"nested-directory-level/".repeat(4)}runs/run-1`;
+  const LONG_PLAN = {
+    ...PLAN,
+    agents: [
+      { agentId: BUILDER, role: "builder", kind: "claude", model: MODEL },
+      { agentId: "reviewer", role: "reviewer", kind: "claude", model: "sonnet" },
+    ],
+    stages: [
+      { stageId: "build", agentId: BUILDER, verdicts: [] },
+      { stageId: "review", agentId: "reviewer", verdicts: ["pass", "fail"] },
+      { stageId: "repair", agentId: BUILDER, verdicts: [] },
+    ],
+  };
+  const LONG_RUN: Json[] = [
+    opened(LONG_PLAN, RUN_ID),
+    assigned(BUILDER),
+    { ...attempt("build", BUILDER), runId: RUN_ID },
+    dispatched("build", BUILDER),
+    {
+      ...accepted(5, "build", BUILDER, null),
+      runId: RUN_ID,
+      artifact: {
+        path: `artifacts/build/visit-1/attempt-1/${BASENAME}`,
+        sha256: "a".repeat(64),
+        bytes: 10,
+        acceptedPath: ARTIFACT,
+      },
+    },
+    gate(5, "build", 1, 1, { next: { stageId: "verify" } }),
+    checkGate(5, "verify", "build"),
+    assigned("reviewer"),
+    { ...review(1), runId: RUN_ID },
+    dispatched("review", "reviewer"),
+    { ...accepted(11, "review", "reviewer", "pass"), runId: RUN_ID },
+    reviewGate(11, 1, {
+      decision: "pass",
+      reason: "approved",
+      round: 1,
+      next: { outcome: "completed" },
+      verdict: "pass",
+    }),
+    { type: "run.terminated", outcome: "completed", reason: "approved" },
+  ];
+  const visible = (line: string) => line.replaceAll(SGR, "");
+
+  /** Every line of the view (opening, rows, summary) of the run kept under a deep run directory. */
+  function view(width: number, color = false): string[] {
+    const long = build(LONG_RUN);
+    const built = {
+      ...long,
+      status: runStatusOf(long.snapshot, LONG_DIR),
+      result: deriveRunResult(long.snapshot, { runDir: LONG_DIR }),
+    };
+    const renderer = rendererFor(built, { width, color });
+    return [
+      ...renderer.opening(),
+      ...rowsOf(renderer, built.events),
+      ...renderer.summary({ status: built.status, result: built.result, snapshot: built.snapshot }),
+    ];
+  }
+
+  /** The `label` artifact's path, read back from its (possibly wrapped) lines. */
+  function artifactPath(lines: string[], label: string): { path: string; lines: number } {
+    const start = lines.findIndex((line) => line.startsWith(`${label} `));
+    expect(start).toBeGreaterThan(-1);
+    const pieces = [lines[start]!.slice(label.length).trim()];
+    for (const line of lines.slice(start + 1)) {
+      if (!line.startsWith("  ") || line.trim() === "") break;
+      pieces.push(line.trim());
+    }
+    return { path: pieces.join(""), lines: pieces.length };
+  }
+
+  it("fixtures are as long as the contract allows", () => {
+    expect(BUILDER).toHaveLength(64);
+    expect(RUN_ID).toHaveLength(128);
+    expect(ARTIFACT).toHaveLength(120);
+  });
+
+  it("at 80 columns every line fits: ids are clipped before layout, paths wrap at `/` and stay copyable", () => {
+    for (const color of [false, true]) {
+      const lines = view(80, color).map(visible);
+      for (const line of lines) expect(line.length, line).toBeLessThanOrEqual(80);
+      // The participant column is clipped with an ellipsis, so the message keeps its room.
+      expect(lines).toContain("10:00:00 → builder-xxx… build   Task dispatched");
+      expect(lines).toContain("10:00:00 ✓ builder-xxx… build   Completion report accepted");
+      expect(lines).toContain("10:00:00 ✓ gate         review  Approved → completed");
+      // The roster shows the same clipped name and clips the model; the stage list survives.
+      const roster = lines.find((line) => line.startsWith("builder-xxx…"));
+      expect(roster).toBe(
+        `builder-xxx…   claude   ${MODEL.slice(0, 23)}…   build, repair   role builder`,
+      );
+      // The 128-char run id continues under itself, nothing lost; joining the pieces gives it back.
+      const runStart = lines.findIndex((line) => line.startsWith("run "));
+      const runLines = [lines[runStart]!];
+      for (const line of lines.slice(runStart + 1)) {
+        if (!line.startsWith("    ")) break;
+        runLines.push(line);
+      }
+      expect(runLines.length).toBeGreaterThan(1);
+      expect(runLines.map((line) => line.trim()).join("")).toBe(`run ${RUN_ID} · workflow v1`);
+      // The run directory breaks after a `/`: no space is ever inserted, so the pieces join back.
+      const dirStart = lines.findIndex((line) => line.startsWith("dir "));
+      const dirLines = [lines[dirStart]!];
+      for (const line of lines.slice(dirStart + 1)) {
+        if (!line.startsWith("    ")) break;
+        dirLines.push(line);
+      }
+      expect(dirLines.length).toBeGreaterThan(1);
+      expect(dirLines[0]!.endsWith("/")).toBe(true);
+      expect(
+        dirLines
+          .map((line) => line.trim())
+          .join("")
+          .slice("dir ".length),
+      ).toBe(`~/${"nested-directory-level/".repeat(4)}runs/run-1`);
+      // An artifact path breaks after the last `/` that fits, then inside its long basename;
+      // joining the pieces gives the path back.
+      const changes = artifactPath(lines, "changes");
+      expect(changes.lines).toBeGreaterThan(1);
+      expect(lines[lines.findIndex((line) => line.startsWith("changes "))]!.endsWith("/")).toBe(
+        true,
+      );
+      expect(changes.path).toBe(ARTIFACT);
+      expect(artifactPath(lines, "review").path).toBe("accepted/review/visit-1/attempt-1/out.md");
+    }
+    // In ASCII mode the ellipsis is `...` and the width still holds.
+    const built = build(LONG_RUN);
+    const ascii = rendererFor(built, { width: 80, ascii: true });
+    const rows = [...ascii.opening(), ...rowsOf(ascii, built.events)];
+    for (const line of rows) expect(line.length, line).toBeLessThanOrEqual(80);
+    expect(rows).toContain("10:00:00 -> builder-x... build   Task dispatched");
+  });
+
+  it("at 120 columns a path that fits stays on one line and the rows keep the same clipped columns", () => {
+    const lines = view(120);
+    for (const line of lines) expect(line.length, line).toBeLessThanOrEqual(120);
+    expect(artifactPath(lines, "review")).toEqual({
+      path: "accepted/review/visit-1/attempt-1/out.md",
+      lines: 1,
+    });
+    expect(artifactPath(lines, "checks")).toEqual({
+      path: "checks/verify/build-v1-a1/output.log",
+      lines: 1,
+    });
+    // 9 columns of label plus 120 of path do not fit 120 either; the path still comes back whole.
+    expect(artifactPath(lines, "changes").path).toBe(ARTIFACT);
+    expect(lines).toContain("10:00:00 → builder-xxx… build   Task dispatched");
+    // A path that fits the width is never wrapped.
+    const short = build(DESIGN_RUN);
+    const renderer = rendererFor(short, { width: 120 });
+    const summary = renderer.summary({
+      status: short.status,
+      result: short.result,
+      snapshot: short.snapshot,
+    });
+    expect(summary.slice(-3)).toEqual([
+      "changes  accepted/repair/visit-1/attempt-1/out.md",
+      "review   accepted/review/visit-2/attempt-1/out.md",
+      "checks   checks/verify/repair-v1-a1/output.log",
+    ]);
+    expect(renderer.opening().slice(1, 3)).toEqual(["run run-1 · workflow v1", "dir ~/runs/run-1"]);
   });
 });

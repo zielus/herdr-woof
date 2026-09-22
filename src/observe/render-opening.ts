@@ -1,13 +1,20 @@
 import type { RunStatusView } from "../inspect/status.js";
 import type { RunSnapshot } from "../state/snapshot.js";
 import {
+  clip,
   duration,
   isObject,
+  KIND_CLIP,
+  MODEL_CLIP,
   pad,
+  participantLabel,
   plural,
   sanitize,
   shortenHome,
   text,
+  wrap,
+  wrapIndented,
+  wrapPath,
   type Layout,
 } from "./render-text.js";
 import type { WorkflowGraph } from "./workflow-graph.js";
@@ -51,7 +58,7 @@ function contextLines(
   repository: { path: string; branch: string | null } | null,
   layout: Layout,
 ): string[] {
-  const { paint } = layout;
+  const { paint, options } = layout;
   const workflow = snapshot.workflow;
   const repo =
     repository === null
@@ -63,13 +70,24 @@ function contextLines(
           ].join(" · "),
           "dim",
         )}`;
+  // A long run id continues under itself (split, never shortened: it is what
+  // `woof run show` takes); the run directory breaks at `/` and stays copyable.
+  const dir = shortenHome(text(status.runDir), options.home);
+  const runLines = wrap(text(snapshot.runId), options.width - 4).map((piece, index) =>
+    index === 0 ? `run ${piece}` : `    ${piece}`,
+  );
+  if (workflow !== null) {
+    const suffix = ` · workflow v${text(workflow.version)}`;
+    const last = runLines.length - 1;
+    if (runLines[last]!.length + suffix.length <= options.width) runLines[last] += suffix;
+    else runLines.push(`   ${suffix}`);
+  }
   return [
     `${paint("woof", "cyan")} / ${paint(workflow === null ? "plan-less run" : text(workflow.name), "bold")}${repo}`,
-    paint(
-      `run ${text(snapshot.runId)}${workflow === null ? "" : ` · workflow v${text(workflow.version)}`}`,
-      "dim",
+    ...runLines.map((piece) => paint(piece, "dim")),
+    ...wrapPath(dir, options.width - 4).map((piece, index) =>
+      paint(index === 0 ? `dir ${piece}` : `    ${piece}`, "dim"),
     ),
-    paint(`dir ${shortenHome(text(status.runDir), layout.options.home)}`, "dim"),
   ];
 }
 
@@ -80,10 +98,13 @@ function rosterLines(snapshot: RunSnapshot, layout: Layout): string[] {
     lines.push(paint("no planned agents", "dim"));
     return lines;
   }
+  // Fixed fields are clipped like the participant column, so a long id, kind or
+  // model cannot push the row past the width; the stage list wraps under itself.
+  const ascii = layout.options.ascii;
   const rows = snapshot.agents.map((agent) => ({
-    name: text(agent.agentId),
-    kind: agent.kind === null ? "unknown kind" : text(agent.kind),
-    model: agent.model === null ? "provider default" : text(agent.model),
+    name: participantLabel(agent.agentId, ascii),
+    kind: clip(agent.kind === null ? "unknown kind" : text(agent.kind), KIND_CLIP, ascii),
+    model: clip(agent.model === null ? "provider default" : text(agent.model), MODEL_CLIP, ascii),
     stages: snapshot.stages
       .filter((stage) => stage.agentId === agent.agentId)
       .map((stage) => text(stage.stageId))
@@ -93,16 +114,22 @@ function rosterLines(snapshot: RunSnapshot, layout: Layout): string[] {
   const nameWidth = Math.max(...rows.map((row) => row.name.length));
   const kindWidth = Math.max(...rows.map((row) => row.kind.length));
   const modelWidth = Math.max(...rows.map((row) => row.model.length));
+  const column = nameWidth + kindWidth + modelWidth + 9;
+  const room = layout.options.width - column;
   for (const row of rows) {
-    lines.push(
-      [
-        paint(pad(row.name, nameWidth), "bold"),
-        pad(row.kind, kindWidth),
-        pad(row.model, modelWidth),
-        paint(row.stages === "" ? "no stage" : row.stages, "dim"),
-        ...(row.role === null ? [] : [paint(`role ${row.role}`, "dim")]),
-      ].join("   "),
-    );
+    const head = `${paint(pad(row.name, nameWidth), "bold")}   ${pad(row.kind, kindWidth)}   ${pad(row.model, modelWidth)}   `;
+    const tail = [
+      row.stages === "" ? "no stage" : row.stages,
+      ...(row.role === null ? [] : [`role ${row.role}`]),
+    ].join("   ");
+    const pieces = tail.length <= room ? [tail] : wrap(tail, room);
+    for (const [index, piece] of pieces.entries()) {
+      lines.push(
+        index === 0
+          ? `${head}${paint(piece, "dim")}`
+          : `${" ".repeat(column)}${paint(piece, "dim")}`,
+      );
+    }
   }
   return lines;
 }
@@ -111,42 +138,45 @@ function mapLines(snapshot: RunSnapshot, graph: WorkflowGraph | null, layout: La
   const { paint, options } = layout;
   const lines = [paint("STEPS & GATES", "dim")];
   let roundNoun = "rounds";
+  const dim = (line: string) => wrapIndented(line, options.width, 2).map((p) => paint(p, "dim"));
   if (graph === null) {
     const stages = snapshot.stages.map((stage) => text(stage.stageId));
     const checks = snapshot.checks ?? [];
     lines.push(
-      [
-        stages.length === 0 ? "no planned stages" : `stages ${stages.join(", ")}`,
-        ...(checks.length === 0 ? [] : [`checks ${checks.map(text).join(", ")}`]),
-      ].join(" · "),
+      ...wrapIndented(
+        [
+          stages.length === 0 ? "no planned stages" : `stages ${stages.join(", ")}`,
+          ...(checks.length === 0 ? [] : [`checks ${checks.map(text).join(", ")}`]),
+        ].join(" · "),
+        options.width,
+        2,
+      ),
     );
   } else {
     if (graph.roundStage !== null) roundNoun = `${text(graph.roundStage)} rounds`;
     const main = mainPath(graph);
-    const mainLine = main.map(text).join(" → ");
-    lines.push(mainLine);
+    lines.push(...wrapIndented(main.map(text).join(" → "), options.width, 2));
     for (const route of rejectRoutes(graph, main)) {
       const body = `reject ↘ ${route.path.map(text).join(" → ")}`;
       const column = columnOf(main, route.from);
-      lines.push(
-        column + body.length <= options.width
-          ? `${" ".repeat(column)}${paint(body, "dim")}`
-          : `${text(route.from)} ${paint(body, "dim")}`,
-      );
+      if (column + body.length <= options.width) {
+        lines.push(`${" ".repeat(column)}${paint(body, "dim")}`);
+      } else {
+        lines.push(...dim(`${text(route.from)} ${body}`));
+      }
     }
     const gates = graph.nodes.flatMap((node) => {
       if (node.kind === "check")
         return node.command === null ? [] : [`${text(node.id)}: ${sanitize(node.command)}`];
       return node.bindsRevision ? [`${text(node.id)}: verdict + matching revision`] : [];
     });
-    if (gates.length > 0) lines.push(paint(gates.join(" · "), "dim"));
+    if (gates.length > 0) lines.push(...dim(gates.join(" · ")));
   }
   const limits = snapshot.limits;
   if (limits !== null) {
     lines.push(
-      paint(
+      ...dim(
         `limits: ${limits.maxRounds} ${roundNoun} · ${limits.maxAttemptsPerVisit} attempts/visit · ${limits.maxVisitsPerStage} visits/stage · ${duration(limits.runTimeoutMs)} run`,
-        "dim",
       ),
     );
   }
@@ -228,7 +258,8 @@ function inputLines(snapshot: RunSnapshot, input: unknown, layout: Layout): stri
   }
   const title = titleOf(input);
   const criteria = criteriaCount(input);
-  if (title !== undefined) lines.push(paint(clipLine(sanitize(title), options.width), "bold"));
+  if (title !== undefined)
+    lines.push(paint(clip(sanitize(title), options.width, options.ascii), "bold"));
   const tail: string[] = [];
   if (criteria !== undefined) {
     tail.push(criteria === 1 ? "1 acceptance criterion" : `${criteria} acceptance criteria`);
@@ -290,7 +321,7 @@ function jsonPreview(input: unknown, layout: Layout): string[] {
   const shown = all.slice(0, limit);
   const lines = shown.map((raw) => {
     const line = sanitize(raw);
-    const clipped = clipLine(line, options.width);
+    const clipped = clip(line, options.width, options.ascii);
     if (!options.color) return clipped;
     const match = KEY_LINE.exec(clipped);
     if (match !== null) {
@@ -318,10 +349,6 @@ function jsonPreview(input: unknown, layout: Layout): string[] {
     ),
   );
   return lines;
-}
-
-function clipLine(line: string, width: number): string {
-  return line.length <= width ? line : `${line.slice(0, Math.max(1, width - 1))}…`;
 }
 
 /** A full-width horizontal rule. */

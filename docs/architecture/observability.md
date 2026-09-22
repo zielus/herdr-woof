@@ -311,9 +311,14 @@ repository {path, revision}, counters, blocked, artifacts
 {completion, review, verification, lastAcceptedByStage}`. Every field is
   derived generically — no stage name appears in `deriveRunResult` itself:
   `artifacts.review` is the subject of the last stage gate that carried a
-  `reviewed` revision, and is `null` on any outcome except `completed`, so a
-  passing gate from an earlier revision is never reported as approval of
-  newer work even though it stays visible in `lastAcceptedByStage`.
+  `reviewed` revision, provided the run `completed`, that gate passed, and it
+  approved the completing revision: its `next` is the `completed` outcome, or
+  no later gate recorded a repository revision (`revision.tree`) other than
+  the one it reviewed. Otherwise it is `null`, so a passing review of an
+  earlier revision (say `review(pass) → publish` where publish changed the
+  tree) is never reported as approval of newer work even though it stays
+  visible in `lastAcceptedByStage`; the human summary then prints no review
+  line at all.
 - **Per-key maps in results and snapshots are null-prototype objects.**
   `RunSnapshot.counters`' id-keyed maps (`visitsByStage`, `attemptsByVisit`,
   `rejectionsByReason`, `replacementsByAgent`, `gatesByGate`,

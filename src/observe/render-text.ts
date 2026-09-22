@@ -136,6 +136,73 @@ export function wrap(message: string, width: number): string[] {
   return lines;
 }
 
+/** Widest participant column: a longer id is clipped, so the message column keeps its room. */
+export const PARTICIPANT_CLIP = 12;
+/** Widest stage column. */
+export const STAGE_CLIP = 8;
+/** Widest agent kind in the roster. */
+export const KIND_CLIP = 12;
+/** Widest model name in the roster. */
+export const MODEL_CLIP = 24;
+
+/**
+ * `value` cut to at most `max` characters, ending in an ellipsis when it was
+ * longer; `…` normally, `...` in ASCII mode so the width holds either way.
+ */
+export function clip(value: string, max: number, ascii: boolean): string {
+  if (value.length <= max) return value;
+  const ellipsis = ascii ? "..." : "…";
+  return `${value.slice(0, Math.max(1, max - ellipsis.length))}${ellipsis}`;
+}
+
+/** The participant column's text: the id, clipped so the column stays narrow. */
+export function participantLabel(participant: unknown, ascii: boolean): string {
+  return clip(text(participant), PARTICIPANT_CLIP, ascii);
+}
+
+/** The stage column's text: the stage or check id, clipped. */
+export function stageLabel(stage: unknown, ascii: boolean): string {
+  return clip(text(stage), STAGE_CLIP, ascii);
+}
+
+/**
+ * Wraps `line` so each piece fits `width`, indenting every piece after the
+ * first by `indent` columns; a wrapped word is split rather than let overflow.
+ */
+export function wrapIndented(line: string, width: number, indent: number): string[] {
+  const lead = " ".repeat(indent);
+  return wrap(line, Math.max(8, width - indent)).map((piece, index) =>
+    index === 0 ? piece : `${lead}${piece}`,
+  );
+}
+
+/**
+ * Splits a path into pieces of at most `width` characters, breaking after a
+ * `/` where one fits and inside a longer segment otherwise. No character is
+ * added or dropped: trimming and concatenating the pieces gives the path back.
+ * Never returns an empty list.
+ */
+export function wrapPath(path: string, width: number): string[] {
+  const limit = Math.max(8, width);
+  if (path.length <= limit) return [path];
+  const segments = path.match(/[^/]*\/|[^/]+$/g) ?? [path];
+  const lines: string[] = [];
+  let current = "";
+  for (const segment of segments) {
+    if (current !== "" && current.length + segment.length > limit) {
+      lines.push(current);
+      current = "";
+    }
+    current += segment;
+    while (current.length > limit) {
+      lines.push(current.slice(0, limit));
+      current = current.slice(limit);
+    }
+  }
+  if (current !== "") lines.push(current);
+  return lines;
+}
+
 /** `snake_case_reason` → `snake case reason`. */
 export function words(reason: unknown): string {
   return text(reason).replaceAll("_", " ");
