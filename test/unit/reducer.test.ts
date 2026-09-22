@@ -429,6 +429,31 @@ describe("run.terminated rules", () => {
     const state = expectOk(journalOf(opened(), attempt("build", "builder"), terminated()));
     expect(state.attempts.get("build/1/1")?.status).toBe("open");
   });
+  it("closes every open activity at termination and refuses an end for it afterwards", () => {
+    // A journal whose writer could not end its activities (a killed host) reads as nothing in
+    // progress once the run terminated; the start counters keep what was started.
+    const state = expectOk(
+      journalOf(
+        opened(),
+        assigned("builder"),
+        activity("readiness_wait", "started", { agentId: "builder" }),
+        activity("check_run", "started", { attempt: ["build", 1, 1] }, { detail: "bun test" }),
+        terminated("failed"),
+      ),
+    );
+    expect(state.activities.size).toBe(0);
+    expect(state.counters["activitiesByKind"]).toEqual({ readiness_wait: 1, check_run: 1 });
+    expectRefused(
+      journalOf(
+        opened(),
+        assigned("builder"),
+        activity("readiness_wait", "started", { agentId: "builder" }),
+        terminated("failed"),
+        activity("readiness_wait", "ended", { agentId: "builder" }, { result: "failed" }),
+      ),
+      "run_closed",
+    );
+  });
 });
 
 describe("derived status", () => {
@@ -1332,11 +1357,11 @@ describe("activity record rules", () => {
         ),
       ).activities.size,
     ).toBe(1);
-    // An activity open at termination stays open: the run ended during it.
+    // An activity open at termination is closed by it: the run ended during it.
     expect(
       expectOk(journalOf(...base(), activity("readiness_wait", "started", wait), terminated()))
         .activities.size,
-    ).toBe(1);
+    ).toBe(0);
   });
 
   it("refuses a second start without an end, an end without a start, and any activity after termination", () => {

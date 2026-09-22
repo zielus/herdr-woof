@@ -96,7 +96,21 @@ export interface RunWorkflowOptions<Input> {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Called with every action before it runs (progress reporting). */
   onAction?: (action: Action) => void;
+  /**
+   * Called when an observability record (`agent.lifecycle_changed`, `run.activity`)
+   * could not be journaled. Those appends are best effort: the failure is reported
+   * here and the run's course is unchanged.
+   */
+  onWarning?: (warning: SchedulerWarning) => void;
   lock?: LockOptions;
+}
+
+/** An observability record the scheduler could not journal; the run went on without it. */
+export interface SchedulerWarning {
+  record: "agent.lifecycle_changed" | "run.activity";
+  /** The store's refusal or failure reason (`journal_busy`, `lifecycle_mismatch`, ...). */
+  reason: string;
+  message: string;
 }
 
 export interface RunWorkflowResult {
@@ -293,13 +307,30 @@ export async function runWorkflow<Input>(
     return { ok: false, closed: false, ...last };
   };
 
+  /**
+   * Observability records (lifecycle transitions, activities) are best effort: a refused or
+   * failed append is reported through `onWarning` and never changes the run's course, so a
+   * busy journal or a stale transition cannot fail a run whose decision is otherwise sound. A
+   * `run_closed` refusal means someone else ended the run; the next tick settles it.
+   */
+  const bestEffort = async (
+    record: SchedulerWarning["record"],
+    call: () => Promise<StoreOutcome<unknown>>,
+  ): Promise<Written<StoreOutcome<unknown>>> => {
+    const written = await write<StoreOutcome<unknown>>(call);
+    if (!written.ok && !written.closed) {
+      options.onWarning?.({ record, reason: written.reason, message: written.message });
+    }
+    return written;
+  };
+
   /** Journals a transition (never a sample); a written one updates the journaled lifecycle at once. */
   const journalLifecycle = async (
     transition: LifecycleTransition | null,
     lockOptions: { lock?: LockOptions },
-  ): Promise<Written<unknown>> => {
-    if (transition === null) return { ok: true, value: null };
-    const written = await write(() =>
+  ): Promise<void> => {
+    if (transition === null) return;
+    const written = await bestEffort("agent.lifecycle_changed", () =>
       recordLifecycleChanged({
         runDir,
         agentId: transition.agentId,
@@ -312,7 +343,6 @@ export async function runWorkflow<Input>(
       }),
     );
     if (written.ok) journaledLifecycle[transition.agentId] = transition.to;
-    return written;
   };
 
   /** Starts an activity once: a subject the journal already holds open is left as it is. */
@@ -320,10 +350,10 @@ export async function runWorkflow<Input>(
     subject: ActivitySubject,
     detail: string | undefined,
     lockOptions: { lock?: LockOptions },
-  ): Promise<Written<unknown>> => {
+  ): Promise<void> => {
     const key = keyOfSubject(subject);
-    if (openActivities.some((open) => keyOfOpen(open) === key)) return { ok: true, value: null };
-    const written = await write<StoreOutcome<RunActivityRecord>>(() =>
+    if (openActivities.some((open) => keyOfOpen(open) === key)) return;
+    const written = await bestEffort("run.activity", () =>
       recordActivity({
         runDir,
         kind: subject.kind,
@@ -335,7 +365,7 @@ export async function runWorkflow<Input>(
       }),
     );
     if (written.ok && written.value.outcome === "recorded") {
-      const record = written.value.record;
+      const record = written.value.record as RunActivityRecord;
       openActivities.push({
         seq: record.seq,
         since: record.ts,
@@ -345,19 +375,22 @@ export async function runWorkflow<Input>(
         detail: record.detail ?? null,
       });
     }
-    return written;
   };
 
-  /** Ends an open activity with its result; a subject that is not open needs no record. */
+  /**
+   * Ends an open activity with its result; a subject that is not open needs no record. An
+   * end that could not be written leaves the activity to the termination, which closes
+   * whatever the journal still holds open.
+   */
   const endActivity = async (
     subject: ActivitySubject,
     result: string,
     lockOptions: { lock?: LockOptions },
-  ): Promise<Written<unknown>> => {
+  ): Promise<void> => {
     const key = keyOfSubject(subject);
     const index = openActivities.findIndex((open) => keyOfOpen(open) === key);
-    if (index < 0) return { ok: true, value: null };
-    const written = await write(() =>
+    if (index < 0) return;
+    const written = await bestEffort("run.activity", () =>
       recordActivity({
         runDir,
         kind: subject.kind,
@@ -369,21 +402,6 @@ export async function runWorkflow<Input>(
       }),
     );
     if (written.ok) openActivities.splice(index, 1);
-    return written;
-  };
-
-  /**
-   * Every activity still open ends with the run, its result being the run's outcome. Best
-   * effort: a refused end never keeps the termination from being recorded.
-   */
-  const endOpenActivities = async (result: string): Promise<void> => {
-    // The subjects are taken first: each end removes its entry from `openActivities`.
-    const pending = openActivities.map(subjectOfOpen);
-    for (const subject of pending) {
-      // Sequential by design: each end is one journal append.
-      // oxlint-disable-next-line no-await-in-loop
-      await endActivity(subject, result, lock);
-    }
   };
 
   const settle = async (): Promise<RunWorkflowResult> => {
@@ -426,7 +444,11 @@ export async function runWorkflow<Input>(
     };
   };
 
-  /** A refused write that is neither run_closed nor retryable ends the loop. */
+  /**
+   * A refused write that is neither run_closed nor retryable ends the loop. Like every
+   * scheduler-owned termination, it closes the activities still open under the same lock as
+   * `run.terminated`, so no snapshot shows engine work in progress after the run ended.
+   */
   const fatal = async (failure: {
     reason: string;
     message: string;
@@ -438,6 +460,7 @@ export async function runWorkflow<Input>(
       runDir,
       outcome: "failed",
       reason: `${reason}: ${failure.reason}: ${failure.message}`.slice(0, 500),
+      endOpenActivities: true,
       ...lock,
     }).catch(() => undefined);
     const settled = await settle();
@@ -448,18 +471,17 @@ export async function runWorkflow<Input>(
     outcome: "failed" | "exhausted",
     reason: string,
     limit?: keyof Limits,
-  ): Promise<Written<unknown>> => {
-    await endOpenActivities(outcome);
-    return write(() =>
+  ): Promise<Written<unknown>> =>
+    write(() =>
       terminateRun({
         runDir,
         outcome,
         reason: reason.slice(0, 500),
         ...(limit !== undefined ? { limit } : {}),
+        endOpenActivities: true,
         ...lock,
       }),
     );
-  };
 
   /** Milliseconds left of runTimeoutMs; no blocking runtime or check call waits longer. */
   const remainingMs = (snapshot: RunSnapshot): number =>
@@ -573,8 +595,7 @@ export async function runWorkflow<Input>(
             if (!recovered.ok && !recovered.closed) return fatal(recovered);
           }
           // A lifecycle other than the journaled one is a transition; a repeated sample is not.
-          const changed = await journalLifecycle(transition, lock);
-          if (!changed.ok && !changed.closed) return fatal(changed);
+          await journalLifecycle(transition, lock);
         } else {
           view.readyStreak = 0;
           const error = observed.error;
@@ -637,15 +658,16 @@ export async function runWorkflow<Input>(
         return settle();
 
       case "terminate":
-        await endOpenActivities(action.outcome);
+        // The open activities' ends, the request (for a cancellation) and the termination,
+        // under one lock. This scheduler is the live host.
         written = await write(() =>
           action.outcome === "cancelled"
-            ? // The request and its termination, under one lock. This scheduler is the live host.
-              cancelRun({
+            ? cancelRun({
                 runDir,
                 source: options.cancelSource ?? "abort_signal",
                 reason: action.reason,
                 probeHost: false,
+                endOpenActivities: true,
                 ...lock,
               })
             : terminateRun({
@@ -653,6 +675,7 @@ export async function runWorkflow<Input>(
                 outcome: action.outcome,
                 reason: action.reason,
                 ...(action.limit !== undefined ? { limit: action.limit } : {}),
+                endOpenActivities: true,
                 ...lock,
               }),
         );
@@ -663,12 +686,11 @@ export async function runWorkflow<Input>(
         if (action.reason === "awaiting_ready" && action.observe !== null) {
           viewOf(action.observe).awaitingReadySince ??= clock();
           // Journaled once per wait, not per poll: a wait already open is left open.
-          written = await startActivity(
+          await startActivity(
             { kind: "readiness_wait", agentId: action.observe },
             undefined,
             lockWithin(snapshot),
           );
-          if (!written.ok) break;
         }
         try {
           await sleep(Math.max(0, Math.min(pollMs, remainingMs(snapshot))), options.signal);
@@ -804,12 +826,11 @@ export async function runWorkflow<Input>(
           break;
         }
         // The agent is ready: the readiness wait, if one was journaled, is over.
-        written = await endActivity(
+        await endActivity(
           { kind: "readiness_wait", agentId: action.agentId },
           "ready",
           lockWithin(snapshot),
         );
-        if (!written.ok) break;
         const attemptRef: AttemptRef = {
           stageId: action.stageId,
           visit: action.visit,
@@ -1008,6 +1029,10 @@ export async function runWorkflow<Input>(
           }
         }
         if (!dispatched.ok && !dispatched.closed && dispatched.reason === "assignment_mismatch") {
+          // The delivery was observed in another terminal than the assigned one: the pane
+          // occupant changed. The replacement is journaled (best effort) before the run fails
+          // for it, so the journal shows who was there when it ended.
+          await journalLifecycle(transition, lockWithin(snapshot));
           written = await end("failed", `agent_replaced: ${dispatched.message}`);
           break;
         }
@@ -1015,9 +1040,9 @@ export async function runWorkflow<Input>(
         if (dispatched.ok) {
           // After the dispatch fact: the lifecycle the delivery observed, or the delivery check
           // an ambiguous delivery is now under (ended by its reconciliation).
-          written = await journalLifecycle(transition, lockWithin(snapshot));
-          if (written.ok && delivery.outcome === "ambiguous") {
-            written = await startActivity(
+          await journalLifecycle(transition, lockWithin(snapshot));
+          if (delivery.outcome === "ambiguous") {
+            await startActivity(
               { kind: "delivery_check", agentId: action.agentId, attempt: attemptRef },
               delivery.error.code,
               lockWithin(snapshot),
@@ -1037,19 +1062,18 @@ export async function runWorkflow<Input>(
           break;
         }
         const check = { kind: "revision_check" as const, attempt: action.subject };
-        written = await startActivity(check, action.gate, lockWithin(snapshot));
-        if (!written.ok) break;
+        // The check is journaled best effort: the fingerprint and its evidence never depend on it.
+        await startActivity(check, action.gate, lockWithin(snapshot));
         const revision = await fingerprint(snapshot);
         if (!revision.ok) {
-          // A failed fingerprint ends the run, and `end` closes the check; an abort leaves it to
-          // the cancellation the next tick records.
+          // A failed fingerprint ends the run, and the termination closes the check; an abort
+          // leaves it to the cancellation the next tick records.
           const failed = await fingerprintFailed(snapshot, revision);
           if (failed === undefined) return undefined;
           written = failed;
           break;
         }
-        written = await endActivity(check, `tree ${revision.revision.tree}`, lockWithin(snapshot));
-        if (!written.ok) break;
+        await endActivity(check, `tree ${revision.revision.tree}`, lockWithin(snapshot));
         evidence = {
           gate: action.gate,
           acceptedSeq: action.acceptedSeq,
@@ -1069,8 +1093,7 @@ export async function runWorkflow<Input>(
           break;
         }
         const checkRun = { kind: "check_run" as const, attempt: action.subject };
-        written = await startActivity(checkRun, action.argv.join(" "), lockWithin(snapshot));
-        if (!written.ok) break;
+        await startActivity(checkRun, action.argv.join(" "), lockWithin(snapshot));
         const run = await runCheck({
           argv: action.argv,
           cwd: repository,
@@ -1084,7 +1107,7 @@ export async function runWorkflow<Input>(
           written = await runTimedOut(snapshot);
           break;
         }
-        written = await endActivity(
+        await endActivity(
           checkRun,
           run.timedOut
             ? "timed out"
@@ -1093,7 +1116,6 @@ export async function runWorkflow<Input>(
               : `exit ${String(run.exitCode)}`,
           lockWithin(snapshot),
         );
-        if (!written.ok) break;
         const subject = action.subject;
         const path = `checks/${action.gate}/${subject.stageId}-v${subject.visit}-a${subject.attempt}/output.log`;
         const file = engineFile(path, run.output);
@@ -1191,7 +1213,13 @@ export async function runWorkflow<Input>(
             // End the run in the same effect, so nothing runs between the gate and its outcome.
             const outcome = gate.next.outcome;
             written = await write(() =>
-              terminateRun({ runDir, outcome, reason: gate.reason.slice(0, 500), ...lock }),
+              terminateRun({
+                runDir,
+                outcome,
+                reason: gate.reason.slice(0, 500),
+                endOpenActivities: true,
+                ...lock,
+              }),
             );
           }
         }
@@ -1240,7 +1268,7 @@ export async function runWorkflow<Input>(
           }),
         );
         if (written.ok) {
-          written = await endActivity(
+          await endActivity(
             {
               kind: "delivery_check",
               agentId: action.agentId,

@@ -234,8 +234,9 @@ export interface RunSnapshot {
   };
   /**
    * Engine activities that started and have not ended, in start order. Empty
-   * for a journal written before `run.activity` existed. An activity still open
-   * at termination stays listed: the run ended during it.
+   * for a journal written before `run.activity` existed, and empty once the run
+   * terminated: an activity its writer could not end (a killed host) is closed
+   * by the termination, so nothing reads as in progress after it.
    */
   activity: { open: SnapshotActivity[] };
   outputs: {

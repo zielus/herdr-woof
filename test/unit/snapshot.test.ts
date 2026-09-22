@@ -796,14 +796,16 @@ describe("deriveSnapshot liveness and recorded configuration (p4)", () => {
       delivery_check: 1,
       check_run: 1,
     });
-    // An activity open at termination stays listed: the run ended during it.
+    // An activity still open at termination is closed by it: the run ended during it, and a
+    // journal whose writer could not end it (a killed host) shows nothing in progress after.
     const ended = snapshotOf(
       opened(),
       assigned("builder"),
       activity("readiness_wait", "started", { agentId: "builder" }),
       terminated("exhausted", "readinessWaitMs"),
     ) as Snapshot & { activity: { open: Json[] } };
-    expect(ended.activity.open.map((open) => open["kind"])).toEqual(["readiness_wait"]);
+    expect(ended.activity.open).toEqual([]);
+    expect(ended.counters["activitiesByKind"]).toEqual({ readiness_wait: 1 });
   });
 
   it("carries the config digest from run.opened and refuses a malformed one", () => {

@@ -118,7 +118,7 @@ export interface RunState {
   observationLost: Map<string, ObservationLostRecord>;
   /** The last journaled lifecycle transition per agent. */
   lifecycles: Map<string, AgentLifecycleChangedRecord>;
-  /** Open engine activities by `activityKey`, in start order; removed by their `ended`. */
+  /** Open engine activities by `activityKey`, in start order; removed by their `ended` or by run.terminated. */
   activities: Map<string, RunActivityRecord>;
   status: RunStatus;
   counters: Counters;
@@ -314,6 +314,9 @@ export function emptyRunState(): RunState {
  * - run.activity: run_closed, then activity_open (a `started` for a kind and
  *   subject that is already open) or activity_not_open (an `ended` for one that
  *   is not).
+ * - run.terminated closes every activity still open: the run ended during it, so
+ *   a journal whose writer could not end it (a killed host) never reads as work
+ *   in progress after the termination. An `ended` for it afterwards is run_closed.
  *
  * A plan-less run skips every plan check. Limits are never enforced here.
  */
@@ -433,6 +436,8 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
         return ["run_closed", "run.terminated after run.terminated"];
       }
       state.termination = record;
+      // The run ended during whatever was still open; nothing is in progress after it.
+      state.activities.clear();
       return undefined;
     case "gate.recorded":
       return applyGate(state, record);
