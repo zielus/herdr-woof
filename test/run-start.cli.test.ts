@@ -1389,7 +1389,14 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
 
     const outcome = await waitForOutcome(runDir);
     expect(outcome).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
-    await waitFor(() => paneLog(ws).includes("Z run ended"), "the host's last log line", 15_000);
+    // The result line follows `run ended`; wait for both, or a loaded machine reads between them.
+    await waitFor(
+      () =>
+        paneLog(ws).includes("Z run ended") &&
+        paneLog(ws).trim().split("\n").at(-1)?.startsWith("{") === true,
+      "the host's log lines and its result line",
+      15_000,
+    );
     const pane = paneLog(ws);
     // The technical form: the timestamped host.log lines, and the result last.
     expect(pane).toMatch(
