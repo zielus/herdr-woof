@@ -1,5 +1,5 @@
 import { duration } from "../observe/render-text.js";
-import { marksFor } from "../observe/render-text.js";
+import { marksFor, plainText } from "../observe/render-text.js";
 import type { ArtifactText } from "./artifact.js";
 import type { RunViewState, UiState } from "./state.js";
 import { TABS, visibleEntries } from "./state.js";
@@ -190,7 +190,7 @@ export function renderFrame(state: UiState, data: ViewData): Frame {
               : "↑↓ scroll  ←→ switch tab  1/2/3 tab  esc runs  q quit";
     }
   }
-  if (state.help) body = helpBody(bodyHeight);
+  if (state.help) body = helpBody(bodyHeight, width);
   const lines: Line[] = [...header, rule, tabs, rule];
   for (let index = 0; index < bodyHeight; index += 1) lines.push(body[index] ?? []);
   lines.push(rule, [span(plainArrows(footer, data.ascii), "dim")]);
@@ -201,7 +201,20 @@ export function renderFrame(state: UiState, data: ViewData): Frame {
 function pad(frame: Frame, width: number, height: number, ascii: boolean): Frame {
   const lines = frame.lines.slice(0, height);
   while (lines.length < height) lines.push([]);
-  return { ...frame, lines: lines.map((line) => fitLine(line, width, ascii)) };
+  const spelled = ascii
+    ? lines.map((line) => line.map((item) => ({ ...item, text: asciiText(item.text) })))
+    : lines;
+  return { ...frame, lines: spelled.map((line) => fitLine(line, width, ascii)) };
+}
+
+/** Arrows, separators and ellipses in their ASCII spelling. */
+function asciiText(value: string): string {
+  return plainText(value, true)
+    .replaceAll("↑↓", "up/down")
+    .replaceAll("←→", "left/right")
+    .replaceAll("←", "<-")
+    .replaceAll("↑", "^")
+    .replaceAll("↓", "v");
 }
 
 function plainArrows(value: string, ascii: boolean): string {
@@ -267,7 +280,10 @@ function runHeader(open: OpenRunData | null, data: ViewData, width: number): Lin
     span("  "),
     span(elapsed(head.openedAt, head.endedAt, data.now), "dim"),
   ];
-  if (head.attention !== null) {
+  // A failed re-read leaves the last good model on screen; say it is no longer current.
+  if (open?.problem != null) {
+    second.push(span("  "), span(`cannot re-read the run: ${open.problem}`, "red"));
+  } else if (head.attention !== null) {
     second.push(span("  "), span(head.attention.word, head.attention.tone));
   }
   return [
@@ -853,7 +869,7 @@ function pagerBody(
 
 // --- help ----------------------------------------------------------------------------------------
 
-function helpBody(height: number): Line[] {
+function helpBody(height: number, width: number): Line[] {
   const rows: Array<[string, string]> = [
     ["runs", "↑↓ / k j move · → / enter open · home / end first / last"],
     ["steps", "↑↓ / k j move · → expand, enter child, open · ← parent, collapse"],
@@ -865,6 +881,10 @@ function helpBody(height: number): Line[] {
     ["leave", "esc back · q or ctrl+c quit · quitting never stops the run"],
   ];
   const lines: Line[] = [[span("keys · ? or esc closes help", "dim")], []];
-  for (const [label, text] of rows) lines.push([span(padToWidth(label, 11), "dim"), span(text)]);
+  for (const [label, text] of rows) {
+    wrapText(text, width - 11).forEach((piece, index) => {
+      lines.push([span(padToWidth(index === 0 ? label : "", 11), "dim"), span(piece)]);
+    });
+  }
   return lines.slice(0, height);
 }

@@ -185,7 +185,7 @@ function headerOf(snapshot: RunSnapshot, input: unknown, steps: StepNode[]): Run
 function attentionOf(snapshot: RunSnapshot): StateWord | null {
   if (snapshot.outcome !== null) return null;
   if (snapshot.liveness.owner === "lost")
-    return { word: "host lost · outcome unknown", mark: "unknown", tone: "red" };
+    return { word: "outcome unknown · no terminal outcome recorded", mark: "unknown", tone: "red" };
   if (snapshot.liveness.owner === "exited")
     return {
       word: "host exited without an outcome · outcome unknown",
@@ -465,7 +465,8 @@ function visitState(
       ? { word: words(gate.reason), mark: "alert", tone: "red" }
       : { word: words(gate.reason), mark: "retry", tone: "amber" };
   }
-  const terminated = snapshot.outcome !== null;
+  // Once the run ended or its host is gone, no gate decision will follow.
+  const terminated = snapshot.outcome !== null || hostLost(snapshot);
   if (accepted?.accepted != null && latest === accepted) {
     if (accepted.accepted.status === "failed")
       return { word: "reported failure", mark: "alert", tone: "red" };
@@ -660,7 +661,42 @@ function pendingSteps(
   const pending: StepNode[] = [];
   let previous = { id: currentId, name: current.name };
   const seen = new Set([currentId]);
-  for (let index = 0; index < 2; index += 1) {
+  const agentOf = (id: string) =>
+    nodes.get(id)?.kind === "check"
+      ? "check"
+      : (snapshot.stages.find((stage) => stage.stageId === id)?.agentId ?? "—");
+  // A finished step whose gate already chose the route: that stage is next, not conditional.
+  const last = snapshot.gates.at(-1);
+  const decidedHere =
+    last !== undefined &&
+    (last.kind === "stage"
+      ? current.id === `stage:${last.subject.stageId}:${last.subject.visit}`
+      : current.kind === "check" && current.endedAt === last.at);
+  const routed = decidedHere ? last : undefined;
+  if (routed !== undefined && "stageId" in routed.next) {
+    const next = routed.next.stageId;
+    const name = numbered(next, (visits.get(next) ?? 0) + 1);
+    pending.push({
+      id: `pending:${next}`,
+      kind: "pending",
+      name,
+      participant: agentOf(next),
+      state: { word: `next · ${gateReason(routed)}`, mark: "dot", tone: "dim" },
+      startedAt: null,
+      endedAt: null,
+      details: [
+        { label: "", value: `routed by the ${text(routed.gate)} gate: ${gatePhrase(routed)}` },
+        { label: "", value: "not started yet" },
+      ],
+      artifacts: [],
+    });
+    seen.add(next);
+    previous = { id: next, name };
+  }
+  // The route "if each gate passes" ends at a step that can complete the run; its other
+  // edges are rejection routes, not the next step.
+  const completes = (id: string) => (graph.edges[id] ?? []).includes("completed");
+  for (let index = pending.length; index < 2 && !completes(previous.id); index += 1) {
     const next = (graph.edges[previous.id] ?? []).find((id) => nodes.has(id) && !seen.has(id));
     if (next === undefined) break;
     seen.add(next);
@@ -707,7 +743,12 @@ function outcomeWord(snapshot: RunSnapshot): StateWord | null {
 function stepsNoteOf(snapshot: RunSnapshot, steps: StepNode[]): StateWord | null {
   const outcome = outcomeWord(snapshot);
   if (outcome !== null) return { ...outcome, word: `result: ${outcome.word}` };
-  if (hostLost(snapshot)) return attentionOf(snapshot);
+  if (hostLost(snapshot))
+    return {
+      word: `${snapshot.liveness.owner === "lost" ? "host lost" : "host exited"} · outcome unknown`,
+      mark: "unknown",
+      tone: "red",
+    };
   const blocked = snapshot.attention.blocked;
   if (blocked !== null) {
     return {
