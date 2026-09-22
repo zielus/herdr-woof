@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadDist } from "../helpers/dist.js";
 import {
   accepted,
+  activity,
   assigned,
   attempt,
   blocked,
@@ -10,6 +11,7 @@ import {
   dispatched,
   gate,
   journalOf,
+  lifecycleChanged,
   opened,
   rejected,
   REV,
@@ -516,59 +518,166 @@ describe("createRunRenderer: history rows", () => {
     ]);
   });
 
-  it("renders lifecycle and activity records by their type string and falls back to a subdued row for an unknown type", () => {
+  it("a live run's lifecycle and activity records: one `Agent ready` per readiness cycle, checks by `run`, no revision rows", () => {
+    // The record sequence of a real build-review run (herdr-woof p3, tabs-a-20260922-021833).
+    const tree = (rev: string) => ({ result: `tree ${rev.repeat(40)}` });
+    const built = build([
+      opened(PLAN),
+      assigned("builder"),
+      lifecycleChanged("builder", null, "ready"),
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      activity("readiness_wait", "ended", { agentId: "builder" }, { result: "ready" }),
+      attempt("build", "builder"),
+      dispatched("build", "builder"),
+      lifecycleChanged("builder", "ready", "working"),
+      accepted(9, "build", "builder", null),
+      activity("revision_check", "started", { attempt: ["build", 1, 1] }, { detail: "build" }),
+      activity("revision_check", "ended", { attempt: ["build", 1, 1] }, tree("c")),
+      gate(9, "build", 1, 1, { next: { stageId: "verify" } }),
+      activity("check_run", "started", { attempt: ["build", 1, 1] }, { detail: "node --test" }),
+      activity("check_run", "ended", { attempt: ["build", 1, 1] }, { result: "exit 0" }),
+      checkGate(9, "verify", "build"),
+      assigned("reviewer"),
+      lifecycleChanged("reviewer", null, "ready"),
+      activity("readiness_wait", "started", { agentId: "reviewer" }),
+      activity("readiness_wait", "ended", { agentId: "reviewer" }, { result: "ready" }),
+      review(1),
+      dispatched("review", "reviewer"),
+      lifecycleChanged("reviewer", "ready", "working"),
+      accepted(23, "review", "reviewer", "fail"),
+      activity("revision_check", "started", { attempt: ["review", 1, 1] }, { detail: "review" }),
+      activity("revision_check", "ended", { attempt: ["review", 1, 1] }, tree("c")),
+      reviewGate(23, 1, {
+        decision: "reject",
+        reason: "changes_requested",
+        round: 1,
+        next: { stageId: "repair" },
+        verdict: "fail",
+      }),
+      // The builder is still `working` when the engine starts waiting for it.
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      lifecycleChanged("builder", "working", "ready"),
+      activity("readiness_wait", "ended", { agentId: "builder" }, { result: "ready" }),
+      attempt("repair", "builder"),
+      dispatched("repair", "builder"),
+      lifecycleChanged("builder", "ready", "working"),
+    ]);
+    const rows = rowsOf(rendererFor(built), built.events);
+    expect(rows).toEqual([
+      "10:00:00 · run              Started",
+      "10:00:00 + builder          Agent started · claude / sonnet",
+      "10:00:00 · builder          Agent ready",
+      "10:00:00 → builder  build   Task dispatched",
+      "10:00:00 · builder          Agent working",
+      "10:00:00 ✓ builder  build   Completion report accepted",
+      "10:00:00 ✓ gate     build   Passed → verify",
+      "10:00:00 · run      build   Running checks · node --test",
+      "10:00:00 ✓ gate     verify  Checks passed → review",
+      "",
+      "10:00:00 + reviewer         Agent started · claude / sonnet",
+      "10:00:00 · reviewer         Agent ready",
+      "10:00:00 → reviewer review  Task dispatched",
+      "10:00:00 · reviewer         Agent working",
+      "10:00:00 ↓ reviewer review  Review received · changes requested",
+      "10:00:00 ↻ gate     review  Changes requested → repair",
+      "10:00:00 · builder          Waiting for agent to become ready",
+      "10:00:00 · builder          Agent ready",
+      "",
+      "10:00:00 → builder  repair  Task dispatched · same agent",
+      "10:00:00 · builder          Agent working",
+    ]);
+    // `Agent working` within 2 s of the dispatch is the expected pickup: subdued, not news.
+    const colored = rowsOf(rendererFor(built, { color: true }), built.events);
+    const blankStage = `\u001B[2m${" ".repeat(6)}\u001B[0m`;
+    expect(colored[4]).toBe(
+      `\u001B[2m10:00:00\u001B[0m \u001B[2m·\u001B[0m builder  ${blankStage}  \u001B[2mAgent working\u001B[0m`,
+    );
+    expect(colored[2]).toBe(`\u001B[2m10:00:00\u001B[0m · builder  ${blankStage}  Agent ready`);
+  });
+
+  it("failure variants of the activity rows, and a subdued fallback for an unknown kind or type", () => {
     const built = build([opened(PLAN), assigned("builder")]);
     const renderer = rendererFor(built);
     rowsOf(renderer, built.events);
-    const at = (seq: number, type: string, data: Json, subject: Json = {}): Event => ({
+    const at = (seq: number, type: string, data: Json, subject: Json = {}, second = 1): Event => ({
       seq,
-      ts: "2026-09-14T10:00:01.000Z",
+      ts: `2026-09-14T10:00:0${second}.000Z`,
       type,
       subject,
       data,
     });
-    const lifecycle = (seq: number, to: string, extra: Json = {}) =>
+    const lifecycle = (seq: number, from: string | null, to: string, extra: Json = {}) =>
       at(seq, "agent.lifecycle_changed", {
         agentId: "builder",
-        from: "x",
+        from,
         to,
         terminalId: "t",
         ...extra,
       });
-    const activity = (seq: number, kind: string, phase: string, extra: Json = {}) =>
-      at(seq, "run.activity", { kind, phase, agentId: "builder", stageId: "build", ...extra });
+    const engine = (seq: number, kind: string, phase: string, extra: Json = {}) =>
+      at(seq, "run.activity", { kind, phase, stageId: "build", visit: 1, attempt: 1, ...extra });
+    const wait = (seq: number, phase: string, extra: Json = {}) =>
+      at(seq, "run.activity", { kind: "readiness_wait", phase, agentId: "builder", ...extra });
     expect(
       [
-        lifecycle(3, "starting"),
-        lifecycle(4, "ready"),
-        lifecycle(5, "working"),
-        lifecycle(6, "blocked"),
-        lifecycle(7, "gone", { replaced: true }),
-        activity(8, "readiness_wait", "started"),
-        activity(9, "readiness_wait", "ended"),
-        activity(10, "revision_check", "started"),
-        activity(11, "revision_check", "ended"),
-        activity(12, "check_run", "started", { detail: "bun test" }),
-        activity(13, "delivery_check", "started"),
-        activity(14, "cache_warmup", "started", { detail: "3 files" }),
-        at(15, "future.thing", { a: 1 }, { agentId: "reviewer" }),
-        at(16, "future.other", {}),
+        // A `starting` agent announces the wait once; the engine's own wait adds nothing.
+        lifecycle(3, null, "starting"),
+        wait(4, "started"),
+        wait(5, "ended", { result: "exhausted" }),
+        // A ready agent needs no wait row; the state change is the one `Agent ready`.
+        lifecycle(6, "starting", "ready"),
+        wait(7, "started"),
+        wait(8, "ended", { result: "ready" }),
+        lifecycle(9, "ready", "blocked"),
+        lifecycle(10, "blocked", "gone", { replaced: true }),
+        // A fingerprint that could not be taken, or one the run's end cut short.
+        engine(11, "revision_check", "started", { detail: "build" }),
+        engine(12, "revision_check", "ended", { result: "failed" }),
+        engine(13, "revision_check", "ended", { result: "cancelled" }),
+        // A check's exit is judged by the gate row; only an end without one has a row.
+        engine(14, "check_run", "started", { detail: "bun test" }),
+        engine(15, "check_run", "ended", { result: "exit 1" }),
+        engine(16, "check_run", "ended", { result: "timed out" }),
+        engine(17, "check_run", "ended", { result: "cancelled" }),
+        engine(18, "delivery_check", "started", { agentId: "builder" }),
+        engine(19, "delivery_check", "ended", { agentId: "builder", result: "delivered (x)" }),
+        engine(20, "cache_warmup", "started", { agentId: "builder", detail: "3 files" }),
+        at(21, "future.thing", { a: 1 }, { agentId: "reviewer" }),
+        at(22, "future.other", {}),
       ].flatMap((event) => renderer.row(event)),
     ).toEqual([
       "10:00:01 · builder          Waiting for agent to become ready",
+      "10:00:01 ! builder          Agent not ready · exhausted",
       "10:00:01 · builder          Agent ready",
-      "10:00:01 · builder          Agent working",
       "10:00:01 ! builder          Blocked · agent waits",
       "10:00:01 ! builder          Agent gone · replaced",
-      "10:00:01 · builder  build   Waiting for agent to become ready",
-      "10:00:01 · builder  build   Agent ready",
-      "10:00:01 · builder  build   Checking repository revision",
-      "10:00:01 · gate     build   Running checks · bun test",
+      "10:00:01 ! run      build   Revision check failed",
+      "10:00:01 ! run      build   Revision check aborted · cancelled",
+      "10:00:01 · run      build   Running checks · bun test",
+      "10:00:01 ! run      build   Checks aborted · cancelled",
       "10:00:01 ↻ builder  build   Delivery unconfirmed · checking",
       "10:00:01 · builder  build   · cache warmup started · 3 files",
       "10:00:01 · reviewer         · future.thing",
       "10:00:01 · run              · future.other",
     ]);
+    // Working long after the dispatch is news again: not subdued.
+    const colored = rendererFor(built, { color: true });
+    rowsOf(colored, built.events);
+    const dispatch = at(
+      23,
+      "request.dispatched",
+      { agentId: "builder", stageId: "build", visit: 1, attempt: 1, delivery: "started" },
+      { agentId: "builder", stageId: "build", visit: 1, attempt: 1 },
+      1,
+    );
+    expect(colored.row(dispatch)).toHaveLength(1);
+    expect(colored.row(lifecycle(24, "ready", "working"))[0]).toContain("\u001B[2mAgent working");
+    const late = { ...lifecycle(25, "working", "ready"), ts: "2026-09-14T10:00:05.000Z" };
+    expect(colored.row(late)[0]).toContain("Agent ready");
+    const again = { ...lifecycle(26, "ready", "working"), ts: "2026-09-14T10:00:05.000Z" };
+    expect(colored.row(again)[0]).toBe(
+      `\u001B[2m10:00:05\u001B[0m · builder  \u001B[2m${" ".repeat(6)}\u001B[0m  Agent working`,
+    );
   });
 
   it("host loss, cancellation and a late rejection stay visible; the termination itself is left to the summary", () => {
