@@ -1,0 +1,1206 @@
+<div id="woof-tui" aria-label="Woof TUI design">
+  <style>
+    #woof-tui {
+      --bg: light-dark(#f7f8f5, #141714);
+      --fg: light-dark(#273027, #dce3da);
+      --muted: light-dark(#626e61, #929f8e);
+      --line: light-dark(#cdd5ca, #354031);
+      --soft: light-dark(#e9eee5, #1b2119);
+      --selected: light-dark(#dfe9de, #273224);
+      --cyan: light-dark(#006b73, #80cccd);
+      --green: light-dark(#267032, #9acb84);
+      --amber: light-dark(#8e5905, #e4bb72);
+      --red: light-dark(#b12e36, #eb9292);
+      font:
+        13px/1.65 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Consolas,
+        monospace;
+      background: var(--bg);
+      color: var(--fg);
+      min-width: 0;
+      border: 1px solid var(--line);
+    }
+    #woof-tui * {
+      box-sizing: border-box;
+    }
+    #woof-tui button,
+    #woof-tui input {
+      font: inherit;
+      color: inherit;
+    }
+    #woof-tui button {
+      background: transparent;
+      border: 0;
+      text-align: left;
+      padding: 0;
+    }
+    #woof-tui button:hover {
+      background: var(--soft);
+    }
+    #woof-tui button:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: -2px;
+    }
+    #woof-tui .muted {
+      color: var(--muted);
+    }
+    #woof-tui .cyan {
+      color: var(--cyan);
+    }
+    #woof-tui .green {
+      color: var(--green);
+    }
+    #woof-tui .amber {
+      color: var(--amber);
+    }
+    #woof-tui .red {
+      color: var(--red);
+    }
+    #woof-tui strong {
+      font-weight: 600;
+    }
+    #woof-tui .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 20px;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    #woof-tui .brand {
+      font-size: 16px;
+      color: var(--green);
+      font-weight: 600;
+    }
+    #woof-tui .sample {
+      margin-left: auto;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    #woof-tui .crumb {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    #woof-tui .crumb button {
+      color: var(--cyan);
+      padding: 2px 5px;
+    }
+    #woof-tui .pagehead {
+      padding: 18px 18px 16px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    #woof-tui .pagehead h2 {
+      font:
+        600 16px/1.5 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+      margin: 0 0 4px;
+      color: var(--fg);
+    }
+    #woof-tui .headright {
+      text-align: right;
+      flex-shrink: 0;
+    }
+    #woof-tui .countline {
+      margin-top: 5px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 18px;
+    }
+    #woof-tui .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 270px;
+      border-top: 1px solid var(--line);
+    }
+    #woof-tui .runlist {
+      min-width: 0;
+      padding: 0 0 22px;
+    }
+    #woof-tui .listhead {
+      padding: 9px 16px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.07em;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 96px 61px;
+      gap: 12px;
+    }
+    #woof-tui .runrow {
+      width: 100%;
+      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: 14px minmax(0, 1fr) 96px 61px;
+      gap: 12px;
+      align-items: start;
+      border-bottom: 1px solid var(--line);
+    }
+    #woof-tui .runrow[aria-current="true"] {
+      background: var(--selected);
+    }
+    #woof-tui .runrow .pointer {
+      color: var(--cyan);
+    }
+    #woof-tui .runrow .name {
+      font-weight: 600;
+      display: block;
+    }
+    #woof-tui .small {
+      font-size: 11px;
+    }
+    #woof-tui .age {
+      text-align: right;
+      white-space: nowrap;
+    }
+    #woof-tui .listnote {
+      padding: 15px 18px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    #woof-tui .preview {
+      border-left: 1px solid var(--line);
+      padding: 14px 16px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    #woof-tui .section-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.09em;
+      margin: 0 0 10px;
+      text-transform: uppercase;
+    }
+    #woof-tui .preview h3 {
+      font:
+        600 14px/1.55 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+      margin: 0 0 4px;
+    }
+    #woof-tui .group {
+      margin-top: 22px;
+    }
+    #woof-tui .preview p,
+    #woof-tui .inspector p {
+      margin: 6px 0;
+    }
+    #woof-tui .primary-action {
+      display: block;
+      background: var(--selected);
+      color: var(--cyan);
+      padding: 7px 10px;
+      margin-top: 18px;
+    }
+    #woof-tui .detailgrid {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr) 255px;
+      border-top: 1px solid var(--line);
+      min-height: 490px;
+    }
+    #woof-tui .steps {
+      min-width: 0;
+      padding: 12px 0;
+      border-right: 1px solid var(--line);
+    }
+    #woof-tui .steps .section-label {
+      padding: 0 12px;
+    }
+    #woof-tui .step {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+    }
+    #woof-tui .step[aria-pressed="true"] {
+      background: var(--selected);
+      color: var(--cyan);
+    }
+    #woof-tui .step-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #woof-tui .step-meta {
+      display: block;
+      padding-left: 20px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    #woof-tui .step-divider {
+      border-top: 1px solid var(--line);
+      margin: 8px 12px;
+    }
+    #woof-tui .mainpane {
+      min-width: 0;
+    }
+    #woof-tui .panetabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 0 10px;
+    }
+    #woof-tui .panetabs button {
+      padding: 9px 8px;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+    }
+    #woof-tui .panetabs button[aria-selected="true"] {
+      color: var(--fg);
+      border-bottom-color: var(--cyan);
+    }
+    #woof-tui .tab-key {
+      color: var(--muted);
+      margin-right: 5px;
+    }
+    #woof-tui .panelbody {
+      padding: 14px 14px 20px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    #woof-tui .feedhead {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 13px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    #woof-tui .event {
+      display: grid;
+      grid-template-columns: 8ch 1ch minmax(0, 1fr);
+      gap: 0 1ch;
+      padding: 5px 0;
+      align-items: baseline;
+    }
+    #woof-tui .event time {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    #woof-tui .event-text {
+      min-width: 0;
+    }
+    #woof-tui .actor {
+      color: var(--fg);
+      font-weight: 600;
+      margin-right: 1ch;
+    }
+    #woof-tui .event-gap {
+      margin-top: 9px;
+    }
+    #woof-tui .feed-end {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    #woof-tui .inspector {
+      border-left: 1px solid var(--line);
+      padding: 13px 14px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    #woof-tui .agent {
+      margin-bottom: 15px;
+    }
+    #woof-tui .agent-name {
+      display: flex;
+      justify-content: space-between;
+      gap: 5px;
+    }
+    #woof-tui .context {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      margin-top: 20px;
+    }
+    #woof-tui .verdict {
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    #woof-tui .ref {
+      font-size: 11px;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+    }
+    #woof-tui .notice {
+      margin: 0 18px 15px;
+      padding: 9px 12px;
+      border-left: 2px solid var(--amber);
+      background: var(--soft);
+    }
+    #woof-tui .notice.danger {
+      border-left-color: var(--red);
+    }
+    #woof-tui .footer {
+      border-top: 1px solid var(--line);
+      padding: 9px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    #woof-tui .footer button {
+      color: var(--muted);
+    }
+    #woof-tui kbd {
+      font: inherit;
+      background: none;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+      color: var(--fg);
+      margin-right: 5px;
+    }
+    #woof-tui .footer .right {
+      margin-left: auto;
+    }
+    #woof-tui .artifact {
+      display: block;
+      width: 100%;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    #woof-tui .artifact-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    #woof-tui pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      margin: 10px 0;
+      font: inherit;
+      color: var(--fg);
+    }
+    #woof-tui .json-key {
+      color: var(--cyan);
+    }
+    #woof-tui .json-string {
+      color: var(--green);
+    }
+    #woof-tui .inputheading {
+      color: var(--muted);
+      margin: 16px 0 6px;
+      font-size: 11px;
+      letter-spacing: 0.07em;
+    }
+    #woof-tui .inputheading:first-child {
+      margin-top: 0;
+    }
+    #woof-tui .help {
+      padding: 16px 18px;
+      border-top: 1px solid var(--line);
+      background: var(--soft);
+    }
+    #woof-tui .help p {
+      margin: 3px 0;
+    }
+    #woof-tui .open-note {
+      margin: 14px 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    #woof-tui[data-density="compact"] .runrow {
+      padding-top: 9px;
+      padding-bottom: 9px;
+    }
+    #woof-tui[data-density="compact"] .event {
+      padding-top: 2px;
+      padding-bottom: 2px;
+    }
+    #woof-tui[data-color="false"] .cyan,
+    #woof-tui[data-color="false"] .green,
+    #woof-tui[data-color="false"] .amber,
+    #woof-tui[data-color="false"] .red {
+      color: var(--fg);
+    }
+    #woof-tui[data-context="false"] .detailgrid {
+      grid-template-columns: 160px minmax(0, 1fr);
+    }
+    #woof-tui[data-context="false"] .inspector {
+      display: none;
+    }
+    @media (max-width: 880px) {
+      #woof-tui .detailgrid {
+        grid-template-columns: minmax(0, 1fr) 235px;
+      }
+      #woof-tui .steps {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 5px 8px;
+      }
+      #woof-tui .steps .section-label,
+      #woof-tui .step-divider {
+        display: none;
+      }
+      #woof-tui .step {
+        width: auto;
+        padding: 5px 9px;
+      }
+      #woof-tui .step-meta {
+        display: none;
+      }
+      #woof-tui[data-context="false"] .detailgrid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      #woof-tui .workspace {
+        grid-template-columns: minmax(0, 1fr) 220px;
+      }
+      #woof-tui .runrow {
+        grid-template-columns: 12px minmax(0, 1fr) 85px;
+        gap: 8px;
+      }
+      #woof-tui .runrow .age {
+        display: none;
+      }
+      #woof-tui .listhead {
+        grid-template-columns: minmax(0, 1fr) 85px;
+      }
+      #woof-tui .listhead .age {
+        display: none;
+      }
+    }
+    @media (max-width: 620px) {
+      #woof-tui {
+        font-size: 12px;
+      }
+      #woof-tui .workspace,
+      #woof-tui .detailgrid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      #woof-tui .preview {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      #woof-tui .inspector {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      #woof-tui .pagehead {
+        flex-wrap: wrap;
+        padding: 14px;
+      }
+      #woof-tui .headright {
+        text-align: left;
+      }
+      #woof-tui .sample {
+        margin-left: 0;
+      }
+      #woof-tui .topbar {
+        gap: 4px 14px;
+        padding: 10px 12px;
+      }
+      #woof-tui .runrow {
+        padding: 12px;
+        grid-template-columns: 10px minmax(0, 1fr) 78px;
+      }
+      #woof-tui .footer .right {
+        margin-left: 0;
+      }
+      #woof-tui .pagehead h2 {
+        font-size: 14px;
+      }
+      #woof-tui .detailgrid {
+        min-height: 0;
+      }
+    }
+    @media (pointer: coarse) {
+      #woof-tui button {
+        min-height: 44px;
+      }
+    }
+  </style>
+  <div class="topbar">
+    <span class="brand">woof</span>
+    <div class="crumb" id="wt-crumb"></div>
+    <span class="sample">DESIGN PREVIEW · SAMPLE RUNS</span>
+  </div>
+  <div id="wt-content"></div>
+  <div id="wt-help" hidden class="help"></div>
+  <div id="wt-footer" class="footer"></div>
+  <span
+    id="wt-announce"
+    aria-live="polite"
+    style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%)"
+  ></span>
+  <script>
+    (() => {
+      const root = document.getElementById("woof-tui");
+      const S = {
+        view: "runs",
+        run: 0,
+        stage: "all",
+        tab: "activity",
+        help: false,
+        density: "comfortable",
+        color: true,
+        context: true,
+        artifact: null,
+      };
+      const runs = [
+        {
+          id: "empty-state-091247",
+          name: "Fix empty-state rendering",
+          flow: "build-review",
+          branch: "fix/empty-state",
+          status: "Running",
+          tone: "cyan",
+          mark: "●",
+          stage: "repair",
+          elapsed: "1m 40s",
+          started: "09:12:47",
+          owner: "Host alive",
+          who: "builder",
+          reason: "Waiting for builder’s repair result.",
+          round: "1 of 3",
+          agents: [
+            ["builder", "repair · result pending", "cyan"],
+            ["reviewer", "review 1 submitted", "muted"],
+          ],
+        },
+        {
+          id: "retry-backoff-090832",
+          name: "Add retry backoff",
+          flow: "plan-build-review",
+          branch: "feat/retry-backoff",
+          status: "Blocked",
+          tone: "amber",
+          mark: "!",
+          stage: "build",
+          elapsed: "5m 55s",
+          started: "09:08:32",
+          owner: "Host alive",
+          who: "builder",
+          reason: "Builder is waiting for permission to run the verification command.",
+          round: "0 of 3",
+          agents: [
+            ["planner", "plan submitted", "green"],
+            ["builder", "permission required", "amber"],
+            ["reviewer", "not started", "muted"],
+          ],
+        },
+        {
+          id: "run-summary-085911",
+          name: "Normalize run summaries",
+          flow: "build-review",
+          branch: "fix/run-summary",
+          status: "Completed",
+          tone: "green",
+          mark: "✓",
+          stage: "completed",
+          elapsed: "1m 27s",
+          started: "08:59:11",
+          owner: "Host exited",
+          who: "reviewer",
+          reason: "Approved on the repaired revision. Accepted artifacts are ready.",
+          round: "2 of 3",
+          agents: [
+            ["builder", "session closed", "muted"],
+            ["reviewer", "session closed", "muted"],
+          ],
+        },
+        {
+          id: "release-085530",
+          name: "Validate release manifest",
+          flow: "build-review",
+          branch: "fix/release-manifest",
+          status: "Exhausted",
+          tone: "red",
+          mark: "×",
+          stage: "verify",
+          elapsed: "4m 02s",
+          started: "08:55:30",
+          owner: "Host exited",
+          who: "gate",
+          reason: "Verification kept failing; the repair visit limit was reached.",
+          round: "0 of 3",
+          agents: [
+            ["builder", "session closed", "muted"],
+            ["reviewer", "not started", "muted"],
+          ],
+        },
+        {
+          id: "role-docs-084102",
+          name: "Document role overrides",
+          flow: "build-review",
+          branch: "docs/role-overrides",
+          status: "Host lost",
+          tone: "red",
+          mark: "!",
+          stage: "build",
+          elapsed: "unknown",
+          started: "08:41:02",
+          owner: "Host lost",
+          who: "builder",
+          reason: "The host stopped responding before a terminal outcome was recorded.",
+          round: "0 of 3",
+          agents: [
+            ["builder", "runtime not observed", "muted"],
+            ["reviewer", "not started", "muted"],
+          ],
+        },
+      ];
+      const baseSteps = [
+        {
+          id: "build1",
+          name: "build",
+          sub: "builder · visit 1",
+          mark: "✓",
+          tone: "green",
+          verdict: "Build accepted",
+          note: "Completion report accepted. The build gate passed.",
+        },
+        {
+          id: "verify1",
+          name: "verify",
+          sub: "check · after build",
+          mark: "✓",
+          tone: "green",
+          verdict: "Checks passed",
+          note: "bun test finished with exit code 0.",
+        },
+        {
+          id: "review1",
+          name: "review",
+          sub: "reviewer · visit 1",
+          mark: "↻",
+          tone: "amber",
+          verdict: "Changes requested",
+          note: "Review accepted with a failing verdict. The gate routed this run to repair.",
+          path: "accepted/review/visit-1/attempt-1/review.md",
+        },
+        {
+          id: "repair1",
+          name: "repair",
+          sub: "builder · visit 1",
+          mark: "●",
+          tone: "cyan",
+          verdict: "Waiting for result",
+          note: "The same builder received the accepted review. No repair result has been accepted yet.",
+        },
+        {
+          id: "verify2",
+          name: "verify",
+          sub: "next, if repair passes",
+          mark: "·",
+          tone: "muted",
+          verdict: "Not started",
+          note: "This check can start only after the repair gate passes.",
+        },
+        {
+          id: "review2",
+          name: "review",
+          sub: "reviewer · visit 2",
+          mark: "·",
+          tone: "muted",
+          verdict: "Not started",
+          note: "A second review is expected after repair and verification pass.",
+        },
+      ];
+      const baseEvents = [
+        ["09:12:47", "run", "Started", "muted", "·", "all"],
+        ["09:12:52", "builder", "Agent started · claude / sonnet", "cyan", "+", "build1"],
+        ["09:12:54", "builder", "Build task dispatched", "cyan", "→", "build1"],
+        ["09:13:12", "builder", "Completion report accepted", "green", "✓", "build1"],
+        ["09:13:13", "gate", "Build passed → verify", "green", "✓", "build1"],
+        ["09:13:13", "gate", "Checks passed → review", "green", "✓", "verify1"],
+        ["09:13:18", "reviewer", "Agent started · claude / sonnet", "cyan", "+", "review1"],
+        ["09:13:20", "reviewer", "Review task dispatched", "cyan", "→", "review1"],
+        ["09:13:41", "reviewer", "Review received · changes requested", "muted", "↓", "review1"],
+        ["09:13:42", "gate", "Changes requested → repair", "amber", "↻", "review1"],
+        ["09:13:45", "builder", "Repair dispatched · same agent", "cyan", "→", "repair1"],
+      ];
+      function esc(x) {
+        return String(x).replace(
+          /[&<>"']/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+        );
+      }
+      function steps() {
+        if (S.run === 0) return baseSteps;
+        if (S.run === 2)
+          return baseSteps
+            .map((x, i) => ({
+              ...x,
+              mark: "✓",
+              tone: "green",
+              sub: i === 4 ? "check · after repair" : x.sub,
+              verdict:
+                i === 3
+                  ? "Repair accepted"
+                  : i === 4
+                    ? "Checks passed"
+                    : i === 5
+                      ? "Approved"
+                      : x.verdict,
+              note:
+                i === 3
+                  ? "The builder’s repair report was accepted."
+                  : i === 4
+                    ? "bun test finished with exit code 0."
+                    : i === 5
+                      ? "The review gate approved the repaired revision."
+                      : x.note,
+            }))
+            .map((x, i) => (i === 2 ? { ...x, mark: "↻", tone: "amber" } : x));
+        if (S.run === 1)
+          return [
+            {
+              id: "plan1",
+              name: "plan",
+              sub: "planner · visit 1",
+              mark: "✓",
+              tone: "green",
+              verdict: "Plan accepted",
+              note: "The accepted plan was passed to the builder.",
+            },
+            {
+              id: "build1",
+              name: "build",
+              sub: "builder · visit 1",
+              mark: "!",
+              tone: "amber",
+              verdict: "Permission required",
+              note: runs[1].reason,
+            },
+            {
+              id: "verify1",
+              name: "verify",
+              sub: "check · not started",
+              mark: "·",
+              tone: "muted",
+              verdict: "Not started",
+              note: "Waiting for an accepted build.",
+            },
+            {
+              id: "review1",
+              name: "review",
+              sub: "reviewer · not started",
+              mark: "·",
+              tone: "muted",
+              verdict: "Not started",
+              note: "Waiting for verification.",
+            },
+          ];
+        if (S.run === 3)
+          return [
+            { ...baseSteps[0] },
+            {
+              ...baseSteps[1],
+              mark: "×",
+              tone: "red",
+              sub: "check · after repair 3",
+              verdict: "Repair limit reached",
+              note: "Verification failed again after three repair visits. The run ended as exhausted.",
+            },
+          ];
+        return [
+          {
+            ...baseSteps[0],
+            mark: "?",
+            tone: "red",
+            sub: "builder · visit 1",
+            verdict: "Outcome unknown",
+            note: "The last recorded action dispatched the build. Runtime state is not currently observed.",
+          },
+        ];
+      }
+      function events() {
+        if (S.run === 0) return baseEvents;
+        if (S.run === 2)
+          return [
+            ["08:59:11", "run", "Started", "muted", "·", "all"],
+            ["08:59:36", "builder", "Completion report accepted", "green", "✓", "build1"],
+            ["08:59:37", "gate", "Checks passed → review", "green", "✓", "verify1"],
+            ["09:00:05", "gate", "Changes requested → repair", "amber", "↻", "review1"],
+            ["09:00:08", "builder", "Repair dispatched · same agent", "cyan", "→", "repair1"],
+            ["09:00:19", "builder", "Completion report accepted", "green", "✓", "repair1"],
+            ["09:00:20", "gate", "Checks passed → review", "green", "✓", "verify2"],
+            ["09:00:23", "reviewer", "Review dispatched · visit 2", "cyan", "→", "review2"],
+            [
+              "09:00:36",
+              "reviewer",
+              "Review received · approval recommended",
+              "muted",
+              "↓",
+              "review2",
+            ],
+            ["09:00:37", "gate", "Approved → completed", "green", "✓", "review2"],
+            ["09:00:38", "run", "Completed · approved", "green", "✓", "all"],
+          ];
+        if (S.run === 1)
+          return [
+            ["09:08:32", "run", "Started", "muted", "·", "all"],
+            ["09:08:37", "planner", "Agent started · claude / sonnet", "cyan", "+", "plan1"],
+            ["09:09:15", "planner", "Plan accepted", "green", "✓", "plan1"],
+            ["09:09:18", "builder", "Agent started · claude / sonnet", "cyan", "+", "build1"],
+            ["09:09:22", "builder", "Build task dispatched", "cyan", "→", "build1"],
+            ["09:13:50", "builder", "Blocked · permission required", "amber", "!", "build1"],
+          ];
+        if (S.run === 3)
+          return [
+            ["08:55:30", "run", "Started", "muted", "·", "all"],
+            ["08:55:56", "builder", "Completion report accepted", "green", "✓", "build1"],
+            ["08:55:58", "gate", "Checks failed → repair", "amber", "↻", "verify1"],
+            ["08:57:12", "gate", "Checks failed after repair 1", "amber", "↻", "verify1"],
+            ["08:58:14", "gate", "Checks failed after repair 2", "amber", "↻", "verify1"],
+            ["08:59:31", "gate", "Checks failed after repair 3", "red", "×", "verify1"],
+            ["08:59:32", "run", "Exhausted · repair visit limit", "red", "×", "all"],
+          ];
+        return [
+          ["08:41:02", "run", "Started", "muted", "·", "all"],
+          ["08:41:09", "builder", "Agent started · claude / sonnet", "cyan", "+", "build1"],
+          ["08:41:11", "builder", "Build task dispatched", "cyan", "→", "build1"],
+        ];
+      }
+      function save() {
+        if (window.openai?.setWidgetState)
+          window.openai
+            .setWidgetState({
+              modelContent: { screen: S.view, run: runs[S.run].name, stage: S.stage, tab: S.tab },
+              privateContent: { runIndex: S.run, view: S.view, stage: S.stage, tab: S.tab },
+            })
+            .catch(() => {});
+      }
+      function applySaved(raw) {
+        const p = raw?.privateContent;
+        if (!p) return;
+        if (Number.isInteger(p.runIndex) && p.runIndex >= 0 && p.runIndex < runs.length)
+          S.run = p.runIndex;
+        if (["runs", "detail"].includes(p.view)) S.view = p.view;
+        if (["activity", "input", "artifacts"].includes(p.tab)) S.tab = p.tab;
+        if (p.stage === "all" || steps().some((x) => x.id === p.stage)) S.stage = p.stage;
+      }
+      function change(fn, announce) {
+        fn();
+        render();
+        save();
+        if (announce) root.querySelector("#wt-announce").textContent = announce;
+      }
+      function openRun(i) {
+        change(() => {
+          S.run = i;
+          S.view = "detail";
+          S.stage = "all";
+          S.tab = "activity";
+          S.artifact = null;
+        }, runs[i].name + " opened");
+        root.querySelector('[data-action="back"]')?.focus({ preventScroll: true });
+      }
+      function setRun(i) {
+        change(
+          () => {
+            S.run = (i + runs.length) % runs.length;
+            S.stage = "all";
+            S.artifact = null;
+          },
+          runs[(i + runs.length) % runs.length].name,
+        );
+      }
+      function stateLine(r) {
+        return `<span class="${r.tone}">${r.mark} ${esc(r.status)}</span>`;
+      }
+      function roster(r) {
+        return r.agents
+          .map(
+            (a) =>
+              `<div class="agent"><div class="agent-name"><strong>${a[0]}</strong><span class="${a[2]}">${a[2] === "cyan" ? "●" : a[2] === "amber" ? "!" : a[2] === "green" ? "✓" : "·"}</span></div><div class="muted small">claude / sonnet</div><div class="${a[2]} small">${a[1]}</div></div>`,
+          )
+          .join("");
+      }
+      function preview(r) {
+        return `<div class="section-label">Selected run</div><h3>${esc(r.name)}</h3><div class="muted small">${esc(r.id)}</div><div class="group">${stateLine(r)}<p>${esc(r.reason)}</p></div><div class="group"><div class="section-label">Participants</div>${roster(r)}</div><div class="group"><div class="section-label">Checkout</div><div>herdr-woof</div><div class="cyan small">${esc(r.branch)}</div></div><button class="primary-action cursor-interaction" data-action="open"><kbd>enter</kbd> Open run →</button>`;
+      }
+      function listView() {
+        const r = runs[S.run];
+        return `<div class="pagehead"><div><h2>Runs</h2><div class="muted">herdr-woof <span class="muted">/ local runs</span></div><div class="countline small"><span class="cyan">● 1 running</span><span class="amber">! 2 need attention</span><span class="muted">2 finished</span></div></div><div class="headright muted small">22 Sep 2026<br>snapshot 09:14:27</div></div><div class="workspace"><section class="runlist" aria-label="Runs"><div class="listhead"><span>RUN / WORKFLOW</span><span>STATE / STEP</span><span class="age">DURATION</span></div>${runs.map((x, i) => `<button class="runrow cursor-interaction" data-run="${i}" aria-current="${S.run === i}" aria-label="Open ${esc(x.name)}"><span class="pointer">${S.run === i ? "›" : ""}</span><span><span class="name">${esc(x.name)}</span><span class="muted small">${esc(x.flow)}</span><br><span class="muted small">${esc(x.branch)} · ${x.started}</span></span><span>${stateLine(x)}<br><span class="muted small">${esc(x.stage)}</span></span><span class="age muted small">${x.elapsed}</span></button>`).join("")}<div class="listnote">All unfinished runs + recent history<br>Selection stays in place as runs update.</div></section><aside class="preview" aria-label="Selected run preview">${preview(r)}</aside></div>`;
+      }
+      function inputView(r) {
+        const obj = {
+          task: {
+            title: r.name,
+            description:
+              S.run === 0
+                ? "Render a useful empty state when the item list has no entries."
+                : "Complete the task described in the run input.",
+            acceptanceCriteria:
+              S.run === 0
+                ? [
+                    "Empty lists render without errors.",
+                    "The existing populated list stays unchanged.",
+                  ]
+                : ["The change meets the requested behavior."],
+          },
+          verify: { command: ["bun", "test"], timeoutMs: 120000 },
+        };
+        const json = JSON.stringify(obj, null, 2);
+        return `<div class="feedhead"><span>INPUT · preview</span><span>read-only</span></div><pre>${esc(json).replace(/(&quot;[^\n]*?&quot;)(\s*:)/g, '<span class="json-key">$1</span>$2')}</pre><div class="feed-end">Other fields omitted from this preview.<br>Full input: ~/.woof/runs/${esc(r.id)}/input.json</div>`;
+      }
+      function artifactList() {
+        if (S.run === 0)
+          return [
+            {
+              label: "Review · visit 1",
+              desc: "Accepted · changes requested",
+              tone: "amber",
+              path: "accepted/review/visit-1/attempt-1/review.md",
+            },
+            {
+              label: "Completion · build",
+              desc: "Accepted",
+              tone: "green",
+              path: "accepted/build/visit-1/attempt-1/completion.md",
+            },
+            {
+              label: "Verification · after build",
+              desc: "Passed",
+              tone: "green",
+              path: "checks/verify/build-v1-a1/output.log",
+            },
+          ];
+        if (S.run === 2)
+          return [
+            {
+              label: "Completion · repair",
+              desc: "Final accepted result",
+              tone: "green",
+              path: "accepted/repair/visit-1/attempt-1/completion.md",
+            },
+            {
+              label: "Review · visit 2",
+              desc: "Approved revision",
+              tone: "green",
+              path: "accepted/review/visit-2/attempt-1/review.md",
+            },
+            {
+              label: "Verification · after repair",
+              desc: "Passed",
+              tone: "green",
+              path: "checks/verify/repair-v1-a1/output.log",
+            },
+            {
+              label: "Review · visit 1",
+              desc: "Earlier · changes requested",
+              tone: "amber",
+              path: "accepted/review/visit-1/attempt-1/review.md",
+            },
+          ];
+        if (S.run === 1)
+          return [
+            {
+              label: "Plan · visit 1",
+              desc: "Accepted · handed to builder",
+              tone: "green",
+              path: "accepted/plan/visit-1/attempt-1/plan.md",
+            },
+          ];
+        if (S.run === 3)
+          return [
+            {
+              label: "Verification · after repair 3",
+              desc: "Failed · retained evidence",
+              tone: "red",
+              path: "checks/verify/repair-v3-a1/output.log",
+            },
+          ];
+        return [];
+      }
+      function artifactsView(r) {
+        const items = artifactList();
+        return `<div class="feedhead"><span>ACCEPTED ARTIFACTS</span><span>${items.length} available</span></div>${items.length ? items.map((a, i) => `<button class="artifact cursor-interaction" data-artifact="${i}"><span class="artifact-label"><strong>${a.label}</strong><span>↗</span></span><span class="${a.tone} small">${a.desc}</span><br><span class="ref">${a.path}</span></button>`).join("") : '<p class="muted">No accepted artifacts recorded.</p>'}<div class="feed-end">Paths relative to ~/.woof/runs/${esc(r.id)}</div>${S.run === 0 ? '<div class="open-note">Repair completion is still pending.</div>' : ""}`;
+      }
+      function activityView(r) {
+        let ev = events();
+        if (S.stage !== "all") ev = ev.filter((e) => e[5] === S.stage);
+        const st = steps().find((x) => x.id === S.stage);
+        return `<div class="feedhead"><span>${st ? esc(st.name.toUpperCase() + " · " + st.sub) : "ALL STAGES"}</span><span>${r.status === "Host lost" ? "observation unavailable" : r.status === "Completed" || r.status === "Exhausted" ? "recorded history" : "following run"}</span></div>${ev.length ? ev.map((e, i) => `<div class="event ${i > 0 && ev[i - 1][5] !== e[5] ? "event-gap" : ""}"><time>${e[0]}</time><span class="${e[3]}">${e[4]}</span><div class="event-text"><span class="actor">${e[1]}</span><span class="${e[3]}">${esc(e[2])}</span></div></div>`).join("") : '<div class="muted">No activity recorded for this step yet.</div>'}<div class="feed-end">${S.run === 0 ? "Awaiting an accepted result · 42s since repair dispatch" : S.run === 1 ? "Blocked since 09:13:50 · the run has not ended" : S.run === 2 ? "Run completed · 1m 27s · 2 reviews · 1 repair" : S.run === 3 ? "Run ended · maxVisitsPerStage reached" : "Observation unavailable · last recorded activity 08:41:11"}</div>`;
+      }
+      function contextView(r) {
+        let st = steps().find((x) => x.id === S.stage);
+        let art = S.artifact === null ? null : artifactList()[S.artifact];
+        return `<div class="section-label">Agents</div>${roster(r)}<div class="context"><div class="section-label">${art ? "Artifact" : st ? "Selected step" : "Current state"}</div><div class="verdict ${art ? art.tone : st ? st.tone : r.tone}">${esc(art ? art.label : st ? st.verdict : r.status === "Running" ? "Repair in progress" : r.status)}</div><p>${esc(art ? art.desc : st ? st.note : r.reason)}</p>${art ? `<div class="ref">~/.woof/runs/${esc(r.id)}/${art.path}</div><p class="small muted">File reference selected. Use the terminal’s file opener in the implemented TUI.</p>` : st?.path ? `<button class="primary-action cursor-interaction" data-action="review-artifact">View artifact reference →</button>` : ""}</div><div class="context"><div class="section-label">Run context</div><div class="small">Review rounds <span class="muted">${r.round}</span><br>Run timeout <span class="muted">2h</span><br>Verification <span class="muted">bun test</span></div><div class="ref group">~/.woof/runs/${esc(r.id)}</div></div>`;
+      }
+      function detailView() {
+        const r = runs[S.run];
+        let notice = "";
+        if (S.run === 1)
+          notice =
+            '<div class="notice"><span class="amber">! Action required</span> · Answer the permission prompt in builder’s Herdr tab.<div class="muted small">Woof will observe the agent becoming unblocked. No automatic resend.</div></div>';
+        if (S.run === 4)
+          notice =
+            '<div class="notice danger"><span class="red">! Host lost</span> · The run outcome is unknown.<div class="muted small">Retained history does not mean this run can resume.</div></div>';
+        return `<div class="pagehead"><div><h2>${esc(r.name)}</h2><div class="muted small">${esc(r.flow)} · ${esc(r.id)}</div><div class="cyan small">herdr-woof / ${esc(r.branch)}</div></div><div class="headright">${stateLine(r)}<div class="muted small">${r.elapsed} · ${esc(r.owner)}</div><div class="muted small">${S.run === 0 ? "repair · builder" : S.run === 2 ? "approved" : r.stage}</div></div></div>${notice}<div class="detailgrid"><nav class="steps" aria-label="Workflow steps"><div class="section-label">Steps</div><button class="step cursor-interaction" data-stage="all" aria-pressed="${S.stage === "all"}"><span class="step-line"><span>≡</span> All activity</span></button><div class="step-divider"></div>${steps()
+          .map(
+            (x) =>
+              `<button class="step cursor-interaction" data-stage="${x.id}" aria-pressed="${S.stage === x.id}"><span class="step-line"><span class="${x.tone}">${x.mark}</span>${x.name}</span><span class="step-meta">${x.sub}</span></button>`,
+          )
+          .join(
+            "",
+          )}</nav><section class="mainpane" aria-label="Run content"><div class="panetabs" role="tablist" aria-label="Run sections">${["activity", "input", "artifacts"].map((t, i) => `<button class="cursor-interaction" role="tab" id="wt-tab-${t}" data-tab="${t}" aria-selected="${S.tab === t}" aria-controls="wt-panel"><span class="tab-key">${i + 1}</span>${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div><div id="wt-panel" class="panelbody" role="tabpanel" aria-labelledby="wt-tab-${S.tab}">${S.tab === "activity" ? activityView(r) : S.tab === "input" ? inputView(r) : artifactsView(r)}</div></section><aside class="inspector" aria-label="Agents and selected context">${contextView(r)}</aside></div>`;
+      }
+      function render() {
+        root.dataset.density = S.density;
+        root.dataset.color = String(S.color);
+        root.dataset.context = String(S.context);
+        root.querySelector("#wt-crumb").innerHTML =
+          S.view === "runs"
+            ? '<span>runs</span><span class="muted">/ herdr-woof</span>'
+            : '<button class="cursor-interaction" data-action="back">← runs</button><span class="muted">/</span><span>' +
+              esc(runs[S.run].id) +
+              "</span>";
+        root.querySelector("#wt-content").innerHTML = S.view === "runs" ? listView() : detailView();
+        root.querySelector("#wt-footer").innerHTML =
+          S.view === "runs"
+            ? '<span><kbd>↑ ↓</kbd> select</span><button class="cursor-interaction" data-action="open"><kbd>enter</kbd> open run</button><span><kbd>tab</kbd> focus</span><button class="cursor-interaction right" data-action="help"><kbd>?</kbd> help</button>'
+            : '<button class="cursor-interaction" data-action="back"><kbd>esc</kbd> runs</button><button class="cursor-interaction" data-action="previous"><kbd>[</kbd> previous run</button><button class="cursor-interaction" data-action="next"><kbd>]</kbd> next run</button><span><kbd>1 2 3</kbd> section</span><button class="cursor-interaction right" data-action="help"><kbd>?</kbd> help</button>';
+        const help = root.querySelector("#wt-help");
+        help.hidden = !S.help;
+        help.innerHTML =
+          '<strong>Navigation</strong><p><kbd>↑ ↓ / j k</kbd> Select a run in the list or a step in run detail.</p><p><kbd>enter</kbd> Open the selected run. <kbd>esc</kbd> Return to the list.</p><p><kbd>[ ]</kbd> Switch runs. <kbd>1 2 3</kbd> Activity, input, artifacts.</p><p class="muted small">This prototype uses sample data. It does not control running agents.</p>';
+      }
+      root.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.run !== undefined) {
+          openRun(Number(b.dataset.run));
+          return;
+        }
+        if (b.dataset.stage) {
+          change(() => {
+            S.stage = b.dataset.stage;
+            S.tab = "activity";
+            S.artifact = null;
+          });
+          root.querySelector(`[data-stage="${S.stage}"]`)?.focus({ preventScroll: true });
+          return;
+        }
+        if (b.dataset.tab) {
+          change(() => {
+            S.tab = b.dataset.tab;
+            S.artifact = null;
+          });
+          root.querySelector(`[data-tab="${S.tab}"]`)?.focus({ preventScroll: true });
+          return;
+        }
+        if (b.dataset.artifact !== undefined) {
+          change(() => {
+            S.artifact = Number(b.dataset.artifact);
+          });
+          root.querySelector(`[data-artifact="${S.artifact}"]`)?.focus({ preventScroll: true });
+          return;
+        }
+        switch (b.dataset.action) {
+          case "back":
+            change(() => {
+              S.view = "runs";
+              S.help = false;
+            });
+            root.querySelector(`[data-run="${S.run}"]`)?.focus({ preventScroll: true });
+            break;
+          case "open":
+            openRun(S.run);
+            break;
+          case "previous":
+            setRun(S.run - 1);
+            break;
+          case "next":
+            setRun(S.run + 1);
+            break;
+          case "help":
+            change(() => {
+              S.help = !S.help;
+            });
+            break;
+          case "review-artifact":
+            change(() => {
+              S.tab = "artifacts";
+              S.artifact = artifactList().findIndex((a) => a.path.includes("review/visit-1"));
+            });
+            break;
+        }
+      });
+      root.addEventListener("keydown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        let used = true;
+        if (e.key === "Escape") {
+          change(() => {
+            if (S.help) S.help = false;
+            else S.view = "runs";
+          });
+          root.querySelector(`[data-run="${S.run}"]`)?.focus({ preventScroll: true });
+        } else if (e.key === "?")
+          change(() => {
+            S.help = !S.help;
+          });
+        else if (S.view === "runs" && ["ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
+          setRun(S.run + (["ArrowDown", "j"].includes(e.key) ? 1 : -1));
+          root.querySelector(`[data-run="${S.run}"]`)?.focus({ preventScroll: true });
+        } else if (S.view === "detail" && ["[", "]"].includes(e.key)) {
+          setRun(S.run + (e.key === "]" ? 1 : -1));
+          root.querySelector('[data-action="back"]')?.focus({ preventScroll: true });
+        } else if (S.view === "detail" && ["1", "2", "3"].includes(e.key)) {
+          change(() => {
+            S.tab = ["activity", "input", "artifacts"][Number(e.key) - 1];
+            S.artifact = null;
+          });
+          root.querySelector(`[data-tab="${S.tab}"]`)?.focus({ preventScroll: true });
+        } else if (S.view === "detail" && ["ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
+          let list = ["all", ...steps().map((x) => x.id)],
+            i = list.indexOf(S.stage),
+            next = (i + (["ArrowDown", "j"].includes(e.key) ? 1 : -1) + list.length) % list.length;
+          change(() => {
+            S.stage = list[next];
+            S.tab = "activity";
+            S.artifact = null;
+          });
+          root.querySelector(`[data-stage="${S.stage}"]`)?.focus({ preventScroll: true });
+        } else used = false;
+        if (used) e.preventDefault();
+      });
+      applySaved(window.openai?.widgetState);
+      render();
+      window.addEventListener("openai:set_globals", (e) => {
+        if (e.detail?.globals?.widgetState) {
+          applySaved(e.detail.globals.widgetState);
+          render();
+        }
+      });
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root, onChange: render });
+        tweak.addSelect(S, "view", {
+          label: "Starting view",
+          options: [
+            { label: "Runs browser", value: "runs" },
+            { label: "Run workspace", value: "detail" },
+          ],
+        });
+        tweak.addSelect(S, "density", {
+          label: "Row spacing",
+          options: ["comfortable", "compact"],
+        });
+        tweak.addToggle(S, "context", { label: "Agent and context pane" });
+        tweak.addToggle(S, "color", { label: "Status colors" });
+      }
+    })();
+  </script>
+</div>

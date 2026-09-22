@@ -43,6 +43,8 @@ integrations behave, how to extend it, and which capabilities are not supported.
   behavior
 - [Human-readable run output](design/run-output.md), approved design brief and
   visual reference for implementation
+- [Terminal UI](design/tui.md), runs navigation and focused run workspace design
+  with an interactive prototype
 
 ### Contribution and release
 
