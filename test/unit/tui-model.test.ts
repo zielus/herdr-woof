@@ -742,7 +742,7 @@ const CONFIG = {
   workflow: { name: "build-review", source: "builtin" },
   agents: { builder: { kind: { value: "claude", source: "input" } } },
   settings: { limits: { maxRounds: { value: 3, source: "user" } } },
-  files: [{ scope: "user", path: "/home/me/.woof/config.json" }],
+  files: [{ scope: "user", path: "/tmp/woof-home/.woof/config.json" }],
 };
 
 describe("deriveRunModel: config", () => {
@@ -816,7 +816,7 @@ describe("deriveRunModel: config", () => {
       verify: "verify: node --test",
       config: "resolved 2026-09-14T09:59:59.000Z · config.json",
       provenance: "workflow builtin · agents input · limits user",
-      file: "user /home/me/.woof/config.json",
+      file: "user /tmp/woof-home/.woof/config.json",
     });
     expect(context["limits"]?.startsWith("3 rounds · 3 visits/stage · 2 attempts/visit · ")).toBe(
       true,

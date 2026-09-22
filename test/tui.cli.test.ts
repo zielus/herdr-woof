@@ -702,12 +702,8 @@ describe("woof tui in a pseudo-terminal", () => {
     },
   );
 
-  // TODO(bug): after `q` the interactive TUI leaves the alternate screen and then paints one more
-  // full frame onto the normal screen. `openTerminal`'s `draw` has no `closed` guard and `runTui`
-  // does not cancel a redraw already scheduled through `changed()` (setImmediate; the key that
-  // quits schedules one), so it runs after `finish` -> `terminal.close()` has written the restore
-  // sequence. Unskip once nothing is written after `\x1b[?25h\x1b[?1049l`.
-  it.skip("T10: nothing is drawn after quitting restores the terminal", { timeout: 40_000 }, () => {
+  // A redraw scheduled by the quitting key must not paint the restored normal screen.
+  it("T10: nothing is drawn after quitting restores the terminal", { timeout: 40_000 }, () => {
     const { output } = ptySession();
     expect(output.toString("utf8").endsWith(`${SHOW_CURSOR}${LEAVE_ALT}`)).toBe(true);
   });

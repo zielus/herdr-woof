@@ -52,9 +52,7 @@ describe("frameString", () => {
       { columns: 3, rows: 3 },
       false,
     );
-    expect(result).toBe(
-      `${SYNC_BEGIN}${HOME}abc\r\nxyz\r\n   ${SYNC_END}`,
-    );
+    expect(result).toBe(`${SYNC_BEGIN}${HOME}abc\r\nxyz\r\n   ${SYNC_END}`);
   });
 
   it("zero rows produces no line content, only the synchronized-update markers", () => {

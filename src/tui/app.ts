@@ -449,8 +449,9 @@ export class TuiSession {
 export async function runTui(options: TuiOptions, terminal: Terminal): Promise<number> {
   let scheduled = false;
   let session: TuiSession | undefined;
+  let finished = false;
   const draw = () => {
-    if (session === undefined) return;
+    if (session === undefined || finished) return;
     terminal.draw(session.render().lines, { color: options.color });
   };
   const changed = () => {
@@ -470,6 +471,8 @@ export async function runTui(options: TuiOptions, terminal: Terminal): Promise<n
       changed();
     }, options.refreshMs);
     const finish = (code: number) => {
+      if (finished) return;
+      finished = true;
       clearInterval(timer);
       process.off("SIGTERM", onSignal);
       process.off("SIGHUP", onSignal);

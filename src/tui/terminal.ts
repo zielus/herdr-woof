@@ -116,6 +116,8 @@ export function openTerminal(input: NodeJS.ReadStream, output: NodeJS.WriteStrea
       resizeListeners.push(callback);
     },
     draw(lines, options) {
+      // A redraw scheduled before close must not paint the restored normal screen.
+      if (closed) return;
       output.write(frameString(lines, size(), options.color));
     },
     close() {
