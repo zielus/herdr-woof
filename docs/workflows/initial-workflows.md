@@ -194,11 +194,14 @@ Two built-ins added with workflow composition — see
   `task`, optional `constraints`, `instructions.planner`, `agents.planner`,
   `limits`, and `publish: {path, push?}`. With `publish` the planner also writes
   the plan to `path` in the repository and commits only that file (and pushes
-  with `push: true`). Three engine-run checks confirm the checkout's HEAD
-  commit holds exactly the accepted `plan.md` at that path (`published`: the
-  path is in HEAD; `committed`: the tree has no other version of it; `matches`:
-  it is byte-for-byte the accepted plan). A failed check sends the planner back,
-  bounded by `maxVisitsPerStage` (default 2).
+  with `push: true`). Engine-run checks confirm the checkout's HEAD commit
+  holds exactly the accepted `plan.md` at that path (`published`: the path is
+  in HEAD; `committed`: the tree has no other version of it; `matches`: it is
+  byte-for-byte the accepted plan). A failed check sends the planner back,
+  bounded by `maxVisitsPerStage` (default 2). A last check, `changed`, confirms
+  the run committed it: the path differs from the revision on the run's first
+  dispatch. When that exact plan was already committed there, no commit is
+  possible, so the run fails with `not_changed`.
   Access `writable`: it never starts on a dirty `current` tree.
 - **`auto-build`**: two workflow steps and no agents. `plan` runs the `plan`
   workflow; `build` runs `build-review` with the accepted `plan.md` as the input

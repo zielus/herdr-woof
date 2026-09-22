@@ -201,7 +201,8 @@ describe("plan and auto-build", () => {
       ["plan", "planned"],
       ["published", "published_ok"],
       ["committed", "committed_ok"],
-      ["matches", "published"],
+      ["matches", "matches_ok"],
+      ["changed", "published"],
     ]);
     expect(git(ws.repo, "log", "--format=%s").split("\n")[0]).toBe("plan");
 
@@ -375,5 +376,38 @@ describe("plan and auto-build", () => {
       join(ws.runs, "b5", "accepted/plan/visit-1/attempt-1/plan.md"),
       "docs/plan.md",
     ]);
+  }, 90_000);
+
+  it("B6: the exact plan already committed at the publish path fails the run: no new commit is possible", () => {
+    const ws = setup();
+    mkdirSync(join(ws.repo, "docs"), { recursive: true });
+    // The bytes the scripted planner writes for visit 1, attempt 1.
+    writeFileSync(
+      join(ws.repo, "docs", "plan.md"),
+      "# plan 1.1\n\n1. Write src/change.txt.\n2. Done when the file exists.\n",
+    );
+    git(ws.repo, "add", "-A");
+    git(ws.repo, "commit", "-q", "-m", "same plan");
+    const start = git(ws.repo, "rev-parse", "HEAD").trim();
+    // The planner's commit finds nothing to commit: HEAD stays where the run started.
+    const out = run(
+      ws,
+      "plan",
+      "b6",
+      { publish: { path: "docs/plan.md" } },
+      { WOOF_TEST_PUBLISH: "docs/plan.md" },
+    );
+    expect(out.json["result"]).toMatchObject({ outcome: "failed", reason: "not_changed" });
+    const gates = ofType(journal(join(ws.runs, "b6")), "gate.recorded");
+    expect(gates.map((gate) => [gate["gate"], gate["reason"]])).toEqual([
+      ["plan", "planned"],
+      ["published", "published_ok"],
+      ["committed", "committed_ok"],
+      ["matches", "matches_ok"],
+      ["changed", "not_changed"],
+    ]);
+    const argv = gates.find((gate) => gate["gate"] === "changed")?.["check"]?.["command"];
+    expect(argv).toEqual(["git", "diff", "--quiet", start, "HEAD", "--", "docs/plan.md"]);
+    expect(git(ws.repo, "rev-parse", "HEAD").trim()).toBe(start);
   }, 90_000);
 });

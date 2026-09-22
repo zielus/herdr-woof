@@ -134,9 +134,14 @@ export interface CheckStage<Input = unknown> {
   checkId: string;
   /**
    * The command to run. `ctx.subject` is the accepted artifact the check is about (composition,
-   * optional to read); it is absent when a presentation layer asks for the command to show it.
+   * optional to read); `ctx.start` is the repository revision recorded on the run's first request
+   * dispatch, before any agent acted (null when nothing was dispatched). `ctx` is absent when a
+   * presentation layer asks for the command to show it.
    */
-  command(input: Input, ctx?: { subject: AcceptedRef }): { argv: string[]; timeoutMs: number };
+  command(
+    input: Input,
+    ctx?: { subject: AcceptedRef; start: Revision | null },
+  ): { argv: string[]; timeoutMs: number };
   next(ctx: CheckGateContext<Input>): Transition;
 }
 

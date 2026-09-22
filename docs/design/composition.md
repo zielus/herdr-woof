@@ -269,9 +269,12 @@ readSnapshot` holds for both journals.
   pushes with `push`; the push itself is not verified), and three check stages
   confirm HEAD holds exactly the accepted `plan.md` at that path (in HEAD, no
   other version in the tree, byte-equal to the accepted artifact — checks see
-  their subject through `command(input, {subject})`), sending the planner back
-  (bounded by `maxVisitsPerStage`) otherwise. An older plan already at the path
-  does not count.
+  their subject through `command(input, {subject, start})`), sending the
+  planner back (bounded by `maxVisitsPerStage`) otherwise. An older plan already
+  at the path does not count. A fourth check, `changed`, requires the path to
+  differ from `start`, the revision on the run's first dispatch; the identical
+  plan already committed there fails the run (`not_changed`) rather than
+  looping, since the planner cannot commit it again.
 - `auto-build`: workflow step `plan` → workflow step `build`
   (`build-review`), the build input mapped from the parent input plus the plan
   step's `plan.md` artifact (path + digest) — scenario (c), one branch, one

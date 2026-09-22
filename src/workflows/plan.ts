@@ -64,7 +64,7 @@ const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
 function publishCheck(
   checkId: string,
   argv: (path: string, subject: string) => string[],
-  pass: string | null,
+  pass: string,
 ): CheckStage<PlanInput> {
   return {
     kind: "check",
@@ -78,9 +78,7 @@ function publishCheck(
     }),
     next: (ctx) =>
       ctx.check.exitCode === 0 && !ctx.check.timedOut
-        ? pass === null
-          ? { decision: "pass", reason: "published", outcome: "completed" }
-          : { decision: "pass", reason: `${checkId}_ok`, to: pass }
+        ? { decision: "pass", reason: `${checkId}_ok`, to: pass }
         : { decision: "reject", reason: `not_${checkId}`, to: "plan" },
   };
 }
@@ -275,22 +273,49 @@ export const planWorkflow: WorkflowDefinition<PlanInput> = {
           ? { decision: "pass", reason: "planned", outcome: "completed" }
           : { decision: "pass", reason: "planned", to: "published" },
     },
-    // Publication is proven in three engine-run steps, each sending the planner back when it fails:
-    // the path is in the HEAD commit, the tree holds no other version of it, and that committed
-    // file is byte-for-byte the accepted plan.md (not an older plan already at that path).
+    // Publication is proven in engine-run steps. The first three send the planner back when they
+    // fail: the path is in the HEAD commit, the tree holds no other version of it, and that
+    // committed file is byte-for-byte the accepted plan.md (not an older plan already at that path).
     publishCheck("published", (path) => ["git", "cat-file", "-e", `HEAD:${path}`], "committed"),
     publishCheck("committed", (path) => ["git", "diff", "--quiet", "HEAD", "--", path], "matches"),
     publishCheck(
       "matches",
       (path, subject) => ["git", "diff", "--no-index", "--quiet", "--", subject, path],
-      null,
+      "changed",
     ),
+    // Last, the run committed it: the path differs from the run's start (its first dispatch). When
+    // the same plan was already committed there, no commit is possible, so the run fails instead of
+    // sending the planner back.
+    {
+      kind: "check",
+      checkId: "changed",
+      command: (input, ctx) => ({
+        argv: [
+          "git",
+          "diff",
+          "--quiet",
+          ctx === undefined
+            ? "<run start>"
+            : (ctx.start?.head ?? ctx.start?.tree ?? "<no dispatch>"),
+          "HEAD",
+          "--",
+          input.publish?.path ?? "plan.md",
+        ],
+        timeoutMs: VERIFY_TIMEOUT_MS,
+      }),
+      // git diff --quiet exits 1 when the path differs, 0 when it does not.
+      next: (ctx) =>
+        ctx.check.exitCode === 1 && !ctx.check.timedOut
+          ? { decision: "pass", reason: "published", outcome: "completed" }
+          : { decision: "reject", reason: "not_changed", outcome: "failed" },
+    },
   ],
   edges: {
     plan: ["published", "completed"],
     published: ["committed", "plan"],
     committed: ["matches", "plan"],
-    matches: ["completed", "plan"],
+    matches: ["changed", "plan"],
+    changed: ["completed", "failed"],
   },
 };
 

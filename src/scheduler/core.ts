@@ -339,7 +339,7 @@ function decideRun<Input>(
     if (subjectRef === null)
       return terminate("failed", "engine_invariant: check subject has no accepted artifact");
     const command = callDefinition(targetId, () =>
-      check.command(view.input, { subject: subjectRef }),
+      check.command(view.input, { subject: subjectRef, start: startRevisionOf(snapshot) }),
     );
     if (
       command === null ||
@@ -954,6 +954,18 @@ export function latestCheckEvidence(
     sha256: gate.check.evidence.sha256,
     bytes: gate.check.evidence.bytes,
   };
+}
+
+/** Revision recorded on the run's earliest request dispatch: the repository before any agent acted. */
+function startRevisionOf(snapshot: RunSnapshot): Revision | null {
+  let first: { seq: number; revision: Revision } | null = null;
+  for (const stage of snapshot.stages)
+    for (const visit of stage.visits)
+      for (const attempt of visit.attempts)
+        if (attempt.dispatch !== null && attempt.revision !== null)
+          if (first === null || attempt.dispatch.seq < first.seq)
+            first = { seq: attempt.dispatch.seq, revision: attempt.revision };
+  return first === null ? null : { ...first.revision };
 }
 
 export function attemptOf(
