@@ -22,7 +22,6 @@ import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
 import { readHostInfo } from "./probe.js";
-import type { HostView } from "./view.js";
 
 /**
  * Hosting one workflow run in this process (p4 §3.5, §3.7): resolve
@@ -67,6 +66,19 @@ export type RuntimeFactory = (
   context: RuntimeContext,
 ) => Promise<{ ok: true; runtime: RuntimeAdapter } | { ok: false; message: string }>;
 
+/**
+ * The human view a host prints to its stdout. The host only drives it; it is built above the host
+ * (`src/inspect/host-view.ts`, from the inspection reads `woof watch` uses) and handed in.
+ */
+export interface HostView {
+  /** Prints the opening block and starts following the journal. Call once the run is open. */
+  start(): void;
+  /** Stops the follow, prints the rows still unread and the outcome summary. Idempotent. */
+  finish(): Promise<void>;
+  /** Aborts the follow without printing anything more (a safety net for an aborted host). */
+  close(): void;
+}
+
 export interface HostWorkflowOptions {
   /** Absolute run directory. */
   runDir: string;
@@ -103,6 +115,12 @@ export interface HostWorkflowOptions {
   /** The technical log (`<runDir>/host.log`, and stdout with `--plain`). */
   log: (line: string) => void;
   /**
+   * Operator-facing warnings: what the recorded configuration warns about (a permission bypass in
+   * an agent's args, an unreadable Claude trust file). The caller puts them where the operator
+   * looks — stderr beside the human view — as well as in the log; defaults to `log`.
+   */
+  warn?: (line: string) => void;
+  /**
    * The human view printed to the host's stdout (null with `--plain`): started once the run is
    * open, finished — rows still unread, then the summary — as soon as the scheduler returns, and
    * closed on every other exit path so a follow never keeps the host alive.
@@ -137,6 +155,7 @@ export interface HostWorkflowResult {
  */
 export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWorkflowResult> {
   const { runDir, runId, log } = options;
+  const warn = options.warn ?? log;
   let release = options.release;
   let result: HostWorkflowResult | undefined;
   let outcomeWritten = false;
@@ -342,8 +361,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
     if (opened.hostClaimed !== null) journaled = true;
     else if (hostRecord !== undefined) log("cannot journal host.claimed: the journal write failed");
+    // Configuration warnings are for the operator, not only the log (PI-004).
     for (const warning of recorded.warnings)
-      log(
+      warn(
         `warning ${warning.code}: ${warning.message}${warning.path !== undefined ? ` (${warning.path})` : ""}`,
       );
 

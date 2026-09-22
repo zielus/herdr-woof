@@ -75,24 +75,16 @@ export interface RunActivityRecord extends RecordBase {
   result?: string;
 }
 
-/** The subject fields an activity's start and end share. */
+/**
+ * The subject fields an activity's start and end share; the reducer keys open
+ * activities on them (`activityKey` in `src/state/reducer.ts`).
+ */
 export interface ActivitySubject {
   kind: ActivityKind;
   agentId?: string;
   stageId?: string;
   visit?: number;
   attempt?: number;
-}
-
-/** One key per (kind, agent, attempt): a started activity is open until the same key ends. */
-export function activityKey(subject: ActivitySubject): string {
-  return [
-    subject.kind,
-    subject.agentId ?? "",
-    subject.stageId ?? "",
-    subject.visit === undefined ? "" : String(subject.visit),
-    subject.attempt === undefined ? "" : String(subject.attempt),
-  ].join("|");
 }
 
 const MAX_RAW = 200;

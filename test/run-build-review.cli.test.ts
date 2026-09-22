@@ -412,12 +412,15 @@ describe("woof run build-review: runs", () => {
       result: { outcome: "completed", runId: "cli-run", limit: null },
     });
     // The host prints the human view of its own run to stdout (what woof watch prints), and its
-    // technical log to <run-dir>/host.log — no longer to stderr.
+    // technical log to <run-dir>/host.log — no longer to stderr. Only the configuration warnings
+    // (here: the test HOME has no Claude trust file) still reach stderr.
     expect(result.stdout).toMatch(/^\d\d:\d\d:\d\d → builder {2}build {3}Task dispatched$/m);
     expect(result.stdout).toMatch(/^\d\d:\d\d:\d\d ✓ gate {5}verify {2}Checks passed → review$/m);
     expect(result.stdout).toContain("\n✓ Completed · approved\n");
     expect(result.stdout).not.toContain("dispatch build visit 1 attempt 1");
-    expect(result.stderr).toBe("");
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringMatching(/^woof: warning claude_trust_unknown: /),
+    ]);
     const hostLog = readFileSync(join(ws.runDir, "host.log"), "utf8");
     expect(hostLog).toMatch(
       /^\d{4}-\d\d-\d\dT\S+ dispatch build visit 1 attempt 1 \(initial\) to builder$/m,

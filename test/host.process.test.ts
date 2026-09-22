@@ -408,13 +408,13 @@ console.log(
   });
 });
 
-describe("run host view and log (host/view.ts, host/log.ts)", () => {
+describe("run host view and log (inspect/host-view.ts, host/log.ts)", () => {
   it("follows the host's own journal into the human rows, finishes at once from the final snapshot whatever its poll, and keeps the technical log in host.log", () => {
     const runDir = join(temp(), "run");
     const result = runNode(
       `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
 const { openAttempt } = await import(${JSON.stringify(distUrl("submission/attempt.js"))});
-const { createHostView } = await import(${JSON.stringify(distUrl("host/view.js"))});
+const { createHostView } = await import(${JSON.stringify(distUrl("inspect/host-view.js"))});
 const { createHostLog } = await import(${JSON.stringify(distUrl("host/log.js"))});
 const { readFileSync } = await import("node:fs");
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -486,7 +486,7 @@ console.log(JSON.stringify({ opened, liveRows, slowRows, live: live.lines, slow:
     const runDir = join(temp(), "run");
     const result = runNode(
       `const store = await import(${JSON.stringify(distUrl("state/store.js"))});
-const { createHostView } = await import(${JSON.stringify(distUrl("host/view.js"))});
+const { createHostView } = await import(${JSON.stringify(distUrl("inspect/host-view.js"))});
 const { appendFileSync } = await import("node:fs");
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const runDir = process.argv[1];

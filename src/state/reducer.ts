@@ -1,5 +1,5 @@
 import type { AttemptCause, DispatchDelivery, RunPlan, RunStatus } from "../domain/types.js";
-import { activityKey } from "../journal/activity-records.js";
+import type { ActivitySubject } from "../journal/activity-records.js";
 import {
   parseRecordLine,
   type AgentAssignedRecord,
@@ -517,6 +517,20 @@ function applyLifecycleChanged(
   state.lifecycles.set(record.agentId, record);
   increment(state.counters.lifecycleChangesByAgent, record.agentId);
   return undefined;
+}
+
+/**
+ * One key per (kind, agent, attempt): a started activity is open until the same key ends. The
+ * scheduler keys its own view of the open activities the same way.
+ */
+export function activityKey(subject: ActivitySubject): string {
+  return [
+    subject.kind,
+    subject.agentId ?? "",
+    subject.stageId ?? "",
+    subject.visit === undefined ? "" : String(subject.visit),
+    subject.attempt === undefined ? "" : String(subject.attempt),
+  ].join("|");
 }
 
 function applyActivity(state: RunState, record: RunActivityRecord): Refusal | undefined {

@@ -142,11 +142,16 @@ function targetProblem(target: unknown): string | undefined {
   );
 }
 
+/** Whether `value` is one of the run's terminal outcomes (the closed list `run.terminated` carries). */
+export function isTerminalOutcome(value: unknown): value is TerminalOutcome {
+  return (TERMINAL_OUTCOMES as readonly unknown[]).includes(value);
+}
+
 export function runTerminatedProblem(value: Record<string, unknown>): string | undefined {
   const problem =
     keysProblem(value, ["outcome", "reason"], ["limit"]) ??
     check(
-      (TERMINAL_OUTCOMES as readonly unknown[]).includes(value["outcome"]),
+      isTerminalOutcome(value["outcome"]),
       `outcome is not one of ${TERMINAL_OUTCOMES.join(", ")}`,
     ) ??
     nonEmptyStringProblem(value, "reason");

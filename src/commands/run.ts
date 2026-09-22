@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { recordedWorkflowDefinition } from "../config/record.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { sha256Hex } from "../contracts/canonical-json.js";
 import { isId, isPlainObject } from "../contracts/envelope.js";
@@ -14,11 +15,12 @@ import { createHostLog } from "../host/log.js";
 import {
   OUTCOME_FILE,
   hostWorkflow,
+  type HostView,
   type HostWorkflowOptions,
   type HostWorkflowResult,
   type RuntimeFactory,
 } from "../host/run.js";
-import { createHostView, type HostView } from "../host/view.js";
+import { createHostView } from "../inspect/host-view.js";
 import { colorEnabled } from "../observe/format.js";
 import { unicodeEnabled } from "../observe/render-text.js";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
@@ -519,13 +521,15 @@ const VIEW_POLL_MS = 250;
 /**
  * What the host prints where: the technical log always goes to `<runDir>/host.log`; stdout gets
  * the human view of the run (colors only on a terminal without NO_COLOR, ASCII marks when asked or
- * when the locale has no UTF-8), or with `--plain` the technical log instead.
+ * when the locale has no UTF-8), or with `--plain` the technical log instead. Configuration
+ * warnings are for the operator: they go to stderr as well as the log — except with `--plain`,
+ * where the echoed log already shows them on stdout, so each is printed once.
  */
 function hostOutput(
   runDir: string,
   view: HostViewFlags,
   pollMs: number | undefined,
-): Pick<HostWorkflowOptions, "log" | "view"> {
+): Pick<HostWorkflowOptions, "log" | "warn" | "view"> {
   // A reader that went away (EPIPE: the pane closed) must not crash the host: the first write
   // error, reported on the stream or to the write callback, ends the view's output for good. The
   // result still reaches outcome.json and the exit code, and the log file keeps the technical lines.
@@ -544,7 +548,11 @@ function hostOutput(
     }
   };
   const log = createHostLog(runDir, { echo: view.plain, write });
-  if (view.plain) return { log, view: null };
+  const warn = (line: string) => {
+    log(line);
+    if (!view.plain) process.stderr.write(`woof: ${line}\n`);
+  };
+  if (view.plain) return { log, warn, view: null };
   const hostView: HostView = createHostView({
     runDir,
     write,
@@ -554,8 +562,9 @@ function hostOutput(
     ascii: view.ascii || !unicodeEnabled(process.env),
     input: view.input,
     width: process.stdout.columns ?? 80,
+    definitionFor: recordedWorkflowDefinition,
   });
-  return { log, view: hostView };
+  return { log, warn, view: hostView };
 }
 
 function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {

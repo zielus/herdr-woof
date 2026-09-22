@@ -1,4 +1,4 @@
-import { TERMINAL_OUTCOMES } from "../domain/types.js";
+import { isTerminalOutcome } from "../journal/run-records.js";
 import type { FormattableEvent } from "./format.js";
 import { capitalized, isObject, text, words, type Style } from "./render-text.js";
 
@@ -126,7 +126,7 @@ export function rowsOf(event: FormattableEvent, state: RowState, ctx: RowContext
 
       case "host.exited": {
         const reason = text(data["reason"]);
-        if ((TERMINAL_OUTCOMES as readonly string[]).includes(reason)) return [];
+        if (isTerminalOutcome(reason)) return [];
         return [
           base({
             participant: "run",
@@ -488,7 +488,7 @@ function activityRows(
     ...(stage === undefined ? {} : { stage }),
   };
   const started = phase === "started";
-  const aborted = result !== undefined && (TERMINAL_OUTCOMES as readonly string[]).includes(result);
+  const aborted = isTerminalOutcome(result);
   switch (kind) {
     case "readiness_wait":
       if (started) return waitingRow(base, { ...common, lifecycle: true }, state, id);

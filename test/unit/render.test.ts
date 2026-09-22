@@ -60,7 +60,7 @@ let graphOf: (definition: unknown, plan: Json, input: unknown) => Graph | null;
 let builtInWorkflow: (name: string) => unknown;
 
 const ANCHOR = "0123456789ab";
-const RUN_DIR = "/home/dev/runs/run-1";
+const RUN_DIR = "/tmp/woof-home/runs/run-1";
 // oxlint-disable-next-line no-control-regex
 const SGR = /\u001B\[[0-9;]*m/g;
 
@@ -106,7 +106,7 @@ const GRAPH: Graph = {
 
 const INPUT = {
   schemaVersion: 1,
-  repo: "/home/dev/fixture-repo",
+  repo: "/tmp/woof-home/fixture-repo",
   task: {
     title: "Fix empty-state rendering",
     description: "The list shows nothing when it is empty.",
@@ -195,7 +195,7 @@ beforeAll(async () => {
   ({ deriveRunResult } = await loadDist<{ deriveRunResult: typeof deriveRunResult }>(
     "state/result.js",
   ));
-  ({ graphOf } = await loadDist<{ graphOf: typeof graphOf }>("observe/workflow-graph.js"));
+  ({ graphOf } = await loadDist<{ graphOf: typeof graphOf }>("inspect/workflow-graph.js"));
   ({ builtInWorkflow } = await loadDist<{ builtInWorkflow: typeof builtInWorkflow }>(
     "workflows/catalog.js",
   ));
@@ -229,7 +229,7 @@ function rendererFor(built: Built, options: Json = {}, extra: Json = {}): Render
     snapshot: built.snapshot,
     status: built.status,
     input: INPUT,
-    repository: { path: "/home/dev/fixture-repo", branch: "master" },
+    repository: { path: "/tmp/woof-home/fixture-repo", branch: "master" },
     graph: GRAPH,
     ...extra,
     options: {
@@ -237,7 +237,7 @@ function rendererFor(built: Built, options: Json = {}, extra: Json = {}): Render
       ascii: false,
       timeZone: "UTC",
       width: 80,
-      home: "/home/dev",
+      home: "/tmp/woof-home",
       ...options,
     },
   });

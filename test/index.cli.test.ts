@@ -272,9 +272,14 @@ describe("run locator index", () => {
       "run.opened",
       "woof.events.end",
     ]);
+    // The human view by default: the opening block names the run, then one row per record.
     const watch = woof(["watch", "by-id-1"], { env: s.env });
     expect(watch.status, watch.stdout + watch.stderr).toBe(0);
-    expect(watch.stdout).toContain("run.opened");
+    expect(watch.stdout).toContain("run by-id-1 · workflow v1");
+    expect(watch.stdout).toMatch(/^\d\d:\d\d:\d\d [·.] run {14}Started$/m);
+    const rawWatch = woof(["watch", "by-id-1", "--plain"], { env: s.env });
+    expect(rawWatch.status, rawWatch.stdout + rawWatch.stderr).toBe(0);
+    expect(rawWatch.stdout).toContain("run.opened");
 
     // An existing directory wins over an id of the same name.
     const shadow = join(s.root, "cwd");

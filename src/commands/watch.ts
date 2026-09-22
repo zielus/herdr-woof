@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
 
+import { recordedWorkflowDefinition } from "../config/record.js";
+import { rendererFor } from "../inspect/run-view.js";
 import { readRunStatus } from "../inspect/status.js";
 import {
   colorEnabled,
@@ -11,7 +13,6 @@ import {
 } from "../observe/format.js";
 import type { RunRenderer } from "../observe/render.js";
 import { unicodeEnabled } from "../observe/render-text.js";
-import { rendererFor } from "../observe/run-view.js";
 import { streamEvents, type EventsSink, type StreamOptions } from "../observe/stream.js";
 import { ALL_HELP, allEventsCommand } from "./all.js";
 import { UsageError, milliseconds, parse } from "./common.js";
@@ -229,12 +230,17 @@ function humanSink(
   const open = (): boolean => {
     const read = readRunStatus(runDir);
     if (!read.ok) return false;
-    renderer = rendererFor(runDir, read, {
-      color: format.color,
-      ascii: view.ascii,
-      input: view.input,
-      width: process.stdout.columns ?? 80,
-    });
+    renderer = rendererFor(
+      runDir,
+      read,
+      {
+        color: format.color,
+        ascii: view.ascii,
+        input: view.input,
+        width: process.stdout.columns ?? 80,
+      },
+      recordedWorkflowDefinition,
+    );
     for (const line of renderer.opening()) write(line);
     return true;
   };
