@@ -199,8 +199,8 @@ Two built-ins added with workflow composition — see
   in HEAD; `committed`: the tree has no other version of it; `matches`: it is
   byte-for-byte the accepted plan). A failed check sends the planner back,
   bounded by `maxVisitsPerStage` (default 2). A last check, `changed`, confirms
-  the run committed it: the path differs from the revision on the run's first
-  dispatch. When that exact plan was already committed there, no commit is
+  the run committed it: a commit since the revision on the run's first dispatch
+  touches the path. When that exact plan was already committed there, no commit is
   possible, so the run fails with `not_changed`.
   Access `writable`: it never starts on a dirty `current` tree.
 - **`auto-build`**: two workflow steps and no agents. `plan` runs the `plan`

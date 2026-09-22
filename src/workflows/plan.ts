@@ -283,29 +283,32 @@ export const planWorkflow: WorkflowDefinition<PlanInput> = {
       (path, subject) => ["git", "diff", "--no-index", "--quiet", "--", subject, path],
       "changed",
     ),
-    // Last, the run committed it: the path differs from the run's start (its first dispatch). When
-    // the same plan was already committed there, no commit is possible, so the run fails instead of
-    // sending the planner back.
+    // Last, the run committed it: a commit since the run's start (its first dispatch) touches the
+    // path. When the same plan was already committed there, no commit is possible, so the run
+    // fails instead of sending the planner back. `git log` exits 0 either way, hence the `test`.
     {
       kind: "check",
       checkId: "changed",
       command: (input, ctx) => ({
         argv: [
-          "git",
-          "diff",
-          "--quiet",
+          "sh",
+          "-c",
+          'test -n "$(git log -1 --format=%H "$@")"',
+          "changed",
           ctx === undefined
-            ? "<run start>"
-            : (ctx.start?.head ?? ctx.start?.tree ?? "<no dispatch>"),
-          "HEAD",
+            ? "<run start>..HEAD"
+            : ctx.start === null
+              ? "<no dispatch>..HEAD"
+              : ctx.start.head === null
+                ? "HEAD"
+                : `${ctx.start.head}..HEAD`,
           "--",
           input.publish?.path ?? "plan.md",
         ],
         timeoutMs: VERIFY_TIMEOUT_MS,
       }),
-      // git diff --quiet exits 1 when the path differs, 0 when it does not.
       next: (ctx) =>
-        ctx.check.exitCode === 1 && !ctx.check.timedOut
+        ctx.check.exitCode === 0 && !ctx.check.timedOut
           ? { decision: "pass", reason: "published", outcome: "completed" }
           : { decision: "reject", reason: "not_changed", outcome: "failed" },
     },

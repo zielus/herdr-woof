@@ -407,7 +407,15 @@ describe("plan and auto-build", () => {
       ["changed", "not_changed"],
     ]);
     const argv = gates.find((gate) => gate["gate"] === "changed")?.["check"]?.["command"];
-    expect(argv).toEqual(["git", "diff", "--quiet", start, "HEAD", "--", "docs/plan.md"]);
+    expect(argv).toEqual([
+      "sh",
+      "-c",
+      'test -n "$(git log -1 --format=%H "$@")"',
+      "changed",
+      `${start}..HEAD`,
+      "--",
+      "docs/plan.md",
+    ]);
     expect(git(ws.repo, "rev-parse", "HEAD").trim()).toBe(start);
   }, 90_000);
 });

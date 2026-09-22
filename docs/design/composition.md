@@ -271,8 +271,8 @@ readSnapshot` holds for both journals.
   other version in the tree, byte-equal to the accepted artifact — checks see
   their subject through `command(input, {subject, start})`), sending the
   planner back (bounded by `maxVisitsPerStage`) otherwise. An older plan already
-  at the path does not count. A fourth check, `changed`, requires the path to
-  differ from `start`, the revision on the run's first dispatch; the identical
+  at the path does not count. A fourth check, `changed`, requires a commit
+  touching the path since `start`, the revision on the run's first dispatch; the identical
   plan already committed there fails the run (`not_changed`) rather than
   looping, since the planner cannot commit it again.
 - `auto-build`: workflow step `plan` → workflow step `build`
