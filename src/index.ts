@@ -84,6 +84,14 @@ export {
   unblockRun,
 } from "./state/store.js";
 export type { CancelSource } from "./journal/lifecycle-records.js";
+export { ACTIVITY_KINDS, ACTIVITY_PHASES, activityKey } from "./journal/activity-records.js";
+export type {
+  ActivityKind,
+  ActivityPhase,
+  ActivitySubject,
+  AgentLifecycleChangedRecord,
+  RunActivityRecord,
+} from "./journal/activity-records.js";
 export type {
   AssignAgentInput,
   BlockRunInput,
@@ -111,7 +119,9 @@ export type {
   ArtifactIntegrity,
   ReadSnapshotResult,
   RunSnapshot,
+  SnapshotActivity,
   SnapshotAgent,
+  SnapshotAgentLifecycle,
   SnapshotAttempt,
   SnapshotBlocked,
   SnapshotGate,

@@ -24,6 +24,11 @@ import type {
 } from "../domain/types.js";
 import { registerRunLocator } from "./locator.js";
 import type {
+  ActivityKind,
+  AgentLifecycleChangedRecord,
+  RunActivityRecord,
+} from "../journal/activity-records.js";
+import type {
   CheckResultRecord,
   DeliveryReconciledRecord,
   GateNext,
@@ -42,6 +47,7 @@ import {
   inspectJournalPath,
   readJournal,
 } from "../journal/journal.js";
+import type { Lifecycle } from "../runtime/adapter.js";
 import type {
   CancelSource,
   HostClaimedRecord,
@@ -231,6 +237,28 @@ export interface ObservationRecoveredInput extends StoreInput {
   agentId: string;
   lostSeq: number;
   terminalId: string | null;
+}
+
+export interface LifecycleChangedInput extends StoreInput {
+  agentId: string;
+  /** The agent's last journaled lifecycle; null for its first transition. */
+  from: Lifecycle | null;
+  to: Lifecycle;
+  terminalId: string | null;
+  /** The raw runtime status behind `to`; omitted from the record when null. */
+  raw?: string | null;
+  /** A pane occupant replacement; omitted from the record when false. */
+  replaced?: boolean;
+}
+
+export interface ActivityInput extends StoreInput {
+  kind: ActivityKind;
+  phase: "started" | "ended";
+  agentId?: string;
+  attempt?: { stageId: string; visit: number; attempt: number };
+  detail?: string;
+  /** Only for `ended`. */
+  result?: string;
 }
 
 export interface TerminateRunInput extends StoreInput {
@@ -663,6 +691,55 @@ export async function recordObservationRecovered(
     agentId: input.agentId,
     lostSeq: input.lostSeq,
     terminalId: input.terminalId,
+  });
+}
+
+/**
+ * Records that an agent's observed lifecycle differs from its last journaled one
+ * (a transition, never a sample). `from` must be that journaled lifecycle
+ * (`lifecycle_mismatch`), and `to` must differ unless the pane occupant was
+ * replaced (`lifecycle_unchanged`).
+ */
+export async function recordLifecycleChanged(
+  input: LifecycleChangedInput,
+): Promise<StoreOutcome<AgentLifecycleChangedRecord>> {
+  return appendFact<AgentLifecycleChangedRecord>(input, {
+    type: "agent.lifecycle_changed",
+    agentId: input.agentId,
+    from: input.from,
+    to: input.to,
+    terminalId: input.terminalId,
+    ...(input.raw !== undefined && input.raw !== null ? { raw: input.raw.slice(0, 200) } : {}),
+    ...(input.replaced === true ? { replaced: true } : {}),
+  });
+}
+
+/**
+ * Records the start or end of an engine activity. A `started` for a kind and
+ * subject already open is `activity_open`; an `ended` for one that is not open
+ * is `activity_not_open`.
+ */
+export async function recordActivity(
+  input: ActivityInput,
+): Promise<StoreOutcome<RunActivityRecord>> {
+  return appendFact<RunActivityRecord>(input, {
+    type: "run.activity",
+    kind: input.kind,
+    phase: input.phase,
+    ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+    ...(input.attempt !== undefined
+      ? {
+          stageId: input.attempt.stageId,
+          visit: input.attempt.visit,
+          attempt: input.attempt.attempt,
+        }
+      : {}),
+    ...(input.detail !== undefined && input.detail !== ""
+      ? { detail: input.detail.slice(0, 500) }
+      : {}),
+    ...(input.result !== undefined && input.result !== ""
+      ? { result: input.result.slice(0, 500) }
+      : {}),
   });
 }
 

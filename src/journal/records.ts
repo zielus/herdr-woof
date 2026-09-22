@@ -15,6 +15,12 @@ import { INFRA_REASONS, REJECTION_REASONS } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
 import type { RunPlan } from "../domain/types.js";
 import {
+  agentLifecycleChangedProblem,
+  runActivityProblem,
+  type AgentLifecycleChangedRecord,
+  type RunActivityRecord,
+} from "./activity-records.js";
+import {
   deliveryReconciledProblem,
   gateRecordedProblem,
   runBlockedProblem,
@@ -56,6 +62,7 @@ import {
 
 export type {
   AgentAssignedRecord,
+  AgentLifecycleChangedRecord,
   DeliveryReconciledRecord,
   GateRecordedRecord,
   HostClaimedRecord,
@@ -64,6 +71,7 @@ export type {
   ObservationLostRecord,
   ObservationRecoveredRecord,
   RequestDispatchedRecord,
+  RunActivityRecord,
   RunBlockedRecord,
   RunCancelRequestedRecord,
   RunTerminatedRecord,
@@ -154,7 +162,9 @@ export type JournalRecord =
   | HostLostRecord
   | RunCancelRequestedRecord
   | ObservationLostRecord
-  | ObservationRecoveredRecord;
+  | ObservationRecoveredRecord
+  | AgentLifecycleChangedRecord
+  | RunActivityRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -261,6 +271,10 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return observationLostProblem(value);
     case "observation.recovered":
       return observationRecoveredProblem(value);
+    case "agent.lifecycle_changed":
+      return agentLifecycleChangedProblem(value);
+    case "run.activity":
+      return runActivityProblem(value);
     default:
       return "unknown record type";
   }

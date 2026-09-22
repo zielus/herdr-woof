@@ -5,6 +5,7 @@ import {
   PLAN,
   REV,
   accepted,
+  activity,
   assigned,
   attempt,
   blocked,
@@ -17,6 +18,7 @@ import {
   hostExited,
   hostLost,
   journalOf,
+  lifecycleChanged,
   observationLost,
   observationRecovered,
   opened,
@@ -142,6 +144,11 @@ describe("projectEvents", () => {
       hostClaimed(),
       observationLost("builder"),
       observationRecovered("builder", 15),
+      lifecycleChanged("builder", null, "ready"),
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      activity("check_run", "started", { attempt: ["build", 1, 1] }, { detail: "bun test" }),
+      activity("revision_check", "started"),
+      activity("delivery_check", "started", { agentId: "builder", attempt: ["build", 1, 1] }),
       hostLost(),
       cancelRequested("signal"),
       terminated("completed"),
@@ -174,6 +181,11 @@ describe("projectEvents", () => {
       {},
       { agentId: "builder" },
       { agentId: "builder" },
+      { agentId: "builder" },
+      { agentId: "builder" },
+      { stageId: "build", visit: 1, attempt: 1 },
+      {},
+      buildSubject,
       {},
       {},
       {},
@@ -303,7 +315,7 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
         resolution,
         evidence,
       );
-    } else if (roll < 0.93) {
+    } else if (roll < 0.885) {
       // Invalid by construction (some only under a plan or a known terminal).
       const acceptance = ofType("submission.accepted").at(-1);
       const latest = ofType("attempt.opened").at(-1);
@@ -348,6 +360,65 @@ function generateJournal(seed: number, refusals: Set<string>): Json[] {
               acceptedRef[0] === "build" ? "review" : "build",
               ...acceptedRef,
             ),
+      ]);
+    } else if (roll < 0.93) {
+      // Activity facts: transitions from the journaled lifecycle (or not), and activity
+      // starts and ends that pair up (or not).
+      const lifecycle = ofType("agent.lifecycle_changed").findLast(
+        (record) => record["agentId"] === agent,
+      );
+      const current = (lifecycle?.["to"] as string | undefined) ?? null;
+      const open = ofType("run.activity").filter(
+        (record) =>
+          record["phase"] === "started" &&
+          !records.some(
+            (other) =>
+              other["type"] === "run.activity" &&
+              other["phase"] === "ended" &&
+              (other["seq"] as number) > (record["seq"] as number) &&
+              other["kind"] === record["kind"] &&
+              other["agentId"] === record["agentId"] &&
+              other["stageId"] === record["stageId"] &&
+              other["visit"] === record["visit"] &&
+              other["attempt"] === record["attempt"],
+          ),
+      );
+      const lastOpen = open.at(-1);
+      const endOf = (started: Json | undefined): Json =>
+        started === undefined
+          ? activity("readiness_wait", "ended", { agentId: agent })
+          : {
+              type: "run.activity",
+              kind: started["kind"],
+              phase: "ended",
+              ...(started["agentId"] === undefined ? {} : { agentId: started["agentId"] }),
+              ...(started["stageId"] === undefined
+                ? {}
+                : {
+                    stageId: started["stageId"],
+                    visit: started["visit"],
+                    attempt: started["attempt"],
+                  }),
+              result: "done",
+            };
+      body = pick([
+        lifecycleChanged(agent, current, pick(["ready", "working", "blocked", "gone"])),
+        lifecycleChanged(agent, current, pick(["ready", "working"]), { raw: "idle" }),
+        lifecycleChanged(agent, current, current ?? "ready", { replaced: true }),
+        lifecycleChanged(agent, pick([null, "ready", "working"]), "ready"),
+        activity("readiness_wait", "started", { agentId: agent }),
+        activity("readiness_wait", "started", { agentId: agent }),
+        activity("delivery_check", "started", {
+          agentId: agent,
+          attempt: [stage, visit, attemptNo],
+        }),
+        activity(pick(["revision_check", "check_run"]), "started", {
+          attempt: [stage, visit, attemptNo],
+        }),
+        endOf(lastOpen),
+        endOf(lastOpen),
+        endOf(pick(open)),
+        activity("check_run", "ended", { attempt: [stage, visit, attemptNo] }),
       ]);
     } else if (roll < 0.965) {
       // Lifecycle facts; the host's exit is the one record that may follow a termination.
@@ -412,6 +483,7 @@ describe("snapshot and events consistency", () => {
     // The generator exercises every record type the reducer knows.
     expect([...types].toSorted()).toEqual([
       "agent.assigned",
+      "agent.lifecycle_changed",
       "attempt.opened",
       "delivery.reconciled",
       "gate.recorded",
@@ -421,6 +493,7 @@ describe("snapshot and events consistency", () => {
       "observation.lost",
       "observation.recovered",
       "request.dispatched",
+      "run.activity",
       "run.blocked",
       "run.cancel_requested",
       "run.opened",
@@ -432,6 +505,8 @@ describe("snapshot and events consistency", () => {
     ]);
     // The refused proposals reach every reducer refusal reason (the closed ReducerReason set).
     expect([...refusals].toSorted()).toEqual([
+      "activity_not_open",
+      "activity_open",
       "agent_busy",
       "agent_unassigned",
       "agent_unknown",
@@ -441,6 +516,7 @@ describe("snapshot and events consistency", () => {
       "attempt_unknown",
       "dispatch_exists",
       "dispatch_not_ambiguous",
+      "dispatch_not_latest",
       "gate_exists",
       "gate_mismatch",
       "gate_subject_stale",
@@ -449,6 +525,8 @@ describe("snapshot and events consistency", () => {
       "host_gone",
       "host_unknown",
       "invalid_transition",
+      "lifecycle_mismatch",
+      "lifecycle_unchanged",
       "not_blocked",
       "observation_lost",
       "observation_not_lost",
