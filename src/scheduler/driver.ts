@@ -1393,10 +1393,12 @@ export async function runWorkflow<Input>(
 
       case "record_child": {
         const result = action.end.result;
-        if (result === null) {
+        // A child that ended with an infrastructure error (an agent pane it could not stop) is not
+        // a clean result: the next step would share the checkout with whatever still runs.
+        if (result === null || action.end.error !== null) {
           written = await end(
             "failed",
-            `child_error: ${action.stageId} visit ${action.visit}: ${action.end.error ?? "the child run ended without a result"}`,
+            `child_error: ${action.stageId} visit ${action.visit}: ${action.end.error ?? "the child run ended without a result"}${result !== null ? ` (child outcome ${result.outcome})` : ""}`,
           );
           break;
         }

@@ -199,7 +199,9 @@ describe("plan and auto-build", () => {
     const planGates = ofType(journal(planDir), "gate.recorded");
     expect(planGates.map((gate) => [gate["gate"], gate["reason"]])).toEqual([
       ["plan", "planned"],
-      ["published", "published"],
+      ["published", "published_ok"],
+      ["committed", "committed_ok"],
+      ["matches", "published"],
     ]);
     expect(git(ws.repo, "log", "--format=%s").split("\n")[0]).toBe("plan");
 
@@ -323,7 +325,7 @@ describe("plan and auto-build", () => {
       "utf8",
     );
     expect(second).toContain(
-      "Publish the plan: docs/plan.md is not in the checkout's HEAD commit.",
+      "Publish the plan: docs/plan.md in the checkout's HEAD commit is not exactly your accepted plan.md (check published failed).",
     );
     expect(second).toContain("- publish check output:");
 
@@ -340,6 +342,38 @@ describe("plan and auto-build", () => {
         field: "inputArtifacts.spec",
         message: `${file} has sha256 ${sha256(Buffer.from("spec\n"))}, not ${"0".repeat(64)}`,
       },
+    ]);
+  }, 90_000);
+
+  it("B5: an older plan already committed at the publish path does not count as publishing the accepted one", () => {
+    const ws = setup();
+    mkdirSync(join(ws.repo, "docs"), { recursive: true });
+    writeFileSync(join(ws.repo, "docs", "plan.md"), "# an older plan\n");
+    git(ws.repo, "add", "-A");
+    git(ws.repo, "commit", "-q", "-m", "older plan");
+    // The scripted planner does not publish: the path exists in HEAD, but not with its plan.
+    const out = run(ws, "plan", "b5", { publish: { path: "docs/plan.md" } });
+    expect(out.status, out.stdout + out.stderr).toBe(5);
+    const gates = ofType(journal(join(ws.runs, "b5")), "gate.recorded");
+    expect(gates.map((gate) => [gate["gate"], gate["reason"]])).toEqual([
+      ["plan", "planned"],
+      ["published", "published_ok"],
+      ["committed", "committed_ok"],
+      ["matches", "not_matches"],
+      ["plan", "planned"],
+      ["published", "published_ok"],
+      ["committed", "committed_ok"],
+      ["matches", "not_matches"],
+    ]);
+    const argv = gates.find((gate) => gate["gate"] === "matches")?.["check"]?.["command"];
+    expect(argv).toEqual([
+      "git",
+      "diff",
+      "--no-index",
+      "--quiet",
+      "--",
+      join(ws.runs, "b5", "accepted/plan/visit-1/attempt-1/plan.md"),
+      "docs/plan.md",
     ]);
   }, 90_000);
 });

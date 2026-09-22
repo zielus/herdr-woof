@@ -295,6 +295,9 @@ Real shipped behavior proving the authoring contract generalizes beyond
   `cancelled`. A later agent stage names a step's output with `{from: {stageId}}`
   (the child's `result.json`) or `{from: {stageId, artifact: "<child stage>"}}`.
   See [domain model](../architecture/domain-model.md#implemented-now-composition-workflow-steps).
+- **Check commands see their subject.** `command(input, ctx)` receives
+  `ctx.subject`, the accepted artifact the check is about (absent when a view
+  only shows the command), so a check can compare the repository with it.
 - **Input artifacts.** `inputArtifacts(input) → [{label, path, sha256}]` names
   files from outside the run; they are checked, copied into the run and named in
   requests with `{from: {input: "<label>"}}`.

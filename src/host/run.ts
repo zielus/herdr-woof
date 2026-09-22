@@ -281,6 +281,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
   process.on("SIGTERM", onSignal);
   /** A created worktree the run asked to discard (`keep: false`) after it completed. */
   let discardAfter: ResolvedCheckout | undefined;
+  /** A worktree this host created for a run that is not open yet: an exception removes it. */
+  let unopened: ResolvedCheckout | undefined;
   try {
     const hosted = await host();
     if (discardAfter !== undefined && options.checkout?.herdr != null) {
@@ -293,10 +295,18 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     }
     return hosted;
   } catch (error) {
+    // The failure is reported as it happened; removing the orphan worktree only adds to it.
+    const discarded =
+      unopened === undefined
+        ? undefined
+        : await discardCreatedCheckout(options.checkout?.herdr ?? null, unopened).catch(
+            (cleanup: unknown) =>
+              `the created worktree could not be removed: ${(cleanup as Error).message}`,
+          );
     return await finishJournaled(3, {
       outcome: "rejected",
       reason: "engine_invariant",
-      message: `the run host failed: ${(error as Error).message}`,
+      message: `the run host failed: ${(error as Error).message}${discarded === undefined ? "" : `; ${discarded}`}`,
       details: [],
     });
   } finally {
@@ -371,6 +381,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       );
     }
     const checkout = admitted.checkout;
+    if (checkout.created && policy?.resolved === undefined) unopened = checkout;
     if (checkout.created)
       log(
         `checkout: worktree ${checkout.path} (branch ${String(checkout.branch)}, workspace ${String(checkout.workspaceId)})`,
@@ -381,6 +392,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         policy?.resolved === undefined
           ? await discardCreatedCheckout(policy?.herdr ?? null, checkout)
           : undefined;
+      unopened = undefined;
       return reject(
         reason,
         discarded === undefined ? message : `${message}; ${discarded}`,
@@ -427,6 +439,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       ...(hostRecord !== undefined ? { host: hostRecord } : {}),
     });
     if (opened.outcome === "rejected") return refuse(opened.reason, opened.message, opened.details);
+    // The run is open: its worktree belongs to the run now, whatever happens next.
+    unopened = undefined;
     if (opened.hostClaimed !== null) journaled = true;
     else if (hostRecord !== undefined) log("cannot journal host.claimed: the journal write failed");
     // Configuration warnings are for the operator, not only the log (PI-004).

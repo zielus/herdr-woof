@@ -188,7 +188,8 @@ async function openChild(
         result: out.result,
         error: out.error === null ? null : `${out.error.reason}: ${out.error.message}`,
       };
-      if (out.result !== null)
+      // An infrastructure error (an unstopped pane) exits 3 like a top-level host, whatever the outcome.
+      if (out.result !== null && out.error === null)
         exitCode = { completed: 0, failed: 4, exhausted: 5, cancelled: 6 }[out.result.outcome];
     } catch (error) {
       end = { result: null, error: `engine_invariant: ${(error as Error).message}` };

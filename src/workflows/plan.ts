@@ -2,7 +2,7 @@ import { canonicalJson } from "../contracts/canonical-json.js";
 import { isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
 import type { Limits } from "../domain/types.js";
-import type { InputRef, WorkflowDefinition } from "../scheduler/definition.js";
+import type { CheckStage, InputRef, WorkflowDefinition } from "../scheduler/definition.js";
 import { MAX_REQUEST_BYTES } from "../scheduler/request.js";
 import { exactKeys, limitsProblem, nonEmpty } from "./input.js";
 import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
@@ -11,9 +11,9 @@ import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
  * Built-in `plan` workflow (composition): one planner writes `plan.md`, the implementation plan
  * for a task. It is the first step of `auto-build` and a workflow of its own (scenario (a) of
  * docs/design/composition.md): with `publish.path` the planner also writes the plan into the
- * repository at that path and commits it (and pushes, with `publish.push`), and an engine-run
- * check confirms the file is in the checkout's HEAD commit before the run completes. A plan that
- * is not committed sends the planner back once more, bounded by `maxVisitsPerStage`.
+ * repository at that path and commits it (and pushes, with `publish.push`), and engine-run checks
+ * confirm the HEAD commit holds exactly the accepted plan.md at that path before the run
+ * completes. A plan that is not published sends the planner back, bounded by `maxVisitsPerStage`.
  *
  * Its checkout access is "writable": with `publish` it commits to the tree, so it never starts
  * on the operator's uncommitted work.
@@ -53,8 +53,37 @@ const VERIFY_TIMEOUT_MS = 30_000;
 
 const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
   { stageId: "plan", enteredBy: null },
-  { stageId: "plan", enteredBy: { kind: "check", gate: "published" } },
+  { stageId: "plan", enteredBy: { kind: "check", gate: "committed" } },
 ];
+
+/**
+ * One publication check: `argv(path, subject)` runs in the repository with the publish path and
+ * the accepted plan's absolute path (a placeholder when only shown), and passes to `pass` (null:
+ * the run completes) or rejects back to the planner.
+ */
+function publishCheck(
+  checkId: string,
+  argv: (path: string, subject: string) => string[],
+  pass: string | null,
+): CheckStage<PlanInput> {
+  return {
+    kind: "check",
+    checkId,
+    command: (input, ctx) => ({
+      argv: argv(
+        input.publish?.path ?? "plan.md",
+        ctx?.subject.acceptedPath ?? "<accepted plan.md>",
+      ),
+      timeoutMs: VERIFY_TIMEOUT_MS,
+    }),
+    next: (ctx) =>
+      ctx.check.exitCode === 0 && !ctx.check.timedOut
+        ? pass === null
+          ? { decision: "pass", reason: "published", outcome: "completed" }
+          : { decision: "pass", reason: `${checkId}_ok`, to: pass }
+        : { decision: "reject", reason: `not_${checkId}`, to: "plan" },
+  };
+}
 
 function validateInput(
   value: unknown,
@@ -224,13 +253,14 @@ export const planWorkflow: WorkflowDefinition<PlanInput> = {
           constraints.length === 0
             ? ""
             : `\nRespect these constraints:\n${constraints.map((item) => `- ${item}`).join("\n")}`;
-        const unpublished = ctx.enteredBy?.kind === "check";
+        const entered = ctx.enteredBy;
+        const unpublished = entered?.kind === "check";
         const inputs: InputRef[] = unpublished
-          ? [{ label: "publish check output", from: { checkId: "published" } }]
+          ? [{ label: "publish check output", from: { checkId: entered.gate } }]
           : [];
         return {
           goal: unpublished
-            ? `Publish the plan: ${ctx.input.publish?.path ?? "the plan"} is not in the checkout's HEAD commit.`
+            ? `Publish the plan: ${ctx.input.publish?.path ?? "the plan"} in the checkout's HEAD commit is not exactly your accepted plan.md (check ${entered.gate} failed).`
             : "Write the implementation plan for the task below.",
           instructions: `Read the repository (your working directory) and write the plan as your artifact: concrete file-level steps another engineer can follow, and an explicit statement of what "done" means against every acceptance criterion.${publishInstruction(ctx.input)}${constraintLines}`,
           inputs,
@@ -245,21 +275,23 @@ export const planWorkflow: WorkflowDefinition<PlanInput> = {
           ? { decision: "pass", reason: "planned", outcome: "completed" }
           : { decision: "pass", reason: "planned", to: "published" },
     },
-    {
-      kind: "check",
-      checkId: "published",
-      // The plan file must be in the commit the checkout's HEAD names.
-      command: (input) => ({
-        argv: ["git", "cat-file", "-e", `HEAD:${input.publish?.path ?? "plan.md"}`],
-        timeoutMs: VERIFY_TIMEOUT_MS,
-      }),
-      next: (ctx) =>
-        ctx.check.exitCode === 0 && !ctx.check.timedOut
-          ? { decision: "pass", reason: "published", outcome: "completed" }
-          : { decision: "reject", reason: "not_published", to: "plan" },
-    },
+    // Publication is proven in three engine-run steps, each sending the planner back when it fails:
+    // the path is in the HEAD commit, the tree holds no other version of it, and that committed
+    // file is byte-for-byte the accepted plan.md (not an older plan already at that path).
+    publishCheck("published", (path) => ["git", "cat-file", "-e", `HEAD:${path}`], "committed"),
+    publishCheck("committed", (path) => ["git", "diff", "--quiet", "HEAD", "--", path], "matches"),
+    publishCheck(
+      "matches",
+      (path, subject) => ["git", "diff", "--no-index", "--quiet", "--", subject, path],
+      null,
+    ),
   ],
-  edges: { plan: ["published", "completed"], published: ["completed", "plan"] },
+  edges: {
+    plan: ["published", "completed"],
+    published: ["committed", "plan"],
+    committed: ["matches", "plan"],
+    matches: ["completed", "plan"],
+  },
 };
 
 export default planWorkflow;

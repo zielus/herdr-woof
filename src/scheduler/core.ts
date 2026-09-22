@@ -335,7 +335,12 @@ function decideRun<Input>(
         },
       });
     }
-    const command = callDefinition(targetId, () => check.command(view.input));
+    const subjectRef = acceptedRefOf(snapshot, view.runDir, lastGate.subject);
+    if (subjectRef === null)
+      return terminate("failed", "engine_invariant: check subject has no accepted artifact");
+    const command = callDefinition(targetId, () =>
+      check.command(view.input, { subject: subjectRef }),
+    );
     if (
       command === null ||
       typeof command !== "object" ||

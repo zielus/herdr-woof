@@ -77,7 +77,9 @@ resolved project root.
   worktrees). `--trust-repository` is never passed.
 - `current` uses `source`.
 - `path` uses an existing git top level given by the caller (for example a
-  worktree created by a wrapping script); nothing is created.
+  worktree created by a wrapping script); nothing is created. It must be a
+  worktree of the source repository (same common Git directory), since
+  configuration and roles were resolved for that repository.
 - A child run's input may omit `checkout` or say `{mode:"current"}`; any other
   mode is refused `input_invalid` ("nested runs inherit the parent's
   checkout"). The child's repository is the parent's admitted repository.
@@ -264,9 +266,12 @@ readSnapshot` holds for both journals.
   stage writes `plan.md`. Input: `repo`, `task`, optional `constraints`,
   `instructions`, `agents`, `limits`, and `publish: {path, push?}` — when set,
   the planner also writes the plan to that repo path and commits it (and
-  pushes with `push`; the push itself is not verified), and a check stage
-  (`git cat-file -e HEAD:<path>`) confirms the commit, sending the planner back
-  (bounded by `maxVisitsPerStage`) when it is missing.
+  pushes with `push`; the push itself is not verified), and three check stages
+  confirm HEAD holds exactly the accepted `plan.md` at that path (in HEAD, no
+  other version in the tree, byte-equal to the accepted artifact — checks see
+  their subject through `command(input, {subject})`), sending the planner back
+  (bounded by `maxVisitsPerStage`) otherwise. An older plan already at the path
+  does not count.
 - `auto-build`: workflow step `plan` → workflow step `build`
   (`build-review`), the build input mapped from the parent input plus the plan
   step's `plan.md` artifact (path + digest) — scenario (c), one branch, one

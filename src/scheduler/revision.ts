@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -200,4 +200,31 @@ export async function treeStatus(
       return !ignore.some((prefix) => path.startsWith(prefix));
     });
   return { ok: true, dirty: entries.length > 0, entries };
+}
+
+/**
+ * The canonical common Git directory of the work tree at `repo` (`git rev-parse
+ * --git-common-dir`, resolved): every worktree of one repository shares it.
+ */
+export async function gitCommonDir(
+  repo: string,
+): Promise<{ ok: true; dir: string } | { ok: false; message: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+  for (const key of ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
+    Reflect.deleteProperty(env, key);
+  const common = await runGit(
+    "git",
+    ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    env,
+    undefined,
+    GIT_TIMEOUT_MS,
+  );
+  if (!common.ok)
+    return { ok: false, message: `git rev-parse in ${repo} failed: ${common.message}` };
+  const dir = common.stdout.trim();
+  try {
+    return { ok: true, dir: realpathSync(dir) };
+  } catch {
+    return { ok: true, dir };
+  }
 }

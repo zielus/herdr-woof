@@ -24,7 +24,7 @@ import { openRun, type OpenRunInput } from "../state/store.js";
 import type { InputArtifact, WorkflowDefinition } from "./definition.js";
 import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
-import { revisionOf, treeStatus, type RevisionResult } from "./revision.js";
+import { gitCommonDir, revisionOf, treeStatus, type RevisionResult } from "./revision.js";
 
 /**
  * Workflow admission (p3, extended in p4): everything checked before a run
@@ -531,7 +531,16 @@ async function resolveCheckout(
   }
   const mode: CheckoutMode = spec?.mode ?? options?.defaultMode ?? "current";
   if (mode === "current") return { ok: true, checkout: { ...base, mode, path: source } };
-  if (spec?.mode === "path") return { ok: true, checkout: { ...base, mode, path: spec.path } };
+  if (spec?.mode === "path") {
+    // A caller's own worktree must be one of the source repository's: configuration and roles
+    // were resolved for that repository, never for another.
+    const [own, given] = await Promise.all([gitCommonDir(source), gitCommonDir(spec.path)]);
+    if (!own.ok || !given.ok || own.dir !== given.dir) {
+      const message = `the checkout path ${spec.path} is not a worktree of the repository ${source}${!given.ok ? ` (${given.message})` : ""}`;
+      return reject("repo_invalid", message, [{ field: `${CHECKOUT_KEY}.path`, message }]);
+    }
+    return { ok: true, checkout: { ...base, mode, path: spec.path } };
+  }
   const create = options?.createWorktree;
   if (create === undefined) {
     const message =

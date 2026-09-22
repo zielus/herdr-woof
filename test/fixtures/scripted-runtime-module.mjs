@@ -62,11 +62,27 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       mkdirSync(join(repo, "src"), { recursive: true });
       writeFileSync(join(repo, "src", "change.txt"), `version ${counts.builder}\n`);
     }
+    const verdict =
+      agentId !== "reviewer"
+        ? null
+        : mode === "always-fail" || counts.reviewer === 1
+          ? "fail"
+          : "pass";
+    const rel = `artifacts/${active.stageId}/visit-${active.visit}/attempt-${active.attempt}/${ARTIFACTS[active.stageId]}`;
+    // The reviewer leads with the opt-in verdict marker (p5 D5), so the happy path
+    // exercises check 17b agreeing rather than only its rejection.
+    const body = `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
+    const content =
+      active.stageId === "plan"
+        ? `# plan ${active.visit}.${active.attempt}\n\n1. Write src/change.txt.\n2. Done when the file exists.\n`
+        : verdict === null
+          ? body
+          : `Woof-Verdict: ${verdict}\n\n${body}`;
     // WOOF_TEST_PUBLISH (composition): the planner also commits its plan at that repository path.
     const publish = process.env["WOOF_TEST_PUBLISH"];
     if (agentId === "planner" && publish !== undefined && publish !== "") {
       mkdirSync(dirname(join(repo, publish)), { recursive: true });
-      writeFileSync(join(repo, publish), `# plan ${active.visit}.${active.attempt}\n`);
+      writeFileSync(join(repo, publish), content);
       const git = (...args) =>
         spawnSync(
           "git",
@@ -84,22 +100,6 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
       git("add", publish);
       git("commit", "-q", "-m", "plan");
     }
-    const verdict =
-      agentId !== "reviewer"
-        ? null
-        : mode === "always-fail" || counts.reviewer === 1
-          ? "fail"
-          : "pass";
-    const rel = `artifacts/${active.stageId}/visit-${active.visit}/attempt-${active.attempt}/${ARTIFACTS[active.stageId]}`;
-    // The reviewer leads with the opt-in verdict marker (p5 D5), so the happy path
-    // exercises check 17b agreeing rather than only its rejection.
-    const body = `# ${active.stageId} ${active.visit}.${active.attempt}\n\n${verdict === "fail" ? "Blocking finding." : "Done."}\n`;
-    const content =
-      active.stageId === "plan"
-        ? `# plan ${active.visit}.${active.attempt}\n\n1. Write src/change.txt.\n2. Done when the file exists.\n`
-        : verdict === null
-          ? body
-          : `Woof-Verdict: ${verdict}\n\n${body}`;
     writeFileSync(join(runDir, rel), content);
     await submitResult({
       runDir,

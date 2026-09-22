@@ -460,6 +460,26 @@ describe("checkout policy in the run input", () => {
       created: false,
     });
     expect(existsSync(join(own, "src", "change.txt"))).toBe(true);
+
+    // A path that is a git top level of another repository is refused: configuration and roles
+    // were resolved for this one.
+    const other = join(ws.root, "other");
+    mkdirSync(other);
+    git(other, "init", "-q");
+    git(other, "commit", "-q", "--allow-empty", "-m", "other");
+    const foreign = woof(
+      ws,
+      start(
+        ws,
+        join(ws.root, "run-foreign"),
+        input(ws, { checkout: { mode: "path", path: other } }),
+        ["--host", "foreground"],
+      ),
+    );
+    expect(foreign.status, foreign.stdout + foreign.stderr).toBe(2);
+    expect(foreign.json).toMatchObject({ reason: "repo_invalid" });
+    expect(foreign.json["details"][0]).toMatchObject({ field: "checkout.path" });
+    expect(existsSync(join(ws.root, "run-foreign", "journal.jsonl"))).toBe(false);
     expect(calls(ws).filter((item) => item[0] === "worktree")).toHaveLength(2);
   }, 120_000);
 });

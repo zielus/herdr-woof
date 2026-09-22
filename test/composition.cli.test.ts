@@ -25,6 +25,7 @@ import { cliPath, repoRoot } from "./helpers/process.js";
 // ways; their results are the steps' accepted outputs; cancellation follows the parent; a step
 // that keeps failing is bounded by the parent's own visit limit.
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
+const failingStopModule = join(repoRoot, "test", "fixtures", "failing-stop-runtime-module.mjs");
 const fixtures = join(repoRoot, "test", "fixtures", "workflows");
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
@@ -374,4 +375,27 @@ describe("a workflow can be a step", () => {
     expect(terminated(join(ws.runs, "w5.first.2"))).toBe(true);
     expect(existsSync(join(ws.runs, "w5.first.3"))).toBe(false);
   }, 90_000);
+
+  it("W6: a child that completed but could not stop an agent pane fails the parent instead of starting the next step", () => {
+    const ws = setup();
+    const result = spawnSync(
+      "node",
+      args(ws, "w6", { note: "hello" }).map((arg) =>
+        arg === runtimeModule ? failingStopModule : arg,
+      ),
+      { cwd: ws.root, env: env(ws), encoding: "utf8", timeout: 90_000 },
+    );
+    const json = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}") as Json;
+    expect(result.status, result.stdout + result.stderr).toBe(4);
+    expect(json["result"]["reason"]).toMatch(
+      /^child_error: first visit 1: runtime_cleanup_failed: .*\(child outcome completed\)$/,
+    );
+    const parent = journal(join(ws.runs, "w6"));
+    expect(ofType(parent, "stage.child_result")).toEqual([]);
+    expect(existsSync(join(ws.runs, "w6.second.1"))).toBe(false);
+    // The child's own host records the infrastructure failure as exit 3.
+    expect(ofType(journal(join(ws.runs, "w6.first.1")), "host.exited")[0]).toMatchObject({
+      exitCode: 3,
+    });
+  }, 60_000);
 });

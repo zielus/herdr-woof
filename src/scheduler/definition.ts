@@ -132,7 +132,11 @@ export interface InputArtifact {
 export interface CheckStage<Input = unknown> {
   kind: "check";
   checkId: string;
-  command(input: Input): { argv: string[]; timeoutMs: number };
+  /**
+   * The command to run. `ctx.subject` is the accepted artifact the check is about (composition,
+   * optional to read); it is absent when a presentation layer asks for the command to show it.
+   */
+  command(input: Input, ctx?: { subject: AcceptedRef }): { argv: string[]; timeoutMs: number };
   next(ctx: CheckGateContext<Input>): Transition;
 }
 

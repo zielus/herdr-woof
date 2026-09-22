@@ -683,6 +683,9 @@ Real shipped behavior for the checkout policy — the plan and its reasoning are
   (`project_mismatch`); the run then works in the checkout: the revision,
   the run-directory overlap check, `config.json`'s `repository`, every pane,
   check and fingerprint use the checkout path.
+- **A `path` checkout must belong to the source repository.** Its canonical
+  common Git directory must be the source's (`git rev-parse --git-common-dir`);
+  another repository is `repo_invalid` naming `checkout.path`.
 - **Writable workflows refuse a dirty tree.** A definition may declare
   `checkout: "any" | "writable"` (default `writable`). A writable workflow
   refuses a `current` or `path` checkout whose `git status --porcelain` lists
@@ -726,7 +729,10 @@ input(ctx), next(ctx)}` runs the named workflow — resolved like `--workflow`,
 <reason>: <message>`), opens it and drives its scheduler in the background;
   the parent journals `stage.child_opened` and keeps ticking (`wait
 awaiting_child`), so its deadline, cancellation and agent observation go on.
-  When the child ends, `record_child` publishes its `RunResult` as
+  A child that ended with an infrastructure error (for example an agent pane it
+  could not stop) fails the parent `child_error` even when its outcome was
+  recorded, so no next step shares the checkout with it. When the child ends
+  cleanly, `record_child` publishes its `RunResult` as
   `accepted/<stage>/visit-<v>/attempt-1/result.json`, copies each child stage's
   latest accepted artifact (checked against the child's digest) to
   `accepted/<stage>/visit-<v>/attempt-1/<childStage>/<file>`, and journals
