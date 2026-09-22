@@ -4,11 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { AttemptRef, Limits } from "../domain/types.js";
 import { acceptedCopyProblem, hashFile } from "../journal/accepted-copy.js";
-import {
-  activityKey,
-  type ActivityKind,
-  type RunActivityRecord,
-} from "../journal/activity-records.js";
+import type { ActivityKind, RunActivityRecord } from "../journal/activity-records.js";
 import type { LockOptions } from "../journal/lock.js";
 import type {
   AgentHandle,
@@ -18,7 +14,7 @@ import type {
 } from "../runtime/adapter.js";
 import { herdrRuntimeName } from "../runtime/names.js";
 import { ObservationTracker } from "../runtime/tracker.js";
-import { dict } from "../state/reducer.js";
+import { activityKey, dict } from "../state/reducer.js";
 import { deriveRunResult, type RunResult } from "../state/result.js";
 import { readSnapshot, type RunSnapshot, type SnapshotActivity } from "../state/snapshot.js";
 import {

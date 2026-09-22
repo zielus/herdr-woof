@@ -419,7 +419,10 @@ describe("woof run start --host herdr-pane", () => {
     // journal: opening block, rows as the records landed, the outcome summary; then the result.
     const pane = readFileSync(join(ws.root, "pane.log"), "utf8");
     const paneLines = pane.split("\n");
-    expect(paneLines[0]).toMatch(/^woof \/ build-review {2}repo · (master|main)$/);
+    // The configuration warning (the test HOME has no Claude trust file) reaches the pane through
+    // stderr, before the human view opens; nothing else of the technical log does.
+    expect(paneLines[0]).toMatch(/^woof: warning claude_trust_unknown: /);
+    expect(paneLines[1]).toMatch(/^woof \/ build-review {2}repo · (master|main)$/);
     expect(paneLines).toContain("builder    claude   provider default   build, repair");
     expect(pane).toMatch(/^\d\d:\d\d:\d\d → builder {2}build {3}Task dispatched$/m);
     expect(pane).toMatch(/^\d\d:\d\d:\d\d ↻ gate {5}review {2}Changes requested → repair$/m);
@@ -433,7 +436,7 @@ describe("woof run start --host herdr-pane", () => {
     // The pane's stdout is a file here, so no color; the technical log stays out of the pane.
     expect(pane).not.toContain("\u001B[");
     expect(pane).not.toContain("dispatch build visit 1 attempt 1");
-    expect(pane).not.toContain("woof: ");
+    expect(paneLines.filter((line) => line.startsWith("woof: "))).toEqual([paneLines[0]]);
     // The technical log is <run-dir>/host.log: timestamped scheduler actions, never the human rows.
     const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
     expect(hostLog).toMatch(
@@ -1511,9 +1514,14 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
     expect(lines.at(-2)?.startsWith("{")).toBe(true);
     expect(lines.filter((line) => line.startsWith("{"))).toHaveLength(1);
     expect(result.stdout).not.toContain("\u001B[");
-    expect(result.stderr).toBe("");
+    // Only the operator-facing configuration warnings reach stderr (the fresh HOME has no Claude
+    // trust file); the scheduler's technical lines never do.
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringMatching(/^woof: warning claude_trust_unknown: /),
+    ]);
     const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
     expect(hostLog).toMatch(/Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m);
+    expect(hostLog).toMatch(/Z warning claude_trust_unknown: /m);
     expect(hostLog).toMatch(/Z run ended$/m);
     expect(hostLog).not.toContain("Task dispatched");
 
@@ -1526,6 +1534,8 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
     expect(plain.json).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
     expect(plain.stdout).toMatch(/Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m);
     expect(plain.stdout).not.toContain("Task dispatched");
+    // With --plain the echoed log already shows the warning on stdout: once, not on stderr too.
+    expect(plain.stdout.split("warning claude_trust_unknown")).toHaveLength(2);
     expect(plain.stderr).toBe("");
     const plainLog = readFileSync(join(plainDir, "host.log"), "utf8").trim().split("\n");
     expect(plain.stdout.trim().split("\n").slice(0, -1)).toEqual(plainLog);

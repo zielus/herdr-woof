@@ -512,8 +512,10 @@ events`**, **`woof watch`** and **`woof run show`** are read-only and never take
   open, one history row per fact as the journal records land, the outcome
   summary — followed by the result JSON line. The host follows its OWN
   journal through the observe stream (`streamEvents` on the run directory:
-  read-only, lock-free, the same follow `woof watch` uses; `src/host/view.ts`
-  and the shared `src/observe/run-view.ts`), never the driver's callbacks, so
+  read-only, lock-free, the same follow `woof watch` uses; `src/inspect/host-view.ts`
+  and the shared `src/inspect/run-view.ts`, which derives the stage map from
+  the built-in definition the record names and hands it to the pure renderer
+  in `src/observe/`), never the driver's callbacks, so
   the host's pane and a separate observer agree by construction. The follow
   never delays the host: when the scheduler returns, the host aborts it,
   prints the rows it had not read yet from one direct read and renders the
@@ -524,8 +526,12 @@ events`**, **`woof watch`** and **`woof run show`** are read-only and never take
   `<run-dir>/host.log`, one ISO-timestamped line per entry, appended as it
   happens; `--plain` prints that log to stdout instead of the human view
   (`--ascii` and `--input summary|json` shape the view like `woof watch`'s).
-  Errors that abort the host still go to stderr; nothing else does, so a
-  Herdr pane shows one coherent view. `outcome.json`, exit codes,
+  Configuration warnings (`warning permission_bypass_configured: …`,
+  `warning claude_trust_unknown: …`) are for the operator: they go to stderr
+  as well as `host.log` in the foreground and pane hosts alike (with `--plain`
+  the echoed log already shows them, so they are printed once). Errors that
+  abort the host still go to stderr; nothing else does, so a Herdr pane shows
+  one coherent view. `outcome.json`, exit codes,
   `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are
   unchanged and do not depend on the host's stdout. There is no separate
   watch pane any more: one pane per run.
