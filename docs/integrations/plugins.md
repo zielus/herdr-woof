@@ -29,14 +29,19 @@ command and action below is an implemented surface.
 - Inspection (read-only; no journal lock, never contacts Herdr):
   `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
-[--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--after <cursor>]
-[--poll-ms <n>] [--timeout-ms <n>]`. `watch` (and `events --pretty`, which
-  prints exactly the same) is the human view: a header (run, workflow, current
-  stage, host owner, agents with role, kind, model and pane) and one line per
-  event, following like `events --follow` and with its exit codes; `<run-dir>`
-  defaults to `WOOF_RUN_DIR`. `status --pretty` prints only that header. Colors
-  only when stdout is a terminal and `NO_COLOR` is unset or empty. See
-  [observability](../architecture/observability.md#implemented-now-p4).
+[--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--input summary|json]
+[--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`.
+  `watch` is the human view of [run output](../design/run-output.md): an
+  opening block (workflow, repository, run id and directory, agent roster, stage
+  map with gates and repair routes, limits, input preview), one plain-English
+  row per meaningful fact (`time mark participant stage message`, the
+  participant an agent, `gate` or `run`) and an outcome summary with the
+  accepted artifact paths; it follows like `events --follow` and shares its exit
+  codes, and `<run-dir>` defaults to `WOOF_RUN_DIR`. `watch --plain` (and
+  `events --pretty`, which prints exactly the same) is the technical view: a
+  status header and one line per journal event; `status --pretty` prints only
+  that header. Colors only when stdout is a terminal and `NO_COLOR` is unset or
+  empty. See [observability](../architecture/observability.md#implemented-now-p4).
 - Runs across directories: `status`, `events`, `watch`, `run show` and
   `run cancel` take a run id wherever they take `<run-dir>` (an existing
   directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is

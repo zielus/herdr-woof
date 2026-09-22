@@ -440,18 +440,55 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   estimate from the iterator's own step time, not a measurement taken inside
   `subscribeEvents` (carry-over C4 stays deferred: `woof events --follow` is
   its first real consumer).
-- **`woof watch [<run-dir>]`** (and **`woof events --pretty`**, the same
-  output) is a human projection of the same stream, from the pure formatter
-  `src/observe/format.ts`: a header from one `readRunStatus` read (run,
-  workflow, active attempts, `liveness.owner`, each agent's role, kind,
-  model and assigned pane, the outcome once recorded), then one line per
-  event (local `HH:MM:SS`, `#seq`, type, subject and a type-specific
-  summary; an unknown type prints its data as compact JSON) and a
-  `-- end (<reason>) cursor <cursor>` line. It shares the read and follow
-  loop of `woof events`, so its exit codes are identical. Journal strings
-  are sanitized (control characters become spaces), and SGR colors are
-  added only when stdout is a TTY and `NO_COLOR` is unset or empty.
-  `woof status --pretty` prints that header instead of the JSON line.
+- **`woof watch [<run-dir>]`** is the human view of the same stream, the
+  presentation of [run output](../design/run-output.md), from the pure
+  renderer `src/observe/render.ts` (`createRunRenderer({snapshot, status,
+input, repository?, graph?, options})`, exported for a run host to print the
+  same lines from the same facts). From one `readRunStatus` read plus the
+  run's `input.json` and `config.json` it prints an opening block — `woof /
+<workflow>  <repo> · <branch>`, run id and version, the `~`-shortened run
+  directory, an AGENTS roster (kind, model or `provider default`, assigned
+  stages, the role when it differs from the name), a STEPS & GATES map drawn
+  from the built-in workflow's edge table when the plan's stages match it
+  (main path, `reject ↘` routes back to it, check commands, which gate binds a
+  revision) or else the plan's stage and check list, a `limits:` line and an
+  input preview (task title and criteria count by default, `--input json` for
+  indented JSON cut after 24 lines with an explicit `… (N more lines, …)`
+  marker) — then one row per meaningful event, `HH:MM:SS mark participant
+stage message`, the participant an agent id, `gate` or `run`, wrapped under
+  the message column (usable at 80 columns). Rows use the design's
+  vocabulary (`Agent started · claude / sonnet`, `Task dispatched · same
+agent`, `· visit 2`, `Completion report accepted`, `Review received · changes
+requested`, `Checks failed → repair`, `Approved → completed`, `Result rejected:
+<reason> · <field>`, `Fixing result format · attempt 2`, `Retrying work ·
+attempt 2`, `Delivery unconfirmed · checking`, `Blocked: <reason>` plus the
+  required action and tab, `Host lost · outcome unknown`); a blank line
+  separates stage visits, `run.terminated` and `host.claimed` are left to the
+  summary, and an unknown record type is a subdued `· <type>` row, never
+  dropped (the lifecycle and activity records another phase adds render by
+  their type string, `Waiting for agent to become ready`, `Agent ready`,
+  `Checking repository revision`, `Running checks · <cmd>`). A terminated run
+  ends with a summary — `✓ Completed · <reason>`, `! Failed · <reason>`, `!
+Exhausted · <limit>`, `· Cancelled · <reason>` — with duration, `N reviews ·
+M repairs` and ARTIFACTS (completion, review, verification from
+  `deriveRunResult`, relative to the run directory). An observer that stops
+  first prints the current block with `supported action: woof run cancel …`
+  when there is one and `-- observer stopped (<reason>); the run continues`.
+  Replayed history uses the same rows as live events (state folds from the
+  events, seqs dedupe), so attaching never invents or repeats narrative.
+  Colors sit on the mark and message only (SGR when stdout is a TTY and
+  `NO_COLOR` is unset or empty); `--ascii`, or a `LANG`/`LC_CTYPE`/`LC_ALL`
+  without UTF-8, uses `+ -> v ~ ! .`. **`woof watch --plain`** (and **`woof
+events --pretty`**, the same output) keeps the technical projection from
+  `src/observe/format.ts`: a header (run, workflow, active attempts,
+  `liveness.owner`, each agent's role, kind, model and assigned pane, the
+  outcome once recorded), one line per event (local `HH:MM:SS`, `#seq`,
+  type, subject and a type-specific summary; an unknown type prints its data
+  as compact JSON) and a `-- end (<reason>) cursor <cursor>` line. Both views
+  share the read and follow loop of `woof events`, so the exit codes are
+  identical, and both sanitize journal strings (control characters become
+  spaces). `woof status --pretty` prints the technical header instead of the
+  JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
 events`**, **`woof watch`** and **`woof run show`** are read-only and never take the journal
   lock or contact Herdr; see

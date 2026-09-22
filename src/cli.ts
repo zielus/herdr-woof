@@ -134,7 +134,7 @@ function printHelp(): void {
   console.log("  runs          List the runs under the runs directory");
   console.log("  events        Print a run's lifecycle events as NDJSON; --follow to keep reading");
   console.log(
-    "  watch         Print a run's header and events as readable lines; --follow to keep reading",
+    "  watch         Follow a run in plain English (--plain for event lines); --follow to keep reading",
   );
   console.log("");
   console.log("Web UI (unstable):");
