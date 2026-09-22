@@ -28,7 +28,6 @@ beforeAll(async () => {
 const SYNC_BEGIN = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const HOME = "\x1b[H";
-const CLEAR_LINE = "\x1b[K";
 
 describe("frameString", () => {
   it("wraps the frame in a synchronized-update block starting at cursor home", () => {
@@ -39,12 +38,12 @@ describe("frameString", () => {
 
   it("pads a short line to the column count and a missing row to a blank one", () => {
     const result = frameString([[{ text: "hi" }]], { columns: 5, rows: 2 }, false);
-    expect(result).toBe(`${SYNC_BEGIN}${HOME}hi   ${CLEAR_LINE}\r\n     ${CLEAR_LINE}${SYNC_END}`);
+    expect(result).toBe(`${SYNC_BEGIN}${HOME}hi   \r\n     ${SYNC_END}`);
   });
 
   it("clips a line wider than the columns with an ellipsis, still exactly the column count", () => {
     const result = frameString([[{ text: "hello world" }]], { columns: 5, rows: 1 }, false);
-    expect(result).toBe(`${SYNC_BEGIN}${HOME}hell…${CLEAR_LINE}${SYNC_END}`);
+    expect(result).toBe(`${SYNC_BEGIN}${HOME}hell…${SYNC_END}`);
   });
 
   it("joins multiple spans on a row and separates rows with \\r\\n, never after the last row", () => {
@@ -54,7 +53,7 @@ describe("frameString", () => {
       false,
     );
     expect(result).toBe(
-      `${SYNC_BEGIN}${HOME}abc${CLEAR_LINE}\r\nxyz${CLEAR_LINE}\r\n   ${CLEAR_LINE}${SYNC_END}`,
+      `${SYNC_BEGIN}${HOME}abc\r\nxyz\r\n   ${SYNC_END}`,
     );
   });
 

@@ -783,9 +783,11 @@ function waitOf(snapshot: RunSnapshot, steps: StepNode[]): RunModel["wait"] {
     return { text: phrase, since: activity.since };
   }
   const current = steps.findLast((step) => step.kind !== "pending");
-  if (current === undefined || current.endedAt !== null) return null;
+  if (current === undefined) return null;
+  // An accepted result ends the agent's work, not the step: the gate decision is still due.
   if (current.state.word === "accepted · awaiting gate")
-    return { text: `waiting for the ${current.name} gate`, since: current.startedAt ?? "" };
+    return { text: `waiting for the ${current.name} gate`, since: current.endedAt ?? "" };
+  if (current.endedAt !== null) return null;
   if (current.kind === "stage" && current.startedAt !== null)
     return {
       text: `waiting for ${current.participant} / ${current.name}`,

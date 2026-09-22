@@ -28,9 +28,11 @@ export interface Terminal {
 /**
  * Builds one full-frame redraw: a synchronized-update block (so a slow
  * terminal never shows a half-painted frame), cursor home, then exactly
- * `rows` lines (a short `lines` pads with blanks), each fitted to `columns`,
- * cleared to end-of-line and separated by `\r\n` (never a trailing one, so
- * the frame cannot scroll the alternate screen).
+ * `rows` lines (a short `lines` pads with blanks), each fitted (padded) to
+ * exactly `columns`, separated by `\r\n` (never a trailing one, so the frame
+ * cannot scroll the alternate screen). No erase-to-end-of-line: after a full
+ * row the cursor sits in the pending-wrap state, where some terminals erase
+ * the last column on EL.
  */
 export function frameString(lines: Line[], size: TerminalSize, color: boolean): string {
   const { columns, rows } = size;
@@ -38,7 +40,6 @@ export function frameString(lines: Line[], size: TerminalSize, color: boolean): 
   for (let row = 0; row < rows; row++) {
     const fitted = fitLine(lines[row] ?? [], columns);
     parts.push(serializeLine(fitted, { color }));
-    parts.push("\x1b[K");
     if (row < rows - 1) parts.push("\r\n");
   }
   parts.push("\x1b[?2026l");

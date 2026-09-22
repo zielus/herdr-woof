@@ -471,11 +471,30 @@ describe("deriveRunModel: a running run", () => {
       attention: null,
     });
     expect(run.activityNote).toBeNull();
-    // The possible next routes are subdued rows, not recorded visits.
+    // A passing review completes the run: repair is only its rejection route, so nothing is
+    // listed as next while the review is in progress.
+    expect(run.steps.filter((item) => item.kind === "pending")).toEqual([]);
+    expect(run.stepsNote).toBeNull();
+  });
+
+  it("after a rejecting review the routed repair is next, then the conditional check", () => {
+    const run = modelOf(build(DESIGN_RUN.slice(0, 15)));
     const pending = run.steps.filter((item) => item.kind === "pending");
-    expect(pending.map((item) => [item.id, item.name, item.participant, item.state.tone])).toEqual([
-      ["pending:repair", "repair", "builder", "dim"],
-      ["pending:verify", "verify 2", "check", "dim"],
+    expect(
+      pending.map((item) => [
+        item.id,
+        item.name,
+        item.participant,
+        item.state.word,
+        item.state.tone,
+      ]),
+    ).toEqual([
+      ["pending:repair", "repair", "builder", "next · changes requested", "dim"],
+      ["pending:verify", "verify 2", "check", "pending repair", "dim"],
+    ]);
+    expect(pending[0]?.details).toEqual([
+      { label: "", value: "routed by the review gate: changes requested → repair" },
+      { label: "", value: "not started yet" },
     ]);
     expect(pending.every((item) => item.startedAt === null && item.artifacts.length === 0)).toBe(
       true,
@@ -545,7 +564,8 @@ describe("deriveRunModel: a running run", () => {
       "accepted review / visit 1 / attempt 1 · verdict fail · no gate decision",
     ]);
     expect(run.header.state.word).toBe("running");
-    expect(run.stepsNote?.word.startsWith("result:")).toBe(false);
+    expect(run.stepsNote).toBeNull();
+    expect(run.wait).toEqual({ text: "waiting for the review gate", since: at(14) });
   });
 });
 
@@ -598,7 +618,7 @@ describe("deriveRunModel: attention", () => {
     const run = modelOf(built);
     expect(run.header.state).toEqual({ word: "host lost", mark: "unknown", tone: "red" });
     expect(run.header.attention).toEqual({
-      word: "host lost · outcome unknown",
+      word: "outcome unknown · no terminal outcome recorded",
       mark: "unknown",
       tone: "red",
     });
@@ -609,7 +629,11 @@ describe("deriveRunModel: attention", () => {
       value: "host lost · no terminal outcome recorded",
     });
     expect(run.steps.some((item) => item.kind === "pending")).toBe(false);
-    expect(run.stepsNote).toEqual(run.header.attention);
+    expect(run.stepsNote).toEqual({
+      word: "host lost · outcome unknown",
+      mark: "unknown",
+      tone: "red",
+    });
     expect(run.activityNote).toEqual({
       word: "host lost; outcome unknown",
       mark: "unknown",

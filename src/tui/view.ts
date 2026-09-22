@@ -819,7 +819,9 @@ function pagerBody(
   const ref = pager.artifact;
   // The path is shown whole (wrapped), so it can be copied.
   const head: Line[] = [
-    [span(`${ref.label} · ${pager.stepName} · ${ref.context}`, "dim")],
+    ...wrapText(`${ref.label} · ${pager.stepName} · ${ref.context}`, width).map((piece) => [
+      span(piece, "dim"),
+    ]),
     ...wrapChars(ref.path, width).map((piece) => [span(piece)]),
     [span(glyphs.rule.repeat(width), "dim")],
   ];
