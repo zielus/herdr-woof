@@ -101,6 +101,7 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
       "scheduler",
       "state",
       "submission",
+      "tui",
       "web",
       "workflows",
     ],
@@ -112,6 +113,9 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
   web: {
     areas: ["web", "inspect", "observe", "state", "contracts", "domain"],
   },
+  // The terminal UI observes through the inspection and observation areas only; it writes nothing.
+  // Like web/, it is below commands/: runs directory and project are resolved there and passed in.
+  tui: { areas: ["tui", "inspect", "observe", "state", "contracts", "domain"] },
   contracts: { areas: ["contracts"] },
   domain: { areas: ["domain", "contracts"] },
   runtime: { areas: ["runtime", "domain", "contracts"] },
