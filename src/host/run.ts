@@ -392,6 +392,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         lastWait = action.type === "wait" ? line : "";
         log(line);
       },
+      // Observability records are best effort; a refused one is a log line, never a run failure.
+      onWarning: (warning) =>
+        log(`warning: ${warning.record}: ${warning.reason}: ${warning.message}`),
     });
     if (reportTimer !== undefined) clearInterval(reportTimer);
     // The summary first, from the final snapshot: the metadata's last report may take seconds.
