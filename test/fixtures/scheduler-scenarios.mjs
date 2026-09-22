@@ -27,7 +27,8 @@ const { runWorkflow } = await load("scheduler/driver.js");
 const { admitWorkflow } = await load("scheduler/admission.js");
 const { loadWorkflowDefinition } = await load("scheduler/loader.js");
 const { buildReviewWorkflow } = await load("workflows/build-review.js");
-const { openRun, recordObservationLost } = await load("state/store.js");
+const { openRun, recordLifecycleChanged, recordObservationLost } = await load("state/store.js");
+const { lockTestHooks } = await load("journal/lock.js");
 const { readSnapshot } = await load("state/snapshot.js");
 const { foldEvents, readEvents } = await load("observe/events.js");
 const { submitResult } = await load("submission/submit.js");
@@ -116,6 +117,7 @@ async function scenario(options) {
   const counts = Object.fromEntries(agentIds.map((agentId) => [agentId, 0]));
   const observeCounts = {};
   const submissions = [];
+  const warnings = [];
   const pending = new Map();
   const context = {
     runDir,
@@ -124,6 +126,7 @@ async function scenario(options) {
     names,
     runtime,
     submissions,
+    warnings,
     marks: {},
     journal: () => journalOf(runDir),
   };
@@ -300,6 +303,8 @@ async function scenario(options) {
     signal: controller.signal,
     pollMs: options.pollMs ?? 2,
     onAction: (action) => options.onAction?.(action, context),
+    // Every observability record the scheduler could not journal, in order.
+    onWarning: (warning) => warnings.push(warning),
     // rejectingSleep: a sleep that rejects with AbortError when the run is aborted mid-sleep.
     ...(options.rejectingSleep === true
       ? { sleep: (ms, signal) => delay(ms, undefined, signal !== undefined ? { signal } : {}) }
@@ -346,6 +351,7 @@ async function scenario(options) {
     })),
     requests,
     submissions,
+    warnings,
     snapshot: snapshot.ok ? snapshot.snapshot : null,
     finalRevision: await revisionOf(repo),
     elapsedMs,
@@ -670,6 +676,60 @@ if (out.outcome !== "recorded") process.exit(1);`;
         }
       },
     }),
+
+  // The delivery itself is observed in another terminal than the builder's: the pane occupant
+  // changed while the request was being sent, so the dispatch is refused (assignment_mismatch).
+  "agent-replaced-in-delivery": () =>
+    scenario({
+      verify: false,
+      idleAfterWork: () => false,
+      runtime: {
+        builder: {
+          afterDeliver: [{ status: "working", stateChangeSeq: 2, terminalId: "term-intruder" }],
+        },
+      },
+      workers: { builder: () => ({ submit: false }), reviewer: () => ({ verdict: "pass" }) },
+    }),
+
+  // Observability appends fail or are refused while the run itself is sound: the builder's
+  // first lifecycle transition is refused because another writer journaled one in between,
+  // the build gate's revision check cannot be started (the journal write fails) and the
+  // review gate's cannot be ended (the write fails again).
+  "observability-append-fails": () => {
+    let failing = { skip: 0, fail: 0 };
+    lockTestHooks.afterAcquire = () => {
+      if (failing.skip > 0) {
+        failing.skip -= 1;
+        return;
+      }
+      if (failing.fail > 0) {
+        failing.fail -= 1;
+        throw Object.assign(new Error("injected EIO"), { code: "EIO" });
+      }
+    };
+    return scenario({
+      verify: false,
+      workers: { builder: builderEdits, reviewer: () => ({ verdict: "pass" }) },
+      onAction: (action, context) => {
+        if (action.type !== "compute_revision") return;
+        // The next journal write (the check's start) fails.
+        if (action.gate === "build" && once(context, "fail-start")) failing = { skip: 0, fail: 1 };
+        // The check's start succeeds; the write after it (its end) fails.
+        if (action.gate === "review" && once(context, "fail-end")) failing = { skip: 1, fail: 1 };
+      },
+      onObserve: async (_handle, context) => {
+        if (context.agentId !== "builder" || !once(context, "foreign-lifecycle")) return;
+        const out = await recordLifecycleChanged({
+          runDir: context.runDir,
+          agentId: "builder",
+          from: null,
+          to: "unknown",
+          terminalId: null,
+        });
+        if (out.outcome !== "recorded") throw new Error(JSON.stringify(out));
+      },
+    });
+  },
 
   "altered-input": () =>
     scenario({

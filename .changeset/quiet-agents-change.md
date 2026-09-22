@@ -12,9 +12,13 @@ replaced pane occupant is a transition too), and `run.activity` `{kind, phase,
 agentId?, stageId?, visit?, attempt?, detail?, result?}`, written at the start
 and end of a `readiness_wait`, `revision_check`, `check_run` or
 `delivery_check`. Neither is a poll sample: the scheduler derives "last
-journaled" from the snapshot and repeated observations write nothing. An
-activity still open when the run is terminated by the scheduler is ended with
-the outcome as its result.
+journaled" from the snapshot and repeated observations write nothing. Both
+records are best effort: an append the store refuses or cannot complete is
+reported through `runWorkflow({onWarning})` and never changes the run's course.
+Every scheduler-owned termination ends the activities still open under the same
+journal lock as `run.terminated` (`terminateRun`/`cancelRun` with
+`endOpenActivities: true`), and the reducer closes whatever an earlier writer
+left open at termination, so `activity.open` is empty once a run is terminated.
 
 The snapshot gains `agents[].lifecycle {state, since, seq, terminalId} | null`,
 `activity.open[]` and the counters `lifecycleChangesByAgent` and

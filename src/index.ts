@@ -193,7 +193,11 @@ export type {
   AdmissionResult,
 } from "./scheduler/admission.js";
 export { runWorkflow } from "./scheduler/driver.js";
-export type { RunWorkflowOptions, RunWorkflowResult } from "./scheduler/driver.js";
+export type {
+  RunWorkflowOptions,
+  RunWorkflowResult,
+  SchedulerWarning,
+} from "./scheduler/driver.js";
 export type { Action, AgentRuntimeView } from "./scheduler/core.js";
 export { buildReviewWorkflow } from "./workflows/build-review.js";
 export type { BuildReviewInput } from "./workflows/build-review.js";

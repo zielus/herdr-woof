@@ -654,11 +654,27 @@ result?}`** — engine work with noticeable duration, one `started` when it
   its `delivery.reconciled`; `detail` the ambiguous code, `result`
   `<resolution> (<evidence>)`). The dispatch-time fingerprint and a
   revision-bound gate's re-fingerprint are not activities of their own. A
-  failure end is still `ended`: every activity still open when the scheduler
-  records a termination (`failed`, `exhausted`, `cancelled`) is ended first
-  with the outcome word as `result`, best effort — a refused end never keeps
-  the termination from being recorded. An activity the scheduler could not
-  end (a killed host) stays open in the snapshot: the run ended during it.
+  failure end is still `ended`: every activity the journal still holds open
+  when the scheduler records a termination (`completed`, `failed`,
+  `exhausted`, `cancelled`, including its engine-failure path) is ended with
+  the outcome word as `result` **under the same journal lock** as
+  `run.terminated` (`terminateRun`/`cancelRun` with `endOpenActivities:
+true`, returned as `activitiesEnded`), so no other record comes between the
+  ends and the termination and nothing is open once the run is closed. An
+  activity its writer could not end (a killed host) is closed by the
+  termination on read; see the reducer rules.
+- **Best effort:** both records are observability, not control flow. An
+  append the store refuses or cannot complete (`journal_busy` after the
+  retries, `journal_write_failed`, `lifecycle_mismatch`, `activity_open`, ...)
+  is reported through `runWorkflow({onWarning})` as `{record, reason,
+message}` and changes nothing else: the fingerprint, check, gate or dispatch
+  it described still runs and is recorded, and the run's outcome never names
+  it. A `run_closed` refusal means someone else ended the run, and the
+  scheduler stops trying. An activity whose `ended` could not be written stays
+  open until the termination closes it. A pane replacement observed during a
+  delivery (the dispatch is refused `assignment_mismatch`) is journaled, best
+  effort, before the `agent_replaced` termination, so the journal shows who
+  occupied the pane when the run ended.
 - **Reducer rules:** `agent.lifecycle_changed` is refused after termination
   (`run_closed`), for an unplanned (`agent_unknown`) or unassigned
   (`agent_unassigned`) agent, when `from` is not the journaled lifecycle
@@ -666,7 +682,10 @@ result?}`** — engine work with noticeable duration, one `started` when it
   (`lifecycle_unchanged`). `run.activity` is refused after termination, as a
   second `started` for a kind and subject still open (`activity_open`) and as
   an `ended` for one that is not (`activity_not_open`) — two consecutive
-  starts are an impossible transition, not a warning.
+  starts are an impossible transition, not a warning. `run.terminated` closes
+  every activity still open (an `ended` for it afterwards is `run_closed`), so
+  a journal written by a host that was killed mid-activity never reads as
+  engine work in progress after the run ended.
 - **Snapshot:** `agents[].lifecycle: {state, since, seq, terminalId} | null`
   (the last journaled transition; `null` when none) and `activity: {open:
 [{seq, since, kind, agentId, attempt, detail}]}` (open activities in start
@@ -674,7 +693,8 @@ result?}`** — engine work with noticeable duration, one `started` when it
   `activitiesByKind {kind: n}` (starts only). All derived by the one reducer,
   so `foldEvents(base, events)` reproduces them; `agents[].runtime` stays the
   separate, non-journaled overlay. Old journals: `lifecycle: null`,
-  `activity.open: []`.
+  `activity.open: []`; a terminated run: `activity.open: []`, whoever wrote
+  the journal (the `started` events remain).
 - **Human formatter (`woof watch`, `--pretty`):** `agent.lifecycle_changed`
   prints `<from|-> -> <to> (<raw>) terminal <id> [pane occupant replaced]`,
   colored as attention only for `blocked`, `gone` or a replacement;

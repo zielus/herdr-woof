@@ -26,6 +26,8 @@ interface Report {
   calls: Array<{ method: string; runtimeName: string | null; args: Json }>;
   requests: Array<{ path: string; text: string; sha256: string }>;
   submissions: Array<Json & { outcome: string }>;
+  /** `onWarning` calls: observability records the scheduler could not journal. */
+  warnings: Array<{ record: string; reason: string; message: string }>;
   snapshot: Json & {
     counters: Json & Record<string, Record<string, number>>;
     attention: Json;
@@ -752,6 +754,38 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         reason: expect.stringMatching(/^agent_replaced/),
       });
       expect(ofType(replaced, "agent.assigned")).toHaveLength(1);
+
+      // A replacement observed during the delivery itself: the dispatch is refused
+      // (assignment_mismatch) and the replacement is journaled before the run fails for it.
+      const inDelivery = runScenario("agent-replaced-in-delivery");
+      expect(inDelivery.result).toMatchObject({
+        outcome: "failed",
+        reason: expect.stringMatching(/^agent_replaced/),
+      });
+      expect(ofType(inDelivery, "request.dispatched")).toEqual([]);
+      const changes = ofType(inDelivery, "agent.lifecycle_changed").filter(
+        (record) => record["agentId"] === "builder",
+      );
+      expect(
+        changes.map((record) => [
+          record["from"],
+          record["to"],
+          record["terminalId"],
+          record["replaced"],
+        ]),
+      ).toEqual([
+        [null, "ready", `term-${inDelivery.names.builder}`, undefined],
+        ["ready", "working", "term-intruder", true],
+      ]);
+      const terminated = ofType(inDelivery, "run.terminated")[0];
+      expect(changes[1]?.seq).toBeLessThan(terminated?.seq ?? 0);
+      expect(inDelivery.snapshot.agents[0]?.["lifecycle"]).toMatchObject({
+        state: "working",
+        terminalId: "term-intruder",
+      });
+      expect((inDelivery.snapshot["activity"] as Json)["open"]).toEqual([]);
+      expect(inDelivery.warnings).toEqual([]);
+      expect(inDelivery.foldMatches).toBe(true);
     },
     SCENARIO_TIMEOUT,
   );
@@ -1346,6 +1380,75 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       ]);
       expect((abandoned.snapshot["activity"] as Json)["open"]).toEqual([]);
       expect(abandoned.foldMatches).toBe(true);
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "PR5-5. a lifecycle or activity record that cannot be journaled is reported and never changes the run's course",
+    () => {
+      const report = runScenario("observability-append-fails");
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "completed" });
+      expect(gatesOf(report).map((gate) => [gate["gate"], gate["decision"]])).toEqual([
+        ["build", "pass"],
+        ["review", "pass"],
+      ]);
+      // Each failure was reported once, in order, and none reached the run's outcome.
+      expect(report.warnings).toEqual([
+        {
+          record: "agent.lifecycle_changed",
+          reason: "lifecycle_mismatch",
+          message: expect.stringContaining("builder"),
+        },
+        {
+          record: "run.activity",
+          reason: "journal_write_failed",
+          message: expect.stringContaining("injected EIO"),
+        },
+        {
+          record: "run.activity",
+          reason: "journal_write_failed",
+          message: expect.stringContaining("injected EIO"),
+        },
+      ]);
+      // The foreign transition stands; the scheduler's next transition starts from it.
+      const builder = ofType(report, "agent.lifecycle_changed").filter(
+        (record) => record["agentId"] === "builder",
+      );
+      expect(builder.map((record) => [record["from"], record["to"]])).toEqual([
+        [null, "unknown"],
+        ["unknown", "ready"],
+        ["ready", "working"],
+        ["working", "ready"],
+      ]);
+      // The build gate's check never started in the journal, yet its evidence gated the run;
+      // the review gate's check could not be ended by the scheduler, so the termination ended
+      // it: right before run.terminated, under the same lock.
+      const revisions = ofType(report, "run.activity").filter(
+        (record) => record["kind"] === "revision_check",
+      );
+      const terminated = ofType(report, "run.terminated")[0];
+      expect(
+        revisions.map((record) => [record["phase"], record["detail"], record["result"]]),
+      ).toEqual([
+        ["started", "review", undefined],
+        ["ended", undefined, "completed"],
+      ]);
+      expect(revisions[1]?.seq).toBe((terminated?.seq ?? 0) - 1);
+      expect((report.snapshot["activity"] as Json)["open"]).toEqual([]);
+      expect(report.foldMatches).toBe(true);
+
+      // A cancellation closes the open wait, records the request and terminates under one lock.
+      const aborted = runScenario("abort-in-sleep");
+      const cancelled = ofType(aborted, "run.terminated")[0];
+      expect(ofType(aborted, "run.activity")).toMatchObject([
+        { kind: "readiness_wait", phase: "started", agentId: "builder" },
+        { kind: "readiness_wait", phase: "ended", agentId: "builder", result: "cancelled" },
+      ]);
+      expect(ofType(aborted, "run.activity")[1]?.seq).toBe((cancelled?.seq ?? 0) - 2);
+      expect(ofType(aborted, "run.cancel_requested")[0]?.seq).toBe((cancelled?.seq ?? 0) - 1);
+      expect((aborted.snapshot["activity"] as Json)["open"]).toEqual([]);
     },
     SCENARIO_TIMEOUT,
   );
