@@ -1,236 +1,240 @@
 # Woof terminal UI
 
-Status: approved design direction, awaiting implementation.
+Status: approved design direction, awaiting production implementation.
 
-This brief describes an interactive terminal UI for browsing runs and inspecting
-one run in detail. It is a product and design handoff for the builder. Terminal
-libraries, module boundaries and API details are implementation decisions.
+This is a product and design handoff for an interactive terminal run browser.
+The reference is a terminal-native layout: aligned text, a selection cursor,
+inline disclosure and a read-only pager. Frameworks, modules and API details
+remain builder decisions.
 
-The TUI extends the visual language of
-[Human-readable run output](run-output.md): meaningful participant names, plain
-English messages, restrained colors and a clear distinction between work,
-review decisions and recorded outcomes. The append-only run output remains useful
-for logs, redirection and users who do not need an interactive view.
+The TUI extends [Human-readable run output](run-output.md): participant names,
+plain English messages and clear distinctions between accepted work, gate
+decisions and recorded outcomes. Append-only output remains useful for logs,
+redirection and observing a run without an interactive interface.
 
-## Visual reference
+## Reference and scope
 
 Open the [standalone interactive prototype](assets/tui/prototype.html) in a local
-browser. The [editable source fragment](assets/tui/woof-tui.fragment.html) is also
-included. These are design references, not production frontend code or a choice
-of TUI framework. The standalone prototype does not require Codex to navigate
-between runs, steps, input and artifacts.
+browser. Its [editable source](assets/tui/woof-tui.fragment.html) is included.
+This replaces the earlier three-column proposal and the subsequent card-like
+step details. The approved direction uses one content area with Steps, Activity
+and Config tabs. Runs use a compact list; artifacts replace the content area
+with a pager.
 
-The prototype uses sample runs. It makes no runtime calls and controls no agents.
-Its task names, durations, branches, activity and artifact paths are illustrative.
-The design includes running, blocked, completed, exhausted and lost-host examples.
-The initial screen is the runs browser; opening a row reveals the run workspace.
+The prototype contains sample running, blocked, completed and lost-host runs.
+It makes no runtime calls and controls no agents. It opens on an expanded review
+to demonstrate the design; Esc opens the runs browser. Click a control or focus
+one with Tab before using keyboard navigation in the browser.
 
-Screenshot capture was blocked by an unavailable browser policy check when this
-handoff was prepared. No screenshot or browser visual acceptance is claimed.
-Use the interactive reference for layout review.
+Implemented in the reference: run selection, tab switching, step expansion,
+arrow navigation through steps and artifact entries, and sample artifact reading.
+Live updates, history following, long-content paging, reconnect and real terminal
+resize behavior are production requirements, not demonstrated runtime features.
+Browser visual verification was blocked by an unavailable browser policy check;
+no screenshot or real-terminal acceptance is claimed.
 
-## Intent
+## Runs
 
-A developer should be able to answer these questions without reading raw events:
+Start with a full-width list of runs in the current project. Each compact row
+shows state, task title, workflow, current step and elapsed time when known.
+Use reverse video and a cursor to mark selection. Keep status words readable
+without color. A missing task title falls back to a truthful workflow/run label.
 
-- Which runs are active, finished or need attention?
-- Which agent is involved, on which step, and what is the run waiting for?
-- Why did a gate choose repair or another review?
-- Where are the accepted outputs and the input that started the run?
+Show active runs and recent history, including runs needing attention. Opening a
+run replaces the list with that run's view. Returning preserves selection and
+scroll position. New runs and status updates must not shift selection to another
+run. An empty project and unreadable history need distinct, explicit messages.
 
-Opening a run should change the workspace and give that run room. Avoid squeezing
-its entire history into a small preview next to a permanent runs sidebar.
+Keep project scope visible. The selected run's Config view provides its complete
+identity and checkout context. Search, filtering and cross-project navigation
+can be separate work.
 
-## Screen 1: runs browser
+## Run view
 
-Use a list with a selected-run preview beside it on wide terminals.
+Keep a compact header visible across all tabs and the artifact pager: task title,
+workflow, current run state, current step and elapsed time. It always describes
+the run now, even while an earlier review is selected. Put secondary identifiers
+and paths in Config. A blocked run shows what requires attention and where to
+act; a lost host shows that the outcome is unknown.
 
-Each row shows a human-readable task title, workflow, checkout or branch, start
-time, state, current step and duration when known. Make state readable through
-both a word and a marker. Internal IDs remain available but should not dominate
-the list. When a task title is unavailable, use a truthful workflow/run label.
+Below the header, use plain text tabs with reverse video for the selected tab:
+`1 steps`, `2 activity`, `3 config`. The selected tab fills the available width.
+Keep a short, context-sensitive key legend at the bottom.
 
-The preview shows the selected run's current situation, participants and models,
-checkout context, and an open action. Moving selection updates the preview;
-opening the run navigates to its workspace. Preserve list selection and position
-when returning from a run.
+### Steps
 
-Show unfinished runs and recent completed history. Keep blocked and lost-host
-runs easy to find, while distinguishing those states from terminal failures.
-Updates must not unexpectedly move selection to a different run. A missing or
-unreadable runs directory needs an explicit empty or error state.
+Render ordered stage visits as aligned rows: disclosure marker, step name,
+participant or check, state, duration and available output count. Repeated
+reviews and checks remain separate visits. The selection cursor is independent
+of lifecycle status: inspecting review 1 does not make it the active step.
 
-The prototype uses one project. Project scope should be visible; do not silently
-mix checkouts that have similar directory or branch names. Broader search,
-filtering and cross-project navigation can be separate work.
+Expand a step directly below its row using indentation and tree characters.
+The expansion shows the relevant attempt, dispatch/result information, waiting
+reason, gate decision and route, and accepted outputs. Artifact entries are
+selectable children. Ordinary explanatory lines do not become extra keyboard
+stops. Keep one step expanded at a time in the initial design.
 
-## Screen 2: run workspace
+For a rejected review, show the verdict, the gate's route to repair, the accepted
+review artifact and its handoff to the same builder when continuity applies.
+For active repair, show what the builder received and what the run is waiting
+for. Keep work retries, envelope format repair and workflow code repair distinct.
 
-Replace the runs browser with a focused run view. Keep a short breadcrumb back
-to the list and make switching to the previous or next run inexpensive.
+Accepted artifacts, verification evidence and available turn/session references
+belong under their step. Turn history is optional and must come from a supported
+source. Do not fabricate a transcript or make it a prerequisite for useful step
+inspection. Multiple attempts and outputs must retain their visit/attempt identity.
+The prototype demonstrates one output per step; the real tree must handle more.
 
-### Persistent header
+Conditional future steps may appear subdued with explicit prerequisites, such
+as `pending repair`. They are possible routes, not a fixed completion checklist.
+Do not infer a percentage complete from the number of rows.
 
-Show the task title, workflow, run identity, checkout, current run state, elapsed
-time and host status. This header always describes the current run, even while
-an earlier step or artifact is selected.
+### Activity
 
-A blocked run gets a prominent reason and concrete required action. A lost host
-gets an explicit unknown-outcome message. Completed runs show their recorded
-outcome rather than an active-state indicator.
+Use a dense chronological stream of aligned text: time, small marker,
+participant, step and meaningful message. Reuse the language of the run-output
+brief, for example:
 
-### Left: workflow steps
+```text
+09:13:18  +  reviewer           Agent started · claude / sonnet
+09:13:20  →  reviewer  review   Task dispatched
+09:13:41  ↓  reviewer  review   Review received · changes requested
+09:13:42  ↻  gate      review   Changes requested → repair
+09:13:45  →  builder   repair   Task dispatched · same agent
+```
 
-Show the ordered stage visits, including verification and repair. A repeated
-review is a distinct visit, not an overwritten entry. Include each step's owner
-or check identity and a concise status mark.
+Agent startup is worth showing. Raw event names, receipt hashes, pane identifiers
+and control envelopes belong in diagnostic detail, not the main narrative.
+Separate receipt/acceptance from the gate's decision. An accepted review can ask
+for changes; acceptance alone must not look like approval.
 
-Provide an all-activity selection as well as individual steps. Selecting a step
-filters the central activity and reveals that step's context on the right.
-Selection styling must be distinct from lifecycle styling: inspecting review 1
-must not make review 1 look active while the builder is repairing.
+Show the current wait and its duration without flooding history with repeated
+waiting lines. Follow new activity until the user scrolls into history. Then
+preserve reading position, indicate that following is paused and provide an
+explicit way to return to the latest entry. New events must not steal focus.
 
-Expected future steps may be shown as pending only when their conditional nature
-is clear. A workflow can reject, branch or repeat; do not present its route as a
-fixed completion checklist or imply a percentage complete.
+### Config
 
-### Center: activity, input and artifacts
+Use a read-only text document with three sections:
 
-The central pane gets the largest share of width. It has three sections:
+- **Agents:** names, roles when different, provider/CLI kind, configured model and
+  stage assignments. Include all configured roles, including a planner when used.
+  Distinguish recorded assignment from current runtime observation. An unspecified
+  model reads `provider default` or unknown rather than a guessed model name.
+- **Input:** pretty-printed input JSON, with explicit abbreviation for large values
+  and access to the complete saved input. Preserve structure and readable text.
+- **Context:** project and checkout, branch/revision when available, run identity,
+  workflow, verification commands, limits and resolved configuration provenance.
 
-- **Activity:** human-readable chronological messages for all stages or the
-  selected visit. Retain time, participant, meaningful action and gate routing.
-  Reuse the message semantics from the run-output brief.
-- **Input:** a readable, read-only structured preview. Large content is clearly
-  abbreviated and accompanied by the full saved input's path.
-- **Artifacts:** accepted outputs and verification evidence, with stage/visit,
-  acceptance or verdict context, and a copyable path. Label earlier reviews so
-  they cannot be mistaken for approval of the final revision.
+Keep configuration stable for the selected run. This view does not edit prompts,
+change agent models or alter an in-flight run. Raw envelopes can be optional
+read-only diagnostics; they do not need a permanent tab.
 
-Selecting an artifact shows its reference and context in the inspector. The
-prototype does not implement a file viewer or launch an external application.
-The initial TUI can keep references copyable and use existing supported file
-opening integrations; a generic editor or diff viewer is outside this design.
+### Artifact pager
 
-Following a run should keep recent activity visible until the user deliberately
-inspects older history. Scrolling back must not snap to the end on every event.
-Show whether following is paused, preserve reading position, and offer an
-explicit way to return to the latest activity. This behavior is a requirement
-for the real TUI; the prototype's sample timeline is static.
+Opening an artifact replaces the current content with its text while preserving
+the run header. Show filename, step, visit/attempt, acceptance or evidence context,
+and a copyable path. Use plain text or restrained Markdown styling. Earlier
+rejected reviews must remain distinguishable from final approval.
 
-### Right: agents and selected context
+Esc returns to the exact originating entry and reading position. Missing,
+unreadable, oversized and non-text files need clear states and a usable reference.
+The production reader must support scrolling and long lines without executing
+terminal control sequences embedded in file content. It is a reader, not an editor.
 
-Keep a compact roster visible: agent name, role when different, provider/CLI
-kind, configured model and its relevant assignment or last known state.
-Distinguish runtime observation from submission history. A recorded submission
-is not a claim that the agent is still running. A missing configured model
-should remain `provider default` or unknown rather than being guessed.
+## Keyboard navigation
 
-Below the roster, show context for the selected step or artifact. With no step
-selected, summarize the current run situation. Useful context includes a gate's
-reason, the next route, the accepted review reference, and relevant run limits.
+All essential inspection works without a mouse. The prototype implements the
+following bindings for its sample content:
 
-For example, selecting the first rejected review should show why the gate routed
-to repair and the accepted review path, while the header still identifies the
-current repair and its builder. Repair continuity must remain visible.
+| Context           | Key              | Behavior                                                                                                    |
+| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Runs              | Up / Down, k / j | Move selection; stop at the first/last row.                                                                 |
+| Runs              | Right / Enter    | Open the selected run, focused on its first step.                                                           |
+| Steps             | Up / Down, k / j | Move through visible step rows and artifact children.                                                       |
+| Steps             | Right            | Expand a collapsed step; on an expanded step, enter its artifact child if present; on an artifact, open it. |
+| Steps             | Left             | Return from an artifact child to its parent; collapse an expanded step. A collapsed root stays selected.    |
+| Steps             | Enter            | Toggle the selected step or open the selected artifact.                                                     |
+| Steps             | o                | Read the selected step's artifact when available.                                                           |
+| Runs / Steps      | Home / End       | Select the first/last visible entry.                                                                        |
+| Tab labels        | Left / Right     | Switch tabs, cycling between Steps, Activity and Config.                                                    |
+| Steps tab label   | Down / Enter     | Focus the retained step/artifact selection.                                                                 |
+| Run view          | 1 / 2 / 3        | Switch to Steps / Activity / Config.                                                                        |
+| Activity / Config | Left / Right     | Switch tabs.                                                                                                |
+| Artifact pager    | Esc              | Return to the originating entry.                                                                            |
+| Run view          | Esc              | Return to the runs list.                                                                                    |
+| Browser reference | Tab / Shift+Tab  | Move native keyboard focus between controls.                                                                |
 
-## Navigation
+Left/Right in the step tree operate on the tree; on the tab labels they switch
+tabs. Use numbered shortcuts to switch tabs directly from a step. In the
+production terminal, Tab/Shift+Tab move between tab navigation and content,
+while Up/Down, Page Up/Page Down and Home/End scroll read-only documents. The
+browser reference uses browser scrolling and does not emulate a terminal pager.
 
-All essential actions must work from the keyboard. Mouse interaction is optional.
-The prototype uses these bindings as a starting point:
+Selection and keyboard focus must remain visible. Switching tabs retains step
+selection and expansion; opening another run clears references belonging to the
+previous run. Resizing and incoming events must preserve the item being inspected.
+The production footer should expose help and an explicit quit binding. Leaving
+the interface ends observation only; it never cancels a run.
 
-| Key                | Behavior                                                                        |
-| ------------------ | ------------------------------------------------------------------------------- |
-| Up / Down or j / k | Move through runs or workflow steps in the relevant navigation context.         |
-| Enter              | Open the selected run or activate the focused item.                             |
-| Esc                | Close local help/detail first, then return from a run to the runs browser.      |
-| [ / ]              | Switch to the previous or next run while keeping the run workspace open.        |
-| 1 / 2 / 3          | Select activity, input or artifacts.                                            |
-| Tab                | Move focus between available controls or panes, with a visible focus indicator. |
-| ?                  | Show context-sensitive navigation help.                                         |
+## Visual language and terminal sizes
 
-The footer should show the few shortcuts relevant to the current screen. Keep
-focus distinct from selection. Arrow keys inside the activity pane should scroll
-activity rather than unexpectedly selecting a different run or step. Exact
-bindings may change to fit terminal conventions, provided the behavior stays
-predictable and discoverable.
+Use a monospace character grid, compact spacing, simple horizontal separators,
+reverse video and restrained ANSI-style colors. Inline expansions are indented
+text. Avoid cards, badges, shadows, rounded containers and persistent inspectors.
+The layout should be credible in a terminal with color disabled.
 
-Leaving the TUI, returning to the list or switching runs only stops or changes
-observation. None of those actions cancels the workflow. A quit action must make
-this distinction clear. Cancellation, if included, should be a separate explicit
-action with the run identity visible and protection against an accidental keypress.
+Use cyan for active work, green for successful outcomes, amber for repair or
+attention, red for failure or lost observation, and subdued text for context.
+Always accompany color with words or symbols. Lost observation still means
+unknown outcome, not proven failure.
 
-## Layout and visual language
+At about 80 columns, preserve the step, participant and state; move secondary
+metadata into the expansion before making the row unreadable. Wider terminals
+show more aligned fields rather than introducing side panels. Keep the header,
+tabs and key legend visible at limited height and scroll the current content.
+Long titles, paths and model names must have a way to reveal their full value.
+The browser mockup reflows for narrow screens; terminal resizing needs separate
+verification in the implementation.
 
-Use terminal-native typography, restrained separators and compact spacing. Keep
-the palette aligned with the run-output design: cyan for active work or dispatch,
-green for successful acceptance and completion, amber for repair or recoverable
-attention, red for failure or unavailable ownership, and subdued text for context.
-Symbols and words must preserve meaning without color.
+## Data and scope boundaries
 
-The wide run view has three regions: steps, activity and context. As width
-shrinks, move steps into a compact strip and reduce secondary metadata. At narrow
-terminal widths, use focused panes or section switching rather than squeezing
-three unreadable columns together. The prototype stacks content at narrow browser
-widths to remain inspectable; that is not a requirement to vertically stack every
-pane in the production TUI.
+Use engine-owned snapshots and lifecycle observations shared with other Woof
+interfaces. Do not reconstruct workflow state from terminal output, agent prose,
+idleness or time since the last event. If required information is unavailable,
+show that honestly; improvements belong in the shared observation contracts.
 
-At roughly 80 columns, current state, participant identity and the selected
-content must remain readable. At wider sizes, show the full workspace. Handle
-limited terminal height with independent scrolling and a persistent header and
-footer. Resizing must preserve selection and reading position. Long titles,
-paths and model names must wrap or truncate with a way to inspect the full value.
+Keep accepted submissions, gate decisions and recorded run completion separate.
+Keep blocked, failed, exhausted, cancelled and lost-host states distinct. An
+observer timeout does not establish a run outcome or imply restart support.
+Reconnection must produce a consistent view without duplicated activity or lost
+selection. The TUI must remain usable without plugin UI or MCP.
 
-## State and scope boundaries
-
-The TUI consumes the same engine-owned observation and control contracts as
-other interfaces. It does not infer state from agent prose, terminal output or
-gaps between events. The UI must remain usable without plugin UI or MCP.
-
-Keep accepted submissions, gate decisions and recorded run completion distinct.
-Do not imply that a recommended approval is final, an idle agent succeeded, or
-a lost host can resume. Distinguish work retry, format repair and code repair.
-Duplicate or late observations must not create duplicate narrative history.
-
-Display live, stale, disconnected and completed observation states honestly.
-An observer timeout or disconnection is not a terminal run outcome. On reconnect,
-recover a consistent visible state without silently losing the selection or
-replaying duplicate rows. Unknown or missing data gets an explicit presentation.
-
-Some desired waiting and activity details still need to be exposed consistently
-by the engine. That work belongs in the shared observation contracts, not in a
-parallel scheduler hidden inside the TUI. The builder should choose the smallest
-supported changes needed to present those details truthfully.
-
-This design does not add workflow creation, prompt editing, retry/resume/re-host,
-permission approval inside Woof, agent terminal emulation, or a general-purpose
-artifact editor. For a blocked agent, show where the user should act and use
-supported Herdr integration only when available. Do not present an unsupported
-action as an enabled control.
+This design covers observation and inspection. Workflow creation, prompt editing,
+retry/resume/re-host, terminal emulation and permission approval inside Woof are
+outside scope. Use supported Herdr integration for agent/session navigation only
+when available; unsupported actions must not appear as working controls.
 
 ## Acceptance
 
-- A user can browse runs, open one, inspect an earlier step and return to the
-  same list position entirely from the keyboard.
-- Opening a run produces a focused workspace rather than a longer list row.
-- Selecting historical review or verification never overwrites the current run
-  status in the header. The selected visit is unambiguous.
-- Activity, input and accepted artifact references are reachable without losing
-  the run context. Switching runs preserves the section where practical but
-  clears any selection that belongs to a different run.
-- Running, blocked, completed, failed/exhausted, cancelled and lost-host states
-  remain distinct. Required action and outcome uncertainty are explicit.
-- New activity does not steal focus, reorder the selected run away from the user,
-  or interrupt someone reading history. Returning to the latest activity is clear.
-- Empty lists, unreadable history, missing models, long labels, large input,
-  narrow terminals, short terminals and no-color output remain usable.
-- Closing or leaving the TUI leaves the run running. Any cancellation is a
-  separate, clearly targeted action.
-- Verify layout and keyboard behavior in a real terminal, including resize and
-  reconnect, as well as automated behavior checks. Sample-data mockups alone do
-  not establish live acceptance.
+- Browse runs, open one, expand a review, select its artifact and return to the
+  same tree entry and runs-list position using the keyboard alone.
+- Right enters the tree; Left backs out or collapses it. Up/Down traverse visible
+  selectable entries without skipping artifacts or selecting hidden children.
+- Steps, Activity and Config occupy the main content area. Details expand inline;
+  reading an artifact opens a pager and Esc restores its origin.
+- Earlier reviews, repeated verification, attempts and repair continuity remain
+  unambiguous. Historical selection never overwrites current run status.
+- Activity explains startup, dispatch, waiting and gate routing in human language.
+  New observations do not interrupt reading or move focus.
+- Configuration includes agent models, readable input and resolved run context.
+  Unknown values and unavailable evidence remain explicit.
+- Empty history, unavailable files, long content, no color, narrow/short terminals
+  and observation loss remain usable and truthful.
+- Verify real keyboard operation, scrolling, resize, live updates and reconnect in
+  a terminal. A sample-data browser prototype does not establish live acceptance.
 
-Related documents: [run output](run-output.md),
+Related: [run output](run-output.md),
 [observability](../architecture/observability.md),
 [domain model](../architecture/domain-model.md), and
 [Web UI capabilities](../architecture/web-ui.md).
