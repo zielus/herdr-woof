@@ -367,6 +367,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
   process.on("SIGINT", deferSignal);
   process.on("SIGTERM", deferSignal);
   let hosted: Promise<HostWorkflowResult>;
+  let seal: (() => void) | undefined;
   try {
     const claim = claimHost(runDir, {
       paneId,
@@ -427,9 +428,11 @@ export async function runHostCommand(args: string[]): Promise<number> {
       return 3;
     }
     const { runtimeModule, ...flags } = request.flags;
+    const output = hostOutput(runDir, view, flags.pollMs);
+    seal = output.seal;
     hosted = hostWorkflow({
       ...baseHostOptions(runtimeModule),
-      ...hostOutput(runDir, view, flags.pollMs),
+      ...output,
       runDir,
       runId: request.runId,
       ...(request.workflow !== null ? { workflow: request.workflow } : {}),
@@ -447,6 +450,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
     process.off("SIGTERM", deferSignal);
   }
   const result = await hosted;
+  seal?.();
   console.log(JSON.stringify(result.output));
   return result.code;
 }
@@ -484,9 +488,10 @@ async function foreground(options: {
 }): Promise<number> {
   const occupied = runDirOccupied(options.runDir);
   if (occupied !== undefined) return rejected("run_exists", occupied, [], 2);
+  const output = hostOutput(options.runDir, options.view, options.flags.pollMs);
   const result = await hostWorkflow({
     ...baseHostOptions(options.runtimeModule),
-    ...hostOutput(options.runDir, options.view, options.flags.pollMs),
+    ...output,
     runDir: options.runDir,
     runId: options.runId,
     ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
@@ -497,6 +502,7 @@ async function foreground(options: {
     writeOutcome: false,
     paneId: nonEmpty(process.env["HERDR_PANE_ID"]) ?? null,
   });
+  output.seal();
   console.log(JSON.stringify(result.output));
   return result.code;
 }
@@ -529,11 +535,16 @@ function hostOutput(
   runDir: string,
   view: HostViewFlags,
   pollMs: number | undefined,
-): Pick<HostWorkflowOptions, "log" | "warn" | "view"> {
+): Pick<HostWorkflowOptions, "log" | "warn" | "view"> & { seal: () => void } {
   // A reader that went away (EPIPE: the pane closed) must not crash the host: the first write
   // error, reported on the stream or to the write callback, ends the view's output for good. The
   // result still reaches outcome.json and the exit code, and the log file keeps the technical lines.
+  // `seal` ends stdout output the same way on purpose, just before the result line is printed, so a
+  // log line from a late Herdr call (the last metadata report) can never follow the result.
   let stdoutGone = false;
+  const seal = () => {
+    stdoutGone = true;
+  };
   process.stdout.on("error", () => {
     stdoutGone = true;
   });
@@ -552,7 +563,7 @@ function hostOutput(
     log(line);
     if (!view.plain) process.stderr.write(`woof: ${line}\n`);
   };
-  if (view.plain) return { log, warn, view: null };
+  if (view.plain) return { log, warn, view: null, seal };
   const hostView: HostView = createHostView({
     runDir,
     write,
@@ -564,7 +575,7 @@ function hostOutput(
     width: process.stdout.columns ?? 80,
     definitionFor: recordedWorkflowDefinition,
   });
-  return { log, warn, view: hostView };
+  return { log, warn, view: hostView, seal };
 }
 
 function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {
