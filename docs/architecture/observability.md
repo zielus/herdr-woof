@@ -465,9 +465,13 @@ attempt 2`, `Delivery unconfirmed · checking`, `Blocked: <reason>` plus the
   required action and tab, `Host lost · outcome unknown`); a blank line
   separates stage visits, `run.terminated` and `host.claimed` are left to the
   summary, and an unknown record type is a subdued `· <type>` row, never
-  dropped (the lifecycle and activity records another phase adds render by
-  their type string, `Waiting for agent to become ready`, `Agent ready`,
-  `Checking repository revision`, `Running checks · <cmd>`). A terminated run
+  dropped (the lifecycle and activity records render by their type string and
+  only when they say something: one `Waiting for agent to become ready` and one
+  `Agent ready` per readiness cycle, `Running checks · <cmd>` by `run`, no row
+  for a revision check or a check end the gate row already judges, `Agent not
+ready · <result>`, `Revision check failed`, `Checks aborted · <result>` when
+  the run ended around them, and an `Agent working` within 2 s of the dispatch
+  subdued as the expected pickup). A terminated run
   ends with a summary — `✓ Completed · <reason>`, `! Failed · <reason>`, `!
 Exhausted · <limit>`, `· Cancelled · <reason>` — with duration, `N reviews ·
 M repairs` and ARTIFACTS (completion, review, verification from

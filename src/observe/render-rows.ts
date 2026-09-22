@@ -59,6 +59,12 @@ export interface RowState {
   dispatchedStages: Map<string, Set<string>>;
   attempts: Map<string, AttemptFacts>;
   latestByStage: Map<string, { visit: number; attempt: number }>;
+  /** The last lifecycle state rendered per agent, so a readiness wait is not announced to a ready agent. */
+  lifecycle: Map<string, string>;
+  /** Agents whose `Waiting for agent to become ready` row is out and not yet answered by `Agent ready`. */
+  awaitingReady: Set<string>;
+  /** Time of the last `Task dispatched` row per agent, for the expected `Agent working` that follows. */
+  dispatchedAt: Map<string, string>;
 }
 
 export function emptyRowState(): RowState {
@@ -68,8 +74,14 @@ export function emptyRowState(): RowState {
     dispatchedStages: new Map(),
     attempts: new Map(),
     latestByStage: new Map(),
+    lifecycle: new Map(),
+    awaitingReady: new Set(),
+    dispatchedAt: new Map(),
   };
 }
+
+/** An agent observed working this soon after its dispatch is the expected pickup, not news. */
+const EXPECTED_PICKUP_MS = 2000;
 
 const APPROVING = new Set(["pass", "approve", "approved", "accept", "accepted", "ok", "lgtm"]);
 const REQUESTING = new Set([
@@ -217,6 +229,7 @@ export function rowsOf(event: FormattableEvent, state: RowState, ctx: RowContext
           ...(visit !== undefined && visit > 1 ? [`visit ${visit}`] : []),
           ...(attempt !== undefined && attempt > 1 ? [`attempt ${attempt}`] : []),
         ];
+        state.dispatchedAt.set(id, event.ts);
         return [
           base({
             mark: "dispatch",
@@ -330,10 +343,10 @@ export function rowsOf(event: FormattableEvent, state: RowState, ctx: RowContext
         return [base({ message: "Observation recovered", lifecycle: true })];
 
       case "agent.lifecycle_changed":
-        return [lifecycleRow(base, data)];
+        return lifecycleRows(base, data, state, event.ts);
 
       case "run.activity":
-        return activityRows(base, data);
+        return activityRows(base, data, state);
 
       default:
         return [base({ style: "dim", message: `· ${text(event.type)}` })];
@@ -397,7 +410,17 @@ function gateRow(base: (over: Partial<Row>) => Row, data: Record<string, unknown
   });
 }
 
-function lifecycleRow(base: (over: Partial<Row>) => Row, data: Record<string, unknown>): Row {
+/**
+ * The runtime rows of one agent. A readiness cycle prints `Waiting for agent to
+ * become ready` at most once (from whichever comes first: the `starting` state or
+ * the engine's wait) and `Agent ready` exactly once, on the state change itself.
+ */
+function lifecycleRows(
+  base: (over: Partial<Row>) => Row,
+  data: Record<string, unknown>,
+  state: RowState,
+  ts: string,
+): Row[] {
   const id = typeof data["agentId"] === "string" ? data["agentId"] : undefined;
   const to = text(data["to"]);
   const replaced = data["replaced"] === true ? " · replaced" : "";
@@ -405,23 +428,55 @@ function lifecycleRow(base: (over: Partial<Row>) => Row, data: Record<string, un
     lifecycle: true,
     ...(id === undefined ? {} : { participant: id }),
   };
+  if (id !== undefined) state.lifecycle.set(id, to);
   switch (to) {
     case "starting":
-      return base({ ...common, message: "Waiting for agent to become ready" });
+      return waitingRow(base, common, state, id);
     case "ready":
-      return base({ ...common, message: "Agent ready" });
-    case "working":
-      return base({ ...common, message: "Agent working" });
+      if (id !== undefined) state.awaitingReady.delete(id);
+      return [base({ ...common, message: "Agent ready" })];
+    case "working": {
+      const dispatched = id === undefined ? undefined : state.dispatchedAt.get(id);
+      const sinceDispatch =
+        dispatched === undefined ? Number.NaN : Date.parse(ts) - Date.parse(dispatched);
+      const expected = sinceDispatch >= 0 && sinceDispatch <= EXPECTED_PICKUP_MS;
+      return [base({ ...common, ...(expected ? { style: "dim" } : {}), message: "Agent working" })];
+    }
     case "blocked":
-      return base({ ...common, mark: "alert", style: "yellow", message: "Blocked · agent waits" });
+      return [
+        base({ ...common, mark: "alert", style: "yellow", message: "Blocked · agent waits" }),
+      ];
     case "gone":
-      return base({ ...common, mark: "alert", style: "red", message: `Agent gone${replaced}` });
+      return [base({ ...common, mark: "alert", style: "red", message: `Agent gone${replaced}` })];
     default:
-      return base({ ...common, message: `Agent ${words(to)}${replaced}` });
+      return [base({ ...common, message: `Agent ${words(to)}${replaced}` })];
   }
 }
 
-function activityRows(base: (over: Partial<Row>) => Row, data: Record<string, unknown>): Row[] {
+/** `Waiting for agent to become ready`, unless the agent is ready or the wait was already announced. */
+function waitingRow(
+  base: (over: Partial<Row>) => Row,
+  common: Partial<Row>,
+  state: RowState,
+  id: string | undefined,
+): Row[] {
+  if (id !== undefined) {
+    if (state.lifecycle.get(id) === "ready" || state.awaitingReady.has(id)) return [];
+    state.awaitingReady.add(id);
+  }
+  return [base({ ...common, lifecycle: true, message: "Waiting for agent to become ready" })];
+}
+
+/**
+ * Engine activity rows. Only what carries information is printed: a wait for an
+ * agent that is not ready, a check being run, an uncertain delivery, and any end
+ * that is not the expected one (the gate row that follows tells of a normal end).
+ */
+function activityRows(
+  base: (over: Partial<Row>) => Row,
+  data: Record<string, unknown>,
+  state: RowState,
+): Row[] {
   const kind = text(data["kind"]);
   const phase = text(data["phase"]);
   const id = typeof data["agentId"] === "string" ? data["agentId"] : undefined;
@@ -433,31 +488,53 @@ function activityRows(base: (over: Partial<Row>) => Row, data: Record<string, un
     ...(stage === undefined ? {} : { stage }),
   };
   const started = phase === "started";
+  const aborted = result !== undefined && (TERMINAL_OUTCOMES as readonly string[]).includes(result);
   switch (kind) {
     case "readiness_wait":
-      if (started) {
-        return [base({ ...common, lifecycle: true, message: "Waiting for agent to become ready" })];
-      }
-      return result === undefined || result === "ready"
-        ? [base({ ...common, lifecycle: true, message: "Agent ready" })]
-        : [
-            base({
-              ...common,
-              lifecycle: true,
-              mark: "alert",
-              style: "yellow",
-              message: `Agent not ready · ${words(result)}`,
-            }),
-          ];
+      if (started) return waitingRow(base, { ...common, lifecycle: true }, state, id);
+      if (result === undefined || result === "ready") return [];
+      if (id !== undefined) state.awaitingReady.delete(id);
+      return [
+        base({
+          ...common,
+          lifecycle: true,
+          mark: "alert",
+          style: "yellow",
+          message: `Agent not ready · ${words(result)}`,
+        }),
+      ];
     case "revision_check":
-      return started ? [base({ ...common, message: "Checking repository revision" })] : [];
+      // The gate row says what the fingerprint meant (passed, or `Revision changed`).
+      if (started || result === undefined || result.startsWith("tree ")) return [];
+      if (result === "failed") {
+        return [base({ ...common, mark: "alert", style: "red", message: "Revision check failed" })];
+      }
+      return [
+        base({
+          ...common,
+          mark: "alert",
+          style: aborted ? "yellow" : "red",
+          message: `Revision check ${aborted ? "aborted" : "failed"} · ${words(result)}`,
+        }),
+      ];
     case "check_run":
-      return started
+      if (started) {
+        return [
+          base({
+            ...common,
+            message: `Running checks${detail === undefined ? "" : ` · ${detail}`}`,
+          }),
+        ];
+      }
+      // An exit, signal or timeout is judged by the gate row that follows; only an end
+      // without one (the run ended around the check) needs its own row.
+      return aborted
         ? [
             base({
               ...common,
-              participant: "gate",
-              message: `Running checks${detail === undefined ? "" : ` · ${detail}`}`,
+              mark: "alert",
+              style: "yellow",
+              message: `Checks aborted · ${words(result)}`,
             }),
           ]
         : [];
