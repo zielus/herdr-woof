@@ -5,12 +5,14 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { recordedWorkflowDefinition } from "../config/record.js";
+import type { ResolvedCheckout } from "../contracts/checkout.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { sha256Hex } from "../contracts/canonical-json.js";
 import { isId, isPlainObject } from "../contracts/envelope.js";
 import { claimHost } from "../host/claim.js";
 import { entryExists, writeExclusiveFile } from "../host/files.js";
 import { LAUNCH_FILE, launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
+import { defaultCheckoutMode } from "../host/checkout.js";
 import { createHostLog } from "../host/log.js";
 import {
   OUTCOME_FILE,
@@ -53,6 +55,12 @@ resolved in config.json.
 --project defaults to the working directory; the input's repository must be
 that project's git top level. The run directory is --run-dir, else
 <runs-dir>/<run-id> (default ~/.woof/runs).
+Where the run works is the input's reserved "checkout" key: {"mode":"current"},
+{"mode":"worktree","branch"?,"base"?,"label"?,"keep"?} or {"mode":"path","path"}.
+Inside Herdr (without --runtime-module) the default is a new Herdr worktree on
+branch woof/<run-id>, whose workspace then holds the host and every agent tab;
+otherwise it is the repository itself. A workflow that edits the tree refuses a
+current or path checkout with uncommitted changes (checkout_dirty).
 
 --host herdr-pane (default) needs HERDR_ENV=1 and HERDR_PANE_ID (or
 --split-from, which only stands in for HERDR_PANE_ID: nothing is split): it
@@ -431,7 +439,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
     const output = hostOutput(runDir, view, flags.pollMs);
     seal = output.seal;
     hosted = hostWorkflow({
-      ...baseHostOptions(runtimeModule),
+      ...baseHostOptions(runtimeModule, request.checkout),
       ...output,
       runDir,
       runId: request.runId,
@@ -507,9 +515,15 @@ async function foreground(options: {
   return result.code;
 }
 
-function baseHostOptions(runtimeModule: string | undefined) {
+function baseHostOptions(runtimeModule: string | undefined, resolvedCheckout?: ResolvedCheckout) {
   const hostPaneId = nonEmpty(process.env["HERDR_PANE_ID"]);
+  const herdr = process.env["HERDR_ENV"] === "1" ? { bin: herdrBin(), env: process.env } : null;
   return {
+    checkout: {
+      herdr,
+      defaultMode: defaultCheckoutMode(process.env, runtimeModule),
+      ...(resolvedCheckout !== undefined ? { resolved: resolvedCheckout } : {}),
+    },
     createRuntime: runtimeFactory(runtimeModule),
     submitCommand: [process.execPath, cliPath],
     workspaceId: nonEmpty(process.env["HERDR_WORKSPACE_ID"]) ?? null,
@@ -589,7 +603,13 @@ function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {
             "woof run build-review needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID) or --runtime-module",
         };
       }
-      return { ok: true, runtime: createHerdrCliRuntime({ bin: herdrBin() }) };
+      return {
+        ok: true,
+        runtime: createHerdrCliRuntime({
+          bin: herdrBin(),
+          ...(context.workspaceId != null ? { workspaceId: context.workspaceId } : {}),
+        }),
+      };
     }
     const loaded = await loadModuleDefault(runtimeModule);
     if (!loaded.ok) return { ok: false, message: loaded.message };

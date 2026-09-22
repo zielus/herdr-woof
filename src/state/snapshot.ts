@@ -1,3 +1,4 @@
+import type { ResolvedCheckout } from "../contracts/checkout.js";
 import { isPositiveInteger } from "../contracts/envelope.js";
 import type {
   AttemptCause,
@@ -201,6 +202,8 @@ export interface RunSnapshot {
   input: { path: string; sha256: string; bytes: number } | null;
   /** Digest of the recorded resolved configuration, when run.opened carries one (p4). */
   config: { path: string; sha256: string; bytes: number } | null;
+  /** The checkout the run works in, when run.opened records one (composition). */
+  checkout: ResolvedCheckout | null;
   status: RunStatus;
   openedAt: string;
   updatedAt: string;
@@ -393,6 +396,7 @@ export function deriveSnapshot(
       workflow: state.plan === null ? null : { ...state.plan.workflow },
       input: first.input === undefined ? null : { ...first.input },
       config: first.config === undefined ? null : { ...first.config },
+      checkout: first.checkout === undefined ? null : { ...first.checkout },
       status: state.status,
       openedAt: state.openedAt ?? first.ts,
       updatedAt: state.updatedAt ?? first.ts,

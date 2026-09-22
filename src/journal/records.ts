@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 
+import { resolvedCheckoutProblem, type ResolvedCheckout } from "../contracts/checkout.js";
 import {
   isId,
   isPlainObject,
@@ -99,6 +100,8 @@ export interface RunOpenedRecord extends RecordBase {
   input?: { path: "input.json"; sha256: string; bytes: number };
   /** Digest of the resolved configuration `config.json` (p4, optional). */
   config?: { path: "config.json"; sha256: string; bytes: number };
+  /** The checkout the run works in (composition, optional; absent in older journals). */
+  checkout?: ResolvedCheckout;
 }
 
 export interface AttemptOpenedRecord extends RecordBase, AttemptIdentity {
@@ -227,7 +230,7 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
   switch (value["type"]) {
     case "run.opened":
       return (
-        keysProblem(value, ["runId"], ["plan", "input", "config"]) ??
+        keysProblem(value, ["runId"], ["plan", "input", "config", "checkout"]) ??
         check(isId(value["runId"]), "runId is invalid") ??
         planProblem(value["plan"]) ??
         (value["input"] === undefined
@@ -235,7 +238,8 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
           : fileRefProblem(value["input"], "input", INPUT_FILE)) ??
         (value["config"] === undefined
           ? undefined
-          : fileRefProblem(value["config"], "config", CONFIG_FILE))
+          : fileRefProblem(value["config"], "config", CONFIG_FILE)) ??
+        (value["checkout"] === undefined ? undefined : resolvedCheckoutProblem(value["checkout"]))
       );
     case "attempt.opened":
       return attemptOpenedProblem(value);

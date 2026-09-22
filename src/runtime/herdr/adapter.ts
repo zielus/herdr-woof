@@ -36,6 +36,11 @@ export interface HerdrCliRuntimeOptions {
   commandTimeoutMs?: number;
   /** Extra time before a child that ignores its own --timeout is killed (default 2000). */
   spawnGraceMs?: number;
+  /**
+   * The workspace new agent tabs go to, when the host knows it better than its own pane does
+   * (a foreground host whose run works in a worktree workspace it created).
+   */
+  workspaceId?: string;
 }
 
 export interface HerdrCliRuntime extends RuntimeAdapter {
@@ -112,6 +117,8 @@ export function createHerdrCliRuntime(options: HerdrCliRuntimeOptions): HerdrCli
   let resolvedWorkspace: Promise<string | undefined> | undefined;
   function tabWorkspaceId(): Promise<string | undefined> {
     resolvedWorkspace ??= (async () => {
+      if (options.workspaceId !== undefined && options.workspaceId !== "")
+        return options.workspaceId;
       const fromEnv = env["HERDR_WORKSPACE_ID"];
       const fallback = fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined;
       const ownPane = env["HERDR_PANE_ID"];

@@ -276,3 +276,13 @@ Real shipped behavior proving the authoring contract generalizes beyond
   whose downstream stage must act on an upstream artifact should say so in
   the request** — an agent cannot infer an artifact's authority from the
   artifact itself, only from what the request tells it about that artifact.
+
+## Implemented now (composition)
+
+- **Checkout.** A definition does not validate where it runs: `checkout` is a
+  reserved top-level input key the engine peels off before `validateInput`
+  (see [domain model](../architecture/domain-model.md#implemented-now-composition-checkout)).
+  `repository(input)` names the source repository; the run may work in a
+  worktree made from it. A definition that only reads the tree can declare
+  `checkout: "any"` so callers may run it on a dirty `current` tree; the
+  default, `"writable"`, refuses one (`checkout_dirty`).

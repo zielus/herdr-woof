@@ -5,6 +5,7 @@ import {
   isVerdictMarker,
   type RejectionDetail,
 } from "../contracts/envelope.js";
+import type { CheckoutAccess } from "../contracts/checkout.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
 import {
   LIMIT_KEYS,
@@ -51,8 +52,17 @@ export interface WorkflowDefinition<Input = unknown> {
   resolveLimits(input: Input): Partial<Limits>;
   /** Built-in value per limit key, below input and configuration (p4, optional). */
   limitDefaults?: Partial<Limits>;
-  /** Absolute path of the git work tree the agents work in. */
+  /**
+   * Absolute path of the git work tree the input names: the source of the run's checkout. The
+   * run works there (`current`), in a worktree created from it, or in a caller-named `path`;
+   * admission resolves which, from the reserved input key `checkout` (composition.md).
+   */
   repository(input: Input): string;
+  /**
+   * What the workflow's agents do to the tree (default "writable"): a writable workflow refuses
+   * a `current` or `path` checkout with uncommitted or untracked changes (`checkout_dirty`).
+   */
+  checkout?: CheckoutAccess;
   /** An agent stage id. */
   start: string;
   /** Entering this agent stage starts a round; null when the workflow has no rounds. */
@@ -182,6 +192,9 @@ export function validateWorkflowDefinition<Input = unknown>(
   for (const field of DEFINITION_FUNCTIONS) {
     if (typeof value[field] !== "function") fail(field, "must be a function");
   }
+  const access = value["checkout"];
+  if (access !== undefined && access !== "any" && access !== "writable")
+    fail("checkout", 'must be "any" or "writable"');
   const limitDefaults = value["limitDefaults"];
   if (limitDefaults !== undefined) {
     if (!isPlainObject(limitDefaults)) {

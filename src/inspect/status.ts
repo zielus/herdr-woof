@@ -33,6 +33,8 @@ export interface RunStatusView {
   attention: RunSnapshot["attention"];
   counters: RunSnapshot["counters"];
   config: { sha256: string } | null;
+  /** Where the run works (composition); null for a run opened before checkouts were recorded. */
+  checkout: RunSnapshot["checkout"];
   cursor: string;
 }
 
@@ -89,6 +91,7 @@ export function runStatusOf(snapshot: RunSnapshot, runDir: string): RunStatusVie
     attention: snapshot.attention,
     counters: snapshot.counters,
     config: snapshot.config === null ? null : { sha256: snapshot.config.sha256 },
+    checkout: snapshot.checkout === null ? null : { ...snapshot.checkout },
     cursor: snapshot.cursor,
   };
 }

@@ -134,6 +134,7 @@ describe("woof status", () => {
       "attention",
       "counters",
       "config",
+      "checkout",
       "cursor",
     ]);
   });

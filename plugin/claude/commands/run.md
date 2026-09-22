@@ -50,6 +50,11 @@ Write one JSON object:
   `timeoutMs`, a required integer number of milliseconds.
 - Omit `agents` unless the user asked for specific agent kinds or models; the
   Woof configuration supplies them.
+- Omit `checkout` unless the user said where the run should work. Inside
+  Herdr a run defaults to a new Herdr worktree on branch `woof/<runId>`; add
+  `"checkout": {"mode": "current"}` to work in the repository itself (its tree
+  must be clean for a workflow that edits it), or `{"mode": "worktree",
+"branch": "<name>", "base": "<ref>"}` to choose the branch and its base.
 - Never add permission-bypass arguments on the user's behalf.
 
 Both built-in workflows take the shape below. A workflow that is neither takes

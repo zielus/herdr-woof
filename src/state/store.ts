@@ -10,6 +10,7 @@ import {
 import { join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
+import type { ResolvedCheckout } from "../contracts/checkout.js";
 import { isId, type RejectionDetail } from "../contracts/envelope.js";
 import type { StoreReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
@@ -110,6 +111,8 @@ export interface OpenRunInput {
    * workflow; it records what the run was admitted with.
    */
   configuration?: unknown;
+  /** The resolved checkout, recorded on run.opened (composition). */
+  checkout?: ResolvedCheckout;
   /**
    * The run host's claim. `host.claimed` is then appended right after
    * `run.opened` under the same journal lock, so no other writer (a cancel) can
@@ -375,6 +378,7 @@ export async function openRun(input: OpenRunInput): Promise<OpenRunOutcome> {
         plan: validated.plan,
         ...(inputRef !== undefined ? { input: inputRef } : {}),
         ...(configRef !== undefined ? { config: configRef } : {}),
+        ...(input.checkout !== undefined ? { checkout: { ...input.checkout } } : {}),
       }) as RunOpenedRecord;
       // Same lock as run.opened: a cancel cannot close the run before its host is on record.
       // A host record is never required for the run: a failed write leaves `hostClaimed` null.

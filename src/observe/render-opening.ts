@@ -88,7 +88,27 @@ function contextLines(
     ...wrapPath(dir, options.width - 4).map((piece, index) =>
       paint(index === 0 ? `dir ${piece}` : `    ${piece}`, "dim"),
     ),
+    ...checkoutLines(snapshot, layout),
   ];
+}
+
+/** `checkout worktree · woof/<run> · from <source>`: where the run works, when it is recorded. */
+function checkoutLines(snapshot: RunSnapshot, layout: Layout): string[] {
+  const checkout = snapshot.checkout;
+  if (checkout === null) return [];
+  const { paint, options } = layout;
+  const parts = [
+    checkout.inherited ? `${text(checkout.mode)} (inherited)` : text(checkout.mode),
+    ...(checkout.branch === null ? [] : [text(checkout.branch)]),
+    ...(checkout.mode === "current" && !checkout.inherited
+      ? []
+      : [shortenHome(text(checkout.path), options.home)]),
+    ...(checkout.mode === "worktree"
+      ? [`from ${shortenHome(text(checkout.source), options.home)}`]
+      : []),
+    ...(checkout.created && !checkout.keep ? ["removed when completed"] : []),
+  ];
+  return wrap(`checkout ${parts.join(" · ")}`, options.width).map((piece) => paint(piece, "dim"));
 }
 
 function rosterLines(snapshot: RunSnapshot, layout: Layout): string[] {

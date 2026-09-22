@@ -90,7 +90,8 @@ and fingerprints.
 A definition may declare `checkout?: "any" | "writable"` (default
 `"writable"`). For a top-level run whose checkout is `current` or `path`, a
 writable definition refuses a tree with uncommitted or untracked changes
-(`git status --porcelain` non-empty) as `checkout_dirty`: the builder's edits
+(`git status --porcelain` lists anything outside the project's `.woof/`) as
+`checkout_dirty`: the builder's edits
 would mix with the operator's and revision fences would review them. `any`
 accepts a dirty tree (read-only workflows such as `plan`). A fresh worktree is
 clean by construction, and an inherited checkout is never re-checked (the
@@ -113,10 +114,10 @@ Observed Herdr 0.9.1 shapes (recorded from a probe on a scratch repository):
 
 ```json
 {"id":"cli:worktree:create","result":{"type":"worktree_created",
- "root_pane":{"pane_id":"w9K:p1","tab_id":"w9K:t1","workspace_id":"w9K","cwd":"/Users/…/.herdr/worktrees/probe-repo/probe-one", …},
+ "root_pane":{"pane_id":"w9K:p1","tab_id":"w9K:t1","workspace_id":"w9K","cwd":"~/.herdr/worktrees/probe-repo/probe-one", …},
  "tab":{"tab_id":"w9K:t1","workspace_id":"w9K", …},
  "workspace":{"workspace_id":"w9K","label":"woof-probe", "worktree":{"checkout_path":"…/probe-one","repo_root":"…/probe-repo", …}, …},
- "worktree":{"branch":"probe/one","path":"/Users/…/.herdr/worktrees/probe-repo/probe-one","open_workspace_id":"w9K", …}}}
+ "worktree":{"branch":"probe/one","path":"~/.herdr/worktrees/probe-repo/probe-one","open_workspace_id":"w9K", …}}}
 {"error":{"code":"worktree_create_failed","message":"fatal: invalid reference: nosuchref"},"id":"cli:worktree:create"}   (exit 1)
 {"id":"cli:worktree:remove","result":{"type":"worktree_removed","path":"…/probe-one","workspace_id":"w9K","forced":false}}
 ```
@@ -273,8 +274,8 @@ start` inputs for (a) and (b) are documented in
 
 ## Phases
 
-0. This note.
-1. Checkout: validator and resolver, Herdr worktree parser and fake-Herdr
+0. This note. (done)
+1. (done) Checkout: validator and resolver, Herdr worktree parser and fake-Herdr
    support, admission `checkout` parameter and dirty rule, launcher/host
    wiring, `run.opened.checkout`, snapshot/status/run view, docs, changeset.
 2. Workflow stage: definition and plan validation, input artifacts, records,

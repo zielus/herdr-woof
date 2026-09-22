@@ -656,3 +656,53 @@ verdict marker — not design intent. Source: `src/workflows/catalog.ts`,
   with no further plumbing. `test/fixtures/p1-journal.jsonl` and
   `p2-journal.jsonl`, written before this field existed, still replay clean
   through `readJournal`.
+
+## Implemented now (composition: checkout)
+
+Real shipped behavior for the checkout policy — the plan and its reasoning are in
+[Checkout policy and workflow composition](../design/composition.md). Source:
+`src/contracts/checkout.ts`, `src/scheduler/admission.ts`, `src/host/checkout.ts`,
+`src/host/launch.ts`.
+
+- **`checkout` is a reserved top-level key of every workflow input.** Admission
+  peels it off before the definition's `validateInput` runs (so no definition
+  lists it, and `input.json` records the input without it) and validates it
+  once: `{"mode":"current"}`, `{"mode":"worktree", "branch"?, "base"?,
+"label"?, "keep"?}` or `{"mode":"path", "path"}`; anything else is
+  `input_invalid` naming `checkout.<field>`.
+- **Defaults.** A top-level run started with `HERDR_ENV=1` and the Herdr
+  runtime (no `--runtime-module`) works in a new Herdr worktree; any other
+  top-level run works in the repository its input names (`current`). A
+  worktree needs Herdr: outside it, asking for one is `checkout_unsupported`.
+  `herdr worktree create --cwd <repo> --branch <branch> [--base <ref>] --label
+<label> --no-focus` makes it (branch default `woof/<runId>`, label default
+  `woof:<workflow>`; `--trust-repository` is never passed); a Herdr failure is
+  `checkout_failed` (exit 3).
+- **Admission validates the source, then relocates.** `repository(input)` is
+  still checked as the git top level and, with configuration, as the project
+  (`project_mismatch`); the run then works in the checkout: the revision,
+  the run-directory overlap check, `config.json`'s `repository`, every pane,
+  check and fingerprint use the checkout path.
+- **Writable workflows refuse a dirty tree.** A definition may declare
+  `checkout: "any" | "writable"` (default `writable`). A writable workflow
+  refuses a `current` or `path` checkout whose `git status --porcelain` lists
+  anything outside `.woof/` as `checkout_dirty`; `any` accepts it. A created
+  worktree is not checked.
+- **Where the host runs.** `woof run start --host herdr-pane` resolves the
+  checkout in the launcher (after a built-in's pre-admission). With a new
+  worktree the host runs in that workspace's root pane instead of a new tab,
+  with `HERDR_WORKSPACE_ID` set to it, so every agent tab of the run opens in
+  the worktree's workspace; `launch.json` carries the resolved checkout to the
+  host, which admits into it. A foreground host inside Herdr creates the
+  worktree itself and gives the runtime its workspace. Any refusal after the
+  worktree exists removes it again.
+- **Recorded.** `run.opened.checkout` (additive at schemaVersion 1) is `{mode,
+path, source, branch, base, workspaceId, created, keep, inherited}`; the
+  snapshot and `woof status` carry it as `checkout` (`null` for older runs),
+  `woof status --pretty` prints a `checkout` line and the run view's opening
+  block a `checkout …` line. The launcher's `started` output includes it.
+- **Cleanup.** Created worktrees are kept. With `keep: false` the host removes
+  the worktree (`herdr worktree remove --workspace <id> --force`) after a
+  completed run, as its very last act, and says so in `host.log`; the branch
+  stays. Removal is not journaled: only `host.exited` may follow
+  `run.terminated`.
