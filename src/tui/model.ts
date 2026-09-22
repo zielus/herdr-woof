@@ -222,6 +222,13 @@ function attentionOf(snapshot: RunSnapshot): StateWord | null {
 }
 
 /** Where to act for an agent: its Herdr tab or pane, when recorded. */
+/** Who works a stage: its agent, or `workflow <name>` for a workflow step (composition). */
+function stageParticipant(snapshot: RunSnapshot, stageId: string): string {
+  const stage = snapshot.stages.find((item) => item.stageId === stageId);
+  if (stage?.workflow !== undefined) return `workflow ${stage.workflow}`;
+  return stage?.agentId ?? "—";
+}
+
 function where(snapshot: RunSnapshot, agentId: string): string {
   const assignment = snapshot.agents.find((agent) => agent.agentId === agentId)?.assignment;
   if (assignment?.tabId != null) return `${text(agentId)}'s tab ${text(assignment.tabId)}`;
@@ -379,9 +386,11 @@ function stageVisitNode(
           ? `${words(checking.kind)} since ${clock(checking.since)}`
           : hostLost(snapshot)
             ? "host lost · no terminal outcome recorded"
-            : latest.dispatch === null
-              ? "not dispatched yet"
-              : "no accepted result yet",
+            : latest.child !== undefined
+              ? `child run ${latest.child.runId}`
+              : latest.dispatch === null
+                ? "not dispatched yet"
+                : "no accepted result yet",
     });
   } else if (!terminated && accepted !== undefined && gate === undefined) {
     details.push({ label: "waiting", value: "gate decision on the accepted result" });
@@ -422,7 +431,7 @@ function stageVisitNode(
       stageId,
       visit,
       attempt: attempt.attempt,
-      context: `request dispatched to ${text(attempt.agentId)} · ${text(stageId)} / visit ${visit} / attempt ${attempt.attempt}`,
+      context: `request dispatched to ${text(attempt.agentId ?? "—")} · ${text(stageId)} / visit ${visit} / attempt ${attempt.attempt}`,
       bytes: attempt.request.bytes,
       sha256: attempt.request.sha256,
     });
@@ -436,7 +445,8 @@ function stageVisitNode(
     id: `stage:${stageId}:${visit}`,
     kind: "stage",
     name: numbered(stageId, visit),
-    participant: latest.agentId,
+    // A workflow step has no agent: its participant is the child run it opened.
+    participant: latest.agentId ?? (latest.child !== undefined ? `run ${latest.child.runId}` : "—"),
     state: visitState(snapshot, latest, accepted, gate, blockedHere),
     startedAt: first.dispatch?.at ?? first.openedAt,
     endedAt,
@@ -498,7 +508,9 @@ function visitState(
 function attemptLine(attempt: SnapshotAttempt, clock: Clock): string {
   const parts: string[] = [];
   if (attempt.cause !== "initial") parts.push(words(attempt.cause));
-  if (attempt.dispatch === null) parts.push("not dispatched");
+  // A workflow step is not dispatched to an agent: it runs a child run (composition).
+  if (attempt.child !== undefined) parts.push(`child run ${attempt.child.runId}`);
+  else if (attempt.dispatch === null) parts.push("not dispatched");
   else {
     parts.push(`dispatched ${clock(attempt.dispatch.at)}`);
     if (attempt.delivery === "ambiguous") parts.push("delivery unconfirmed");
@@ -662,9 +674,7 @@ function pendingSteps(
   let previous = { id: currentId, name: current.name };
   const seen = new Set([currentId]);
   const agentOf = (id: string) =>
-    nodes.get(id)?.kind === "check"
-      ? "check"
-      : (snapshot.stages.find((stage) => stage.stageId === id)?.agentId ?? "—");
+    nodes.get(id)?.kind === "check" ? "check" : stageParticipant(snapshot, id);
   // A finished step whose gate already chose the route: that stage is next, not conditional.
   const last = snapshot.gates.at(-1);
   const decidedHere =
@@ -703,10 +713,7 @@ function pendingSteps(
     const node = nodes.get(next);
     const count = (visits.get(next) ?? 0) + 1;
     const name = numbered(next, count);
-    const agent =
-      node?.kind === "check"
-        ? "check"
-        : (snapshot.stages.find((stage) => stage.stageId === next)?.agentId ?? "—");
+    const agent = node?.kind === "check" ? "check" : stageParticipant(snapshot, next);
     pending.push({
       id: `pending:${next}`,
       kind: "pending",
