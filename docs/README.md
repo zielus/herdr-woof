@@ -41,6 +41,8 @@ integrations behave, how to extend it, and which capabilities are not supported.
 - [Set up the Woof Herdr plugin](integrations/herdr-setup.md)
 - [Open proposals](design/proposals.md), clearly separated from implemented
   behavior
+- [Human-readable run output](design/run-output.md), approved design brief and
+  visual reference for implementation
 
 ### Contribution and release
 
