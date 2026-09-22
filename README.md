@@ -168,6 +168,7 @@ woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
   [--poll-ms <n>] [--stats] [--pretty]
 woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] \
   [--timeout-ms <n>]
+woof tui [--project <dir>] [--runs-dir <dir>] [--ascii] [--poll-ms <n>]
 woof ui [--port <n>] [--host <addr>] [--runs-dir <dir>] [--token <secret>] \
   [--allow-host <name>] [--allow-origin <origin>] [--poll-ms <n>] [--no-open]
 woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \

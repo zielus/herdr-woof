@@ -30,7 +30,8 @@ command and action below is an implemented surface.
   `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
 [--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--input summary|json]
-[--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`.
+[--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`,
+  `tui [--project <dir>] [--runs-dir <dir>] [--ascii] [--poll-ms <n>]`.
   `watch` is the human view of [run output](../design/run-output.md): an
   opening block (workflow, repository, run id and directory, agent roster, stage
   map with gates and repair routes, limits, input preview), one plain-English
@@ -41,7 +42,11 @@ command and action below is an implemented surface.
   `events --pretty`, which prints exactly the same) is the technical view: a
   status header and one line per journal event; `status --pretty` prints only
   that header. Colors only when stdout is a terminal and `NO_COLOR` is unset or
-  empty. See [observability](../architecture/observability.md#implemented-now-p4).
+  empty. `tui` is a read-only, interactive terminal run browser: a runs list and
+  a run view with steps, activity and config tabs, driven entirely by the
+  keyboard (see [Terminal UI](../design/tui.md)); `--frames` is a
+  non-interactive text mode for tests. See
+  [observability](../architecture/observability.md#implemented-now-p4).
 - Runs across directories: `status`, `events`, `watch`, `run show` and
   `run cancel` take a run id wherever they take `<run-dir>` (an existing
   directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is

@@ -3,10 +3,9 @@
 ## One source of run meaning
 
 The engine exposes current state and incremental updates. Herdr, Claude Code,
-logs and the Web UI consume that contract; a future TUI can do the same.
-Consumers must not infer stages or success by reading prompts, scraping
-terminals, or interpreting UI labels. Observability works when the Herdr Woof
-plugin is absent.
+logs, the Web UI and `woof tui` consume that contract. Consumers must not infer
+stages or success by reading prompts, scraping terminals, or interpreting UI
+labels. Observability works when the Herdr Woof plugin is absent.
 
 ## Snapshot contract
 
@@ -66,11 +65,16 @@ should focus on blocks, failures and completion rather than every activity chang
 
 ## TUI readiness
 
-The future TUI needs run listing, snapshots, incremental updates, artifact
-retrieval, and defined control operations such as cancellation. It should be
-possible to build it without modifying workflow definitions. No TUI, rendering
-library, WebSocket server or specific database is required. The current Web UI
-uses the same snapshot, event and cancellation contracts over local HTTP and SSE.
+`woof tui` is a consumer of exactly this contract, built without modifying
+workflow definitions: it reads `listRuns` for the runs list, and for an open run
+`readRunStatus` and `readEvents` for the initial state and history, then follows
+with `subscribeEvents` (`lockFree: true`, so it never takes the journal lock).
+Events are kept once per seq, so a reconnect resumes from the last cursor
+without repeating a row, and it re-reads the run's status on an interval to
+notice host liveness changes (`lost`/`exited`) that no event announces on its
+own. It calls no control operation and writes nothing to a run. The current Web
+UI uses the same snapshot, event and cancellation contracts over local HTTP and
+SSE.
 
 Verify this with an external consumer that follows an active run, disconnects,
 reconnects, and reaches the same visible state as a fresh snapshot. Include a

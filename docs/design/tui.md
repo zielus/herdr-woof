@@ -1,6 +1,6 @@
 # Woof terminal UI
 
-Status: approved design direction, awaiting production implementation.
+Status: approved design direction, implemented as `woof tui`.
 
 This is a product and design handoff for an interactive terminal run browser.
 The reference is a terminal-native layout: aligned text, a selection cursor,
@@ -233,6 +233,36 @@ when available; unsupported actions must not appear as working controls.
   and observation loss remain usable and truthful.
 - Verify real keyboard operation, scrolling, resize, live updates and reconnect in
   a terminal. A sample-data browser prototype does not establish live acceptance.
+
+## Implementation notes
+
+Non-obvious decisions made while building `woof tui`:
+
+- A terminal has no focusable tab labels, so the run view keeps an explicit
+  focus of its own, tab bar or content, moved with Tab and Shift+Tab. Left/Right
+  switch tabs on the tab bar and in Activity and Config; in the Steps content
+  they operate on the tree, and in the pager they pan long lines.
+- Activity follows the latest entry until the user scrolls into history; End (or
+  scrolling back down to the bottom) resumes following rather than needing a
+  separate command.
+- `q` and Ctrl+C quit from anywhere; `?` opens a key legend. Quitting only ends
+  observation, never the run.
+- The artifact pager pans long lines horizontally with Left/Right in addition to
+  vertical scrolling, and prints control characters in caret notation instead of
+  executing them, so arbitrary file bytes are always safe to display.
+- Dispatched requests appear as their own readable `request` children beside
+  accepted artifacts and verification evidence under a step; OUTPUT counts only
+  accepted artifacts and evidence, not requests.
+- Possible next steps come from the recorded workflow graph only when the run's
+  workflow is a built-in one at the recorded version; a project's own workflow
+  module is never reloaded to read a run, so a project workflow shows no routes.
+- The runs list scope is the git top level of `--project` (default the working
+  directory); a project outside a git repository lists every run.
+- `--frames` is a non-interactive text mode that reads one command per stdin
+  line and prints each frame as plain text, for tests and terminals without raw
+  input.
+- A terminal narrower than 40 columns or shorter than 10 rows shows an explicit
+  message instead of a truncated or garbled layout.
 
 Related: [run output](run-output.md),
 [observability](../architecture/observability.md),
