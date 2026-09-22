@@ -854,13 +854,8 @@ async function partA() {
     return;
   }
 
-  // The watch pane is a split inside the host's tab: Herdr's own pane record says which tab holds it.
-  const watchPaneId = run.launched?.watch?.paneId ?? null;
-  const watchPane = watchPaneId === null ? null : herdrJson("pane", "get", watchPaneId);
-  evidence(
-    "A/herdr-pane-get-watch.json",
-    watchPane?.raw.stdout ?? `no watch pane: ${JSON.stringify(run.launched?.watch ?? null)}`,
-  );
+  // One pane per run: the host's tab holds only the host's pane, which prints the human view; the
+  // technical log is <run-dir>/host.log. Herdr's own pane record says which tab holds the host.
   const hostPane = herdrJson("pane", "get", host.paneId);
   evidence("A/herdr-pane-get-host.json", hostPane.raw.stdout);
 
@@ -947,14 +942,30 @@ async function partA() {
     JSON.stringify(soleOccupant),
   );
 
+  // The host tab in every active sample: exactly the host's pane, no watch split or anything else.
+  const hostTabRows = samples.filter((row) =>
+    row.panes?.some((pane) => pane.tab_id === host.tabId),
+  );
+  const hostTabSole =
+    hostTabRows.length > 0 &&
+    hostTabRows.every((row) => {
+      const inTab = row.panes.filter((pane) => pane.tab_id === host.tabId);
+      return inTab.length === 1 && inTab[0].pane_id === host.paneId;
+    });
+  const hostLogPath = join(run.runDir, "host.log");
+  const hostLog = existsSync(hostLogPath) ? readFileSync(hostLogPath, "utf8") : null;
+  if (hostLog !== null) evidence("A/host.log", hostLog);
+  const dispatchLines = (hostLog ?? "")
+    .split("\n")
+    .filter((line) => /^\S+Z dispatch \S+ visit \d+ attempt \d+ /.test(line));
   gate(
     "A7",
-    "the watch pane is a split inside the host's tab",
-    watchPaneId !== null &&
-      watchPane?.result?.pane?.tab_id === host.tabId &&
+    "one pane per run: the host tab held exactly the host's pane in every active sample (no watch split), and <run-dir>/host.log holds the technical dispatch lines",
+    hostTabSole &&
       hostPane.result?.pane?.tab_id === host.tabId &&
-      watchPaneId !== host.paneId,
-    `watch pane ${watchPaneId ?? `none (${JSON.stringify(run.launched?.watch ?? null)})`} in tab ${watchPane?.result?.pane?.tab_id ?? "unknown"}, host pane ${host.paneId} in tab ${hostPane.result?.pane?.tab_id ?? "unknown"}`,
+      run.launched?.watch === undefined &&
+      dispatchLines.length >= 2,
+    `host pane ${host.paneId} in tab ${hostPane.result?.pane?.tab_id ?? "unknown"}; ${hostTabRows.length} active samples of the host tab, sole occupant ${hostTabSole}; watch field ${JSON.stringify(run.launched?.watch ?? null)}; host.log ${hostLog === null ? "missing" : `${dispatchLines.length} dispatch lines`}`,
   );
 
   const accepted = ofType(records, "submission.accepted");

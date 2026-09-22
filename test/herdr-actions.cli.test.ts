@@ -157,12 +157,8 @@ function setup(): Setup {
           },
         }),
       },
-      // The watch pane: a down split of the host tab's root pane; its typed command is not spawned.
-      {
-        match: ["pane", "split", "w5:p8"],
-        stdout: JSON.stringify({ result: { pane: { pane_id: "w5:p9" } } }),
-      },
-      { match: ["pane", "run", "w5:p9"], stdout: "{}" },
+      // The run host, typed into the tab's root pane; no pane split is scripted, so a start that
+      // split anything would hit an unscripted fake and fail.
       {
         match: ["pane", "run"],
         call: 1,
@@ -334,7 +330,7 @@ describe("woof herdr actions", () => {
     expect(existsSync(s.guardLog)).toBe(false);
   });
 
-  it("A3: start needs .woof/start.json, then opens the host in a new tab with the watch split below it, and the host runs to its end", async () => {
+  it("A3: start needs .woof/start.json, then opens the host in the root pane of a new tab (no split), and the host runs to its end", async () => {
     const s = setup();
     const repo = s.repo("repo-a");
     const context = { focused_pane_id: "w5:p3", focused_pane_cwd: repo };
@@ -375,8 +371,9 @@ describe("woof herdr actions", () => {
       outcome: "started",
       runDir: join(s.runsDir, started.json["runId"]),
       host: { mode: "herdr-pane", paneId: "w5:p8", tabId: "w5:t4" },
-      watch: { paneId: "w5:p9" },
     });
+    // One pane per run: the host's root pane shows the run's human view; nothing is split.
+    expect(started.json).not.toHaveProperty("watch");
     // The action process has no HERDR_WORKSPACE_ID: the tab goes to the workspace Herdr reports
     // for the focused pane, never to Herdr's default workspace.
     expect(calls(s).filter((argv) => argv[1] === "get" && argv[2] === "w5:p3")).toEqual([
@@ -393,16 +390,13 @@ describe("woof herdr actions", () => {
       "woof:build-review",
       "--no-focus",
     ]);
-    // The only split is the watch pane, below the host tab's root pane.
-    expect(calls(s).filter((argv) => argv[0] === "pane" && argv[1] === "split")).toEqual([
-      ["pane", "split", "w5:p8", "--direction", "down", "--cwd", repo, "--no-focus"],
-    ]);
+    expect(calls(s).filter((argv) => argv[0] === "pane" && argv[1] === "split")).toEqual([]);
+    const runDir = started.json["runDir"] as string;
     expect(
       calls(s)
-        .find((argv) => argv[1] === "run" && argv[2] === "w5:p9")
-        ?.slice(-3),
-    ).toEqual(["watch", started.json["runDir"], "--follow"]);
-    const runDir = started.json["runDir"] as string;
+        .filter((argv) => argv[1] === "run")
+        .map((argv) => argv.slice(-3)),
+    ).toEqual([["run", "host", runDir]]);
     // The host may notify after the action does: look for the action's notification, not the last one.
     expect(notifications(s)).toContainEqual({
       title: `Woof: started ${started.json["runId"]}`,
@@ -427,6 +421,11 @@ describe("woof herdr actions", () => {
     const outcome = JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
     expect(["run", "rejected"]).toContain(outcome["outcome"]);
     expect(exit["exitCode"]).toEqual(expect.any(Number));
+    // The host's technical log is in the run directory; its pane (stdout) got the human view.
+    expect(readFileSync(join(runDir, "host.log"), "utf8")).toMatch(/Z run .* in /);
+    const pane = readFileSync(join(s.root, "host.log"), "utf8");
+    expect(pane).toContain("AGENTS");
+    expect(pane.trim().split("\n").at(-1)).toBe(JSON.stringify(outcome));
     expect(existsSync(s.guardLog)).toBe(false);
   }, 90_000);
 

@@ -10,7 +10,7 @@ import { isId, isPlainObject } from "../contracts/envelope.js";
 import { claimHost } from "../host/claim.js";
 import { entryExists, writeExclusiveFile } from "../host/files.js";
 import { LAUNCH_FILE, launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
-import { openWatchPane } from "../host/watch-pane.js";
+import { createHostLog } from "../host/log.js";
 import {
   OUTCOME_FILE,
   hostWorkflow,
@@ -18,6 +18,9 @@ import {
   type HostWorkflowResult,
   type RuntimeFactory,
 } from "../host/run.js";
+import { createHostView, type HostView } from "../host/view.js";
+import { colorEnabled } from "../observe/format.js";
+import { unicodeEnabled } from "../observe/render-text.js";
 import type { RuntimeAdapter } from "../runtime/adapter.js";
 import { createHerdrCliRuntime } from "../runtime/herdr/adapter.js";
 import { loadModuleDefault } from "../scheduler/loader.js";
@@ -35,7 +38,8 @@ import {
 export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workflow <name>] [--project <dir>] [--run-id <id>]
                       [--run-dir <dir> | --runs-dir <dir>] [--host herdr-pane|foreground]
                       [--poll-ms <n>] [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>]
-                      [--split-from <pane-id>] [--runtime-module <path>] [--watch|--no-watch]
+                      [--split-from <pane-id>] [--runtime-module <path>]
+                      [--plain] [--ascii] [--preview summary|json]
 
 Starts a workflow run. The workflow is --workflow, else the configured default,
 else build-review. Built in: build-review (build, verify, review, repair) and
@@ -54,39 +58,78 @@ runs the scheduler in the root pane of a new, unfocused Herdr tab
 (woof:<workflow>) and returns once that host has opened the run, printing
 {"outcome":"started"} with the run directory and the host's paneId and tabId;
 follow it with woof status <run-dir> --wait. Every agent of the run gets its
-own tab (woof:<role>).
+own tab (woof:<role>); the host's tab is the only pane Woof adds for the run
+and stays open after it, so its last lines remain readable. Agent tabs close
+when the run ends unless --keep-panes (or keepPanes) is set.
 --host foreground runs the scheduler in this process and prints
 {"outcome":"run","result"} when the run ends.
-Watch (herdr-pane only, on by default; --no-watch opts out, --watch is still
-accepted): once the host opened the run, splits a pane below the host inside
-the host's tab running woof watch <run-dir> --follow and adds "watch"
-({paneId, command}, or {problem} when that pane could not be opened) to the
-output. The watch pane stays open after the run unless --no-keep-panes is
-given. An explicit --watch is refused (exit 2) with --host foreground or
-outside Herdr.
+The run host prints the human view of the run to its stdout (what woof watch
+<run-dir> --follow prints: opening block, one row per fact, outcome summary) and
+its technical log to <run-dir>/host.log. --plain prints that technical log to
+stdout instead of the human view; --ascii and --preview summary|json are woof
+watch's --ascii and --input for the host's view. Colors only when the host's
+stdout is a terminal and NO_COLOR is unset or empty.
 
 Exits 0 started (or completed in the foreground), 4 failed, 5 exhausted,
 6 cancelled, 2 rejected before launch, 3 runtime, host or journal failure
 (host_pane_failed, host_not_started, host_unresponsive), 1 usage.`;
 
-export const RUN_HOST_USAGE = `Usage: woof run host <run-dir>
+export const RUN_HOST_USAGE = `Usage: woof run host <run-dir> [--plain] [--ascii] [--input summary|json]
 
 Internal and unstable: hosts the run described by <run-dir>/launch.json in this
-process. woof run start types this command into the Herdr pane it opens.`;
+process. woof run start types this command into the Herdr pane it opens. Prints
+the human view of the run (woof watch <run-dir> --follow) to stdout, its
+technical log to <run-dir>/host.log, and the result as one JSON line at the
+end; --plain prints the technical log to stdout instead of the human view.
+--ascii and --input summary|json are woof watch's.`;
 
 export const RUN_BUILD_REVIEW_USAGE = `Usage: woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>]
                              [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
+                             [--plain] [--ascii] [--preview summary|json]
 
 Runs the built-in build-review workflow in the foreground: build, verify (when
 the input names a command), review and repair until a review passes on the
 repaired tree or a limit ends the run. Agents start in Herdr panes next to this
 one (HERDR_ENV=1 and HERDR_PANE_ID are required). --run-dir must not hold a run.
 --runtime-module loads a module whose default export createRuntime(context)
-returns a runtime adapter instead of Herdr (unstable, for tests). Progress goes
-to stderr; stdout gets one JSON line. Exits 0 completed, 4 failed, 5 exhausted,
+returns a runtime adapter instead of Herdr (unstable, for tests). The human
+view of the run (woof watch --follow) goes to stdout, the technical log to
+<run-dir>/host.log (--plain prints it to stdout instead), and the last stdout
+line is the result JSON. Exits 0 completed, 4 failed, 5 exhausted,
 6 cancelled, 2 rejected before launch, 3 runtime or journal failure, 1 usage.
 Same as woof run start --workflow build-review --host foreground, with the
 input's repository as the project.`;
+
+/** How a host presents the run on its stdout: the technical log, or the human view of woof watch. */
+export interface HostViewFlags {
+  plain: boolean;
+  ascii: boolean;
+  input: "summary" | "json";
+}
+
+/** The `run host` arguments that carry the view flags into the pane's typed command. */
+export function hostViewArgs(flags: HostViewFlags): string[] {
+  return [
+    ...(flags.plain ? ["--plain"] : []),
+    ...(flags.ascii ? ["--ascii"] : []),
+    ...(flags.input === "json" ? ["--input", "json"] : []),
+  ];
+}
+
+function viewFlagsOf(
+  values: { plain?: boolean; ascii?: boolean },
+  input: string | undefined,
+  flag: string,
+  usage: string,
+): HostViewFlags {
+  if (input !== undefined && input !== "summary" && input !== "json")
+    throw new UsageError(`${flag} must be summary or json\n\n${usage}`);
+  return {
+    plain: values.plain === true,
+    ascii: values.ascii === true,
+    input: input ?? "summary",
+  };
+}
 
 /** Every RuntimeAdapter method a `--runtime-module` factory result must provide. */
 const RUNTIME_METHODS = [
@@ -121,8 +164,9 @@ export async function runStartCommand(args: string[]): Promise<number> {
           "host-start-timeout-ms": { type: "string" },
           "split-from": { type: "string" },
           "runtime-module": { type: "string" },
-          watch: { type: "boolean" },
-          "no-watch": { type: "boolean" },
+          plain: { type: "boolean" },
+          ascii: { type: "boolean" },
+          preview: { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -133,6 +177,7 @@ export async function runStartCommand(args: string[]): Promise<number> {
     return 0;
   }
   const inputArg = required(values.input, "--input", RUN_START_USAGE);
+  const view = viewFlagsOf(values, values.preview, "--preview", RUN_START_USAGE);
   const host = values.host ?? "herdr-pane";
   if (host !== "herdr-pane" && host !== "foreground")
     throw new UsageError(`--host must be herdr-pane or foreground\n\n${RUN_START_USAGE}`);
@@ -168,30 +213,8 @@ export async function runStartCommand(args: string[]): Promise<number> {
     values["runtime-module"] !== undefined ? resolve(values["runtime-module"]) : undefined;
   const projectDir = resolve(values.project ?? process.cwd());
   const runDir = values["run-dir"] !== undefined ? resolve(values["run-dir"]) : undefined;
-
-  if (values.watch === true && values["no-watch"] === true)
-    throw new UsageError(`--watch and --no-watch cannot be combined\n\n${RUN_START_USAGE}`);
-  // An explicit --watch is refused where no watch pane can open; the default only applies
-  // to a pane-hosted run.
-  const watch = values.watch === true;
-  const opensWatch = host === "herdr-pane" && values["no-watch"] !== true;
   const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
   const splitFrom = values["split-from"] ?? (paneId !== undefined ? "current" : undefined);
-  // Refused before any input is read, any Herdr call is made or any run directory exists.
-  if (watch && host === "foreground")
-    return rejected(
-      "watch_unavailable",
-      "--watch needs --host herdr-pane inside Herdr; --host foreground has no pane to split",
-      [],
-      2,
-    );
-  if (watch && (process.env["HERDR_ENV"] !== "1" || splitFrom === undefined))
-    return rejected(
-      "watch_unavailable",
-      "--watch needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID, or --split-from <pane-id>)",
-      [],
-      2,
-    );
 
   if (host === "herdr-pane") {
     if (process.env["HERDR_ENV"] !== "1" || splitFrom === undefined) {
@@ -216,28 +239,8 @@ export async function runStartCommand(args: string[]): Promise<number> {
       env: process.env,
       nodePath: process.execPath,
       cliPath,
+      hostArgs: hostViewArgs(view),
     });
-    const hostPaneId = hostPaneOf(launched.output);
-    if (
-      opensWatch &&
-      launched.code === 0 &&
-      launched.output["outcome"] === "started" &&
-      hostPaneId !== undefined
-    ) {
-      const opened = await openWatchPane({
-        runDir: String(launched.output["runDir"]),
-        hostPaneId,
-        cwd: projectDir,
-        // Only an explicit --no-keep-panes closes the watch pane; the resolved default does not.
-        closeOnEnd: values["no-keep-panes"] === true,
-        herdrBin: herdrBin(),
-        env: process.env,
-        nodePath: process.execPath,
-        cliPath,
-      });
-      console.log(JSON.stringify({ ...launched.output, watch: opened }));
-      return launched.code;
-    }
     console.log(JSON.stringify(launched.output));
     return launched.code;
   }
@@ -270,6 +273,7 @@ export async function runStartCommand(args: string[]): Promise<number> {
     input: input.value,
     flags,
     runtimeModule,
+    view,
   });
 }
 
@@ -287,6 +291,9 @@ export async function runBuildReviewCommand(args: string[]): Promise<number> {
           "poll-ms": { type: "string" },
           "keep-panes": { type: "boolean" },
           "runtime-module": { type: "string" },
+          plain: { type: "boolean" },
+          ascii: { type: "boolean" },
+          preview: { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -297,6 +304,7 @@ export async function runBuildReviewCommand(args: string[]): Promise<number> {
     return 0;
   }
   const inputArg = required(values.input, "--input", RUN_BUILD_REVIEW_USAGE);
+  const view = viewFlagsOf(values, values.preview, "--preview", RUN_BUILD_REVIEW_USAGE);
   const runDir = resolve(required(values["run-dir"], "--run-dir", RUN_BUILD_REVIEW_USAGE));
   const runId = values["run-id"] ?? defaultRunId("build-review");
   if (!isId(runId))
@@ -320,6 +328,7 @@ export async function runBuildReviewCommand(args: string[]): Promise<number> {
     },
     runtimeModule:
       values["runtime-module"] !== undefined ? resolve(values["runtime-module"]) : undefined,
+    view,
   });
 }
 
@@ -330,7 +339,12 @@ export async function runHostCommand(args: string[]): Promise<number> {
         args,
         strict: true,
         allowPositionals: true,
-        options: { help: { type: "boolean", short: "h" } },
+        options: {
+          plain: { type: "boolean" },
+          ascii: { type: "boolean" },
+          input: { type: "string" },
+          help: { type: "boolean", short: "h" },
+        },
       }),
     RUN_HOST_USAGE,
   );
@@ -338,6 +352,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
     console.log(RUN_HOST_USAGE);
     return 0;
   }
+  const view = viewFlagsOf(values, values.input, "--input", RUN_HOST_USAGE);
   const [target, ...extra] = positionals;
   if (target === undefined || target === "" || extra.length > 0)
     throw new UsageError(`expected exactly one <run-dir>\n\n${RUN_HOST_USAGE}`);
@@ -412,6 +427,7 @@ export async function runHostCommand(args: string[]): Promise<number> {
     const { runtimeModule, ...flags } = request.flags;
     hosted = hostWorkflow({
       ...baseHostOptions(runtimeModule),
+      ...hostOutput(runDir, view, flags.pollMs),
       runDir,
       runId: request.runId,
       ...(request.workflow !== null ? { workflow: request.workflow } : {}),
@@ -462,11 +478,13 @@ async function foreground(options: {
   input: unknown;
   flags: HostWorkflowOptions["flags"];
   runtimeModule: string | undefined;
+  view: HostViewFlags;
 }): Promise<number> {
   const occupied = runDirOccupied(options.runDir);
   if (occupied !== undefined) return rejected("run_exists", occupied, [], 2);
   const result = await hostWorkflow({
     ...baseHostOptions(options.runtimeModule),
+    ...hostOutput(options.runDir, options.view, options.flags.pollMs),
     runDir: options.runDir,
     runId: options.runId,
     ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
@@ -492,8 +510,43 @@ function baseHostOptions(runtimeModule: string | undefined) {
       process.env["HERDR_ENV"] === "1" && hostPaneId !== undefined
         ? { bin: herdrBin(), env: process.env, hostPaneId }
         : null,
-    log: (line: string) => console.error(`woof: ${line}`),
   };
+}
+
+/** How often the host's own view polls its journal: woof watch's default, or faster with a faster scheduler. */
+const VIEW_POLL_MS = 250;
+
+/**
+ * What the host prints where: the technical log always goes to `<runDir>/host.log`; stdout gets
+ * the human view of the run (colors only on a terminal without NO_COLOR, ASCII marks when asked or
+ * when the locale has no UTF-8), or with `--plain` the technical log instead.
+ */
+function hostOutput(
+  runDir: string,
+  view: HostViewFlags,
+  pollMs: number | undefined,
+): Pick<HostWorkflowOptions, "log" | "view"> {
+  // A reader that went away must not crash the host: the result still reaches outcome.json and
+  // the exit code, and the log file keeps the technical lines.
+  let stdoutGone = false;
+  process.stdout.on("error", () => {
+    stdoutGone = true;
+  });
+  const write = (line: string) => {
+    if (!stdoutGone) process.stdout.write(`${line}\n`);
+  };
+  const log = createHostLog(runDir, { echo: view.plain, write });
+  if (view.plain) return { log, view: null };
+  const hostView: HostView = createHostView({
+    runDir,
+    write,
+    pollMs: Math.max(1, Math.min(pollMs ?? VIEW_POLL_MS, VIEW_POLL_MS)),
+    color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }),
+    ascii: view.ascii || !unicodeEnabled(process.env),
+    input: view.input,
+    width: process.stdout.columns ?? 80,
+  });
+  return { log, view: hostView };
 }
 
 function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {
@@ -565,12 +618,6 @@ export function defaultRunId(workflow: string | undefined): string {
   const prefix =
     workflow === undefined || workflow === "build-review" ? "br" : workflow.slice(0, 24);
   return `${prefix}-${stamp}-${randomBytes(3).toString("hex")}`;
-}
-
-function hostPaneOf(output: Record<string, unknown>): string | undefined {
-  const host = output["host"];
-  const paneId = isPlainObject(host) ? host["paneId"] : undefined;
-  return typeof paneId === "string" && paneId !== "" ? paneId : undefined;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

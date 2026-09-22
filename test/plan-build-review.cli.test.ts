@@ -212,7 +212,11 @@ describe("plan-build-review: a full run on the scripted runtime", () => {
     );
     const result = runPlanBuildReview(ws);
     expect(result.status, result.stderr).toBe(0);
-    const printed = JSON.parse(result.stdout.trim()) as { outcome: string; result: Json };
+    // The last stdout line is the result; the lines before it are the host's human view.
+    const printed = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "null") as {
+      outcome: string;
+      result: Json;
+    };
     expect(printed).toMatchObject({
       outcome: "run",
       result: { outcome: "completed", runId: "pbr-run", limit: null },
@@ -361,7 +365,7 @@ describe("plan-build-review: a full run on the scripted runtime", () => {
     writeInput(ws.inputPath, input(ws.repo, { limits: { maxRounds: 2, runTimeoutMs: 60_000 } }));
     const result = runPlanBuildReview(ws, [], "always-fail");
     expect(result.status, result.stderr).toBe(5);
-    expect(JSON.parse(result.stdout.trim())).toMatchObject({
+    expect(result.json).toMatchObject({
       result: { outcome: "exhausted", limit: "maxRounds" },
     });
     // A failed review routes to repair, never back to the planner (0.1.0 takes no

@@ -443,8 +443,8 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
 - **`woof watch [<run-dir>]`** is the human view of the same stream, the
   presentation of [run output](../design/run-output.md), from the pure
   renderer `src/observe/render.ts` (`createRunRenderer({snapshot, status,
-input, repository?, graph?, options})`, exported for a run host to print the
-  same lines from the same facts). From one `readRunStatus` read plus the
+input, repository?, graph?, options})`; the run host prints the same lines
+  from the same facts, see below). From one `readRunStatus` read plus the
   run's `input.json` and `config.json` it prints an opening block — `woof /
 <workflow>  <repo> · <branch>`, run id and version, the `~`-shortened run
   directory, an AGENTS roster (kind, model or `provider default`, assigned
@@ -505,11 +505,35 @@ events`**, **`woof watch`** and **`woof run show`** are read-only and never take
   `PATH`. Each external probe, in either mode, is bounded at 10 s
   (`PROBE_TIMEOUT_MS`); a probe that times out is reported as failed rather
   than hanging the command.
+- **The run host prints the human view of its own run.** `woof run host`
+  (the pane host `run start` types into the root pane of the host's tab) and
+  `--host foreground`/`run build-review` print to their stdout exactly what
+  `woof watch <run-dir> --follow` prints — the opening block once the run is
+  open, one history row per fact as the journal records land, the outcome
+  summary — followed by the result JSON line. The host follows its OWN
+  journal through the observe stream (`streamEvents` on the run directory:
+  read-only, lock-free, the same follow `woof watch` uses; `src/host/view.ts`
+  and the shared `src/observe/run-view.ts`), never the driver's callbacks, so
+  the host's pane and a separate observer agree by construction. The follow
+  never delays the host: when the scheduler returns, the host aborts it,
+  prints the rows it had not read yet from one direct read and renders the
+  summary from the final snapshot, and only then journals `host.exited`. The
+  technical log — the scheduler's actions (`dispatch build visit 1 attempt 1
+(initial) to builder`, `gate review pass (approved)`, `waiting (…)`),
+  configuration warnings and metadata-report failures — goes to
+  `<run-dir>/host.log`, one ISO-timestamped line per entry, appended as it
+  happens; `--plain` prints that log to stdout instead of the human view
+  (`--ascii` and `--input summary|json` shape the view like `woof watch`'s).
+  Errors that abort the host still go to stderr; nothing else does, so a
+  Herdr pane shows one coherent view. `outcome.json`, exit codes,
+  `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are
+  unchanged and do not depend on the host's stdout. There is no separate
+  watch pane any more: one pane per run.
 - **Metadata is a display-only projection, never a source.** The run host
   reports pane metadata tokens and notifications (`herdr pane
 report-metadata`, `herdr notification show`); nothing in Woof reads a
   token back, the journal stays authoritative, and a failed report is logged
-  to stderr and never affects the run. Reports are bounded: the host sends
+  to `host.log` and never affects the run. Reports are bounded: the host sends
   at most one metadata report at a time (`createCoalescer`), so a Herdr
   invocation slower than the poll interval never queues up an unbounded
   backlog of report calls behind it — a refresh requested while one is in

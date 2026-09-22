@@ -5,7 +5,6 @@ import { discoverRoots } from "../config/discover.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { isInfraReason } from "../contracts/reasons.js";
 import { launchInPane } from "../host/launch.js";
-import { openWatchPane } from "../host/watch-pane.js";
 import { clip } from "../host/metadata.js";
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
@@ -25,8 +24,8 @@ Each action shows a Herdr notification and prints one JSON line.
 
   status  the project's runs that have not ended; exits 0
   start   start the default workflow with <project>/.woof/start.json in a new
-          tab (the run host, with woof watch --follow split below it); exits
-          like woof run start
+          tab whose root pane runs the run host and shows the run's human
+          view; exits like woof run start
   cancel  cancel the project's single active run; exits 0 with outcome noop when
           none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
@@ -141,24 +140,7 @@ async function start(project: Project): Promise<number> {
     nodePath: process.execPath,
     cliPath,
   });
-  let out = launched.output;
-  // The live watch is part of a pane-hosted run's tab: a down split of the host's root pane.
-  // Failing to open it never fails the started run; the problem is reported next to it.
-  const host = out["host"];
-  const hostPaneId = isObject(host) ? host["paneId"] : undefined;
-  if (out["outcome"] === "started" && typeof hostPaneId === "string" && hostPaneId !== "") {
-    const watching = await openWatchPane({
-      runDir: String(out["runDir"]),
-      hostPaneId,
-      cwd: project.root,
-      closeOnEnd: false,
-      herdrBin: herdrBin(),
-      env: process.env,
-      nodePath: process.execPath,
-      cliPath,
-    });
-    out = { ...out, watch: watching };
-  }
+  const out = launched.output;
   if (out["outcome"] === "started") {
     await notify(`Woof: started ${String(out["runId"])}`, `run directory ${String(out["runDir"])}`);
   } else {
