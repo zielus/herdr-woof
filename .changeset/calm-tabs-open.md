@@ -6,15 +6,12 @@ Workflow runs now use one Herdr tab per participant instead of pane splits.
 
 `woof run start --host herdr-pane` (and the Herdr `start` action) opens the run
 host in the root pane of a new, unfocused tab labelled `woof:<workflow>`, and
-every agent of the run gets its own tab labelled `woof:<role>`. The live watch
-(`woof watch <run-dir> --follow`) is now on by default as a pane split below the
-host inside the host's tab; `--no-watch` opts out and `--watch` is still
-accepted. The started output's `host` gains `tabId`.
+every agent of the run gets its own tab labelled `woof:<role>`. The started
+output's `host` gains `tabId`.
 
 When a run ends, Woof closes the agent tabs it created (unless `keepPanes` is
-set) and never a tab it did not create. The host's tab and its watch pane stay
-open so their last lines remain readable; only an explicit `--no-keep-panes`
-makes the watch pane close itself, whatever the run's outcome. A launch that
+set) and never a tab it did not create. The host's tab stays open so its last
+lines remain readable. A launch that
 fails before any host owns the run directory — `pane run` failed, the host's
 claim failed, no host claimed in time, or the `tab create` reply did not verify
 — closes the host tab it created; a tab whose host did claim the directory is

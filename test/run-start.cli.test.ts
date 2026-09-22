@@ -170,8 +170,9 @@ const paneGot = (paneId: string, workspaceId: string) =>
   });
 
 /**
- * The host's tab, the host typed into its root pane (spawned for real with `spawnHost`), and the
- * default watch pane: a split whose typed command is accepted but never spawned.
+ * The host's tab and the host typed into its root pane (spawned for real with `spawnHost`; its
+ * stdout and stderr land in `<root>/pane.log`, standing in for the pane's screen). No `pane split`
+ * is scripted: a launcher that split anything would hit an unscripted fake and fail.
  */
 function writeScenario(ws: Workspace, paneId: string, spawnHost: boolean): void {
   writeFileSync(
@@ -181,18 +182,14 @@ function writeScenario(ws: Workspace, paneId: string, spawnHost: boolean): void 
       { match: ["pane", "get", "w9:p1"], stdout: paneGot("w9:p1", "w9") },
       { match: ["tab", "create"], stdout: tabCreated(paneId) },
       {
-        match: ["pane", "split"],
-        stdout: JSON.stringify({ result: { pane: { pane_id: `${paneId}w` } } }),
-      },
-      {
         match: ["pane", "run", paneId],
         stdout: "{}",
         ...(spawnHost
           ? {
               spawn: {
                 commandIndex: 3,
-                env: { HERDR_ENV: "1", HERDR_PANE_ID: paneId },
-                log: join(ws.root, "host.log"),
+                env: { HERDR_ENV: "1", HERDR_PANE_ID: paneId, TZ: "UTC" },
+                log: join(ws.root, "pane.log"),
               },
             }
           : {}),
@@ -373,14 +370,10 @@ describe("woof run start --host herdr-pane", () => {
       "woof:build-review",
       "--no-focus",
     ]);
-    // The only split is the default watch pane: a down split of the host tab's root pane.
-    expect(calls.filter((argv) => argv[1] === "split")).toEqual([
-      ["pane", "split", "w9:p2", "--direction", "down", "--cwd", ws.repo, "--no-focus"],
-    ]);
-    expect(started.json).toMatchObject({
-      host: { paneId: "w9:p2", tabId: "w9:t2" },
-      watch: { paneId: "w9:p2w" },
-    });
+    // One pane per run: nothing is split, and the started output names only the host.
+    expect(calls.filter((argv) => argv[1] === "split")).toEqual([]);
+    expect(started.json).toMatchObject({ host: { paneId: "w9:p2", tabId: "w9:t2" } });
+    expect(started.json).not.toHaveProperty("watch");
     // The verified workspace of the created tab travels to the host process, over the stale value
     // its pane inherited: the host's claim (and its runtime adapter's agent tabs) use it.
     // The created tab's id travels the same way, so host.claimed journals it.
@@ -406,22 +399,50 @@ describe("woof run start --host herdr-pane", () => {
       paneId: "w9:p2",
       tabId: "w9:t2",
     });
-    // outcome.json is the host's stdout line. LV-004: the redirected stdout can reach host.log after
-    // outcome.json exists, so the line is awaited (bounded) rather than read once.
+    // outcome.json is the host's last stdout line. LV-004: the redirected stdout can reach pane.log
+    // after outcome.json exists, so the line is awaited (bounded) rather than read once.
     let hostStdout: string | undefined;
     await waitFor(
       () => {
-        hostStdout = existsSync(join(ws.root, "host.log"))
-          ? readFileSync(join(ws.root, "host.log"), "utf8")
+        hostStdout = existsSync(join(ws.root, "pane.log"))
+          ? readFileSync(join(ws.root, "pane.log"), "utf8")
               .split("\n")
               .findLast((line) => line.startsWith("{"))
           : undefined;
         return hostStdout !== undefined;
       },
-      "the host's result line in host.log",
+      "the host's result line in pane.log",
       15_000,
     );
     expect(JSON.parse(hostStdout ?? "null")).toEqual(outcome);
+    // The pane shows the human view of the run (what woof watch prints), from the host's own
+    // journal: opening block, rows as the records landed, the outcome summary; then the result.
+    const pane = readFileSync(join(ws.root, "pane.log"), "utf8");
+    const paneLines = pane.split("\n");
+    expect(paneLines[0]).toMatch(/^woof \/ build-review {2}repo · (master|main)$/);
+    expect(paneLines).toContain("builder    claude   provider default   build, repair");
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d → builder {2}build {3}Task dispatched$/m);
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d ↻ gate {5}review {2}Changes requested → repair$/m);
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d → builder {2}repair {2}Task dispatched · same agent$/m);
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d → reviewer review {2}Task dispatched · visit 2$/m);
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d ✓ gate {5}review {2}Approved → completed$/m);
+    expect(paneLines).toContain("✓ Completed · approved");
+    expect(pane).toMatch(/^(\d+s|\d+m( \d+s)?) · 2 reviews · 1 repair$/m);
+    expect(paneLines).toContain("changes  accepted/repair/visit-1/attempt-1/completion.md");
+    expect(paneLines.at(-2)).toBe(hostStdout);
+    // The pane's stdout is a file here, so no color; the technical log stays out of the pane.
+    expect(pane).not.toContain("\u001B[");
+    expect(pane).not.toContain("dispatch build visit 1 attempt 1");
+    expect(pane).not.toContain("woof: ");
+    // The technical log is <run-dir>/host.log: timestamped scheduler actions, never the human rows.
+    const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
+    expect(hostLog).toMatch(
+      /^\d{4}-\d\d-\d\dT[\d:.]+Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m,
+    );
+    expect(hostLog).toMatch(/Z dispatch repair visit 1 attempt 1 \(initial\) to builder$/m);
+    expect(hostLog).toMatch(/Z gate review pass \(approved\)$/m);
+    expect(hostLog).toMatch(/Z run ended$/m);
+    expect(hostLog).not.toContain("Task dispatched");
     // The caller's wait returns the same result (plan §3.9 step 5).
     const waited = woofIn(ws, ["status", runDir, "--wait", "--poll-ms", "50"]);
     expect(waited.status, waited.stdout + waited.stderr).toBe(0);
@@ -789,7 +810,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
           spawn: {
             commandIndex: 3,
             env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p2", WOOF_TEST_SCRIPT: "hang" },
-            log: join(ws.root, "host.log"),
+            log: join(ws.root, "pane.log"),
           },
           hangMs: 4000,
           stderr: "run refused after the pane had started it\n",
@@ -1308,209 +1329,207 @@ console.log(JSON.stringify({ h: createHash("sha256").update(readFileSync(process
   });
 });
 
-describe("woof run start watch pane (default; --watch accepted, --no-watch opts out)", () => {
-  const paneOf = (paneId: string) => JSON.stringify({ result: { pane: { pane_id: paneId } } });
-
-  /** S1's scenario with the watch pane's split and a spawned pane run; `call` entries come first. */
-  function writeWatchScenario(ws: Workspace, overrides: Json[] = []): void {
+describe("woof run start: the run host's pane shows the human view; no watch split", () => {
+  /** The host typed into the tab's root pane, with its stdout and stderr captured in pane.log. */
+  function writeHostScenario(ws: Workspace, extraEnv: Record<string, string> = {}): void {
     writeFileSync(
       ws.scenario,
       JSON.stringify([
-        ...overrides,
+        { match: ["pane", "get", "w9:p1"], stdout: paneGot("w9:p1", "w9") },
         { match: ["tab", "create"], stdout: tabCreated("w9:p2") },
-        { match: ["pane", "split"], stdout: paneOf("w9:p3") },
         {
-          match: ["pane", "run"],
-          call: 1,
+          match: ["pane", "run", "w9:p2"],
           stdout: "{}",
           spawn: {
             commandIndex: 3,
-            env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p2" },
-            log: join(ws.root, "host.log"),
+            env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p2", TZ: "UTC", ...extraEnv },
+            log: join(ws.root, "pane.log"),
           },
         },
-        {
-          match: ["pane", "run"],
-          call: 2,
-          stdout: "{}",
-          spawn: {
-            commandIndex: 3,
-            env: { HERDR_PANE_ID: "w9:p3", TZ: "UTC" },
-            log: join(ws.root, "watch.log"),
-          },
-        },
-        { match: ["pane", "close"], stdout: "{}" },
+        { match: ["tab", "close"], stdout: "{}" },
         { match: ["pane", "report-metadata"], stdout: "{}" },
         { match: ["notification", "show"], stdout: "{}" },
       ]),
     );
   }
 
-  const watchLog = (ws: Workspace) =>
-    existsSync(join(ws.root, "watch.log")) ? readFileSync(join(ws.root, "watch.log"), "utf8") : "";
+  const paneLog = (ws: Workspace) =>
+    existsSync(join(ws.root, "pane.log")) ? readFileSync(join(ws.root, "pane.log"), "utf8") : "";
 
-  it("S9: opens a watch pane below the host, inside the host's tab, running woof watch <run-dir> --follow, and leaves it open", async () => {
+  it("S9: --plain, --ascii and --preview json travel to the typed run host command; --plain puts the technical log on the pane instead of the human view", async () => {
     const ws = workspace();
-    writeWatchScenario(ws);
+    writeHostScenario(ws);
     const runDir = join(ws.root, "run");
-    const started = woofIn(ws, startArgs(ws, runDir, ["--run-id", "s9-run", "--watch"]), {
-      WOOF_TEST_SCRIPT: "slow",
-    });
+    const started = woofIn(
+      ws,
+      startArgs(ws, runDir, ["--run-id", "s9-run", "--plain", "--ascii", "--preview", "json"]),
+    );
     expect(started.status, started.stdout + started.stderr).toBe(0);
-    expect(started.stdout.trim().split("\n")).toHaveLength(1);
-    expect(started.json).toMatchObject({
-      outcome: "started",
-      runId: "s9-run",
-      host: { mode: "herdr-pane", paneId: "w9:p2" },
-      watch: {
-        paneId: "w9:p3",
-        command: [expect.stringMatching(/^\/.*node[^/]*$/), cliPath, "watch", runDir, "--follow"],
-      },
-    });
+    expect(started.json).toMatchObject({ outcome: "started", host: { paneId: "w9:p2" } });
+    expect(started.json).not.toHaveProperty("watch");
     const calls = fakeCalls(ws);
-    const panes = calls.filter(
-      (argv) => argv[0] === "tab" || argv[1] === "split" || argv[1] === "run",
-    );
-    expect(panes.map((argv) => argv.slice(0, 3))).toEqual([
-      ["tab", "create", "--workspace"],
-      ["pane", "run", "w9:p2"],
-      ["pane", "split", "w9:p2"],
-      ["pane", "run", "w9:p3"],
+    // One typed command, into the tab's root pane, carrying the view flags after the run dir.
+    const typed = calls.filter((argv) => argv[1] === "run");
+    expect(typed).toHaveLength(1);
+    expect(typed[0]?.slice(7)).toEqual([
+      cliPath,
+      "run",
+      "host",
+      runDir,
+      "--plain",
+      "--ascii",
+      "--input",
+      "json",
     ]);
-    expect(panes[2]).toEqual([
-      "pane",
-      "split",
-      "w9:p2",
-      "--direction",
-      "down",
-      "--cwd",
-      ws.repo,
-      "--no-focus",
+    expect(calls.filter((argv) => argv[1] === "split")).toEqual([]);
+
+    const outcome = await waitForOutcome(runDir);
+    expect(outcome).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    await waitFor(() => paneLog(ws).includes("Z run ended"), "the host's last log line", 15_000);
+    const pane = paneLog(ws);
+    // The technical form: the timestamped host.log lines, and the result last.
+    expect(pane).toMatch(
+      /^\d{4}-\d\d-\d\dT[\d:.]+Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m,
+    );
+    expect(pane).toMatch(/Z gate review pass \(approved\)$/m);
+    expect(pane).not.toContain("Task dispatched");
+    expect(pane).not.toContain("AGENTS");
+    expect(pane.trim().split("\n").at(-1)?.startsWith("{")).toBe(true);
+    // host.log holds the same lines whatever the pane shows.
+    const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
+    for (const line of pane.trim().split("\n"))
+      if (!line.startsWith("{")) expect(hostLog).toContain(line);
+  }, 60_000);
+
+  it("S10: --preview json and --ascii shape the pane's human view; --no-keep-panes types no close and splits nothing", async () => {
+    const ws = workspace();
+    writeHostScenario(ws);
+    const runDir = join(ws.root, "run");
+    const started = woofIn(
+      ws,
+      startArgs(ws, runDir, ["--ascii", "--preview", "json", "--no-keep-panes"]),
+    );
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    const typed = fakeCalls(ws).filter((argv) => argv[1] === "run");
+    expect(typed).toHaveLength(1);
+    expect(typed[0]?.slice(7)).toEqual([
+      cliPath,
+      "run",
+      "host",
+      runDir,
+      "--ascii",
+      "--input",
+      "json",
     ]);
-    expect(panes[3]?.slice(4)).toEqual([cliPath, "watch", runDir, "--follow"]);
-    expect(panes[3]?.[3]).toMatch(/^\/.*node[^/]*$/);
-
-    writeFileSync(ws.release, "go\n");
+    // The host's own tab is never closed by the launcher, and no shell script is typed for it.
+    expect(typed[0]).not.toContain("sh");
     expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
-    await waitFor(
-      () => watchLog(ws).includes("-- end (terminated)"),
-      "the watch pane to see the end",
-      30_000,
-    );
-    const log = watchLog(ws);
-    expect(log).toMatch(/^run      s9-run  build-review@1 /);
-    expect(log).toMatch(/ run\.terminated +- {2}completed: /);
-    expect(fakeCalls(ws).some((argv) => argv[1] === "close")).toBe(false);
+    await waitFor(() => paneLog(ws).includes("v Completed"), "the pane's summary", 15_000);
+    const pane = paneLog(ws);
+    // ASCII marks and arrows, and the input shown as indented JSON.
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d -> builder {2}build {3}Task dispatched$/m);
+    expect(pane).toMatch(/^\d\d:\d\d:\d\d v {2}gate {5}review {2}Approved -> completed$/m);
+    expect(pane).toContain("build -> verify -> review -> completed");
+    expect(pane).toContain('  "title": "Change the fixture",');
+    expect(pane).toMatch(/^v Completed - approved$/m);
+    expect(pane).not.toMatch(/[→✓↻·]/u);
+    expect(fakeCalls(ws).filter((argv) => argv[1] === "split" || argv[1] === "close")).toEqual([]);
   }, 60_000);
 
-  it("S10: with --no-keep-panes the watch pane closes itself after watch ends", async () => {
+  it("S11: --watch and --no-watch are gone (usage error, exit 1); --preview takes only summary or json; run host --help names the view flags", () => {
     const ws = workspace();
-    writeWatchScenario(ws);
     const runDir = join(ws.root, "run");
-    const started = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-keep-panes"]));
-    expect(started.status, started.stdout + started.stderr).toBe(0);
-    const run = fakeCalls(ws).filter((argv) => argv[1] === "run")[1];
-    // One `sh -c` script: the close follows watch unconditionally and watch's status is kept.
-    const command = started.json?.["watch"]["command"] as string[];
-    expect(command.slice(0, 2)).toEqual(["sh", "-c"]);
-    expect(command[2]).toMatch(/^\/\S*node\S* /);
-    expect(
-      command[2]?.endsWith(
-        ` ${cliPath} watch ${runDir} --follow; s=$?; ${fakeHerdr} pane close w9:p3; exit $s`,
-      ),
-      command[2],
-    ).toBe(true);
-    // The script is typed as a single quoted shell word.
-    expect(run?.slice(3)).toEqual(["sh", "-c", `'${command[2]}'`]);
-    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
-    await waitFor(
-      () => fakeCalls(ws).some((argv) => argv.join(" ") === "pane close w9:p3"),
-      "the watch pane to close itself",
-      30_000,
-    );
-    expect(watchLog(ws)).toContain("-- end (terminated)");
-  }, 60_000);
+    for (const flag of ["--watch", "--no-watch"]) {
+      const result = woofIn(ws, startArgs(ws, runDir, [flag]));
+      expect(result.status, flag + result.stdout + result.stderr).toBe(1);
+    }
+    const preview = woofIn(ws, startArgs(ws, runDir, ["--preview", "table"]));
+    expect(preview.status, preview.stdout + preview.stderr).toBe(1);
+    expect(preview.stderr).toContain("--preview must be summary or json");
+    const hostInput = woofIn(ws, ["run", "host", runDir, "--input", "table"]);
+    expect(hostInput.status).toBe(1);
+    expect(hostInput.stderr).toContain("--input must be summary or json");
+    expect(fakeCalls(ws)).toEqual([]);
+    expect(existsSync(runDir)).toBe(false);
+    const help = woofIn(ws, ["run", "start", "--help"]).stdout;
+    expect(help).not.toContain("--watch");
+    expect(help).toContain("[--plain] [--ascii] [--preview summary|json]");
+    expect(help).toContain("host.log");
+    const hostHelp = woofIn(ws, ["run", "host", "--help"]).stdout;
+    expect(hostHelp).toContain("[--plain] [--ascii] [--input summary|json]");
+  });
 
-  it("S10b: with --no-keep-panes the watch pane also closes after a cancelled run, and the typed command keeps watch's non-zero exit status", async () => {
+  it("S12: a foreground host prints the human view to stdout, the technical log to host.log and nothing to stderr; --plain swaps the view for the log", () => {
     const ws = workspace();
-    writeWatchScenario(ws);
     const runDir = join(ws.root, "run");
-    const started = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-keep-panes"]), {
-      WOOF_TEST_SCRIPT: "slow",
+    const result = woofIn(ws, startArgs(ws, runDir, ["--host", "foreground"]), {
+      HERDR_ENV: undefined,
+      HERDR_PANE_ID: undefined,
+      TZ: "UTC",
     });
-    expect(started.status, started.stdout + started.stderr).toBe(0);
-    expect(woofIn(ws, ["run", "cancel", runDir, "--reason", "s10b"]).json).toMatchObject({
-      outcome: "recorded",
-    });
-    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "cancelled" } });
-    // Whatever `woof watch --follow` exits with for a cancelled run, the pane is closed all the same.
-    await waitFor(
-      () => fakeCalls(ws).some((argv) => argv.join(" ") === "pane close w9:p3"),
-      "the watch pane of a cancelled run to close itself",
-      30_000,
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.json).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    const lines = result.stdout.split("\n");
+    expect(lines[0]).toMatch(/^woof \/ build-review {2}repo · (master|main)$/);
+    expect(lines.slice(0, 12)).toContain("AGENTS");
+    expect(lines).toContain("builder    claude   provider default   build, repair");
+    expect(lines).toContain("reviewer   claude   provider default   review");
+    expect(lines).toContain("build → verify → review → completed");
+    expect(lines).toContain("Change the fixture");
+    expect(lines).toContain("1 acceptance criterion · full input: input.json");
+    const rows = lines.filter((line) => /^\d\d:\d\d:\d\d /.test(line));
+    expect(rows.map((row) => row.slice(9))).toEqual(
+      expect.arrayContaining([
+        "· run              Started",
+        "+ builder          Agent started · claude / provider default",
+        "→ builder  build   Task dispatched",
+        "✓ builder  build   Completion report accepted",
+        "✓ gate     build   Passed → review",
+        "→ reviewer review  Task dispatched",
+        "↓ reviewer review  Review received · changes requested",
+        "↻ gate     review  Changes requested → repair",
+        "→ builder  repair  Task dispatched · same agent",
+        "→ reviewer review  Task dispatched · visit 2",
+        "↓ reviewer review  Review received · approval recommended",
+        "✓ gate     review  Approved → completed",
+      ]),
     );
-    expect(watchLog(ws)).toContain("-- end (terminated)");
-    // The same typed words, run here against a journal watch cannot read, so that watch is certain
-    // to exit non-zero: the close still happens, and watch's own status survives it.
-    const typed = fakeCalls(ws).filter((argv) => argv[1] === "run")[1] ?? [];
-    const hostPid = hostClaim(runDir)?.["pid"];
-    await waitFor(
-      () => typeof hostPid !== "number" || !processAlive(hostPid),
-      "the host process to be gone before its journal is replaced",
-    );
-    rmSync(join(runDir, "journal.jsonl"));
-    writeFileSync(join(runDir, "journal.jsonl"), "not a journal record\n");
-    const watchOnly = spawnSync("node", [cliPath, "watch", runDir, "--follow"], {
-      env: env(ws),
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    expect(watchOnly.status).not.toBe(0);
-    const closesBefore = fakeCalls(ws).filter((argv) => argv[1] === "close").length;
-    const rerun = spawnSync("sh", ["-c", typed.slice(3).join(" ")], {
-      env: env(ws),
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    expect(rerun.status, rerun.stdout + rerun.stderr).toBe(watchOnly.status);
-    expect(fakeCalls(ws).filter((argv) => argv[1] === "close")).toHaveLength(closesBefore + 1);
-  }, 60_000);
+    // The rows come from the host's own journal, in journal order, once each.
+    const dispatched = rows.filter((row) => row.includes("Task dispatched"));
+    expect(dispatched.map((row) => row.slice(11, 19).trim())).toEqual([
+      "builder",
+      "reviewer",
+      "builder",
+      "reviewer",
+    ]);
+    expect(lines).toContain("✓ Completed · approved");
+    expect(lines.filter((line) => line.startsWith("✓ Completed"))).toHaveLength(1);
+    expect(result.stdout).toMatch(/^(\d+s|\d+m( \d+s)?) · 2 reviews · 1 repair$/m);
+    expect(lines).toContain("ARTIFACTS · relative to run directory");
+    expect(lines).toContain("changes  accepted/repair/visit-1/attempt-1/completion.md");
+    expect(lines).toContain("review   accepted/review/visit-2/attempt-1/review.md");
+    expect(lines.at(-2)?.startsWith("{")).toBe(true);
+    expect(lines.filter((line) => line.startsWith("{"))).toHaveLength(1);
+    expect(result.stdout).not.toContain("\u001B[");
+    expect(result.stderr).toBe("");
+    const hostLog = readFileSync(join(runDir, "host.log"), "utf8");
+    expect(hostLog).toMatch(/Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m);
+    expect(hostLog).toMatch(/Z run ended$/m);
+    expect(hostLog).not.toContain("Task dispatched");
 
-  it("S11: --watch is refused before launch with --host foreground or outside Herdr", () => {
-    const ws = workspace();
-    const runDir = join(ws.root, "run");
-    const foreground = woofIn(ws, startArgs(ws, runDir, ["--watch", "--host", "foreground"]));
-    expect(foreground.status, foreground.stdout + foreground.stderr).toBe(2);
-    expect(foreground.json).toMatchObject({ outcome: "rejected", reason: "watch_unavailable" });
-    expect(foreground.json?.["message"]).toContain("--watch");
-    const outside = woofIn(ws, startArgs(ws, runDir, ["--watch"]), {
+    const plainDir = join(ws.root, "run-plain");
+    const plain = woofIn(ws, startArgs(ws, plainDir, ["--host", "foreground", "--plain"]), {
       HERDR_ENV: undefined,
       HERDR_PANE_ID: undefined,
     });
-    expect(outside.status, outside.stdout + outside.stderr).toBe(2);
-    expect(outside.json).toMatchObject({ outcome: "rejected", reason: "watch_unavailable" });
-    expect(outside.json?.["message"]).toContain("--watch");
-    expect(fakeCalls(ws)).toEqual([]);
-    expect(existsSync(runDir)).toBe(false);
-    expect(woofIn(ws, ["run", "start", "--help"]).stdout).toContain("[--watch|--no-watch]");
-    const both = woofIn(ws, startArgs(ws, runDir, ["--watch", "--no-watch"]));
-    expect(both.status, both.stdout + both.stderr).toBe(1);
-    expect(fakeCalls(ws)).toEqual([]);
-  });
-
-  it("S12: a watch pane that cannot be split is reported next to the started run, which still completes", async () => {
-    const ws = workspace();
-    writeWatchScenario(ws, [{ match: ["pane", "split"], exit: 1, stderr: "split refused\n" }]);
-    const runDir = join(ws.root, "run");
-    const started = woofIn(ws, startArgs(ws, runDir, ["--watch"]));
-    expect(started.status, started.stdout + started.stderr).toBe(0);
-    expect(started.json).toMatchObject({
-      outcome: "started",
-      watch: { problem: "herdr pane split w9:p2 failed: split refused" },
-    });
-    expect(await waitForOutcome(runDir)).toMatchObject({ result: { outcome: "completed" } });
-    expect(fakeCalls(ws).filter((argv) => argv[1] === "run")).toHaveLength(1);
-  }, 60_000);
+    expect(plain.status, plain.stdout + plain.stderr).toBe(0);
+    expect(plain.json).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+    expect(plain.stdout).toMatch(/Z dispatch build visit 1 attempt 1 \(initial\) to builder$/m);
+    expect(plain.stdout).not.toContain("Task dispatched");
+    expect(plain.stderr).toBe("");
+    const plainLog = readFileSync(join(plainDir, "host.log"), "utf8").trim().split("\n");
+    expect(plain.stdout.trim().split("\n").slice(0, -1)).toEqual(plainLog);
+  }, 120_000);
 
   it("S14: the Herdr runtime opens an agent in its own new tab (no pane split) and closes that tab when the run ends", () => {
     const ws = workspace("w9:p2", false);
@@ -1564,33 +1583,4 @@ describe("woof run start watch pane (default; --watch accepted, --no-watch opts 
     // The tab Woof created for the agent is what gets closed, never a bare pane.
     expect(calls.filter((argv) => argv[1] === "close")).toEqual([["tab", "close", "w9:t5"]]);
   }, 60_000);
-
-  it("S13: the watch pane is the default without --watch, and --no-watch opens none", async () => {
-    const byDefault = workspace();
-    writeWatchScenario(byDefault);
-    const defaultDir = join(byDefault.root, "run");
-    const started = woofIn(byDefault, startArgs(byDefault, defaultDir));
-    expect(started.status, started.stdout + started.stderr).toBe(0);
-    expect(started.json).toMatchObject({
-      outcome: "started",
-      host: { paneId: "w9:p2", tabId: "w9:t2" },
-      watch: { paneId: "w9:p3" },
-    });
-    expect(fakeCalls(byDefault).filter((argv) => argv[1] === "split")).toEqual([
-      ["pane", "split", "w9:p2", "--direction", "down", "--cwd", byDefault.repo, "--no-focus"],
-    ]);
-    expect(await waitForOutcome(defaultDir)).toMatchObject({ result: { outcome: "completed" } });
-
-    const optedOut = workspace();
-    writeWatchScenario(optedOut);
-    const quietDir = join(optedOut.root, "run");
-    const quiet = woofIn(optedOut, startArgs(optedOut, quietDir, ["--no-watch"]));
-    expect(quiet.status, quiet.stdout + quiet.stderr).toBe(0);
-    expect(quiet.json).toMatchObject({ outcome: "started", host: { tabId: "w9:t2" } });
-    expect(quiet.json).not.toHaveProperty("watch");
-    const calls = fakeCalls(optedOut);
-    expect(calls.filter((argv) => argv[1] === "split")).toEqual([]);
-    expect(calls.filter((argv) => argv[1] === "run")).toHaveLength(1);
-    expect(await waitForOutcome(quietDir)).toMatchObject({ result: { outcome: "completed" } });
-  }, 120_000);
 });

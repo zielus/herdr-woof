@@ -1,11 +1,13 @@
 # Human-readable run output
 
-Status: approved design direction, awaiting implementation.
+Status: implemented (see [Observability](../architecture/observability.md),
+"Implemented now (p4)": `woof watch` and the run host's own pane print this
+view; the technical log lives in `<run-dir>/host.log`).
 
-This brief defines the terminal experience for following a Woof run. It is the
-implementation handoff for the builder; module structure, APIs and rendering
-libraries are left to the implementation. Current behavior remains documented
-in [Observability](../architecture/observability.md).
+This brief defines the terminal experience for following a Woof run. It was
+the implementation handoff for the builder; module structure, APIs and
+rendering libraries were left to the implementation. Shipped behavior is
+documented in [Observability](../architecture/observability.md).
 
 ## Purpose
 

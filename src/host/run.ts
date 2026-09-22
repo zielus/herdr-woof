@@ -22,6 +22,7 @@ import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
 import { readHostInfo } from "./probe.js";
+import type { HostView } from "./view.js";
 
 /**
  * Hosting one workflow run in this process (p4 §3.5, §3.7): resolve
@@ -99,7 +100,14 @@ export interface HostWorkflowOptions {
   /** Herdr metadata projection; null outside a Herdr pane. */
   metadata: { bin: string; env: NodeJS.ProcessEnv; hostPaneId: string } | null;
   homeDir?: string;
+  /** The technical log (`<runDir>/host.log`, and stdout with `--plain`). */
   log: (line: string) => void;
+  /**
+   * The human view printed to the host's stdout (null with `--plain`): started once the run is
+   * open, finished — rows still unread, then the summary — as soon as the scheduler returns, and
+   * closed on every other exit path so a follow never keeps the host alive.
+   */
+  view?: HostView | null;
 }
 
 export interface HostWorkflowResult {
@@ -244,6 +252,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     if (reportTimer !== undefined) clearInterval(reportTimer);
+    options.view?.close();
     releaseClaim(result?.code ?? 3);
   }
 
@@ -363,6 +372,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     reportTimer?.unref();
 
     log(`run ${runId} in ${runDir}`);
+    // The human view follows the journal from here; the driver's callbacks feed only the log.
+    options.view?.start();
     let lastWait = "";
     const out = await runWorkflow({
       runDir,
@@ -383,6 +394,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       },
     });
     if (reportTimer !== undefined) clearInterval(reportTimer);
+    // The summary first, from the final snapshot: the metadata's last report may take seconds.
+    if (options.view != null) await options.view.finish();
     if (reporter !== null) {
       // Bounded: the report in flight (each Herdr call is capped) and then the final one.
       await refresh?.drain();
