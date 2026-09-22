@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 
@@ -8,13 +8,13 @@ import { OUTCOME_EXIT_CODES, OUTCOME_FILE } from "../host/run.js";
 import { readRunStatus, type ReadRunStatusResult } from "../inspect/status.js";
 import { colorEnabled, formatHeader, formatHostOutcome } from "../observe/format.js";
 import { UsageError, milliseconds, parse } from "./common.js";
+import { TARGET_HELP, resolveTarget } from "./target.js";
 
-export const STATUS_USAGE = `Usage: woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] [--poll-ms <n>]
+export const STATUS_USAGE = `Usage: woof status <run-dir|run-id> [--wait] [--timeout-ms <n>] [--allow-blocked] [--poll-ms <n>]
                    [--verify-artifacts] [--pretty]
 
-Prints one JSON line {"outcome":"status","status","result"} for the run in
-<run-dir>: status, owner liveness (unhosted, alive, lost, exited), active
-attempts, the last gate, attention and counters; result is the run result once
+Prints one JSON line {"outcome":"status","status","result"} for the run: status,
+owner liveness (unhosted, alive, lost, exited), active attempts, the last gate, attention and counters; result is the run result once
 the run has ended. Read-only: no journal lock, no Herdr.
 
 Without --wait: exits 0, or 3 when the journal cannot be read (run_dir_invalid,
@@ -26,10 +26,13 @@ With --wait (poll every --poll-ms, default 1000; --timeout-ms default 540000):
     at least two heartbeats apart), or exited (a host interrupted before the run
     recorded its end; its outcome.json, when present, is printed as hostOutcome);
   9 the run is blocked and needs the operator (unless --allow-blocked).
-The last line printed is always the status at return time.
+The last line printed is always the status at return time. --wait returns on the
+recorded outcome without waiting for the host's own host.exited, which may follow;
+woof events --follow --after <status.cursor> delivers it and then ends.
 --pretty prints the human header of woof watch (run, workflow, current stage,
 owner, agents, outcome) instead of the JSON line, with the same exit codes; a
-run directory it cannot read prints "woof status: <reason>: <message>".`;
+run directory it cannot read prints "woof status: <reason>: <message>".
+${TARGET_HELP}`;
 
 const DEFAULT_WAIT_TIMEOUT_MS = 540_000;
 const DEFAULT_HEARTBEAT_MS = 2000;
@@ -59,8 +62,13 @@ export async function statusCommand(args: string[]): Promise<number> {
   }
   const [target, ...extra] = positionals;
   if (target === undefined || target === "" || extra.length > 0)
-    throw new UsageError(`expected exactly one <run-dir>\n\n${STATUS_USAGE}`);
-  const runDir = canonical(resolve(target));
+    throw new UsageError(`expected exactly one <run-dir|run-id>\n\n${STATUS_USAGE}`);
+  const located = await resolveTarget(target);
+  if (!located.ok) {
+    const unknown = { ok: false as const, reason: located.reason, message: located.message };
+    return (values.pretty === true ? printPretty : printJson)(unknown, 3);
+  }
+  const runDir = canonical(located.runDir);
   const pollMs =
     values["poll-ms"] === undefined ? 1000 : milliseconds(values["poll-ms"], "--poll-ms", 1);
   const timeoutMs =
@@ -108,7 +116,11 @@ export async function statusCommand(args: string[]): Promise<number> {
   }
 }
 
-function printPretty(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+/** A status read, or a `<run-dir|run-id>` argument that named no single run. */
+type Printable =
+  ReadRunStatusResult | { ok: false; reason: string; message: string; line?: number };
+
+function printPretty(current: Printable, code: number, hostOutcome?: unknown): number {
   const format = { color: colorEnabled({ isTTY: process.stdout.isTTY, env: process.env }) };
   if (!current.ok) {
     console.log(`woof status: ${current.reason}: ${current.message}`);
@@ -123,7 +135,7 @@ function printPretty(current: ReadRunStatusResult, code: number, hostOutcome?: u
   return code;
 }
 
-function printJson(current: ReadRunStatusResult, code: number, hostOutcome?: unknown): number {
+function printJson(current: Printable, code: number, hostOutcome?: unknown): number {
   if (current.ok) {
     console.log(
       JSON.stringify({

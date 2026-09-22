@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { resolveConfiguration } from "../config/resolve.js";
+import { defaultIndexDir } from "../inspect/locator.js";
 import { DEFAULT_UI_PORT, startWebServer } from "../web/server.js";
 import { MISSING_SPA_MESSAGE } from "../web/static.js";
 import { milliseconds, rejected, UsageError, parse } from "./common.js";
@@ -12,7 +13,8 @@ export const UI_USAGE = `Usage: woof ui [--port <n>] [--host <addr>] [--runs-dir
 
 Serves the run dashboard and its inspection API over the same runs directory
 woof runs lists (--runs-dir, else the user setting defaults.runsDir, else
-~/.woof/runs). Binds 127.0.0.1:${DEFAULT_UI_PORT} by default and opens a browser unless
+~/.woof/runs) and, without --runs-dir, the runs of the run index, as woof runs
+does. Binds 127.0.0.1:${DEFAULT_UI_PORT} by default and opens a browser unless
 --no-open.
 
 The API is not read-only: every route but one is a read, and cancel records
@@ -66,9 +68,12 @@ export async function uiCommand(args: string[]): Promise<number> {
   if (values.host === "") throw new UsageError(`--host must not be empty\n\n${UI_USAGE}`);
 
   let runsDir: string;
+  // As woof runs: an explicit --runs-dir serves only that directory; otherwise the run index too.
+  let indexDir: string | null = null;
   if (values["runs-dir"] !== undefined) {
     runsDir = resolve(values["runs-dir"]);
   } else {
+    indexDir = defaultIndexDir();
     // The runs directory is a user setting, exactly as woof runs resolves it.
     const resolved = await resolveConfiguration({ projectDir: null });
     if (!resolved.ok) {
@@ -81,6 +86,7 @@ export async function uiCommand(args: string[]): Promise<number> {
   try {
     server = await startWebServer({
       runsDir,
+      indexDir,
       port,
       pollMs,
       ...(values.host !== undefined ? { host: values.host } : {}),

@@ -12,6 +12,7 @@ import {
   type LifecycleObservation,
   type NotDeliveredCode,
   type ObserveOptions,
+  type OpenedPane,
   type OpenPaneInput,
   type RuntimeAdapter,
   type RuntimeResult,
@@ -137,8 +138,11 @@ export function createScriptedRuntime(options: {
     });
   }
   let panes = 0;
+  let tabs = 0;
   /** Panes this instance opened; the only panes `stop` may close. */
   const ownedPanes = new Set<string>();
+  /** Root pane id → the fake tab this instance created for it. */
+  const ownedTabs = new Map<string, string>();
 
   const record = (
     method: ScriptedCall["method"],
@@ -177,12 +181,22 @@ export function createScriptedRuntime(options: {
   return {
     adapter: "scripted",
 
-    async openPane(input: OpenPaneInput): Promise<RuntimeResult<{ paneId: string }>> {
-      record("openPane", null, { near: input.near, cwd: input.cwd });
+    async openPane(input: OpenPaneInput): Promise<RuntimeResult<OpenedPane>> {
+      record(
+        "openPane",
+        null,
+        input.placement === "tab"
+          ? { placement: "tab", label: input.label ?? null, cwd: input.cwd }
+          : { near: input.near, cwd: input.cwd },
+      );
       panes += 1;
       const paneId = `scripted:p${panes}`;
       ownedPanes.add(paneId);
-      return { ok: true, value: { paneId } };
+      if (input.placement !== "tab") return { ok: true, value: { paneId, tabId: null } };
+      tabs += 1;
+      const tabId = `scripted:t${tabs}`;
+      ownedTabs.set(paneId, tabId);
+      return { ok: true, value: { paneId, tabId } };
     },
 
     async startAgent(input: StartAgentInput): Promise<RuntimeResult<AgentHandle>> {
@@ -190,12 +204,15 @@ export function createScriptedRuntime(options: {
       const state = agents.get(input.runtimeName);
       if (state === undefined) return { ok: false, error: notFound(input.runtimeName) };
       const first = state.timeline[0] as TimelineEntry;
+      const ownedTab = ownedTabs.get(input.paneId);
       const handle: AgentHandle = {
         adapter: "scripted",
         runtimeName: input.runtimeName,
         kind: input.kind,
         paneId: input.paneId,
         paneOwned: ownedPanes.has(input.paneId),
+        // Only a pane opened as a tab carries a tab id; a split's handle is unchanged.
+        ...(ownedTab !== undefined ? { tabId: ownedTab } : {}),
         terminalId: first.terminalId ?? `term-${input.runtimeName}`,
         sessionId: state.script.sessionId ?? `session-${input.runtimeName}`,
       };
@@ -340,9 +357,14 @@ export function createScriptedRuntime(options: {
         };
       }
       ownedPanes.delete(handle.paneId);
+      // A pane opened as a tab is closed with the tab this instance created for it.
+      const tabClosed = ownedTabs.delete(handle.paneId);
       const state = agents.get(handle.runtimeName);
       if (state !== undefined) state.stopped = true;
-      return { ok: true as const, value: { paneClosed: true as const } };
+      return {
+        ok: true as const,
+        value: { paneClosed: true as const, ...(tabClosed ? { tabClosed: true as const } : {}) },
+      };
     },
 
     advance(runtimeName: string, steps = 1): void {

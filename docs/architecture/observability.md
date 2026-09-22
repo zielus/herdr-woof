@@ -257,12 +257,9 @@ records}`) is the proof of this by construction: it re-derives the
 
 - **Gate evaluation, blocking/unblocking and delivery reconciliation are
   implemented (p3).** See "Implemented now (p3)" below for the snapshot and
-  event shapes. **Still not covered:** a cancellation request distinct from
-  plain termination (`runWorkflow({signal})` and `woof run cancel` both
-  produce the same `run.terminated{outcome:"cancelled"}`), and observation
-  loss/owner liveness recovery (still needs a run owner, which does not
-  exist — every snapshot's `liveness.owner` stays `"unhosted"` (p2;
-  superseded by p4, see [Implemented now (p4)](#implemented-now-p4))).
+  event shapes. A cancellation request distinct from termination, host
+  lifecycle and observation loss/recovery are journaled too — see
+  [Implemented now (lifecycle records)](#implemented-now-lifecycle-records).
 
 ## Implemented now (p3)
 
@@ -432,7 +429,9 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
   line, and exit 3, rather than the one locked read that decides it by
   default. Resumed with `--after <cursor>` at a terminated run's last
   cursor, `--follow` ends at once with `{"terminal":true,
-"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`; an
+"reason":"terminated"}` (exit 0) instead of waiting out `--timeout-ms`
+  (a hosted run first waits, bounded, for its host's `host.exited`: see
+  [lifecycle records](#implemented-now-lifecycle-records)); an
   earlier cursor still delivers the `run.terminated` event through the
   subscription first. `--stats` prints
   `{"kind":"woof.events.stats","polls","maxProjectionMs","pollMs","method":
@@ -484,5 +483,183 @@ report-metadata`, `herdr notification show`); nothing in Woof reads a
   finalizing stays prompt even when Herdr is slow to respond. See
   [plugins](../integrations/plugins.md#herdr-plugin).
 - **Still not covered:** crash resume or re-hosting a lost run (a `lost`
-  owner is reported and only ever cancelled), parallel scheduling, and a
-  second built-in workflow.
+  owner is reported and only ever cancelled) and parallel scheduling.
+
+## Implemented now (lifecycle records)
+
+Real shipped behavior — not design intent. Source:
+`src/journal/lifecycle-records.ts`, `src/state/{reducer,store,snapshot}.ts`,
+`src/host/run.ts`, `src/scheduler/driver.ts`, `src/observe/format.ts`. Every
+record below is an ordinary journal record and therefore an event, one-to-one;
+all are additive at `schemaVersion: 1`, and a journal without them reads
+unchanged. They are transitions, never poll samples.
+
+- **`run.cancel_requested {source, reason}`** — who asked, distinct from the
+  termination it leads to. `source` is `cli` (`woof run cancel`), `web` (the
+  UI's cancel route), `herdr_action` (`woof herdr cancel`), `signal` (a run
+  host's SIGINT/SIGTERM) or `abort_signal` (`runWorkflow({signal})`, the
+  default; `cancelSource` overrides it). All of them go through
+  `cancelRun`, which appends the request and then
+  `run.terminated{outcome:"cancelled"}` under **one** journal lock, so no
+  other writer comes between the two. It prints/returns the termination as
+  `record` plus `cancelRequest` and `hostLost`. `terminateRun` with
+  `outcome: "cancelled"` still works and writes no request.
+- **`host.claimed {pid, hostname, startedAt, heartbeatMs, paneId,
+workspaceId, tabId?}`** — written by the run host together with `run.opened`, under
+  **one** journal lock (`openRun({host})`, returned as `hostClaimed`), so a
+  cancel racing the open can never close the run before its host is on
+  record and thereby suppress `host.exited` (the claim file itself precedes
+  the journal); read back from its own `host.json`. The optional `tabId` is
+  the host tab the launcher created (it reaches the host as
+  `WOOF_HOST_TAB_ID`); `agent.assigned` likewise carries an optional `tabId`,
+  the tab opened for that agent, projected as `agents[].assignment.tabId`
+  (null when absent). Both are additive at schemaVersion 1: journals written
+  before them read unchanged. **`host.exited {pid, exitCode, reason}`** — written by the
+  host on every awaited exit path, before it writes `host-exit.json`;
+  `reason` is the run outcome or `rejected:<reason>`. It is the one record
+  the reducer allows after `run.terminated`, because a host exits after the
+  run it hosted ended. A host records the termination, drains, and only then
+  journals its exit, so a follower (`woof events --follow`, `woof watch
+--follow`, the Web UI's SSE stream — all one `streamEvents` loop) does not
+  end at `run.terminated`: it ends when the journal holds no `host.claimed`,
+  or the host's `host.exited`/`host.lost` is recorded, or the read-time probe
+  no longer sees a live host (exit marker, dead pid, stale heartbeat, no
+  claim file). A host that still looks alive is waited for at most three of
+  its heartbeats, so a host killed right after the termination never makes a
+  follower hang; `--timeout-ms` or a signal only cuts that wait short, and
+  the follow still ends `terminated` with exit 0. A late `submission.rejected`
+  between the two is delivered with the exit, never on its own. `--follow --after <cursor
+at or past the termination>` applies the same rule: it delivers the exit
+  whether it was written before or after the follower started. `woof status
+--wait` still returns on the recorded outcome at once — `host.exited` may
+  follow, and resuming from its `status.cursor` delivers it. The synchronous second-signal
+  exit (130) cannot take the journal lock and leaves only `host-exit.json`.
+  A refused or failed host record is logged and never affects the run. A
+  scheduler driven without a host (`runWorkflow` from the SDK) journals no
+  host record.
+- **`host.lost {pid, heartbeatAt, reason, detectedBy}`** — a dead host cannot
+  write it, and inspectors never write anything: `cancelRun` (the only
+  mutating path that acts on a lost run) probes the host under the lock and,
+  when the probe says `lost` and the journal holds no `host.exited`/
+  `host.lost` yet, appends the evidence first — `host_process_gone`,
+  `heartbeat_stale` or `claim_invalid: <problem>` (`probeHostEvidence`) — then
+  the request and the termination. A `host.claimed` is not required (a host
+  can die before journaling it); a later `host.exited` is still accepted,
+  since `host.lost` records a suspicion.
+- **`observation.lost {agentId, code, message, terminalId}`** /
+  **`observation.recovered {agentId, lostSeq, terminalId}`** — the scheduler
+  writes `lost` at the first failed observe of an outage (the point where its
+  observation stops being current: the first timeout of a streak, or the
+  runtime error that fails the run at once) and `recovered` at the next
+  successful observe. One record per outage: the second and third timeouts
+  of a streak write nothing, and the third then fails the run with the
+  unresolved loss still in the snapshot. Which losses are unresolved is
+  read from the snapshot's `lifecycle.observationLost`, never from the
+  scheduler's memory: a scheduler that meets a loss it did not write pairs
+  its recovery with that record and writes no second loss. Individual
+  samples stay unjournaled.
+- **Snapshot: `lifecycle {host, cancelRequested, observationLost}`** —
+  `host` is the last journaled host fact (`{state: "claimed"|"exited"|"lost",
+seq, at, pid, exitCode, reason}` or `null`), `cancelRequested` the latest
+  request (`{seq, at, source, reason}` or `null`), `observationLost` every
+  loss no recovery resolved. It is derived by the one reducer, so
+  `foldEvents` reproduces it; `liveness` stays the separate read-time probe.
+- **Reducer refusals:** `host_exists`, `host_unknown`, `host_gone`,
+  `observation_lost`, `observation_not_lost`, plus `run_closed` for every
+  lifecycle record but `host.exited`.
+- **Still not covered:** per-agent runtime lifecycle transitions
+  (ready/working/blocked/gone, a replaced pane occupant) are not journaled;
+  they stay the in-memory overlay. Format repair and work retry are not
+  records of their own: the reducer derives an attempt's `cause`. The journaled
+  `tabId`s say which tabs a run opened, not whether they are still open: the
+  run host closes its agent tabs when the run ends, so a host that was killed
+  leaves them open, `host.lost` and `woof run cancel` close nothing, and no
+  record says a tab was closed.
+
+## Implemented now (central index)
+
+Real shipped behavior for finding runs across directories and streaming all of
+them — not design intent. Source: `src/inspect/{locator,runs,reindex,target}.ts`,
+`src/inspect/all-events.ts`, `src/observe/format-all.ts`, `src/state/locator.ts`, `src/contracts/index-dir.ts`, `src/commands/{all,target,runs}.ts`.
+
+- **The per-run journal stays the only source of truth.** Nothing here stores
+  status or events a second time. The run index is a set of locators; the
+  cross-run stream reads each run's own `journal.jsonl` through `readEvents`
+  and the single-run follow loop.
+- **Locator index.** `<index>/runs/<runId>.json`, where `<index>` is
+  `WOOF_INDEX_DIR` when set, else `~/.woof/index`. A locator is
+  `{schemaVersion: 1, kind: "woof.run.locator", runId, runDir, projectRoot,
+workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
+  `projectRoot` and `workflow` `null` for a plan-less run — and never carries
+  status or events. It is written when `run.opened` is recorded (`openRun`,
+  and the implicit plan-less open of `openAttempt`) through a `*.tmp` file and
+  a `rename`; readers ignore `*.tmp`. A failed index write is one stderr line
+  and never fails the run. A later run with the same id does not take over a
+  locator that still leads to its run at another directory: the first locator
+  stays, the newcomer is one stderr line, its open succeeds, and it remains
+  reachable by its directory and by a runs-directory scan. A locator that no
+  longer leads to its run is replaced.
+- **Readers never trust a locator as state.** Status always comes from
+  `readSnapshot(runDir)`. The locator's `runDir` is resolved (`realpath`) on
+  every load. A locator whose directory is gone (`run_dir_missing`) or cannot
+  be resolved right now (`run_dir_unavailable`), whose journal cannot be read
+  (the snapshot's own reason, e.g. `run_dir_invalid`) or whose journal records
+  another run id (`run_id_mismatch`) is reported under `skipped` with its
+  `runId`, and a locator file that does not parse, or whose `runDir` is not an
+  absolute path, as `locator_invalid` — never as a run. A relative `runDir` is
+  never followed against the inspector's working directory.
+- **`listRuns({runsDir, indexDir})` is the union** of the runs-directory scan
+  and the index, listed once per resolved directory. `woof runs` with no
+  `--runs-dir` passes the index (its output gains `indexDir`), so a run opened
+  with its own `--run-dir` or `--runs-dir` is listed; an explicit `--runs-dir`
+  lists that directory only. `--project`, `--all` and `--limit` apply to the
+  union. `woof ui` follows the same rule for `/api/runs` and for resolving a
+  run id. There is no `GET /api/events` for all runs.
+- **`woof runs --reindex`** is the only inspection command that writes: it
+  writes a locator for each readable run under the runs directory that has
+  none (or one whose directory holds no such run) and prints
+  `{"outcome":"reindexed","written","pruned","unavailable","kept","conflicts",
+"skipped"}`. A locator whose run directory cannot be reached is listed under
+  `unavailable` (`run_dir_missing` or `run_dir_unavailable`) and **kept**: a
+  volume that is not mounted right now must not lose its runs. Only
+  `--reindex --prune` removes the locators whose directory does not exist. A
+  run id already indexed at another directory that holds that run — or, without
+  `--prune`, at a directory that cannot be reached — is left alone and listed
+  under `conflicts`. It never touches a run directory.
+- **Run addressing by id.** `woof status|events|watch|run show|run cancel`
+  resolve their argument: an existing directory always wins; else, for a bare
+  run id, the locator (which must still lead to that run) and `<runs-dir>/<id>`
+  are both looked at. When both hold a run with that id at different real
+  directories the id is rejected as `run_id_ambiguous` (exit 3, the message
+  names both directories) — `run cancel` never picks one of two runs — and the
+  run directory still works. Directories under the runs directory whose name
+  differs from the run id they record are not searched by the CLI (`woof runs`
+  and the Web API, which read every journal, do see them).
+  A bare id found nowhere is `run_dir_invalid` (exit 3). Any other path that
+  does not exist is still treated as a run directory, so `events --follow` keeps
+  waiting for a directory that is about to be created.
+- **`woof events --all [--follow] [--project <dir>] [--since <iso>]`** emits the
+  unchanged `RunEvent`s of every known run. Each run is introduced once, before
+  its first event, by `{"kind":"woof.events.run","runId","runDir","project"}`.
+  Recorded events are merged by `ts`, then `runId`, then `seq`. With `--follow`
+  each run is then followed from the cursor its backlog ended at, and runs
+  that appear later (a new locator or runs-directory entry, checked at least
+  every 500 ms) are followed from their start; live lines of different runs
+  are not re-ordered against each other. `--timeout-ms` (exit 7) and SIGINT
+  (130) bound it. The follow is bounded: at most `--max-runs <n>` runs
+  (default 64) are polled at a time, runs that have not ended and the most
+  recently opened first; a follower is dropped as soon as its run has
+  terminated (and its `host.exited` was delivered or given up on), and a run
+  that was already terminal with no live host when the stream started is not
+  polled at all. A run that has to wait for a free follower is reported once as
+  `{"kind":"woof.events.skipped","runId","runDir","project","reason":
+"follow_cap","message"}` and is followed from where it stood (its backlog
+  cursor, or its start) once a follower ends — delayed, never silently dropped. A run's `resync_required`/`error` item, or an entry that
+  holds no readable run (`type: "skipped"`), is printed with `runId` and
+  `runDir` and does not end the stream. The last line is
+  `{"kind":"woof.events.end","scope":"all","runs","cursor":null,"terminal":
+false,"reason"}`. There is no cross-run cursor: `--after` is single-run only.
+- **`woof watch --all`** (and `events --all --pretty`) is the human projection
+  of that stream: a `== <short id>  run <id>  <run-dir>` line per run and the
+  single-run event line behind the short run id (the id, or `~` and its last 11
+  characters).

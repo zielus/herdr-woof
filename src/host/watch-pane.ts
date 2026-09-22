@@ -3,10 +3,11 @@ import { shellQuote } from "./files.js";
 import { paneIdOf } from "./launch.js";
 
 /**
- * `woof run start --watch`: once the run host has opened the run, split a pane below the host pane
- * and type `woof watch <run-dir> --follow` into it. With `closeOnEnd` the typed command closes the
- * pane after watch exits 0 (the run reached its terminal record); otherwise the pane stays, so the
- * final lines remain readable. A failure here never fails the started run: it is reported as a
+ * The live watch of a pane-hosted run (on by default; `woof run start --no-watch` opts out): once
+ * the run host has opened the run, split a pane below the host pane — the root pane of the host's
+ * own tab, so the watch lives inside that tab — and type `woof watch <run-dir> --follow` into it. With `closeOnEnd` the typed command closes the
+ * pane once watch exits, whatever the run's outcome (watch exits non-zero for a failed, exhausted
+ * or cancelled run); otherwise the pane stays, so the final lines remain readable. A failure here never fails the started run: it is reported as a
  * problem next to the launch output.
  */
 
@@ -47,16 +48,22 @@ export async function openWatchPane(options: WatchPaneOptions): Promise<WatchPan
   if (paneId === undefined)
     return { problem: `herdr pane split ${options.hostPaneId} failed: ${failure(split)}` };
 
-  const command = [options.nodePath, options.cliPath, "watch", options.runDir, "--follow"];
-  // `&&` is typed as a shell operator, never quoted: the pane closes only after watch exits 0.
-  const close = options.closeOnEnd ? ["&&", options.herdrBin, "pane", "close", paneId] : [];
-  const typed = await exec([
-    "pane",
-    "run",
-    paneId,
-    ...command.map(shellQuote),
-    ...(options.closeOnEnd ? ["&&", ...close.slice(1).map(shellQuote)] : []),
-  ]);
+  const watch = [options.nodePath, options.cliPath, "watch", options.runDir, "--follow"];
+  // `herdr pane run` types its words, joined by spaces, into the pane's shell. `watch --follow`
+  // exits non-zero for a failed, exhausted or cancelled run, so the close is unconditional and the
+  // watch status is what the typed command exits with. The script runs under `sh -c` as one quoted
+  // word: `$?` and `exit` then mean the same whatever shell the pane runs, and `exit` ends that
+  // `sh`, never the pane's own shell.
+  const command = options.closeOnEnd
+    ? [
+        "sh",
+        "-c",
+        `${watch.map(shellQuote).join(" ")}; s=$?; ${[options.herdrBin, "pane", "close", paneId]
+          .map(shellQuote)
+          .join(" ")}; exit $s`,
+      ]
+    : watch;
+  const typed = await exec(["pane", "run", paneId, ...command.map(shellQuote)]);
   if (typed.exitCode !== 0) {
     const closed = await exec(["pane", "close", paneId]);
     return {
@@ -67,7 +74,7 @@ export async function openWatchPane(options: WatchPaneOptions): Promise<WatchPan
       }`,
     };
   }
-  return { paneId, command: [...command, ...close] };
+  return { paneId, command };
 }
 
 function failure(result: ExecResult): string {

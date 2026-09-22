@@ -9,7 +9,8 @@ import {
   type ResolvedConfiguration,
 } from "../config/resolve.js";
 import { isId, isPlainObject } from "../contracts/envelope.js";
-import { execHerdr } from "../runtime/herdr/exec.js";
+import { execHerdr, type ExecResult } from "../runtime/herdr/exec.js";
+import { paneWorkspaceId, parseTabCreated } from "../runtime/herdr/parse.js";
 import { admitWorkflow } from "../scheduler/admission.js";
 import { validateWorkflowDefinition } from "../scheduler/definition.js";
 import { readSnapshot } from "../state/snapshot.js";
@@ -21,8 +22,8 @@ import { OUTCOME_FILE, isHostInfraReason } from "./run.js";
 
 /**
  * `woof run start --host herdr-pane` (p4 D1, §3.7): pre-admit a built-in
- * workflow in memory, write a launch request into the run directory, split a
- * Herdr pane and run `woof run host <run-dir>` there, then return once that
+ * workflow in memory, write a launch request into the run directory, create a
+ * Herdr tab and run `woof run host <run-dir>` in its root pane, then return once that
  * host has claimed and opened the run (or has written a rejection). A host
  * that never claims within `hostStartTimeoutMs` is closed out with an
  * abandoned claim, so it can never start an unobserved run later.
@@ -82,9 +83,9 @@ export interface LaunchOptions {
   projectDir: string | null;
   input: unknown;
   flags: LaunchFlags;
-  /** "current" (the caller's pane) or a pane id to split. */
-  splitFrom: string;
   launcherPaneId: string | null;
+  /** The pane whose workspace the host's tab joins (a Herdr action's focused pane); default the launcher's. */
+  workspacePaneId?: string | null;
   herdrBin: string;
   env: NodeJS.ProcessEnv;
   nodePath: string;
@@ -180,29 +181,58 @@ export async function launchInPane(
       graceMs: 2000,
     });
   const projectRoot = configuration.roots.project?.root ?? options.projectDir ?? process.cwd();
-  const split = await exec([
-    "pane",
-    "split",
-    ...(options.splitFrom === "current" ? ["--current"] : [options.splitFrom]),
-    "--direction",
-    "right",
+  // The run host gets its own unfocused tab and runs in that tab's root pane. The tab goes to the
+  // workspace Herdr reports for the launcher's (or the action's focused) pane; HERDR_WORKSPACE_ID,
+  // which can be absent or stale, is only the fallback, and with neither Herdr's default decides.
+  const workspaceId = await launchWorkspaceId(
+    exec,
+    options.workspacePaneId ?? options.launcherPaneId,
+    options.env,
+  );
+  const createArgs = [
+    "tab",
+    "create",
+    ...(workspaceId !== undefined ? ["--workspace", workspaceId] : []),
     "--cwd",
     projectRoot,
+    "--label",
+    `woof:${configuration.workflow?.value.name ?? options.workflow ?? "host"}`,
     "--no-focus",
-  ]);
+  ];
+  const created = await exec(createArgs);
   // A launch this launcher reports as failed must never start later: close the unclaimed directory.
-  const paneFailed = (message: string) =>
-    rejected("host_pane_failed", `${message}; ${closeRunDir(runDir, "woof run start")}`);
-  const paneId = split.exitCode === 0 ? paneIdOf(split.stdout) : undefined;
-  if (paneId === undefined) {
+  // An abandonment that succeeds proves no host claimed the directory, so the tab created for that
+  // host is closed too; a directory a host did claim keeps its tab (that host may still run there).
+  const paneFailed = async (message: string, createdTabId: string | undefined) => {
+    const closed = closeRunDir(runDir, "woof run start");
+    const tabNote =
+      createdTabId === undefined
+        ? ""
+        : closed.ok
+          ? `; ${await closeTab(exec, createdTabId)}`
+          : `; the created tab ${createdTabId} is left open`;
+    return rejected("host_pane_failed", `${message}; ${closed.message}${tabNote}`);
+  };
+  const reply = created.exitCode === 0 ? resultOf(created.stdout) : undefined;
+  if (reply === undefined) {
     return paneFailed(
-      `herdr pane split failed: ${split.spawnErrorMessage ?? (split.stderr.trim().split("\n")[0] || `exit ${split.exitCode ?? split.signal ?? "unknown"}, stdout ${JSON.stringify(split.stdout.slice(0, 200))}`)}`,
+      `herdr tab create failed: ${created.spawnErrorMessage ?? (created.stderr.trim().split("\n")[0] || `exit ${created.exitCode ?? created.signal ?? "unknown"}, stdout ${JSON.stringify(created.stdout.slice(0, 200))}`)}`,
+      undefined,
     );
   }
+  // Herdr has created the tab by now: a reply that does not verify still names the tab to close.
+  const tab = parseTabCreated(reply, workspaceId);
+  if (!tab.ok) return paneFailed(`herdr tab create failed: ${tab.message}`, tab.createdTabId);
+  const { paneId, tabId } = tab;
+  // The verified workspace of the host's tab travels to the host process (`env` works in any
+  // shell), whose runtime adapter creates the agents' tabs there whatever the pane inherited.
   const typed = await exec([
     "pane",
     "run",
     paneId,
+    "env",
+    shellQuote(`HERDR_WORKSPACE_ID=${tab.workspaceId}`),
+    shellQuote(`WOOF_HOST_TAB_ID=${tabId}`),
     shellQuote(options.nodePath),
     shellQuote(options.cliPath),
     "run",
@@ -210,9 +240,7 @@ export async function launchInPane(
     shellQuote(runDir),
   ]);
   if (typed.exitCode !== 0) {
-    return paneFailed(
-      `herdr pane run ${paneId} failed: ${typed.spawnErrorMessage ?? (typed.stderr.trim().split("\n")[0] || `exit ${typed.exitCode ?? typed.signal ?? "unknown"}`)}`,
-    );
+    return paneFailed(`herdr pane run ${paneId} failed: ${failureOf(typed)}`, tabId);
   }
 
   const timeoutMs = configuration.settings.hostStartTimeoutMs.value;
@@ -245,17 +273,20 @@ export async function launchInPane(
             `${runDir} holds a run that this launch did not open; nothing was started`,
           );
         }
-        return { code: 0, output: startedOutput(runDir, paneId, opened) };
+        return { code: 0, output: startedOutput(runDir, paneId, tabId, opened) };
       }
     }
     if (own !== undefined) {
       const reason = typeof own["reason"] === "string" ? own["reason"] : "";
       if (reason === "host_claim_failed") {
         // The host's failure handoff: it holds no claim, so close the directory before reporting.
+        // An abandonment that succeeds proves no host owns the directory: its tab is closed too.
         const closed = closeRunDir(runDir, "woof run start after the run host's claim failed");
+        // oxlint-disable-next-line no-await-in-loop
+        const tabNote = closed.ok ? `; ${await closeTab(exec, tabId)}` : "";
         return {
           code: 3,
-          output: { ...own, message: `${String(own["message"])}; ${closed}` },
+          output: { ...own, message: `${String(own["message"])}; ${closed.message}${tabNote}` },
         };
       }
       return {
@@ -268,9 +299,11 @@ export async function launchInPane(
       if (now - startedAt >= timeoutMs) {
         const abandoned = abandonHost(runDir, `woof run start (pid ${process.pid})`);
         if (abandoned.ok) {
+          // No host claimed and none can any more: the tab created for it is closed with the directory.
           return rejected(
             "host_not_started",
-            `the run host in pane ${paneId} did not claim ${runDir} within ${timeoutMs} ms; the run directory is closed (abandoned) and no run will start there`,
+            // oxlint-disable-next-line no-await-in-loop
+            `the run host in pane ${paneId} did not claim ${runDir} within ${timeoutMs} ms; the run directory is closed (abandoned) and no run will start there; ${await closeTab(exec, tabId)}`,
           );
         }
         hostSeenAt = now;
@@ -294,7 +327,7 @@ export async function launchInPane(
  * Closes an unclaimed run directory as abandoned so no later host starts the launch, and says how
  * that went (a host that did claim first keeps the directory, and the message names it).
  */
-function closeRunDir(runDir: string, by: string): string {
+function closeRunDir(runDir: string, by: string): { ok: boolean; message: string } {
   let abandoned: ReturnType<typeof abandonHost>;
   try {
     abandoned = abandonHost(runDir, `${by} (pid ${process.pid})`);
@@ -302,8 +335,57 @@ function closeRunDir(runDir: string, by: string): string {
     abandoned = { ok: false, host: null, message: (error as Error).message };
   }
   return abandoned.ok
-    ? "the run directory is closed (abandoned) and no run will start there"
-    : `the run directory could not be closed (abandoned): ${abandoned.message}`;
+    ? { ok: true, message: "the run directory is closed (abandoned) and no run will start there" }
+    : {
+        ok: false,
+        message: `the run directory could not be closed (abandoned): ${abandoned.message}`,
+      };
+}
+
+type Exec = (args: string[]) => Promise<ExecResult>;
+
+/** Closes a tab this launch created (best effort) and says how that went. */
+async function closeTab(exec: Exec, tabId: string): Promise<string> {
+  const closed = await exec(["tab", "close", tabId]);
+  return closed.exitCode === 0
+    ? `the created tab ${tabId} was closed`
+    : `the created tab ${tabId} could not be closed (${failureOf(closed)})`;
+}
+
+/**
+ * The workspace the host's tab goes to: the one Herdr reports for `paneId` (`herdr pane get`),
+ * else a non-empty HERDR_WORKSPACE_ID, else undefined (no `--workspace`: Herdr's default).
+ */
+async function launchWorkspaceId(
+  exec: Exec,
+  paneId: string | null,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  if (paneId !== null && paneId !== "") {
+    const got = await exec(["pane", "get", paneId]);
+    const result = got.exitCode === 0 ? resultOf(got.stdout) : undefined;
+    const fromPane = result === undefined ? undefined : paneWorkspaceId(result);
+    if (fromPane !== undefined) return fromPane;
+  }
+  const fromEnv = env["HERDR_WORKSPACE_ID"];
+  return fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined;
+}
+
+function failureOf(result: ExecResult): string {
+  return (
+    result.spawnErrorMessage ??
+    (result.stderr.trim().split("\n")[0] || `exit ${result.exitCode ?? result.signal ?? "unknown"}`)
+  );
+}
+
+/** The `result` object of a Herdr reply, else undefined. */
+function resultOf(stdout: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(stdout);
+    return isPlainObject(value) && isPlainObject(value["result"]) ? value["result"] : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function rejected(
@@ -329,7 +411,8 @@ export function paneIdOf(stdout: string): string | undefined {
 
 function startedOutput(
   runDir: string,
-  splitPaneId: string,
+  rootPaneId: string,
+  tabId: string,
   snapshot: { runId: string; workflow: unknown; config: { sha256: string } | null },
 ): Record<string, unknown> {
   const host = readHostInfo(runDir);
@@ -349,7 +432,12 @@ function startedOutput(
     runId: snapshot.runId,
     runDir,
     workflow: snapshot.workflow,
-    host: { mode: "herdr-pane", paneId: host?.paneId ?? splitPaneId, pid: host?.pid ?? null },
+    host: {
+      mode: "herdr-pane",
+      paneId: host?.paneId ?? rootPaneId,
+      tabId,
+      pid: host?.pid ?? null,
+    },
     configuration: {
       sha256: snapshot.config?.sha256 ?? null,
       agents,

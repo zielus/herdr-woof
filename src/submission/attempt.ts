@@ -10,6 +10,7 @@ import {
   type RejectionDetail,
 } from "../contracts/envelope.js";
 import type { AttemptOpenReason } from "../contracts/reasons.js";
+import { registerRunLocator } from "../state/locator.js";
 import {
   JournalFileError,
   appendRecord,
@@ -160,7 +161,13 @@ export async function openAttempt(input: OpenAttemptInput): Promise<OpenAttemptO
 
           if (!existed) createJournal(runDir);
           if (records.length === 0) {
-            records.push(appendRecord(runDir, records, { type: "run.opened", runId: input.runId }));
+            const runOpened = appendRecord(runDir, records, {
+              type: "run.opened",
+              runId: input.runId,
+            });
+            records.push(runOpened);
+            // A plan-less run opens here: index it like openRun does. Never fails the attempt.
+            registerRunLocator({ runDir, runId: input.runId, openedAt: runOpened.ts });
           }
           const opened = appendRecord(runDir, records, candidate);
           return {

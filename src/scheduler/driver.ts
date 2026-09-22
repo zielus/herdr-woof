@@ -13,9 +13,12 @@ import { readSnapshot, type RunSnapshot } from "../state/snapshot.js";
 import {
   assignAgent,
   blockRun,
+  cancelRun,
   reconcileDelivery,
   recordDispatch,
   recordGate,
+  recordObservationLost,
+  recordObservationRecovered,
   terminateRun,
   unblockRun,
   type StoreOutcome,
@@ -67,12 +70,15 @@ export interface RunWorkflowOptions<Input> {
   /** Command that runs `woof`, placed before `submit` in worker requests. */
   submitCommand: readonly string[];
   signal?: AbortSignal;
+  /**
+   * What aborting `signal` stands for on the journaled `run.cancel_requested`
+   * (default "abort_signal"); a run host that aborts on SIGINT/SIGTERM passes "signal".
+   */
+  cancelSource?: "signal" | "abort_signal";
   /** Sleep between ticks that wait (default 1000 ms). */
   pollMs?: number;
   /** Leave agent panes open when the run ends. */
   keepPanes?: boolean;
-  /** Pane to split for agents (default "current"). */
-  paneNear?: string;
   clock?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Called with every action before it runs (progress reporting). */
@@ -133,6 +139,14 @@ export async function runWorkflow<Input>(
   let evidence: GateEvidence | null = null;
   /** Consecutive observe timeouts per agent; any successful observation resets it. */
   const observeTimeouts: Record<string, number> = Object.create(null);
+  /**
+   * `lifecycle.observationLost` of the latest snapshot read. The journal is the authority on
+   * which losses are unresolved, never this process's memory: a scheduler started on a journal
+   * that already holds a loss pairs its recovery with that record and writes no second loss. It
+   * stays exact between reads because only this scheduler writes observation records, always
+   * before the tick's read; `null` until the first read.
+   */
+  let unresolvedLosses: RunSnapshot["lifecycle"]["observationLost"] | null = null;
   /** openedAt + runTimeoutMs, known after the first snapshot read. */
   let deadlineAt: number | null = null;
   let observeNext: string | null = null;
@@ -143,6 +157,7 @@ export async function runWorkflow<Input>(
     const started = performance.now();
     const result = readSnapshot(runDir);
     stats.maxSnapshotMs = Math.max(stats.maxSnapshotMs, performance.now() - started);
+    if (result.ok) unresolvedLosses = result.snapshot.lifecycle.observationLost;
     return result.ok ? result : { ok: false, message: `${result.reason}: ${result.message}` };
   };
 
@@ -367,14 +382,44 @@ export async function runWorkflow<Input>(
         const observed = await runtime.observe(view.handle, {
           timeoutMs: Math.floor(Math.min(ADAPTER_COMMAND_CAP_MS, left)),
         });
+        if (unresolvedLosses === null) read();
+        const lostSeq = unresolvedLosses?.find((loss) => loss.agentId === agentId)?.seq;
         if (observed.ok) {
           observeTimeouts[agentId] = 0;
           accept(view, observed.value);
+          if (lostSeq !== undefined) {
+            // The first successful observation after a journaled loss, never every sample.
+            const recovered = await write(() =>
+              recordObservationRecovered({
+                runDir,
+                agentId,
+                lostSeq,
+                terminalId: observed.value.order.terminalId,
+                ...lock,
+              }),
+            );
+            if (!recovered.ok && !recovered.closed) return fatal(recovered);
+          }
         } else {
           view.readyStreak = 0;
           const error = observed.error;
           const timeouts = error.code === "timeout" ? (observeTimeouts[agentId] ?? 0) + 1 : 0;
           observeTimeouts[agentId] = timeouts;
+          if (lostSeq === undefined) {
+            // Observation stops being current at the first failed observe of an outage: one record
+            // per outage, whether it then recovers or fails the run below.
+            const lost = await write(() =>
+              recordObservationLost({
+                runDir,
+                agentId,
+                code: error.code,
+                message: error.message.slice(0, 2000),
+                terminalId: view.handle?.terminalId ?? null,
+                ...lock,
+              }),
+            );
+            if (!lost.ok && !lost.closed) return fatal(lost);
+          }
           // A runtime error is a structured failure; a timeout only after consecutive repeats.
           if (error.code !== "timeout" || timeouts >= OBSERVE_TIMEOUT_LIMIT) {
             const ended = await end(
@@ -418,13 +463,22 @@ export async function runWorkflow<Input>(
 
       case "terminate":
         written = await write(() =>
-          terminateRun({
-            runDir,
-            outcome: action.outcome,
-            reason: action.reason,
-            ...(action.limit !== undefined ? { limit: action.limit } : {}),
-            ...lock,
-          }),
+          action.outcome === "cancelled"
+            ? // The request and its termination, under one lock. This scheduler is the live host.
+              cancelRun({
+                runDir,
+                source: options.cancelSource ?? "abort_signal",
+                reason: action.reason,
+                probeHost: false,
+                ...lock,
+              })
+            : terminateRun({
+                runDir,
+                outcome: action.outcome,
+                reason: action.reason,
+                ...(action.limit !== undefined ? { limit: action.limit } : {}),
+                ...lock,
+              }),
         );
         break;
 
@@ -452,14 +506,16 @@ export async function runWorkflow<Input>(
           break;
         }
         const paneTimeoutMs = capped(snapshot, ADAPTER_COMMAND_CAP_MS);
+        // Every workflow agent gets its own unfocused tab; the agent runs in that tab's root pane.
         const pane = await runtime.openPane({
-          near: options.paneNear ?? "current",
+          placement: "tab",
+          label: `woof:${spec?.role ?? action.agentId}`,
           cwd: repository,
           env: { WOOF_RUN_DIR: runDir },
           timeoutMs: paneTimeoutMs,
         });
         const runtimeName = herdrRuntimeName(snapshot.runId, action.agentId);
-        // A split that timed out on a budget-capped bound, or any split that returns after the
+        // A tab open that timed out on a budget-capped bound, or any open that returns after the
         // deadline, is the run timeout rather than a failed start.
         const paneBudgetTimeout =
           !pane.ok && pane.error.code === "timeout" && paneTimeoutMs < ADAPTER_COMMAND_CAP_MS;
@@ -469,7 +525,7 @@ export async function runWorkflow<Input>(
               runtime,
               runtimeName,
               planAgent.kind,
-              pane.value.paneId,
+              pane.value,
             );
           }
           written = await runTimedOut(snapshot);
@@ -488,7 +544,7 @@ export async function runWorkflow<Input>(
             runtime,
             runtimeName,
             planAgent.kind,
-            pane.value.paneId,
+            pane.value,
           );
           written = await runTimedOut(snapshot);
           break;
@@ -505,12 +561,12 @@ export async function runWorkflow<Input>(
         if (remainingMs(snapshot) <= 0) {
           view.handle = started.ok
             ? started.value
-            : handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+            : handleFor(runtime, runtimeName, planAgent.kind, pane.value);
           written = await runTimedOut(snapshot);
           break;
         }
         if (!started.ok && started.error.code !== "agent_not_ready") {
-          view.handle = handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+          view.handle = handleFor(runtime, runtimeName, planAgent.kind, pane.value);
           written = await end(
             "failed",
             `agent_start_failed: ${action.agentId}: ${started.error.code}: ${started.error.message}`,
@@ -519,7 +575,7 @@ export async function runWorkflow<Input>(
         }
         const handle = started.ok
           ? started.value
-          : handleFor(runtime, runtimeName, planAgent.kind, pane.value.paneId);
+          : handleFor(runtime, runtimeName, planAgent.kind, pane.value);
         view.handle = handle;
         written = await write(() =>
           assignAgent({
@@ -528,6 +584,7 @@ export async function runWorkflow<Input>(
             runtime: { adapter: runtime.adapter, runtimeName, paneId: handle.paneId },
             terminalId: handle.terminalId,
             sessionId: handle.sessionId,
+            tabId: handle.tabId ?? pane.value.tabId ?? null,
             ...lockWithin(snapshot),
           }),
         );
@@ -537,7 +594,7 @@ export async function runWorkflow<Input>(
               runDir,
               agentId: action.agentId,
               reason: "startup_blocked",
-              requiredAction: `Agent ${action.agentId} (runtime agent ${runtimeName}) is blocked while starting in pane ${handle.paneId}. Answer its prompt in that pane, or cancel the run with: woof run cancel ${runDir}`,
+              requiredAction: `Agent ${action.agentId} (runtime agent ${runtimeName}) is blocked while starting in pane ${handle.paneId}${handle.tabId != null ? ` (tab ${handle.tabId})` : ""}. Answer its prompt in that pane, or cancel the run with: woof run cancel ${runDir}`,
               observed: { runtimeStatus: null, terminalId: null, stateChangeSeq: null },
               ...lockWithin(snapshot),
             }),
@@ -1001,14 +1058,16 @@ function handleFor(
   runtime: RuntimeAdapter,
   runtimeName: string,
   kind: string,
-  paneId: string,
+  pane: { paneId: string; tabId?: string | null },
 ): AgentHandle {
   return {
     adapter: runtime.adapter,
     runtimeName,
     kind,
-    paneId,
+    paneId: pane.paneId,
     paneOwned: true,
+    // A runtime module written before tab placement may return no tabId.
+    tabId: pane.tabId ?? null,
     terminalId: null,
     sessionId: null,
   };

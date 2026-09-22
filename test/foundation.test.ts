@@ -43,6 +43,7 @@ console.log(JSON.stringify({
       buildReviewWorkflow: "object",
       builtInWorkflow: "function",
       builtInWorkflowNames: "function",
+      cancelRun: "function",
       claimHost: "function",
       claudeTrustStatus: "function",
       createHerdrCliRuntime: "function",

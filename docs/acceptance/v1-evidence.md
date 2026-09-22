@@ -225,3 +225,103 @@ requirements to satisfy (not suggestions), and an objection belongs in
 probe against the fixed product, reached 13/13: the builder satisfied the
 marker requirement and recorded an objection about its unclear origin in its
 completion report — satisfy and object, not silent compliance and not refusal.
+
+## Tabs and observability (live, outside the matrix)
+
+This section is additional to the v1 matrix above. Its three logs are **not**
+registered in `scripts/acceptance/matrix.mjs` and no matrix row cites them: the
+matrix mirrors `docs/acceptance/v1.md` one row at a time, and the tab layout,
+the host lifecycle records and the run index are not v1 rows. `bun run
+acceptance:collect` therefore does not read these logs.
+
+**What ran.** `node scripts/live/tabs-observability.mjs`, one part per
+invocation, on 2026-09-21 on the `feat/tabs-observability` branch at `9375fcd`
+(worktree clean, recorded in each log) with herdr 0.9.1, claude 2.1.278 (Claude
+Code), node v26.7.0 and real Claude agents (`sonnet`) on the deterministic
+build-review fixture. The logs are committed as
+`docs/research/tabs-observability-live-a.log`, `…-live-b.log` and
+`…-live-c.log`, redacted like the other logs (the home directory is `~`, the
+session-local evidence directory is `<evidence-dir>`); every gate line, id and
+timestamp is unchanged. The run directories and the per-run evidence files
+(journals, tab samples) stayed on the operator's machine and are not part of
+this repository.
+
+The run happened **before** the central-index fixes that followed it on the same
+branch (`run_id_ambiguous`, `runs --reindex` keeping unavailable locators,
+the `--all --follow` cap and `--max-runs`, absolute locator paths). Those fixes
+are covered by `test/index.cli.test.ts` only; the live script was not repeated
+after them.
+
+**Part A — hosted build-review run, one tab per participant: 17/17 gates (A1–A16,
+H1).** Run `live-tabs-a-20260921-050015`: build → review fail → repair → review
+pass, `run.terminated` completed (approved), `status <runId> --wait` exit 0.
+
+- `host.claimed` is journaled with the host's pane and tab (`w9A:t3`), and both
+  `agent.assigned` records carry different, non-null tab ids that are not the
+  host's (builder `w9A:t4`, reviewer `w9A:t5`). `herdr tab list` showed those
+  tabs (`woof:builder`, `woof:reviewer`) in all 18 samples taken while the run
+  was active, each holding exactly its agent's pane; the watch pane was a split
+  inside the host's tab.
+- The repair reused the builder: same agent, pane, terminal and native session
+  as the build, no replacement. `run show --verify-artifacts` reported no
+  altered artifact (4 checked), and the fixture repository held the repaired
+  change with `node --test` passing.
+- The run directory was outside `~/.woof/runs`, and `woof runs` with no path
+  flags listed it from the run index; `woof status <runId>` resolved it by id;
+  `woof events --all` introduced the run and carried 24/24 of its events.
+- `host.exited` was the last record (seq 24), after `run.terminated` (seq 23),
+  written by the claiming pid. Afterwards both agent tabs were closed and the
+  host tab remained.
+
+**Part B — the host is killed mid-run: 8/8 gates (B1–B7, H1).** After a
+dispatch, with `journal.lock` absent, the host pid from `host.json` was killed
+with `kill -9`. `woof status <runId>` reported owner `lost` and `--wait` exited
+8; `woof runs` still listed the run as `running` with owner `lost`;
+`woof run cancel <runId>` appended `host.lost` → `run.cancel_requested` →
+`run.terminated{cancelled}`; a late `woof submit` was rejected as `run_closed`
+and accepted nothing. The killed host left one agent tab open; the script
+reported it and closed it (and the host tab) with `herdr tab close`.
+
+**Part C — event reconnect: 6/6 gates (C0–C4, H1).** A
+`woof events <runId> --follow` child was killed mid-run after seq 5 and resumed
+with `--after` its last cursor while two records were written in the gap. The
+resumed follow started at seq 6 and ended `terminated`; across both connections
+seq 1..14 had no gap and no repeated seq with different content; SDK
+`foldEvents` over the collected events equalled `readSnapshot` (JSON form,
+`liveness` excluded).
+
+**Not proven by this run.**
+
+- Crash resume: a killed host was cancelled, never resumed or re-hosted (see
+  the limit above).
+- Per-agent runtime lifecycle transitions (`agent.lifecycle_changed`:
+  ready/working/blocked/gone) are not journaled, so nothing here observed them.
+- `plan-build-review` was not re-run live on the tab layout; only `build-review`.
+- A host killed mid-run leaves its agent tabs open until something closes them:
+  `woof run cancel` does not, and Part B's tab was closed by the script.
+- The full test suite and `bun run verify` were not run in this effort, only the
+  targeted files `test/index.cli.test.ts`, `test/inspect.cli.test.ts`,
+  `test/web-server.process.test.ts`, `test/acceptance-matrix.test.ts` and
+  `test/acceptance-evidence.test.ts`.
+- One operator machine, one Herdr version, one agent kind.
+
+**Re-run.** Inside a Herdr pane, after `bun run build`, with the fixture
+repository trusted once in Claude Code (`--probe` reports the preconditions):
+
+```sh
+node scripts/live/tabs-observability.mjs --probe
+node scripts/live/tabs-observability.mjs --part A --evidence-dir <dir>/live-A
+node scripts/live/tabs-observability.mjs --part B --evidence-dir <dir>/live-B
+node scripts/live/tabs-observability.mjs --part C --evidence-dir <dir>/live-C
+```
+
+Each part re-initializes the shared fixture, so never run two at once. Exit 0
+means every gate passed; `run.log` in the evidence directory is what was
+committed here.
+
+### Re-run on the final branch code
+
+After the index review fixes and the module-boundary refactor, the whole script
+(`--part all`) was run again live at `40788db` on 2026-09-21: **28/28 gates passed**
+(log: [tabs-observability-live-final.log](../research/tabs-observability-live-final.log)).
+`bun run verify` passed at the same commit (58 files, 930 tests, package smoke).

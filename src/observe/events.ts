@@ -11,10 +11,14 @@ import { checkCursor, formatCursor, parseCursor, type CursorProblem } from "./cu
  * transition; across reconnects delivery is at-least-once, so consumers dedupe
  * by `seq`.
  *
- * Not covered yet: gate evaluation, blocking/unblocking and delivery
- * reconciliation (phase-3 records), runtime lifecycle changes (in-memory
- * overlay only), format repair and work retry, cancellation requests distinct
- * from termination, and observation loss (needs a run owner).
+ * Covered: admission and termination, assignment, attempts, dispatch,
+ * submissions, gates, blocking/unblocking, delivery reconciliation, a
+ * cancellation request distinct from the termination it leads to
+ * (`run.cancel_requested`), host lifecycle (`host.claimed`, `host.exited`,
+ * `host.lost`) and observation loss/recovery. Format repair and work retry are
+ * not events of their own: the reducer derives an attempt's `cause` when
+ * `attempt.opened` is folded. Not covered: per-agent runtime lifecycle changes
+ * (ready/working/blocked/gone), which stay an in-memory overlay.
  */
 
 export interface RunEvent {
@@ -63,9 +67,15 @@ function subjectOf(
   switch (record.type) {
     case "run.opened":
     case "run.terminated":
+    case "run.cancel_requested":
+    case "host.claimed":
+    case "host.exited":
+    case "host.lost":
       return {};
     case "agent.assigned":
     case "run.unblocked":
+    case "observation.lost":
+    case "observation.recovered":
       return { agentId: record.agentId };
     case "run.blocked":
       return record.stageId === undefined

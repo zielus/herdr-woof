@@ -82,11 +82,11 @@ function startClaim(runDir: string, hold: string, extra: Record<string, string> 
   return { child, firstLine, exit };
 }
 
-function probe(runDir: string): Json {
+function probe(runDir: string, fn = "probeHost"): Json {
   const result = runNode(
-    `const { probeHost } = await import(${JSON.stringify(distUrl("host/probe.js"))});
-console.log(JSON.stringify(probeHost(process.argv[1])));`,
-    [runDir],
+    `const probes = await import(${JSON.stringify(distUrl("host/probe.js"))});
+console.log(JSON.stringify(probes[process.argv[2]](process.argv[1])));`,
+    [runDir, fn],
     { timeoutMs: 5000 },
   );
   expect(result.status, result.stderr).toBe(0);
@@ -141,6 +141,9 @@ describe("run host claim", () => {
     }
     expect(owner).toBe("lost");
     expect(probe(runDir)["host"]).toMatchObject({ state: "hosting", pid: host.child.pid });
+    // The evidence a locked writer journals as host.lost; the plain probe's shape is unchanged.
+    expect(probe(runDir, "probeHostEvidence")["lostReason"]).toBe("host_process_gone");
+    expect(probe(runDir)).not.toHaveProperty("lostReason");
   });
 
   it("H4 (PI-008): a clean release never rewrites the claim; it records the exit in an exclusive marker", async () => {
@@ -164,6 +167,7 @@ describe("run host claim", () => {
       owner: "exited",
       host: { state: "exited", exitCode: 4, exitedAt: expect.any(String) },
     });
+    expect(probe(runDir, "probeHostEvidence")).not.toHaveProperty("lostReason");
   });
 
   it("H5: an abandoned run directory refuses a late host", async () => {

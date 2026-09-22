@@ -13,10 +13,16 @@ import {
   assigned,
   attempt,
   blocked,
+  cancelRequested,
   checkGate,
   dispatched,
   gate,
+  hostClaimed,
+  hostExited,
+  hostLost,
   journalOf,
+  observationLost,
+  observationRecovered,
   opened,
   reconciled,
   rejected,
@@ -118,6 +124,11 @@ describe("deriveSnapshot status", () => {
 });
 
 describe("deriveSnapshot documents", () => {
+  it("projects an agent's journaled tab id on its assignment", () => {
+    const snapshot = snapshotOf(opened(), { ...assigned("builder", "w1:p7"), tabId: "w1:t3" });
+    expect(snapshot.agents[0]?.assignment).toMatchObject({ paneId: "w1:p7", tabId: "w1:t3" });
+  });
+
   it("lists planned agents and stages with plan metadata, limits and counters", () => {
     const snapshot = snapshotOf(
       opened(),
@@ -149,6 +160,7 @@ describe("deriveSnapshot documents", () => {
           paneId: "w1:p7",
           terminalId: null,
           sessionId: null,
+          tabId: null,
           at: expect.any(String),
         },
         activeAttempt: { stageId: "build", visit: 1, attempt: 1 },
@@ -659,7 +671,74 @@ describe("deriveSnapshot liveness and recorded configuration (p4)", () => {
         .snapshot;
       expect(snapshot.liveness).toEqual({ owner: "unhosted", runtime: "not_observed", host: null });
       expect(snapshot.config).toBeNull();
+      // A journal written before the lifecycle records existed reads as "nothing journaled".
+      expect((snapshot as unknown as { lifecycle: Json }).lifecycle).toEqual({
+        host: null,
+        cancelRequested: null,
+        observationLost: [],
+      });
     }
+  });
+
+  it("projects the last host fact, the cancellation request and unresolved observation loss", () => {
+    const lifecycleOf = (...bodies: Json[]) =>
+      (snapshotOf(opened(), assigned("builder"), ...bodies) as unknown as { lifecycle: Json })
+        .lifecycle;
+    expect(lifecycleOf(hostClaimed())["host"]).toEqual({
+      state: "claimed",
+      seq: 3,
+      at: expect.any(String),
+      pid: 4242,
+      exitCode: null,
+      reason: null,
+    });
+    // A derived snapshot still probes nothing: the journaled fact and liveness.owner are separate.
+    expect(snapshotOf(opened(), hostClaimed()).liveness).toMatchObject({ owner: "unhosted" });
+
+    const lost = lifecycleOf(
+      hostClaimed(),
+      observationLost("builder"),
+      hostLost(),
+      cancelRequested("cli", "stop it"),
+      terminated(),
+    );
+    expect(lost["host"]).toMatchObject({ state: "lost", seq: 5, reason: "host_process_gone" });
+    expect(lost["cancelRequested"]).toEqual({
+      seq: 6,
+      at: expect.any(String),
+      source: "cli",
+      reason: "stop it",
+    });
+    expect(lost["observationLost"]).toEqual([
+      {
+        agentId: "builder",
+        seq: 4,
+        since: expect.any(String),
+        code: "timeout",
+        message: "timeout observing builder",
+        terminalId: null,
+      },
+    ]);
+
+    const clean = lifecycleOf(
+      hostClaimed(),
+      observationLost("builder"),
+      observationRecovered("builder", 4),
+      terminated("completed"),
+      hostExited(),
+    );
+    expect(clean["host"]).toMatchObject({
+      state: "exited",
+      seq: 7,
+      exitCode: 0,
+      reason: "completed",
+    });
+    expect(clean["observationLost"]).toEqual([]);
+    expect(clean["cancelRequested"]).toBeNull();
+    // The host's exit follows the termination without reopening the run.
+    const ended = snapshotOf(opened(), hostClaimed(), terminated("completed"), hostExited());
+    expect(ended.status).toBe("completed");
+    expect(ended.outcome).toMatchObject({ outcome: "completed", seq: 3 });
   });
 
   it("carries the config digest from run.opened and refuses a malformed one", () => {

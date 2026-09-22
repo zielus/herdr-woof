@@ -645,6 +645,13 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         .map((call) => call.runtimeName);
       expect(stops.toSorted()).toEqual([report.names.builder, report.names.reviewer].toSorted());
       const termination = ofType(report, "run.terminated")[0];
+      // The request is its own fact, journaled right before the termination it leads to.
+      expect(ofType(report, "run.cancel_requested")).toMatchObject([
+        { seq: (termination?.seq ?? 0) - 1, source: "abort_signal", reason: "cancel requested" },
+      ]);
+      expect(report.snapshot["lifecycle"]).toMatchObject({
+        cancelRequested: { source: "abort_signal", seq: (termination?.seq ?? 0) - 1 },
+      });
       expect(
         report.journal
           .filter((record) => record.seq > (termination?.seq ?? 0))
@@ -661,7 +668,10 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
         outcome: "cancelled",
         reason: "cancelled from another process",
       });
-      expect(external.types.at(-1)).toBe("run.terminated");
+      expect(external.types.slice(-2)).toEqual(["run.cancel_requested", "run.terminated"]);
+      expect(ofType(external, "run.cancel_requested")[0]).toMatchObject({ source: "cli" });
+      // A scheduler driven without a run host journals no host facts, and none is invented.
+      expect(external.types.filter((type) => type.startsWith("host."))).toEqual([]);
       expect(external.calls.filter((call) => call.method === "stop")).toHaveLength(2);
     },
     SCENARIO_TIMEOUT,
@@ -872,6 +882,21 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       const panes = report.calls.filter((call) => call.method === "openPane");
       expect(panes.length).toBeGreaterThan(0);
       for (const pane of panes) expect(pane.args["cwd"]).toBe(report.repo);
+      // One agent per tab: every agent pane is opened as a labelled new tab, never as a split.
+      for (const pane of panes) {
+        expect(pane.args).toMatchObject({
+          placement: "tab",
+          label: expect.stringMatching(/^woof:[a-z]/),
+        });
+        expect(pane.args).not.toHaveProperty("near");
+      }
+      const started = report.calls.filter((call) => call.method === "startAgent");
+      expect(panes).toHaveLength(started.length);
+      // The journal proves it: every assignment carries the tab its pane was opened in, all distinct.
+      const tabIds = ofType(report, "agent.assigned").map((record) => record["tabId"]);
+      expect(tabIds).toHaveLength(panes.length);
+      for (const tabId of tabIds) expect(tabId).toMatch(/^scripted:t\d+$/);
+      expect(new Set(tabIds).size).toBe(tabIds.length);
     },
     SCENARIO_TIMEOUT,
   );
@@ -931,13 +956,52 @@ describe("scheduler blocking, delivery, cancellation and failures", () => {
       const error = runScenario("observe-error");
       expect(error.result).toMatchObject({ outcome: "failed", limit: null });
       expect(error.result.reason).toMatch(/^runtime_error: runtime_unavailable: agent builder/);
+      expect(ofType(error, "observation.lost")).toMatchObject([
+        { agentId: "builder", code: "runtime_unavailable" },
+      ]);
 
       const timeouts = runScenario("observe-timeouts");
       expect(timeouts.result).toMatchObject({ outcome: "failed", limit: null });
       expect(timeouts.result.reason).toMatch(/^runtime_error: timeout: agent builder/);
+      // One record for the whole streak (a transition, not a sample), before the run fails on it.
+      const lost = ofType(timeouts, "observation.lost");
+      expect(lost).toMatchObject([{ agentId: "builder", code: "timeout" }]);
+      expect(lost[0]?.seq).toBeLessThan(ofType(timeouts, "run.terminated")[0]?.seq ?? 0);
+      expect(ofType(timeouts, "observation.recovered")).toEqual([]);
+      expect(timeouts.snapshot["lifecycle"]).toMatchObject({
+        observationLost: [{ agentId: "builder", seq: lost[0]?.seq, code: "timeout" }],
+      });
 
       const recovered = runScenario("observe-two-timeouts");
       expect(recovered.result).toMatchObject({ outcome: "completed", limit: null });
+      const outage = ofType(recovered, "observation.lost");
+      expect(outage).toMatchObject([{ agentId: "builder", code: "timeout" }]);
+      expect(ofType(recovered, "observation.recovered")).toMatchObject([
+        { agentId: "builder", lostSeq: outage[0]?.seq },
+      ]);
+      expect(recovered.snapshot["lifecycle"]).toMatchObject({ observationLost: [] });
+    },
+    SCENARIO_TIMEOUT,
+  );
+
+  it(
+    "an unresolved observation.lost the scheduler did not write is paired from the journal: no second loss, and the recovery names it",
+    () => {
+      // The journal, never the scheduler's memory, says which losses are unresolved. A scheduler
+      // that meets a loss it never journaled (one started on such a journal) must not answer the
+      // next failed observe with a duplicate observation.lost (refused observation_lost, which was
+      // fatal) and must resolve that very record at the next successful observe.
+      const report = runScenario("observe-foreign-loss");
+      expect(report.error).toBeNull();
+      expect(report.result).toMatchObject({ outcome: "completed", limit: null });
+      const lost = ofType(report, "observation.lost");
+      expect(lost).toMatchObject([
+        { agentId: "builder", message: "journaled by an earlier scheduler" },
+      ]);
+      expect(ofType(report, "observation.recovered")).toMatchObject([
+        { agentId: "builder", lostSeq: lost[0]?.seq },
+      ]);
+      expect(report.snapshot["lifecycle"]).toMatchObject({ observationLost: [] });
     },
     SCENARIO_TIMEOUT,
   );

@@ -12,11 +12,17 @@ import {
   assigned,
   attempt,
   blocked,
+  cancelRequested,
   checkGate,
   dispatched,
   duplicate,
   gate,
+  hostClaimed,
+  hostExited,
+  hostLost,
   journalOf as buildJournal,
+  observationLost,
+  observationRecovered,
   opened,
   reconciled,
   rejected,
@@ -45,6 +51,9 @@ interface StateJson {
   gates: Json[];
   blocks: Array<{ blocked: Json; unblocked?: Json }>;
   reconciliations: Map<number, Json>;
+  host: { claimed?: Json; exited?: Json; lost?: Json };
+  cancelRequests: Json[];
+  observationLost: Map<string, Json>;
   counters: Json;
 }
 type ReplayResult =
@@ -1090,5 +1099,119 @@ describe("delivery.reconciled rules", () => {
       journalOf(...base(), terminated(), reconciled(4, "build", "builder")),
       "run_closed",
     );
+  });
+});
+
+describe("lifecycle record rules", () => {
+  const base = () => [opened(), assigned("builder")];
+
+  it("keeps a cancellation request distinct from the termination it leads to", () => {
+    const requested = expectOk(journalOf(...base(), cancelRequested("web", "stop")));
+    expect(requested.status).toBe("starting");
+    expect(requested.termination).toBeUndefined();
+    expect(requested.cancelRequests).toMatchObject([{ seq: 3, source: "web", reason: "stop" }]);
+    const ended = expectOk(journalOf(...base(), cancelRequested(), terminated()));
+    expect(ended.status).toBe("cancelled");
+    expectRefused(journalOf(...base(), terminated(), cancelRequested()), "run_closed");
+  });
+
+  it("records one host claim, and the host's exit even after termination", () => {
+    const state = expectOk(journalOf(...base(), hostClaimed(), terminated(), hostExited()));
+    expect(state.host.claimed).toMatchObject({ seq: 3, pid: 4242 });
+    expect(state.host.exited).toMatchObject({ seq: 5, exitCode: 0, reason: "completed" });
+    expect(state.status).toBe("cancelled");
+    expectRefused(journalOf(...base(), hostClaimed(), hostClaimed(7)), "host_exists");
+    expectRefused(journalOf(...base(), terminated(), hostClaimed()), "run_closed");
+    expectRefused(journalOf(...base(), hostExited()), "host_unknown");
+    expectRefused(journalOf(...base(), hostClaimed(), hostExited(7)), "host_unknown");
+    expectRefused(journalOf(...base(), hostClaimed(), hostExited(), hostExited()), "host_gone");
+  });
+
+  it("records a lost host once, with or without a journaled claim, and never after an exit", () => {
+    expect(
+      expectOk(journalOf(...base(), hostLost(null, "claim_invalid: torn"))).host.lost,
+    ).toBeDefined();
+    const state = expectOk(journalOf(...base(), hostClaimed(), hostLost(), hostExited(4242, 130)));
+    expect(state.host.lost).toMatchObject({ seq: 4, reason: "host_process_gone" });
+    expect(state.host.exited).toMatchObject({ seq: 5 });
+    expectRefused(journalOf(...base(), hostClaimed(), hostLost(), hostLost()), "host_gone");
+    expectRefused(journalOf(...base(), hostClaimed(), hostExited(), hostLost()), "host_gone");
+    expectRefused(journalOf(...base(), terminated(), hostLost()), "run_closed");
+  });
+
+  it("holds one unresolved observation loss per agent until it recovers", () => {
+    const lost = expectOk(journalOf(...base(), observationLost("builder")));
+    expect(lost.observationLost.get("builder")).toMatchObject({ seq: 3, code: "timeout" });
+    const recovered = expectOk(
+      journalOf(...base(), observationLost("builder"), observationRecovered("builder", 3)),
+    );
+    expect(recovered.observationLost.size).toBe(0);
+    const again = expectOk(
+      journalOf(
+        ...base(),
+        observationLost("builder"),
+        observationRecovered("builder", 3),
+        observationLost("builder", "runtime_unavailable"),
+      ),
+    );
+    expect(again.observationLost.get("builder")).toMatchObject({ seq: 5 });
+    // Termination keeps the unresolved loss: it is what the run ended with.
+    expect(
+      expectOk(journalOf(...base(), observationLost("builder"), terminated("failed")))
+        .observationLost.size,
+    ).toBe(1);
+  });
+
+  it("refuses impossible observation records", () => {
+    expectRefused(
+      journalOf(...base(), observationLost("builder"), observationLost("builder")),
+      "observation_lost",
+    );
+    expectRefused(journalOf(...base(), observationLost("ghost")), "agent_unknown");
+    expectRefused(journalOf(...base(), observationLost("reviewer")), "agent_unassigned");
+    expectRefused(journalOf(...base(), observationRecovered("builder", 2)), "observation_not_lost");
+    expectRefused(
+      journalOf(...base(), observationLost("builder"), observationRecovered("builder", 2)),
+      "observation_not_lost",
+    );
+    expectRefused(journalOf(...base(), terminated(), observationLost("builder")), "run_closed");
+    expectRefused(
+      journalOf(
+        ...base(),
+        observationLost("builder"),
+        terminated(),
+        observationRecovered("builder", 3),
+      ),
+      "run_closed",
+    );
+  });
+
+  it("refuses lifecycle records that break their field contract", () => {
+    const line = (body: Json) =>
+      parseRecordLine(
+        JSON.stringify({ schemaVersion: 1, seq: 2, ts: "2026-09-14T10:00:00.000Z", ...body }),
+      );
+    expect(line({ ...cancelRequested(), source: "telepathy" })).toMatch(/source is not one of/);
+    expect(line({ ...hostClaimed(), pid: 0 })).toMatch(/pid is not a positive integer/);
+    expect(line({ ...hostExited(), exitCode: -1 })).toMatch(/exitCode/);
+    expect(line({ ...hostLost(), extra: 1 })).toMatch(/unexpected field extra/);
+    expect(line({ ...observationLost("builder"), code: "" })).toMatch(/code is not a non-empty/);
+    expect(line({ ...observationRecovered("builder", 0) })).toMatch(/lostSeq is invalid/);
+  });
+
+  it("tab ids are additive: optional on host.claimed and agent.assigned, validated when present", () => {
+    const line = (body: Json) =>
+      parseRecordLine(
+        JSON.stringify({ schemaVersion: 1, seq: 2, ts: "2026-09-14T10:00:00.000Z", ...body }),
+      );
+    // A journal written before tab ids has neither field and still reads.
+    expect(line(hostClaimed())).toMatchObject({ type: "host.claimed" });
+    expect(line(assigned("builder"))).toMatchObject({ type: "agent.assigned" });
+    expect(line({ ...hostClaimed(), tabId: "w1:t1" })).toMatchObject({ tabId: "w1:t1" });
+    expect(line({ ...hostClaimed(), tabId: null })).toMatchObject({ tabId: null });
+    expect(line({ ...assigned("builder"), tabId: "w1:t2" })).toMatchObject({ tabId: "w1:t2" });
+    expect(line({ ...hostClaimed(), tabId: 7 })).toMatch(/tabId/);
+    expect(line({ ...assigned("builder"), tabId: "" })).toMatch(/tabId/);
+    expect(line({ ...assigned("builder"), tabId: null })).toMatch(/tabId/);
   });
 });

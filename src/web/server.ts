@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
-import { terminateRun } from "../state/store.js";
+import { cancelRun } from "../state/store.js";
 import {
   admit,
   isLoopback,
@@ -23,7 +23,7 @@ import { bundleIndex, MISSING_SPA_MESSAGE, serveSpa } from "./static.js";
  * Every GET is a passthrough to `listRuns` / `readRunStatus` / the event
  * stream, which take no journal lock and never contact Herdr, so the UI is
  * never a second journal writer or a parallel lock holder. The only mutating
- * route is cancel, which calls the same `terminateRun` that `woof run cancel`
+ * route is cancel, which calls the same `cancelRun` that `woof run cancel`
  * calls. Actions the engine has no call for are reported as unsupported with
  * the engine's reason; they are never simulated.
  *
@@ -90,6 +90,11 @@ export const CAPABILITIES = {
 export interface WebServerOptions {
   /** Directory holding one subdirectory per run. */
   runsDir: string;
+  /**
+   * The run locator index to list as well, so runs opened outside `runsDir` are
+   * reachable. Omitted or null: only `runsDir` is served.
+   */
+  indexDir?: string | null;
   host?: string;
   port?: number;
   /** Required on every request when set. A non-loopback host must set one. */
@@ -244,13 +249,14 @@ class OpenStreams {
  */
 function runDirOf(
   runsDir: string,
+  indexDir: string | null,
   runId: string,
 ): { ok: true; entry: RunListEntry } | { ok: false; reason: string; message: string } {
   let listed;
   try {
     // `all` matters: the default listing keeps only the 20 most recent terminal
     // runs, so an older finished run would be unreachable by id.
-    listed = listRuns({ runsDir, all: true });
+    listed = listRuns({ runsDir, indexDir, all: true });
   } catch (error) {
     return {
       ok: false,
@@ -273,11 +279,17 @@ function runDirOf(
   return { ok: true, entry };
 }
 
-function handleRuns(response: ServerResponse, runsDir: string, url: URL): void {
+function handleRuns(
+  response: ServerResponse,
+  runsDir: string,
+  indexDir: string | null,
+  url: URL,
+): void {
   const project = url.searchParams.get("project");
   try {
     const listed = listRuns({
       runsDir,
+      indexDir,
       all: url.searchParams.get("all") === "true",
       ...(project !== null && project !== "" ? { project: resolve(project) } : {}),
     });
@@ -327,7 +339,7 @@ async function handleCancel(
 ): Promise<void> {
   // A JSON content type is required, not merely accepted: it is the header that
   // forces a cross-origin request into a preflight this server never answers,
-  // so a form post from another page cannot reach terminateRun at all.
+  // so a form post from another page cannot reach cancelRun at all.
   const contentType = (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     rejected(
@@ -387,7 +399,7 @@ async function handleCancel(
   // The same call `woof run cancel` makes: it takes the journal lock, replays
   // state and refuses an invalid transition, so cancelling a run a scheduler is
   // actively hosting is safe without any liveness check first.
-  const outcome = await terminateRun({ runDir: entry.runDir, outcome: "cancelled", reason });
+  const outcome = await cancelRun({ runDir: entry.runDir, source: "web", reason });
   send(response, outcome.outcome === "recorded" ? 200 : 409, outcome);
 }
 
@@ -396,6 +408,7 @@ async function route(
   response: ServerResponse,
   options: {
     runsDir: string;
+    indexDir: string | null;
     distUiDir: string;
     policy: SecurityPolicy;
     pollMs: number;
@@ -449,7 +462,7 @@ async function route(
   }
   if (segments.length === 2) {
     if (method === "GET") {
-      handleRuns(response, options.runsDir, url);
+      handleRuns(response, options.runsDir, options.indexDir, url);
       return;
     }
     if (method === "POST") {
@@ -478,7 +491,7 @@ async function route(
     return;
   }
 
-  const found = runDirOf(options.runsDir, runId);
+  const found = runDirOf(options.runsDir, options.indexDir, runId);
   if (!found.ok) {
     rejected(
       response,
@@ -533,6 +546,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const token = options.token ?? null;
   const distUiDir = options.distUiDir ?? distUiDefault;
   const runsDir = resolve(options.runsDir);
+  const indexDir =
+    options.indexDir === undefined || options.indexDir === null ? null : resolve(options.indexDir);
   if (!isLoopback(host) && token === null) {
     throw new TypeError(
       `refusing to bind ${host}: a server reachable beyond loopback needs --token, because the Host and Origin checks do not authenticate whoever can reach the port`,
@@ -566,7 +581,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const streams = new OpenStreams();
 
   const server = createServer((request, response) => {
-    void route(request, response, { runsDir, distUiDir, policy, pollMs, streams }).catch(
+    void route(request, response, { runsDir, indexDir, distUiDir, policy, pollMs, streams }).catch(
       (error: unknown) => {
         if (response.headersSent) {
           response.end();

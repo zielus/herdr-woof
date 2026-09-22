@@ -268,6 +268,7 @@ describe("woof ui: the event stream", () => {
     expect(events.map((event) => event["type"])).toEqual([
       "run.opened",
       "attempt.opened",
+      "run.cancel_requested",
       "run.terminated",
     ]);
     // Each event carries the cursor positioned after it, as the SSE id.
@@ -289,6 +290,7 @@ describe("woof ui: the event stream", () => {
     );
     expect(sseEvents(resumed).map((event) => event["type"])).toEqual([
       "attempt.opened",
+      "run.cancel_requested",
       "run.terminated",
     ]);
 
@@ -299,6 +301,7 @@ describe("woof ui: the event stream", () => {
     const text = await byHeader.text();
     expect(sseEvents(text).map((event) => event["type"])).toEqual([
       "attempt.opened",
+      "run.cancel_requested",
       "run.terminated",
     ]);
 
@@ -373,6 +376,14 @@ describe("woof ui: actions", () => {
     const terminated = ofType(journal(runDir), "run.terminated");
     expect(terminated).toHaveLength(1);
     expect(terminated[0]).toMatchObject({ reason: "cancelled from the test" });
+    // The request is journaled as its own fact, naming the web UI, right before the termination.
+    expect(ofType(journal(runDir), "run.cancel_requested")).toMatchObject([
+      {
+        seq: (terminated[0]?.["seq"] as number) - 1,
+        source: "web",
+        reason: "cancelled from the test",
+      },
+    ]);
     expect(woof(["status", runDir]).json).toMatchObject({ status: { status: "cancelled" } });
 
     // A second cancel is refused by the reducer, not silently accepted.

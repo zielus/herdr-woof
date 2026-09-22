@@ -19,6 +19,7 @@ import type {
   ObservedState,
 } from "../journal/control-records.js";
 import { journalAnchor, readJournalPrefixSettled } from "../journal/journal.js";
+import type { CancelSource } from "../journal/lifecycle-records.js";
 import type { JournalRecord } from "../journal/records.js";
 import {
   attemptKey,
@@ -52,6 +53,8 @@ export interface SnapshotAgent {
     paneId: string;
     terminalId: string | null;
     sessionId: string | null;
+    /** The Herdr tab created for the agent's pane; null when none was journaled. */
+    tabId: string | null;
     at: string;
   } | null;
   /** Latest open attempt owned by this agent; null once the run terminated. */
@@ -131,6 +134,28 @@ export interface SnapshotBlocked {
   attempt: AttemptRef | null;
 }
 
+/** The last host fact the journal holds; `liveness` is the read-time probe, this is the record. */
+export interface SnapshotHostFact {
+  state: "claimed" | "exited" | "lost";
+  seq: number;
+  at: string;
+  pid: number | null;
+  /** Set for `exited`. */
+  exitCode: number | null;
+  /** The exit reason or the loss evidence; null for `claimed`. */
+  reason: string | null;
+}
+
+export interface SnapshotObservationLoss {
+  agentId: string;
+  /** Seq of the observation.lost record. */
+  seq: number;
+  since: string;
+  code: string;
+  message: string;
+  terminalId: string | null;
+}
+
 export interface ArtifactIntegrity {
   checked: number;
   altered: Array<{ receiptId: string; acceptedPath: string; problem: string }>;
@@ -169,6 +194,17 @@ export interface RunSnapshot {
     ambiguousDeliveries: Array<AttemptRef & { agentId: string; reason: string }>;
     /** The unresolved block, if any. */
     blocked: SnapshotBlocked | null;
+  };
+  /**
+   * Journaled lifecycle facts: the last host record (null when no host journaled
+   * one), the latest cancellation request, and every observation loss that no
+   * observation.recovered resolved. Empty for a journal written before these
+   * records existed.
+   */
+  lifecycle: {
+    host: SnapshotHostFact | null;
+    cancelRequested: { seq: number; at: string; source: CancelSource; reason: string } | null;
+    observationLost: SnapshotObservationLoss[];
   };
   outputs: {
     /** Highest accepted (visit, attempt) per stage; a newer unaccepted attempt never hides or replaces it. */
@@ -354,6 +390,7 @@ export function deriveSnapshot(
         ambiguousDeliveries: ambiguousDeliveries(state),
         blocked: deriveBlocked(state),
       },
+      lifecycle: deriveLifecycle(state),
       outputs: { latestAcceptedByStage: latestAccepted(state) },
       liveness: { owner: "unhosted", runtime: "not_observed", host: null },
       integrity: { artifacts: "unchecked" },
@@ -402,6 +439,7 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
               paneId: assignment.runtime.paneId,
               terminalId: assignment.terminalId ?? null,
               sessionId: assignment.sessionId ?? null,
+              tabId: assignment.tabId ?? null,
               at: assignment.ts,
             },
       activeAttempt: active,
@@ -526,6 +564,46 @@ function deriveBlocked(state: RunState): SnapshotBlocked | null {
       current.stageId === undefined || current.visit === undefined || current.attempt === undefined
         ? null
         : { stageId: current.stageId, visit: current.visit, attempt: current.attempt },
+  };
+}
+
+function deriveLifecycle(state: RunState): RunSnapshot["lifecycle"] {
+  const { claimed, exited, lost } = state.host;
+  const last = [claimed, exited, lost]
+    .filter((record) => record !== undefined)
+    .toSorted((a, b) => b.seq - a.seq)[0];
+  const request = state.cancelRequests.at(-1);
+  return {
+    host:
+      last === undefined
+        ? null
+        : {
+            state:
+              last.type === "host.claimed"
+                ? "claimed"
+                : last.type === "host.exited"
+                  ? "exited"
+                  : "lost",
+            seq: last.seq,
+            at: last.ts,
+            pid: last.pid,
+            exitCode: last.type === "host.exited" ? last.exitCode : null,
+            reason: last.type === "host.claimed" ? null : last.reason,
+          },
+    cancelRequested:
+      request === undefined
+        ? null
+        : { seq: request.seq, at: request.ts, source: request.source, reason: request.reason },
+    observationLost: [...state.observationLost.values()]
+      .toSorted((a, b) => a.seq - b.seq)
+      .map((record) => ({
+        agentId: record.agentId,
+        seq: record.seq,
+        since: record.ts,
+        code: record.code,
+        message: record.message,
+        terminalId: record.terminalId,
+      })),
   };
 }
 

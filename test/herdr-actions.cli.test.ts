@@ -137,11 +137,32 @@ function setup(): Setup {
     s.scenario,
     JSON.stringify([
       { match: ["notification", "show"], stdout: "{}" },
+      // Herdr places the pane the action was invoked from (focused_pane_id) in workspace w5.
       {
-        match: ["pane", "split"],
-        call: 1,
-        stdout: JSON.stringify({ result: { pane: { pane_id: "w5:p8" } } }),
+        match: ["pane", "get", "w5:p3"],
+        stdout: JSON.stringify({
+          id: "cli:pane:get",
+          result: { pane: { pane_id: "w5:p3", workspace_id: "w5" }, type: "pane_info" },
+        }),
       },
+      {
+        match: ["tab", "create"],
+        call: 1,
+        stdout: JSON.stringify({
+          id: "cli:tab:create",
+          result: {
+            root_pane: { pane_id: "w5:p8", tab_id: "w5:t4", workspace_id: "w5" },
+            tab: { tab_id: "w5:t4", label: "woof:build-review", number: 4, pane_count: 1 },
+            type: "tab_created",
+          },
+        }),
+      },
+      // The watch pane: a down split of the host tab's root pane; its typed command is not spawned.
+      {
+        match: ["pane", "split", "w5:p8"],
+        stdout: JSON.stringify({ result: { pane: { pane_id: "w5:p9" } } }),
+      },
+      { match: ["pane", "run", "w5:p9"], stdout: "{}" },
       {
         match: ["pane", "run"],
         call: 1,
@@ -173,7 +194,7 @@ function action(
     FAKE_HERDR_SCENARIO: s.scenario,
     ...(context !== undefined ? { HERDR_PLUGIN_CONTEXT_JSON: JSON.stringify(context) } : {}),
   };
-  for (const key of ["HERDR_PANE_ID", "HERDR_ENV", "WOOF_RUN_DIR"])
+  for (const key of ["HERDR_PANE_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV", "WOOF_RUN_DIR"])
     Reflect.deleteProperty(env, key);
   if (context === undefined) Reflect.deleteProperty(env, "HERDR_PLUGIN_CONTEXT_JSON");
   const result = spawnSync(bin, ["herdr", name], {
@@ -313,7 +334,7 @@ describe("woof herdr actions", () => {
     expect(existsSync(s.guardLog)).toBe(false);
   });
 
-  it("A3: start needs .woof/start.json, then splits the host pane from the focused pane and the host runs to its end", async () => {
+  it("A3: start needs .woof/start.json, then opens the host in a new tab with the watch split below it, and the host runs to its end", async () => {
     const s = setup();
     const repo = s.repo("repo-a");
     const context = { focused_pane_id: "w5:p3", focused_pane_cwd: repo };
@@ -353,18 +374,34 @@ describe("woof herdr actions", () => {
     expect(started.json).toMatchObject({
       outcome: "started",
       runDir: join(s.runsDir, started.json["runId"]),
-      host: { mode: "herdr-pane", paneId: "w5:p8" },
+      host: { mode: "herdr-pane", paneId: "w5:p8", tabId: "w5:t4" },
+      watch: { paneId: "w5:p9" },
     });
-    expect(calls(s).find((argv) => argv[0] === "pane" && argv[1] === "split")).toEqual([
-      "pane",
-      "split",
-      "w5:p3",
-      "--direction",
-      "right",
+    // The action process has no HERDR_WORKSPACE_ID: the tab goes to the workspace Herdr reports
+    // for the focused pane, never to Herdr's default workspace.
+    expect(calls(s).filter((argv) => argv[1] === "get" && argv[2] === "w5:p3")).toEqual([
+      ["pane", "get", "w5:p3"],
+    ]);
+    expect(calls(s).find((argv) => argv[0] === "tab")).toEqual([
+      "tab",
+      "create",
+      "--workspace",
+      "w5",
       "--cwd",
       repo,
+      "--label",
+      "woof:build-review",
       "--no-focus",
     ]);
+    // The only split is the watch pane, below the host tab's root pane.
+    expect(calls(s).filter((argv) => argv[0] === "pane" && argv[1] === "split")).toEqual([
+      ["pane", "split", "w5:p8", "--direction", "down", "--cwd", repo, "--no-focus"],
+    ]);
+    expect(
+      calls(s)
+        .find((argv) => argv[1] === "run" && argv[2] === "w5:p9")
+        ?.slice(-3),
+    ).toEqual(["watch", started.json["runDir"], "--follow"]);
     const runDir = started.json["runDir"] as string;
     // The host may notify after the action does: look for the action's notification, not the last one.
     expect(notifications(s)).toContainEqual({

@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { readRunStatus } from "../inspect/status.js";
@@ -10,10 +9,14 @@ import {
   formatProblem,
   type FormatOptions,
 } from "../observe/format.js";
+import { ALL_HELP, allEventsCommand } from "./all.js";
 import { UsageError, milliseconds, parse } from "./common.js";
 import { streamEvents, type EventsSink, type StreamOptions } from "../observe/stream.js";
+import { TARGET_HELP, resolveTarget } from "./target.js";
 
-export const WATCH_USAGE = `Usage: woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
+export const WATCH_USAGE = `Usage: woof watch [<run-dir|run-id>] [--follow] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
+       woof watch --all [--follow] [--project <dir>] [--since <iso>] [--runs-dir <dir>]
+                  [--max-runs <n>] [--poll-ms <n>] [--timeout-ms <n>]
 
 Prints a short header for the run in <run-dir> (run id, workflow, current
 stage, host owner, each agent with role, kind, model and pane) and then one
@@ -23,7 +26,12 @@ woof events --follow (every --poll-ms, default 250) until the run terminates,
 --timeout-ms passes or SIGINT. Colors only when stdout is a terminal and
 NO_COLOR is unset or empty. Read-only: no journal lock, no Herdr.
 Exits like woof events: 0 end or terminated, 7 timeout, 2 resync_required,
-3 journal error, 130 SIGINT; 1 usage.`;
+3 journal error, 130 SIGINT; 1 usage.
+${TARGET_HELP}
+
+${ALL_HELP}
+woof watch --all prints the same stream as woof events --all, one readable line
+per event behind a short run id, with the same exit codes.`;
 
 export async function watchCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(
@@ -37,6 +45,11 @@ export async function watchCommand(args: string[]): Promise<number> {
           follow: { type: "boolean" },
           "timeout-ms": { type: "string" },
           "poll-ms": { type: "string" },
+          all: { type: "boolean" },
+          project: { type: "string" },
+          since: { type: "string" },
+          "runs-dir": { type: "string" },
+          "max-runs": { type: "string" },
           help: { type: "boolean", short: "h" },
         },
       }),
@@ -46,19 +59,54 @@ export async function watchCommand(args: string[]): Promise<number> {
     console.log(WATCH_USAGE);
     return 0;
   }
+  const pollMs =
+    values["poll-ms"] === undefined ? 250 : milliseconds(values["poll-ms"], "--poll-ms", 1);
+  const timeoutMs =
+    values["timeout-ms"] === undefined
+      ? undefined
+      : milliseconds(values["timeout-ms"], "--timeout-ms", 1, 604_800_000);
+  if (values.all === true) {
+    if (positionals.length > 0 || values.after !== undefined)
+      throw new UsageError(`--all takes no <run-dir> or --after\n\n${WATCH_USAGE}`);
+    return allEventsCommand(
+      {
+        "runs-dir": values["runs-dir"],
+        project: values.project,
+        since: values.since,
+        follow: values.follow === true,
+        pollMs,
+        timeoutMs,
+        maxRuns: values["max-runs"],
+        pretty: true,
+      },
+      WATCH_USAGE,
+    );
+  }
+  if (
+    values.project !== undefined ||
+    values.since !== undefined ||
+    values["runs-dir"] !== undefined ||
+    values["max-runs"] !== undefined
+  )
+    throw new UsageError(
+      `--project, --since, --runs-dir and --max-runs need --all\n\n${WATCH_USAGE}`,
+    );
   const [positional, ...extra] = positionals;
   const envRunDir = process.env["WOOF_RUN_DIR"];
   const target =
     positional ?? (envRunDir !== undefined && envRunDir !== "" ? envRunDir : undefined);
   if (target === undefined || target === "" || extra.length > 0)
-    throw new UsageError(`expected one <run-dir> (or WOOF_RUN_DIR)\n\n${WATCH_USAGE}`);
-  return watchRun(resolve(target), {
+    throw new UsageError(`expected one <run-dir|run-id> (or WOOF_RUN_DIR)\n\n${WATCH_USAGE}`);
+  const located = await resolveTarget(target);
+  if (!located.ok) {
+    console.log(`woof watch: ${located.reason}: ${located.message}`);
+    return 3;
+  }
+  return watchRun(located.runDir, {
     ...(values.after !== undefined ? { after: values.after } : {}),
     follow: values.follow === true,
-    pollMs: values["poll-ms"] === undefined ? 250 : milliseconds(values["poll-ms"], "--poll-ms", 1),
-    ...(values["timeout-ms"] !== undefined
-      ? { timeoutMs: milliseconds(values["timeout-ms"], "--timeout-ms", 1, 604_800_000) }
-      : {}),
+    pollMs,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     stats: false,
   });
 }

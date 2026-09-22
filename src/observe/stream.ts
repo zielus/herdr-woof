@@ -1,8 +1,17 @@
 import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { MAX_EVENTS_LIMIT, readEvents, type RunEvent } from "./events.js";
 import { subscribeEvents } from "./subscribe.js";
-import { readSnapshot } from "../state/snapshot.js";
+import { parseCursor, readSnapshot } from "../state/snapshot.js";
+
+/** Heartbeat assumed for a host whose claim does not state one. */
+const DEFAULT_HEARTBEAT_MS = 2000;
+/**
+ * How many heartbeats a follower keeps waiting, after `run.terminated`, for the `host.exited` of a
+ * host that still looks alive. A host killed right after the termination never writes it.
+ */
+export const HOST_EXIT_GRACE_HEARTBEATS = 3;
 
 const CURSOR_REASONS: ReadonlySet<string> = new Set([
   "cursor_ahead",
@@ -81,19 +90,27 @@ export async function streamEvents(
     return 0;
   }
 
-  // A resume cursor already at the run's terminal record: no event can follow, so end now instead of
-  // waiting for the timeout (PR #6). The snapshot's cursor equal to the resume cursor proves no record
-  // was appended between the two lock-free reads.
+  // A resume cursor at or past the run's terminal record: the only lifecycle record that can follow
+  // a termination is the host's own host.exited, so deliver it (waiting for it while its host still
+  // lives, see followHostExit) with whatever else is left, and end instead of waiting for the
+  // timeout (PR #6).
   if (options.after !== undefined) {
-    const read = readEvents(runDir, { after: options.after, limit: 1 });
-    if (read.ok && read.events.length === 0) {
+    const read = readEvents(runDir, { after: options.after });
+    const resumedAt = parseCursor(options.after)?.seq;
+    if (read.ok && resumedAt !== undefined) {
       const snapshot = readSnapshot(runDir);
       if (
         snapshot.ok &&
         snapshot.snapshot.outcome !== null &&
-        snapshot.snapshot.cursor === read.cursor
+        snapshot.snapshot.outcome.seq <= resumedAt
       ) {
-        sink.end(read.cursor, true, "terminated");
+        const cursor = await followHostExit(runDir, options.after, sink, {
+          pollMs,
+          deliverRest: true,
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+        });
+        sink.end(cursor, true, "terminated");
         if (options.stats) sink.stats(statsLine(0, 0, pollMs));
         return 0;
       }
@@ -170,6 +187,14 @@ export async function streamEvents(
       if (item.type === "run.terminated") {
         terminal = true;
         reason = "terminated";
+        // The run's outcome is final from here; what may still follow is its host's host.exited.
+        // The timeout and a signal only cut that wait short: the follow still ends terminated.
+        // oxlint-disable-next-line no-await-in-loop
+        cursor = await followHostExit(runDir, item.cursor, sink, {
+          pollMs,
+          deliverRest: false,
+          signal: controller.signal,
+        });
         break;
       }
     }
@@ -182,6 +207,79 @@ export async function streamEvents(
   sink.end(cursor, terminal, reason);
   if (options.stats) sink.stats(statsLine(polls, maxProjectionMs, pollMs));
   return code;
+}
+
+/**
+ * After `run.terminated`: delivers the one record that may still follow it, the `host.exited` of
+ * the host that ran it, and returns the last cursor delivered. A host records the termination,
+ * drains for a while and only then journals its exit, so ending at the termination would lose that
+ * record for every live follower. The wait ends as soon as nothing more can come: the journal holds
+ * no `host.claimed`, or the host's `host.exited`/`host.lost` is recorded, or the read-time probe no
+ * longer sees a live host (exit marker, dead pid, stale heartbeat, no claim file). A host that
+ * still looks alive is waited for at most HOST_EXIT_GRACE_HEARTBEATS of its heartbeats, so a host
+ * killed right after the termination never makes a follower hang. Lock-free like every read here;
+ * a read problem ends the wait silently, because the terminal event was already delivered.
+ */
+async function followHostExit(
+  runDir: string,
+  after: string,
+  sink: EventsSink,
+  options: {
+    pollMs: number;
+    /** A resume delivers whatever else follows its cursor; a live follow stops at the termination. */
+    deliverRest: boolean;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  },
+): Promise<string> {
+  const started = Date.now();
+  let cursor = after;
+  for (;;) {
+    // Settledness is decided before the read: a host journals host.exited before it writes its
+    // exit marker, so whatever made the probe say "gone" is already in the journal read below.
+    const snapshot = readSnapshot(runDir);
+    let settled = true;
+    let heartbeatMs = DEFAULT_HEARTBEAT_MS;
+    if (snapshot.ok) {
+      const { lifecycle, liveness } = snapshot.snapshot;
+      settled =
+        lifecycle.host === null || lifecycle.host.state !== "claimed" || liveness.owner !== "alive";
+      heartbeatMs = liveness.host?.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+    }
+    const read = readEvents(runDir, { after: cursor, limit: MAX_EVENTS_LIMIT });
+    if (!read.ok) return cursor;
+    // Records refused after the termination (a late submission.rejected) may precede the exit;
+    // they are delivered with it so the sequence stays contiguous, never on their own.
+    const exit = read.events.findIndex((event) => event.type === "host.exited");
+    if (exit !== -1) {
+      for (const event of read.events.slice(0, exit + 1)) {
+        sink.event(event);
+        cursor = event.cursor;
+      }
+      return cursor;
+    }
+    const waited = Date.now() - started;
+    const graceMs = Math.min(
+      HOST_EXIT_GRACE_HEARTBEATS * heartbeatMs,
+      options.timeoutMs ?? Number.POSITIVE_INFINITY,
+    );
+    if (settled || waited >= graceMs || options.signal?.aborted === true) {
+      if (!options.deliverRest) return cursor;
+      for (const event of read.events) sink.event(event);
+      return read.cursor;
+    }
+    try {
+      // Polling is sequential by design: each wait precedes the next read.
+      // oxlint-disable-next-line no-await-in-loop
+      await delay(
+        Math.max(1, Math.min(options.pollMs, graceMs - waited)),
+        undefined,
+        options.signal === undefined ? {} : { signal: options.signal },
+      );
+    } catch {
+      return cursor;
+    }
+  }
 }
 
 function statsLine(

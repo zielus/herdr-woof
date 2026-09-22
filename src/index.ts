@@ -75,6 +75,7 @@ export type { SubmitInput } from "./submission/submit.js";
 export {
   assignAgent,
   blockRun,
+  cancelRun,
   openRun,
   reconcileDelivery,
   recordDispatch,
@@ -82,10 +83,14 @@ export {
   terminateRun,
   unblockRun,
 } from "./state/store.js";
+export type { CancelSource } from "./journal/lifecycle-records.js";
 export type {
   AssignAgentInput,
   BlockRunInput,
+  CancelRunInput,
+  CancelRunOutcome,
   OpenRunInput,
+  OpenRunOutcome,
   ReconcileDeliveryInput,
   RecordDispatchInput,
   RecordGateInput,
@@ -110,6 +115,8 @@ export type {
   SnapshotAttempt,
   SnapshotBlocked,
   SnapshotGate,
+  SnapshotHostFact,
+  SnapshotObservationLoss,
   SnapshotStage,
 } from "./state/snapshot.js";
 

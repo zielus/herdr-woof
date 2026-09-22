@@ -67,7 +67,7 @@ function openRunWith(runDir: string, runId: string, configuration?: Json): void 
 }
 
 /** A claim held by this (live) test process with a fresh heartbeat. */
-function writeAliveHost(runDir: string): void {
+function writeAliveHost(runDir: string, heartbeatMs = 60_000): void {
   writeFileSync(
     join(runDir, "host.json"),
     JSON.stringify({
@@ -79,7 +79,7 @@ function writeAliveHost(runDir: string): void {
       paneId: "w1:p9",
       workspaceId: null,
       startedAt: new Date().toISOString(),
-      heartbeatMs: 60_000,
+      heartbeatMs,
     }),
   );
 }
@@ -416,6 +416,8 @@ describe("woof runs", () => {
     expect(missing.json).toEqual({
       outcome: "runs",
       runsDir: join(home, ".woof", "runs"),
+      // Without --runs-dir the run index is read too (test/index.cli.test.ts).
+      indexDir: join(home, ".woof", "index"),
       exists: false,
       runs: [],
       skipped: [],
@@ -539,6 +541,234 @@ console.log(JSON.stringify(readEvents(process.argv[1], { limit: 10000 })));`,
       reason: "terminated",
     });
   });
+
+  it("--follow --after a terminated run's cursor delivers the host's later host.exited and ends at once", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    // A host journals its claim, the run ends, and the host's own exit follows the termination.
+    const written = runSdk<{ outcomes: string[] }>(
+      runDir,
+      `const claimed = await store.recordHostClaimed({ runDir, pid: 4242, hostname: "test-host",
+  startedAt: "2026-09-15T10:00:00.000Z", heartbeatMs: 2000, paneId: null, workspaceId: null });
+const cancelled = await store.cancelRun({ runDir, source: "cli", reason: "stop", probeHost: false });
+const stranger = await store.recordHostExited({ runDir, pid: 7, exitCode: 0, reason: "cancelled" });
+const exited = await store.recordHostExited({ runDir, pid: 4242, exitCode: 6, reason: "cancelled" });
+out = { outcomes: [claimed, cancelled, stranger, exited].map((item) => item.reason ?? item.outcome) };`,
+    );
+    expect(written.outcomes).toEqual(["recorded", "recorded", "host_unknown", "recorded"]);
+    const recorded = lines(woof(["events", runDir]).stdout);
+    expect(recorded.map((line) => line["type"] ?? line["kind"])).toEqual([
+      "run.opened",
+      "host.claimed",
+      "run.cancel_requested",
+      "run.terminated",
+      "host.exited",
+      "woof.events.end",
+    ]);
+    const terminated = recorded[3] as Json;
+    const started = Date.now();
+    const resumed = woof(
+      ["events", runDir, "--follow", "--after", terminated["cursor"], "--timeout-ms", "5000"],
+      { timeoutMs: 20_000 },
+    );
+    expect(resumed.status, resumed.stdout + resumed.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(lines(resumed.stdout)).toMatchObject([
+      { type: "host.exited", data: { pid: 4242, exitCode: 6 } },
+      { kind: "woof.events.end", cursor: recorded[4]?.["cursor"], terminal: true },
+    ]);
+    // The host's exit never reopens the run, and the snapshot shows it as the last host fact.
+    expect(woof(["run", "show", runDir]).json).toMatchObject({
+      snapshot: {
+        status: "cancelled",
+        lifecycle: { host: { state: "exited", pid: 4242, exitCode: 6 } },
+      },
+    });
+  });
+
+  // A host records the termination, drains for a while and only then journals host.exited. The
+  // three tests below write that record (or never write it) while a follower is already running:
+  // a journal that holds it beforehand cannot show a follower ending too early.
+  const claimHostAs = (runDir: string, pid: number, heartbeatMs: number): void => {
+    writeAliveHost(runDir, heartbeatMs);
+    if (pid !== process.pid) {
+      const claim = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
+      writeFileSync(join(runDir, "host.json"), JSON.stringify({ ...claim, pid }));
+    }
+    const claimed = runSdk<{ outcome: string }>(
+      runDir,
+      `out = await store.recordHostClaimed({ runDir, pid: input.pid, hostname: input.hostname,
+  startedAt: "2026-09-15T10:00:00.000Z", heartbeatMs: input.heartbeatMs, paneId: null, workspaceId: null });`,
+      { pid, hostname: hostname(), heartbeatMs },
+    );
+    expect(claimed.outcome).toBe("recorded");
+  };
+  const cancelHosted = (runDir: string): void => {
+    const cancelled = runSdk<{ outcome: string }>(
+      runDir,
+      `out = await store.cancelRun({ runDir, source: "cli", reason: "stop", probeHost: false });`,
+    );
+    expect(cancelled.outcome).toBe("recorded");
+  };
+  const exitHost = (runDir: string, pid: number): void => {
+    const exited = runSdk<{ outcome: string }>(
+      runDir,
+      `out = await store.recordHostExited({ runDir, pid: input.pid, exitCode: 6, reason: "cancelled" });`,
+      { pid },
+    );
+    expect(exited.outcome).toBe("recorded");
+  };
+
+  it("--follow delivers a host.exited journaled after the follower saw run.terminated, then ends", async () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    claimHostAs(runDir, process.pid, 2000);
+    const following = woofAsync([
+      "events",
+      runDir,
+      "--follow",
+      "--poll-ms",
+      "20",
+      "--timeout-ms",
+      "20000",
+    ]);
+    await delay(400);
+    cancelHosted(runDir);
+    // The follower has delivered run.terminated by now; its live host is still "draining".
+    await delay(800);
+    exitHost(runDir, process.pid);
+    const followed = await following;
+    expect(followed.status, followed.stdout + followed.stderr).toBe(0);
+    const printed = lines(followed.stdout);
+    expect(printed.map((line) => line["type"] ?? line["kind"])).toEqual([
+      "run.opened",
+      "host.claimed",
+      "run.cancel_requested",
+      "run.terminated",
+      "host.exited",
+      "woof.events.end",
+    ]);
+    expect(printed.at(-1)).toEqual({
+      kind: "woof.events.end",
+      cursor: printed.at(-2)?.["cursor"],
+      terminal: true,
+      reason: "terminated",
+    });
+  }, 30_000);
+
+  it("--follow --after the terminated cursor waits for a live host's host.exited, before and after it is written", async () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    claimHostAs(runDir, process.pid, 2000);
+    cancelHosted(runDir);
+    // The cursor `woof status --wait` returns with: the termination, no host.exited yet.
+    const waited = woof(["status", runDir, "--wait", "--timeout-ms", "5000"]);
+    expect(waited.status, waited.stdout).toBe(6);
+    const cursor = (waited.json as Json)["status"]["cursor"] as string;
+    expect(lines(woof(["events", runDir]).stdout).at(-1)).toMatchObject({ cursor, terminal: true });
+    const resume = ["events", runDir, "--follow", "--after", cursor, "--poll-ms", "20"];
+    const following = woofAsync([...resume, "--timeout-ms", "20000"]);
+    await delay(800);
+    exitHost(runDir, process.pid);
+    const before = await following;
+    expect(before.status, before.stdout + before.stderr).toBe(0);
+    const printed = lines(before.stdout);
+    expect(printed).toMatchObject([
+      { type: "host.exited", data: { pid: process.pid, exitCode: 6 } },
+      { kind: "woof.events.end", terminal: true, reason: "terminated" },
+    ]);
+    expect(printed[1]?.["cursor"]).toBe(printed[0]?.["cursor"]);
+    // Once the exit is written, the same resume delivers it and ends at once.
+    const started = Date.now();
+    const after = woof([...resume, "--timeout-ms", "20000"], { timeoutMs: 30_000 });
+    expect(after.status, after.stdout + after.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(lines(after.stdout)).toEqual(printed);
+  }, 30_000);
+
+  it("--follow ends within a few heartbeats when a live host never journals host.exited, and at once when the host is gone", () => {
+    const runDir = makeRunDir();
+    openPlannedRun(runDir);
+    // Alive (this process) with a 400 ms heartbeat: waited for three heartbeats, never longer.
+    claimHostAs(runDir, process.pid, 400);
+    cancelHosted(runDir);
+    writeAliveHost(runDir, 400); // a fresh heartbeat right before the follower starts
+    const started = Date.now();
+    const followed = woof(["events", runDir, "--follow", "--poll-ms", "20"], {
+      timeoutMs: 30_000,
+    });
+    const elapsed = Date.now() - started;
+    expect(followed.status, followed.stdout + followed.stderr).toBe(0);
+    expect(elapsed).toBeGreaterThanOrEqual(1000);
+    expect(elapsed).toBeLessThan(8000);
+    const printed = lines(followed.stdout);
+    expect(printed.map((line) => line["type"] ?? line["kind"])).toEqual([
+      "run.opened",
+      "host.claimed",
+      "run.cancel_requested",
+      "run.terminated",
+      "woof.events.end",
+    ]);
+    expect(printed.at(-1)).toEqual({
+      kind: "woof.events.end",
+      cursor: printed.at(-2)?.["cursor"],
+      terminal: true,
+      reason: "terminated",
+    });
+
+    // A host killed right after the termination: its pid is gone, so nothing is waited for even
+    // though its claim still says "hosting" with a heartbeat far from stale.
+    const goneDir = makeRunDir();
+    openPlannedRun(goneDir);
+    const dead = spawnSync("node", ["-e", ""]).pid;
+    claimHostAs(goneDir, dead, 60_000);
+    cancelHosted(goneDir);
+    const goneStarted = Date.now();
+    const gone = woof(["events", goneDir, "--follow", "--poll-ms", "20"], { timeoutMs: 30_000 });
+    expect(gone.status, gone.stdout + gone.stderr).toBe(0);
+    expect(Date.now() - goneStarted).toBeLessThan(3000);
+    expect(lines(gone.stdout).at(-1)).toMatchObject({ terminal: true, reason: "terminated" });
+  }, 60_000);
+
+  it("openRun journals host.claimed under run.opened's lock: a concurrent cancel never comes between them", () => {
+    // A cancel racing the open used to be able to close the run between run.opened and
+    // host.claimed; the claim was then refused run_closed and the host wrote no host.exited.
+    for (let round = 0; round < 8; round += 1) {
+      const runDir = join(makeRunDir(), "race");
+      const out = runSdk<{ types: string[]; hostClaimed: Json | null; exited: string }>(
+        runDir,
+        `const cancel = (async () => {
+  for (;;) {
+    let cancelled;
+    try {
+      cancelled = await store.cancelRun({ runDir, source: "cli", reason: "race", probeHost: false });
+    } catch {
+      cancelled = { outcome: "rejected" };
+    }
+    if (cancelled.outcome === "recorded") return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+})();
+const opened = await store.openRun({ runDir, runId: "run-race", plan: input.plan, host: {
+  pid: 4242, hostname: "test-host", startedAt: "2026-09-15T10:00:00.000Z", heartbeatMs: 2000,
+  paneId: "w1:p1", workspaceId: null } });
+await cancel;
+const exited = await store.recordHostExited({ runDir, pid: 4242, exitCode: 6, reason: "cancelled" });
+const read = readJournal(runDir);
+out = { types: read.records.map((record) => record.type), hostClaimed: opened.hostClaimed, exited: exited.outcome };`,
+        { plan: testPlan() },
+      );
+      expect(out.types).toEqual([
+        "run.opened",
+        "host.claimed",
+        "run.cancel_requested",
+        "run.terminated",
+        "host.exited",
+      ]);
+      expect(out.hostClaimed).toMatchObject({ type: "host.claimed", seq: 2, pid: 4242 });
+      expect(out.exited).toBe("recorded");
+    }
+  }, 60_000);
 
   it("PR #6 (events.ts:118): --follow never takes the journal lock; a persistent torn tail ends with journal_corrupt after the grace period", () => {
     const runDir = makeRunDir();
