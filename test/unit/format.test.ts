@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadDist } from "../helpers/dist.js";
 import {
   accepted,
+  activity,
   assigned,
   attempt,
   blocked,
@@ -15,6 +16,7 @@ import {
   hostExited,
   hostLost,
   journalOf,
+  lifecycleChanged,
   observationLost,
   observationRecovered,
   opened,
@@ -243,6 +245,62 @@ describe("formatEventLine", () => {
     );
     expect(lastLine(opened(), observationRecovered("builder", 2))).toBe(
       `${time(1)} observation.recovered builder  after loss #2`,
+    );
+  });
+
+  it("agent lifecycle transitions and engine activity", () => {
+    const base = [opened(), assigned("builder")];
+    expect(lastLine(...base, lifecycleChanged("builder", null, "ready", { raw: "idle" }))).toBe(
+      `${time(2)} agent.lifecycle_changed builder  - -> ready (idle) terminal term-1`,
+    );
+    expect(
+      lastLine(
+        ...base,
+        lifecycleChanged("builder", null, "working"),
+        lifecycleChanged("builder", "working", "working", { replaced: true, terminalId: null }),
+      ),
+    ).toBe(
+      `${time(3)} agent.lifecycle_changed builder  working -> working [pane occupant replaced]`,
+    );
+    expect(lastLine(...base, activity("readiness_wait", "started", { agentId: "builder" }))).toBe(
+      `${time(2)} run.activity         builder  readiness_wait started`,
+    );
+    expect(
+      lastLine(
+        ...base,
+        activity("check_run", "started", { attempt: ["build", 1, 1] }, { detail: "bun test" }),
+        activity("check_run", "ended", { attempt: ["build", 1, 1] }, { result: "exit 1" }),
+      ),
+    ).toBe(`${time(3)} run.activity         build v1 a1  check_run ended -> exit 1`);
+    expect(
+      lastLine(
+        ...base,
+        activity(
+          "delivery_check",
+          "started",
+          { agentId: "builder", attempt: ["build", 1, 1] },
+          { detail: "stalled" },
+        ),
+      ),
+    ).toBe(`${time(2)} run.activity         builder build v1 a1  delivery_check started: stalled`);
+    // Blocked and gone transitions are colored as attention; a plain change and any activity are not.
+    const colored = (body: Json) =>
+      format.formatEventLine(
+        projectEvents(journalOf(parse, ...base, body), ANCHOR).at(-1) as Event,
+        {
+          color: true,
+          timeZone: "UTC",
+        },
+      );
+    expect(colored(lifecycleChanged("builder", null, "blocked"))).toContain(
+      "\u001B[33magent.lifecycle_changed\u001B[0m",
+    );
+    expect(colored(lifecycleChanged("builder", null, "gone", { terminalId: null }))).toContain(
+      "\u001B[31magent.lifecycle_changed\u001B[0m",
+    );
+    expect(colored(lifecycleChanged("builder", null, "ready"))).not.toContain("magent.lifecycle");
+    expect(colored(activity("revision_check", "started"))).toContain(
+      "\u001B[2mrun.activity\u001B[0m",
     );
   });
 

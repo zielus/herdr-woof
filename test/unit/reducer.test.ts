@@ -9,6 +9,7 @@ import {
   PLAN,
   REV,
   accepted,
+  activity,
   assigned,
   attempt,
   blocked,
@@ -21,6 +22,7 @@ import {
   hostExited,
   hostLost,
   journalOf as buildJournal,
+  lifecycleChanged,
   observationLost,
   observationRecovered,
   opened,
@@ -54,6 +56,8 @@ interface StateJson {
   host: { claimed?: Json; exited?: Json; lost?: Json };
   cancelRequests: Json[];
   observationLost: Map<string, Json>;
+  lifecycles: Map<string, Json>;
+  activities: Map<string, Json>;
   counters: Json;
 }
 type ReplayResult =
@@ -125,6 +129,8 @@ describe("p1 journal compatibility", () => {
       workRetriesByVisit: {},
       blocks: 0,
       reconciliations: { delivered: 0, abandoned: 0 },
+      lifecycleChangesByAgent: {},
+      activitiesByKind: {},
     });
   });
 
@@ -459,6 +465,8 @@ describe("counters", () => {
     workRetriesByVisit: {},
     blocks: 0,
     reconciliations: { delivered: 0, abandoned: 0 },
+    lifecycleChangesByAgent: {},
+    activitiesByKind: {},
   };
   // Each step names only the counters that must change; everything else must not.
   const steps: Array<[Json, Json]> = [
@@ -519,6 +527,13 @@ describe("counters", () => {
         rejectionsByReason: { artifact_missing: 1, envelope_malformed: 1 },
       },
     ],
+    [lifecycleChanged("builder", null, "ready"), { lifecycleChangesByAgent: { builder: 1 } }],
+    [
+      activity("readiness_wait", "started", { agentId: "builder" }),
+      { activitiesByKind: { readiness_wait: 1 } },
+    ],
+    // An end changes no counter: only starts are counted.
+    [activity("readiness_wait", "ended", { agentId: "builder" }, { result: "ready" }), {}],
   ];
 
   it("changes each counter exactly where its record lands", () => {
@@ -1213,5 +1228,185 @@ describe("lifecycle record rules", () => {
     expect(line({ ...hostClaimed(), tabId: 7 })).toMatch(/tabId/);
     expect(line({ ...assigned("builder"), tabId: "" })).toMatch(/tabId/);
     expect(line({ ...assigned("builder"), tabId: null })).toMatch(/tabId/);
+  });
+});
+
+describe("activity record rules", () => {
+  const base = () => [opened(), assigned("builder")];
+  const wait = { agentId: "builder" };
+  const check = { attempt: ["build", 1, 1] as [string, number, number] };
+
+  it("holds the last journaled lifecycle per agent and accepts only transitions from it", () => {
+    const first = expectOk(journalOf(...base(), lifecycleChanged("builder", null, "ready")));
+    expect(first.lifecycles.get("builder")).toMatchObject({ seq: 3, from: null, to: "ready" });
+    expect(first.counters["lifecycleChangesByAgent"]).toEqual({ builder: 1 });
+    const chain = expectOk(
+      journalOf(
+        ...base(),
+        lifecycleChanged("builder", null, "ready", { raw: "idle" }),
+        lifecycleChanged("builder", "ready", "working", { raw: "working" }),
+        lifecycleChanged("builder", "working", "gone", { terminalId: null }),
+      ),
+    );
+    expect(chain.lifecycles.get("builder")).toMatchObject({ seq: 5, to: "gone", terminalId: null });
+    expect(chain.counters["lifecycleChangesByAgent"]).toEqual({ builder: 3 });
+    // A replaced pane occupant is a transition even to the same lifecycle.
+    const replaced = expectOk(
+      journalOf(
+        ...base(),
+        lifecycleChanged("builder", null, "working"),
+        lifecycleChanged("builder", "working", "working", { replaced: true, terminalId: "term-2" }),
+      ),
+    );
+    expect(replaced.lifecycles.get("builder")).toMatchObject({ seq: 4, replaced: true });
+  });
+
+  it("refuses a repeated sample, a transition from another lifecycle than the journaled one, and impossible agents", () => {
+    expectRefused(
+      journalOf(
+        ...base(),
+        lifecycleChanged("builder", null, "ready"),
+        lifecycleChanged("builder", "ready", "ready"),
+      ),
+      "lifecycle_unchanged",
+    );
+  });
+
+  it("refuses a from that is not the journaled lifecycle", () => {
+    expectRefused(
+      journalOf(...base(), lifecycleChanged("builder", "ready", "working")),
+      "lifecycle_mismatch",
+    );
+    expectRefused(
+      journalOf(
+        ...base(),
+        lifecycleChanged("builder", null, "ready"),
+        lifecycleChanged("builder", null, "working"),
+      ),
+      "lifecycle_mismatch",
+    );
+    expectRefused(journalOf(...base(), lifecycleChanged("ghost", null, "ready")), "agent_unknown");
+    expectRefused(
+      journalOf(...base(), lifecycleChanged("reviewer", null, "ready")),
+      "agent_unassigned",
+    );
+    expectRefused(
+      journalOf(...base(), terminated(), lifecycleChanged("builder", null, "ready")),
+      "run_closed",
+    );
+  });
+
+  it("keeps an activity open from its start to its end, per kind and subject", () => {
+    const open = expectOk(
+      journalOf(
+        ...base(),
+        activity("readiness_wait", "started", wait),
+        activity("check_run", "started", check, { detail: "bun test" }),
+      ),
+    );
+    expect([...open.activities.values()].map((record) => [record["seq"], record["kind"]])).toEqual([
+      [3, "readiness_wait"],
+      [4, "check_run"],
+    ]);
+    expect(open.counters["activitiesByKind"]).toEqual({ readiness_wait: 1, check_run: 1 });
+    const ended = expectOk(
+      journalOf(
+        ...base(),
+        activity("readiness_wait", "started", wait),
+        activity("check_run", "started", check, { detail: "bun test" }),
+        activity("readiness_wait", "ended", wait, { result: "ready" }),
+        // The same kind on another subject is another activity.
+        activity("readiness_wait", "started", { agentId: "reviewer" }),
+        activity("check_run", "ended", check, { result: "exit 0" }),
+      ),
+    );
+    expect([...ended.activities.values()].map((record) => record["agentId"])).toEqual(["reviewer"]);
+    // Ended, an activity can start again for the same subject.
+    expect(
+      expectOk(
+        journalOf(
+          ...base(),
+          activity("readiness_wait", "started", wait),
+          activity("readiness_wait", "ended", wait),
+          activity("readiness_wait", "started", wait),
+        ),
+      ).activities.size,
+    ).toBe(1);
+    // An activity open at termination stays open: the run ended during it.
+    expect(
+      expectOk(journalOf(...base(), activity("readiness_wait", "started", wait), terminated()))
+        .activities.size,
+    ).toBe(1);
+  });
+
+  it("refuses a second start without an end, an end without a start, and any activity after termination", () => {
+    expectRefused(
+      journalOf(
+        ...base(),
+        activity("readiness_wait", "started", wait),
+        activity("readiness_wait", "started", wait),
+      ),
+      "activity_open",
+    );
+    expectRefused(
+      journalOf(...base(), activity("readiness_wait", "ended", wait)),
+      "activity_not_open",
+    );
+    // Another subject of the same kind is not this one.
+    expectRefused(
+      journalOf(
+        ...base(),
+        activity("check_run", "started", check),
+        activity("check_run", "ended", { attempt: ["build", 1, 2] }),
+      ),
+      "activity_not_open",
+    );
+    expectRefused(
+      journalOf(
+        ...base(),
+        activity("readiness_wait", "started", wait),
+        activity("readiness_wait", "ended", { agentId: "reviewer" }),
+      ),
+      "activity_not_open",
+    );
+    expectRefused(
+      journalOf(...base(), terminated(), activity("readiness_wait", "started", wait)),
+      "run_closed",
+    );
+  });
+
+  it("refuses activity records that break their field contract", () => {
+    const line = (body: Json) =>
+      parseRecordLine(
+        JSON.stringify({ schemaVersion: 1, seq: 2, ts: "2026-09-14T10:00:00.000Z", ...body }),
+      );
+    expect(line(lifecycleChanged("builder", null, "napping"))).toMatch(/to is not one of/);
+    expect(line(lifecycleChanged("builder", "asleep", "ready"))).toMatch(/from is not one of/);
+    expect(line(lifecycleChanged("builder", null, "ready", { replaced: false }))).toMatch(
+      /replaced is not true/,
+    );
+    expect(line(lifecycleChanged("builder", null, "ready", { raw: "" }))).toMatch(/raw is not/);
+    expect(line(lifecycleChanged("builder", null, "ready", { terminalId: "" }))).toMatch(
+      /terminalId/,
+    );
+    expect(line(activity("nap", "started"))).toMatch(/kind is not one of/);
+    expect(line({ ...activity("check_run", "started"), phase: "paused" })).toMatch(
+      /phase is not one of/,
+    );
+    expect(line({ ...activity("check_run", "started", check), visit: undefined })).toMatch(
+      /stageId, visit and attempt must be given together/,
+    );
+    expect(line(activity("check_run", "started", check, { result: "exit 0" }))).toMatch(
+      /result is only carried by an ended activity/,
+    );
+    expect(line(activity("check_run", "ended", check, { result: "" }))).toMatch(/result is not/);
+    expect(line(activity("check_run", "ended", check, { extra: 1 }))).toMatch(
+      /unexpected field extra/,
+    );
+    // The minimal forms parse: a bare lifecycle transition and a subject-less activity.
+    expect(line(lifecycleChanged("builder", null, "ready"))).toMatchObject({
+      type: "agent.lifecycle_changed",
+    });
+    expect(line(activity("revision_check", "started"))).toMatchObject({ type: "run.activity" });
   });
 });

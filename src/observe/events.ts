@@ -15,10 +15,12 @@ import { checkCursor, formatCursor, parseCursor, type CursorProblem } from "./cu
  * submissions, gates, blocking/unblocking, delivery reconciliation, a
  * cancellation request distinct from the termination it leads to
  * (`run.cancel_requested`), host lifecycle (`host.claimed`, `host.exited`,
- * `host.lost`) and observation loss/recovery. Format repair and work retry are
- * not events of their own: the reducer derives an attempt's `cause` when
- * `attempt.opened` is folded. Not covered: per-agent runtime lifecycle changes
- * (ready/working/blocked/gone), which stay an in-memory overlay.
+ * `host.lost`), observation loss/recovery, per-agent runtime lifecycle
+ * transitions (`agent.lifecycle_changed`, written on change only, never per poll)
+ * and engine activity (`run.activity`: a readiness wait, revision check, check
+ * run or delivery check, at its start and its end). Format repair and work
+ * retry are not events of their own: the reducer derives an attempt's `cause`
+ * when `attempt.opened` is folded.
  */
 
 export interface RunEvent {
@@ -76,7 +78,17 @@ function subjectOf(
     case "run.unblocked":
     case "observation.lost":
     case "observation.recovered":
+    case "agent.lifecycle_changed":
       return { agentId: record.agentId };
+    case "run.activity":
+      return {
+        ...(record.agentId === undefined ? {} : { agentId: record.agentId }),
+        ...(record.stageId === undefined ||
+        record.visit === undefined ||
+        record.attempt === undefined
+          ? {}
+          : { stageId: record.stageId, visit: record.visit, attempt: record.attempt }),
+      };
     case "run.blocked":
       return record.stageId === undefined
         ? { agentId: record.agentId }

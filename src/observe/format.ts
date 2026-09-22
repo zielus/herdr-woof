@@ -201,6 +201,16 @@ function summaryOf(type: string, raw: unknown): string {
         return `${text(data["code"])}: ${clipped(data["message"])}`;
       case "observation.recovered":
         return `after loss #${text(data["lostSeq"])}`;
+      case "agent.lifecycle_changed":
+        return `${data["from"] === null ? "-" : text(data["from"])} -> ${text(data["to"])}${
+          data["raw"] === undefined ? "" : ` (${text(data["raw"])})`
+        }${data["terminalId"] === null ? "" : ` terminal ${text(data["terminalId"])}`}${
+          data["replaced"] === true ? " [pane occupant replaced]" : ""
+        }`;
+      case "run.activity":
+        return `${text(data["kind"])} ${text(data["phase"])}${
+          data["detail"] === undefined ? "" : `: ${clipped(data["detail"])}`
+        }${data["result"] === undefined ? "" : ` -> ${clipped(data["result"])}`}`;
       default:
         return unknownSummary(raw);
     }
@@ -242,6 +252,14 @@ function typeStyle(type: string, data: Record<string, unknown>): Style | undefin
     case "request.dispatched":
     case "attempt.opened":
       return "cyan";
+    case "agent.lifecycle_changed":
+      return data["to"] === "blocked" || data["replaced"] === true
+        ? "yellow"
+        : data["to"] === "gone"
+          ? "red"
+          : undefined;
+    case "run.activity":
+      return "dim";
     default:
       return undefined;
   }

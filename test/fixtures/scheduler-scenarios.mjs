@@ -29,6 +29,7 @@ const { loadWorkflowDefinition } = await load("scheduler/loader.js");
 const { buildReviewWorkflow } = await load("workflows/build-review.js");
 const { openRun, recordObservationLost } = await load("state/store.js");
 const { readSnapshot } = await load("state/snapshot.js");
+const { foldEvents, readEvents } = await load("observe/events.js");
 const { submitResult } = await load("submission/submit.js");
 const { herdrRuntimeName } = await load("runtime/names.js");
 const { revisionOf } = await load("scheduler/revision.js");
@@ -323,7 +324,15 @@ async function scenario(options) {
   };
   if (existsSync(join(runDir, "requests"))) walk(join(runDir, "requests"));
   const snapshot = readSnapshot(runDir);
+  // The one reducer: folding the run's own events from nothing must reproduce its snapshot.
+  const events = readEvents(runDir);
+  const folded = events.ok ? foldEvents(null, events.events) : events;
+  const foldMatches =
+    snapshot.ok &&
+    folded.ok === true &&
+    JSON.stringify(folded.projection.snapshot) === JSON.stringify(snapshot.snapshot);
   return {
+    foldMatches,
     result: out.result,
     error: out.error,
     stats: out.stats,

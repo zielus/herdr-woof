@@ -1,7 +1,9 @@
 import type { AttemptCause, DispatchDelivery, RunPlan, RunStatus } from "../domain/types.js";
+import { activityKey } from "../journal/activity-records.js";
 import {
   parseRecordLine,
   type AgentAssignedRecord,
+  type AgentLifecycleChangedRecord,
   type AttemptOpenedRecord,
   type DeliveryReconciledRecord,
   type GateRecordedRecord,
@@ -13,6 +15,7 @@ import {
   type ObservationLostRecord,
   type ObservationRecoveredRecord,
   type RequestDispatchedRecord,
+  type RunActivityRecord,
   type RunBlockedRecord,
   type RunCancelRequestedRecord,
   type RunTerminatedRecord,
@@ -79,6 +82,10 @@ export interface Counters {
   workRetriesByVisit: Record<string, number>;
   blocks: number;
   reconciliations: { delivered: number; abandoned: number };
+  /** Journaled lifecycle transitions per agent. */
+  lifecycleChangesByAgent: Record<string, number>;
+  /** Activities started, per kind. */
+  activitiesByKind: Record<string, number>;
 }
 
 export interface RunState {
@@ -109,6 +116,10 @@ export interface RunState {
   cancelRequests: RunCancelRequestedRecord[];
   /** Unresolved observation loss per agent; removed by observation.recovered. */
   observationLost: Map<string, ObservationLostRecord>;
+  /** The last journaled lifecycle transition per agent. */
+  lifecycles: Map<string, AgentLifecycleChangedRecord>;
+  /** Open engine activities by `activityKey`, in start order; removed by their `ended`. */
+  activities: Map<string, RunActivityRecord>;
   status: RunStatus;
   counters: Counters;
 }
@@ -149,7 +160,11 @@ export type ReducerReason =
   | "host_unknown"
   | "host_gone"
   | "observation_lost"
-  | "observation_not_lost";
+  | "observation_not_lost"
+  | "lifecycle_mismatch"
+  | "lifecycle_unchanged"
+  | "activity_open"
+  | "activity_not_open";
 
 export interface ReplayFailure {
   ok: false;
@@ -196,6 +211,8 @@ export function emptyRunState(): RunState {
     host: {},
     cancelRequests: [],
     observationLost: new Map(),
+    lifecycles: new Map(),
+    activities: new Map(),
     status: "created",
     counters: {
       attemptsOpened: 0,
@@ -214,6 +231,8 @@ export function emptyRunState(): RunState {
       workRetriesByVisit: dict(),
       blocks: 0,
       reconciliations: { delivered: 0, abandoned: 0 },
+      lifecycleChangesByAgent: dict(),
+      activitiesByKind: dict(),
     },
   };
 }
@@ -287,6 +306,14 @@ export function emptyRunState(): RunState {
  *   observation_lost (the agent already has an unresolved loss).
  * - observation.recovered: run_closed, observation_not_lost (`lostSeq` is not
  *   the agent's unresolved loss).
+ *
+ * Activity rules, in check order per record:
+ * - agent.lifecycle_changed: run_closed, agent_unknown (plan), agent_unassigned,
+ *   lifecycle_mismatch (`from` is not the agent's last journaled lifecycle, null
+ *   when none), lifecycle_unchanged (`to` equals `from` without `replaced`).
+ * - run.activity: run_closed, then activity_open (a `started` for a kind and
+ *   subject that is already open) or activity_not_open (an `ended` for one that
+ *   is not).
  *
  * A plan-less run skips every plan check. Limits are never enforced here.
  */
@@ -452,7 +479,60 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
       return applyObservationLost(state, record);
     case "observation.recovered":
       return applyObservationRecovered(state, record);
+    case "agent.lifecycle_changed":
+      return applyLifecycleChanged(state, record);
+    case "run.activity":
+      return applyActivity(state, record);
   }
+}
+
+function applyLifecycleChanged(
+  state: RunState,
+  record: AgentLifecycleChangedRecord,
+): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "agent.lifecycle_changed after run.terminated"];
+  }
+  if (state.plan !== null && !state.plan.agents.some((agent) => agent.agentId === record.agentId)) {
+    return ["agent_unknown", `agent ${record.agentId} is not in the run plan`];
+  }
+  if (!state.assignments.has(record.agentId)) {
+    return ["agent_unassigned", `agent ${record.agentId} has no runtime assignment`];
+  }
+  const current = state.lifecycles.get(record.agentId)?.to ?? null;
+  if (record.from !== current) {
+    return [
+      "lifecycle_mismatch",
+      `agent ${record.agentId} is journaled ${current ?? "with no lifecycle"}, not ${record.from ?? "with no lifecycle"}`,
+    ];
+  }
+  if (record.to === record.from && record.replaced !== true) {
+    return ["lifecycle_unchanged", `agent ${record.agentId} is already ${record.to}`];
+  }
+  state.lifecycles.set(record.agentId, record);
+  increment(state.counters.lifecycleChangesByAgent, record.agentId);
+  return undefined;
+}
+
+function applyActivity(state: RunState, record: RunActivityRecord): Refusal | undefined {
+  if (state.termination !== undefined) {
+    return ["run_closed", "run.activity after run.terminated"];
+  }
+  const key = activityKey(record);
+  const open = state.activities.get(key);
+  if (record.phase === "started") {
+    if (open !== undefined) {
+      return ["activity_open", `${record.kind} is already open since seq ${open.seq}`];
+    }
+    state.activities.set(key, record);
+    increment(state.counters.activitiesByKind, record.kind);
+    return undefined;
+  }
+  if (open === undefined) {
+    return ["activity_not_open", `${record.kind} is not open for this subject`];
+  }
+  state.activities.delete(key);
+  return undefined;
 }
 
 function applyObservationLost(state: RunState, record: ObservationLostRecord): Refusal | undefined {

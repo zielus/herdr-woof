@@ -293,3 +293,39 @@ export const observationRecovered = (agentId: string, lostSeq: number): Json => 
   lostSeq,
   terminalId: "term-1",
 });
+
+/** A lifecycle transition of `agentId` from the journaled `from` (null for the first) to `to`. */
+export function lifecycleChanged(
+  agentId: string,
+  from: string | null,
+  to: string,
+  extra: Json = {},
+): Json {
+  return {
+    type: "agent.lifecycle_changed",
+    agentId,
+    from,
+    to,
+    terminalId: "term-1",
+    ...extra,
+  };
+}
+
+/** One phase of an engine activity; `subject` carries agentId and/or an attempt ref. */
+export function activity(
+  kind: string,
+  phase: "started" | "ended",
+  subject: { agentId?: string; attempt?: [string, number, number] } = {},
+  extra: Json = {},
+): Json {
+  return {
+    type: "run.activity",
+    kind,
+    phase,
+    ...(subject.agentId !== undefined ? { agentId: subject.agentId } : {}),
+    ...(subject.attempt !== undefined
+      ? { stageId: subject.attempt[0], visit: subject.attempt[1], attempt: subject.attempt[2] }
+      : {}),
+    ...extra,
+  };
+}

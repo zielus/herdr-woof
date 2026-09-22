@@ -12,6 +12,7 @@ import type {
 } from "../domain/types.js";
 import { probeHost, type HostInfo, type HostOwner } from "../host/probe.js";
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
+import type { ActivityKind } from "../journal/activity-records.js";
 import type {
   CheckResultRecord,
   GateNext,
@@ -21,6 +22,7 @@ import type {
 import { journalAnchor, readJournalPrefixSettled } from "../journal/journal.js";
 import type { CancelSource } from "../journal/lifecycle-records.js";
 import type { JournalRecord } from "../journal/records.js";
+import type { Lifecycle } from "../runtime/adapter.js";
 import {
   attemptKey,
   compareAttempts,
@@ -59,8 +61,32 @@ export interface SnapshotAgent {
   } | null;
   /** Latest open attempt owned by this agent; null once the run terminated. */
   activeAttempt: AttemptRef | null;
+  /**
+   * The last journaled lifecycle transition (`agent.lifecycle_changed`); null when
+   * none was journaled. A recorded fact, unlike `runtime`, which is an overlay.
+   */
+  lifecycle: SnapshotAgentLifecycle | null;
   /** Null in derived snapshots; see overlayRuntime. */
   runtime: null;
+}
+
+export interface SnapshotAgentLifecycle {
+  state: Lifecycle;
+  /** Timestamp of the transition record. */
+  since: string;
+  seq: number;
+  terminalId: string | null;
+}
+
+/** An engine activity that started and has not ended (`run.activity`). */
+export interface SnapshotActivity {
+  /** Seq of the `started` record. */
+  seq: number;
+  since: string;
+  kind: ActivityKind;
+  agentId: string | null;
+  attempt: AttemptRef | null;
+  detail: string | null;
 }
 
 export interface SnapshotAttempt {
@@ -206,6 +232,12 @@ export interface RunSnapshot {
     cancelRequested: { seq: number; at: string; source: CancelSource; reason: string } | null;
     observationLost: SnapshotObservationLoss[];
   };
+  /**
+   * Engine activities that started and have not ended, in start order. Empty
+   * for a journal written before `run.activity` existed. An activity still open
+   * at termination stays listed: the run ended during it.
+   */
+  activity: { open: SnapshotActivity[] };
   outputs: {
     /** Highest accepted (visit, attempt) per stage; a newer unaccepted attempt never hides or replaces it. */
     latestAcceptedByStage: Record<string, AttemptRef & { receiptId: string; acceptedPath: string }>;
@@ -391,6 +423,7 @@ export function deriveSnapshot(
         blocked: deriveBlocked(state),
       },
       lifecycle: deriveLifecycle(state),
+      activity: { open: deriveActivity(state) },
       outputs: { latestAcceptedByStage: latestAccepted(state) },
       liveness: { owner: "unhosted", runtime: "not_observed", host: null },
       integrity: { artifacts: "unchecked" },
@@ -413,6 +446,7 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
   return order.map((agentId) => {
     const spec = state.plan?.agents.find((agent) => agent.agentId === agentId);
     const assignment = state.assignments.get(agentId)?.at(-1);
+    const lifecycle = state.lifecycles.get(agentId);
     let active: AttemptRef | null = null;
     let activeSeq = 0;
     if (!terminated) {
@@ -443,9 +477,34 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
               at: assignment.ts,
             },
       activeAttempt: active,
+      lifecycle:
+        lifecycle === undefined
+          ? null
+          : {
+              state: lifecycle.to,
+              since: lifecycle.ts,
+              seq: lifecycle.seq,
+              terminalId: lifecycle.terminalId,
+            },
       runtime: null,
     };
   });
+}
+
+function deriveActivity(state: RunState): SnapshotActivity[] {
+  return [...state.activities.values()]
+    .toSorted((a, b) => a.seq - b.seq)
+    .map((record) => ({
+      seq: record.seq,
+      since: record.ts,
+      kind: record.kind,
+      agentId: record.agentId ?? null,
+      attempt:
+        record.stageId === undefined || record.visit === undefined || record.attempt === undefined
+          ? null
+          : { stageId: record.stageId, visit: record.visit, attempt: record.attempt },
+      detail: record.detail ?? null,
+    }));
 }
 
 /** Plan stages in plan order, then other stages in order of first attempt. */
@@ -646,6 +705,8 @@ function cloneCounters(counters: Counters): Counters {
     workRetriesByVisit: copyDict(counters.workRetriesByVisit),
     blocks: counters.blocks,
     reconciliations: { ...counters.reconciliations },
+    lifecycleChangesByAgent: copyDict(counters.lifecycleChangesByAgent),
+    activitiesByKind: copyDict(counters.activitiesByKind),
   };
 }
 
