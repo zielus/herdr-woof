@@ -33,6 +33,19 @@ export interface BuildReviewInput {
   >;
   /** Per-run limit overrides; other keys come from configuration, then the defaults below. */
   limits?: Partial<Limits>;
+  /**
+   * Artifacts from outside the run every agent receives by path and digest (composition): a plan
+   * from an earlier workflow, a specification. Admission checks each sha256 and the run copies
+   * each file in, so the builder and reviewer read exactly these bytes.
+   */
+  inputs?: BuildInput[];
+}
+
+export interface BuildInput {
+  label: string;
+  /** Absolute path of the file. */
+  path: string;
+  sha256: string;
 }
 
 export const BUILD_REVIEW_DEFAULT_LIMITS: Required<Limits> = {
@@ -58,6 +71,8 @@ const BUILDER_STAGES: ReadonlySet<string> = new Set(["build", "repair"]);
  * the verify check, each carrying every input its request names.
  */
 const REQUEST_BOUND_CASES: readonly RequestBoundCase[] = [
+  // Every stage also carries the input artifacts (`inputs`); the build is measured too.
+  { stageId: "build", enteredBy: null },
   { stageId: "review", enteredBy: { kind: "stage", gate: "repair" } },
   { stageId: "repair", enteredBy: { kind: "stage", gate: "review" } },
   { stageId: "repair", enteredBy: { kind: "check", gate: "verify" } },
@@ -72,10 +87,11 @@ function validateInput(
     return { ok: false, details: [{ field: "input", message: "must be an object" }] };
   exactKeys(
     value,
-    ["schemaVersion", "repo", "task", "instructions", "verify", "agents", "limits"],
+    ["schemaVersion", "repo", "task", "instructions", "verify", "agents", "limits", "inputs"],
     "",
     fail,
   );
+  buildInputsProblem(value["inputs"], fail);
   if (value["schemaVersion"] !== 1) fail("schemaVersion", "must be 1");
   if (typeof value["repo"] !== "string" || !value["repo"].startsWith("/"))
     fail("repo", "must be an absolute path");
@@ -177,6 +193,48 @@ function validateInput(
   return { ok: true, input: structuredClone(value) as unknown as BuildReviewInput };
 }
 
+const MAX_INPUTS = 8;
+const MAX_INPUT_LABEL = 80;
+
+/** `inputs`: at most 8 `{label, path, sha256}` with unique single-line labels and absolute paths. */
+export function buildInputsProblem(
+  inputs: unknown,
+  fail: (field: string, message: string) => void,
+) {
+  if (inputs === undefined) return;
+  if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > MAX_INPUTS) {
+    fail("inputs", `must be a non-empty array of at most ${MAX_INPUTS} { label, path, sha256 }`);
+    return;
+  }
+  const labels = new Set<string>();
+  for (const [index, item] of inputs.entries()) {
+    const field = `inputs[${index}]`;
+    if (!isPlainObject(item)) {
+      fail(field, "must be an object with label, path and sha256");
+      continue;
+    }
+    exactKeys(item, ["label", "path", "sha256"], `${field}.`, fail);
+    const label = item["label"];
+    if (
+      !nonEmpty(label) ||
+      label.length > MAX_INPUT_LABEL ||
+      /[\n\r]/.test(label) ||
+      labels.has(label)
+    )
+      fail(`${field}.label`, `must be a unique single-line string of at most ${MAX_INPUT_LABEL}`);
+    else labels.add(label);
+    if (typeof item["path"] !== "string" || !item["path"].startsWith("/"))
+      fail(`${field}.path`, "must be an absolute path");
+    if (typeof item["sha256"] !== "string" || !/^[0-9a-f]{64}$/.test(item["sha256"]))
+      fail(`${field}.sha256`, "must be 64 lowercase hex characters");
+  }
+}
+
+/** Every input artifact as a request input, in the input's order. */
+function inputRefs(input: BuildReviewInput): InputRef[] {
+  return (input.inputs ?? []).map((item) => ({ label: item.label, from: { input: item.label } }));
+}
+
 /** The latest gate on a builder acceptance (build or repair). */
 function latestBuilderGate(history: RunHistory) {
   return history.gates.findLast((gate) => gate.kind === "stage" && BUILDER_STAGES.has(gate.gate));
@@ -240,6 +298,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
   resolveLimits: (input) => ({ ...input.limits }),
   limitDefaults: { ...BUILD_REVIEW_DEFAULT_LIMITS },
   repository: (input) => input.repo,
+  inputArtifacts: (input) => structuredClone(input.inputs ?? []),
   start: "build",
   roundStage: "review",
   stages: [
@@ -253,8 +312,8 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       bindsRevision: false,
       request: (ctx) => ({
         goal: "Implement the task below in the repository.",
-        instructions: `Make the change in the repository (your working directory) so that every acceptance criterion holds. ${COMPLETION_REPORT}`,
-        inputs: [],
+        instructions: `Make the change in the repository (your working directory) so that every acceptance criterion holds.${ctx.input.inputs === undefined ? "" : " Read every input first: they are given to you for this task (a plan, a specification)."} ${COMPLETION_REPORT}`,
+        inputs: inputRefs(ctx.input),
         task: ctx.input.task,
         ...(ctx.input.instructions?.builder !== undefined
           ? { roleInstructions: ctx.input.instructions.builder }
@@ -285,10 +344,12 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       artifactVerdictMarker: REVIEW_VERDICT_MARKER,
       request: (ctx) => {
         const builder = latestBuilderGate(ctx.history);
-        const inputs: InputRef[] =
-          builder === undefined
+        const inputs: InputRef[] = [
+          ...inputRefs(ctx.input),
+          ...(builder === undefined
             ? []
-            : [{ label: "completion report", from: { stageId: builder.subject.stageId } }];
+            : [{ label: "completion report", from: { stageId: builder.subject.stageId } }]),
+        ];
         return {
           goal: "Review the current change in the repository against the task below.",
           instructions: `Inspect the repository (your working directory) and the completion report. Decide whether every acceptance criterion and project instruction holds. Write your review as your artifact with concrete findings. Submit verdict "fail" when any blocking finding remains, "pass" otherwise. A "fail" review is a completed review: use status "completed". Do not change repository files.${VERDICT_LINE_INSTRUCTION}`,
@@ -326,7 +387,7 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
       bindsRevision: false,
       request: (ctx) => {
         const entered = ctx.enteredBy;
-        const inputs: InputRef[] = [];
+        const inputs: InputRef[] = inputRefs(ctx.input);
         // One condition for both: the review reaches this repair as an input, and
         // only then does the request say the review is canonical (PB-101).
         const enteredByReview = entered?.kind === "stage" && entered.gate === "review";

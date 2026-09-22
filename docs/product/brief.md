@@ -19,6 +19,11 @@ Woof 0.2.0 includes:
   for repair when the review gate fails;
 - `plan-build-review`, which adds a planning handoff before the same bounded
   build, verification, review and repair cycle;
+- `plan`, a planner that writes (and optionally commits) an implementation plan,
+  and `auto-build`, which composes `plan` and `build-review` as workflow steps
+  on one branch: a workflow can be a step of another;
+- a checkout policy in the run input: runs started inside Herdr work in a new
+  Herdr worktree by default, and nested runs inherit their parent's checkout;
 - project and user workflow discovery, role resolution and recorded
   configuration provenance;
 - validated artifact/envelope handoff, finite limits, blocking, cancellation and

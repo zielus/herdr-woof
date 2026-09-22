@@ -758,3 +758,6 @@ cancel <parent>`, which its next tick settles) aborts the running child, which
   the child is the step's result (`cancelled`) and the parent's `next` decides.
   The child's limits are its own; the parent bounds the step with its own visit
   and round limits and `runTimeoutMs`.
+- **Status.** A run that has opened a workflow step is `running` (like one that
+  has dispatched a request), so a run whose steps are all workflows does not
+  read `created` while its children work.

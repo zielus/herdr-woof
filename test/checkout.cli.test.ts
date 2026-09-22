@@ -431,8 +431,13 @@ describe("checkout policy in the run input", () => {
     expect(
       git(ws.repo, "branch", "--list", "--format=%(refname:short)", "woof/k4-run").trim(),
     ).toBe("woof/k4-run");
-    expect(readFileSync(join(runDir, "host.log"), "utf8")).toContain(
-      "checkout: the worktree of workspace w7 was removed (keep: false)",
+    // The host logs the removal once Herdr has answered, as its very last act.
+    await waitFor(
+      () =>
+        readFileSync(join(runDir, "host.log"), "utf8").includes(
+          "checkout: the worktree of workspace w7 was removed (keep: false)",
+        ),
+      "the removal in host.log",
     );
 
     // mode path: a worktree the caller made; nothing is created or removed.

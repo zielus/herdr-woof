@@ -1,6 +1,8 @@
 import type { WorkflowDefinition } from "../scheduler/definition.js";
+import { autoBuildWorkflow } from "./auto-build.js";
 import { buildReviewWorkflow } from "./build-review.js";
 import { planBuildReviewWorkflow } from "./plan-build-review.js";
+import { planWorkflow } from "./plan.js";
 
 /**
  * The built-in workflow catalog (p5 D2): one name-keyed registry both
@@ -16,6 +18,8 @@ export const BUILT_IN_WORKFLOWS: Record<string, WorkflowDefinition<unknown>> = O
     [buildReviewWorkflow.name]: buildReviewWorkflow as unknown as WorkflowDefinition<unknown>,
     [planBuildReviewWorkflow.name]:
       planBuildReviewWorkflow as unknown as WorkflowDefinition<unknown>,
+    [planWorkflow.name]: planWorkflow as unknown as WorkflowDefinition<unknown>,
+    [autoBuildWorkflow.name]: autoBuildWorkflow as unknown as WorkflowDefinition<unknown>,
   },
 );
 

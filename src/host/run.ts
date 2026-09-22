@@ -483,6 +483,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         submitCommand: options.submitCommand,
         paneId: options.paneId,
         workspaceId: options.workspaceId,
+        checkoutWorkspaceId: checkout.workspaceId,
         log,
       }),
       onAction: (action) => {

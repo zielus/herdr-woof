@@ -2,6 +2,7 @@
 // scripted runtime whose workers submit through the real submission path.
 // WOOF_TEST_SCRIPT selects the behaviour ("happy", "always-fail", "hang", "slow");
 // WOOF_TEST_RUNTIME_LOG, when set, records every createRuntime call.
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -60,6 +61,28 @@ export default function createRuntime({ runDir, runId, plan, repo }) {
     if (agentId === "builder") {
       mkdirSync(join(repo, "src"), { recursive: true });
       writeFileSync(join(repo, "src", "change.txt"), `version ${counts.builder}\n`);
+    }
+    // WOOF_TEST_PUBLISH (composition): the planner also commits its plan at that repository path.
+    const publish = process.env["WOOF_TEST_PUBLISH"];
+    if (agentId === "planner" && publish !== undefined && publish !== "") {
+      mkdirSync(dirname(join(repo, publish)), { recursive: true });
+      writeFileSync(join(repo, publish), `# plan ${active.visit}.${active.attempt}\n`);
+      const git = (...args) =>
+        spawnSync(
+          "git",
+          [
+            "-c",
+            "user.name=Woof Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            ...args,
+          ],
+          { cwd: repo },
+        );
+      git("add", publish);
+      git("commit", "-q", "-m", "plan");
     }
     const verdict =
       agentId !== "reviewer"

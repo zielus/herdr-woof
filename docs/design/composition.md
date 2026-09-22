@@ -257,11 +257,13 @@ readSnapshot` holds for both journals.
 
 ### Built-ins
 
-- `plan` (checkout `any`): one planner stage writes `plan.md`. Input: `repo`,
-  `task`, optional `constraints`, `instructions`, `agents`, `limits`, and
-  `publish: {path}` — when set, the planner also writes the plan to that repo
-  path and commits it (scenario (a); pushing is left to the caller's
-  instructions because the fixture has no remote).
+- `plan` (checkout `writable`, because with `publish` it commits): one planner
+  stage writes `plan.md`. Input: `repo`, `task`, optional `constraints`,
+  `instructions`, `agents`, `limits`, and `publish: {path, push?}` — when set,
+  the planner also writes the plan to that repo path and commits it (and
+  pushes with `push`; the push itself is not verified), and a check stage
+  (`git cat-file -e HEAD:<path>`) confirms the commit, sending the planner back
+  (bounded by `maxVisitsPerStage`) when it is missing.
 - `auto-build`: workflow step `plan` → workflow step `build`
   (`build-review`), the build input mapped from the parent input plus the plan
   step's `plan.md` artifact (path + digest) — scenario (c), one branch, one
@@ -272,6 +274,19 @@ start` inputs for (a) and (b) are documented in
   [initial workflows](../workflows/initial-workflows.md).
 - `plan-build-review` is unchanged.
 
+### Status of a run whose steps are all workflows
+
+Run status stays derived: a run that has opened a workflow step (a
+`stage.child_opened`) is `running`, like one that has dispatched a request, so a
+pure composite such as `auto-build` does not read `created` while its children
+work.
+
+### Where a child's agents open
+
+A child's runtime is given the top run's worktree workspace when the run made
+one, so a foreground host inside Herdr puts the children's agent tabs in the
+run's workspace, not the caller's.
+
 ## Phases
 
 0. This note. (done)
@@ -281,7 +296,7 @@ start` inputs for (a) and (b) are documented in
 2. (done) Workflow stage: definition and plan validation, input artifacts, records,
    reducer, snapshot, events, core actions, driver, host child hosting,
    cancellation, run view and `woof runs`, docs, changeset.
-3. `plan` and `auto-build` built-ins, scripted-runtime tests, docs,
+3. (done) `plan` and `auto-build` built-ins, scripted-runtime tests, docs,
    changeset.
 4. Live proof `scripts/live/composition.mjs` and recorded evidence.
 

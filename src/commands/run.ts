@@ -46,9 +46,11 @@ export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workfl
                       [--plain] [--ascii] [--preview summary|json]
 
 Starts a workflow run. The workflow is --workflow, else the configured default,
-else build-review. Built in: build-review (build, verify, review, repair) and
+else build-review. Built in: build-review (build, verify, review, repair),
 plan-build-review (the same with a planner ahead of it, whose plan.md every
-builder turn receives as an input); a project or user
+builder turn receives as an input), plan (a planner that writes, and with
+publish commits, plan.md) and auto-build (plan, then build-review with that
+plan, as two child runs on one branch); a project or user
 .woof/workflows/<name>.{mjs,js,ts} defines any other. Configuration comes from
 <project>/.woof and ~/.woof (see woof config show), and the run records what it
 resolved in config.json.

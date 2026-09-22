@@ -1060,6 +1060,9 @@ function deriveStatus(state: RunState): RunStatus {
   if (state.termination !== undefined) return state.termination.outcome;
   if (currentBlock(state) !== undefined) return "blocked";
   if (state.dispatches.size > 0) return "running";
+  // A workflow step's child run is work in progress too, even in a run with no agents of its own.
+  for (const attempt of state.attempts.values())
+    if (attempt.opened.type === "stage.child_opened") return "running";
   if (state.assignments.size > 0) return "starting";
   return "created";
 }

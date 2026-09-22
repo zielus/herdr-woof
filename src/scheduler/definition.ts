@@ -17,6 +17,8 @@ import {
 import type { AcceptedRef, EvidenceRef } from "../state/result.js";
 import type { SnapshotGate } from "../state/snapshot.js";
 
+export type { AcceptedRef } from "../state/result.js";
+
 /**
  * Workflow definition contract (p3, unstable until v1). A definition is an ES
  * module whose default export satisfies `WorkflowDefinition`: static agents,

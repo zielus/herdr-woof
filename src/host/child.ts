@@ -45,6 +45,11 @@ export interface ChildHostContext {
   /** The host's pane and workspace, recorded on each child's claim. */
   paneId: string | null;
   workspaceId: string | null;
+  /**
+   * The workspace of the top run's worktree, where every child's agent tabs go too; null when the
+   * run made none (then the runtime uses its own pane's workspace, as for the top run).
+   */
+  checkoutWorkspaceId: string | null;
   /** The parent host's technical log; each child also writes its own `host.log`. */
   log: (line: string) => void;
 }
@@ -118,7 +123,7 @@ async function openChild(
     runId,
     plan: admitted.plan,
     repo: admitted.repository,
-    workspaceId: null,
+    workspaceId: context.checkoutWorkspaceId,
   });
   if (!runtime.ok) return refuse("runtime_unavailable", runtime.message);
 

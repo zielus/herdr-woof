@@ -5,6 +5,8 @@ an executable, built-in workflow definition, runnable via `woof run
 build-review` (p3; see "Implemented now (p3)" below). `plan-build-review` is
 also now an executable, built-in workflow definition, runnable via `woof run
 start --workflow plan-build-review` (p5; see "Implemented now (p5)" below).
+`plan` and the composite `auto-build` followed with workflow composition (see
+"Plan and auto-build" below).
 
 ## Build-review
 
@@ -181,6 +183,79 @@ verification, lastAcceptedByStage}`) already carried `plan`, `build`, `repair`
   records 13/13 gates passing, including gate 6 (the plan reaches every
   builder request by reference, never inlined) and gate 10 (Herdr status and
   an external observer agree with the SDK state, 0 disagreeing).
+
+## Plan and auto-build (composition)
+
+Two built-ins added with workflow composition — see
+[Checkout policy and workflow composition](../design/composition.md). Source:
+`src/workflows/{plan,auto-build}.ts`.
+
+- **`plan`**: one `planner` writes `plan.md`. Input: `schemaVersion`, `repo`,
+  `task`, optional `constraints`, `instructions.planner`, `agents.planner`,
+  `limits`, and `publish: {path, push?}`. With `publish` the planner also writes
+  the plan to `path` in the repository and commits only that file (and pushes
+  with `push: true`); an engine-run check (`git cat-file -e HEAD:<path>`)
+  confirms the file is in the checkout's HEAD commit, and a plan that is not
+  there sends the planner back, bounded by `maxVisitsPerStage` (default 2).
+  Access `writable`: it never starts on a dirty `current` tree.
+- **`auto-build`**: two workflow steps and no agents. `plan` runs the `plan`
+  workflow; `build` runs `build-review` with the accepted `plan.md` as the input
+  artifact `plan` (the builder is told to follow it, the reviewer to check the
+  change against it). Input: build-review's fields (`task`, `verify`,
+  `instructions.{planner,builder,reviewer}`, `agents.{planner,builder,reviewer}`),
+  plus `constraints` and `publish` for the plan step and `limits` for this run
+  (default `runTimeoutMs` 4 h, one visit per step). Both children's inputs are
+  validated up front, so a bad field is refused before any step runs. A step
+  whose child does not complete fails the run (`plan_failed`,
+  `build_exhausted`, …).
+- **`build-review` accepts `inputs: [{label, path, sha256}]`** (at most 8): files
+  from outside the run every build, review and repair request names by path
+  and digest after the run copies them into `inputs/<n>/`.
+
+### Three scenarios as `woof run start` inputs
+
+Inside Herdr each top-level run below works in a new Herdr worktree by default.
+
+(a) Plan in its own worktree and commit the plan on its branch
+(`woof run start --workflow plan --input a.json`):
+
+```json
+{
+  "schemaVersion": 1,
+  "repo": "/abs/repo",
+  "task": {
+    "title": "Add slugify",
+    "description": "Add slugify(text) in src/slugify.mjs.",
+    "acceptanceCriteria": ["slugify lowercases its input"]
+  },
+  "publish": { "path": "docs/plans/slugify.md", "push": true },
+  "checkout": { "mode": "worktree", "branch": "plan/slugify" }
+}
+```
+
+(b) Once `plan/slugify` is merged, build and review on a branch based on it,
+with the merged plan as a checked input (`woof run start --workflow
+build-review --input b.json`; `sha256` is `shasum -a 256
+docs/plans/slugify.md` on the merged branch):
+
+```json
+{
+  "schemaVersion": 1,
+  "repo": "/abs/repo",
+  "task": {
+    "title": "Add slugify",
+    "description": "Implement docs/plans/slugify.md.",
+    "acceptanceCriteria": ["slugify lowercases its input"]
+  },
+  "inputs": [{ "label": "plan", "path": "/abs/repo/docs/plans/slugify.md", "sha256": "<hex>" }],
+  "checkout": { "mode": "worktree", "branch": "build/slugify", "base": "main" }
+}
+```
+
+(c) Both on one branch in one worktree (`woof run start --workflow auto-build
+--input c.json`): the same `task`, optional `publish` and `verify`, and
+`"checkout": {"mode": "worktree", "branch": "auto/slugify"}`. The plan and
+build-review children inherit that worktree.
 
 ## Direct delegation and later research
 
