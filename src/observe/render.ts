@@ -8,18 +8,24 @@ import { openingLines, rule } from "./render-opening.js";
 import { emptyRowState, rowsOf, type Row, type RowContext, type RowState } from "./render-rows.js";
 import {
   clampWidth,
+  clip,
   duration,
   marksFor,
   pad,
   paintFor,
+  participantLabel,
   plainText,
   plural,
   sanitize,
+  stageLabel,
   text,
   words,
   wrap,
+  wrapIndented,
+  wrapPath,
   type Layout,
   type RenderOptions,
+  type Style,
 } from "./render-text.js";
 import type { WorkflowGraph } from "./workflow-graph.js";
 
@@ -142,13 +148,21 @@ export function createRunRenderer(input: RunRendererInput): RunRenderer {
   };
 }
 
+/**
+ * Column geometry from the plan. Ids are clipped before the columns are sized,
+ * so a long agent or stage id widens its column only up to the clip and the
+ * message column keeps its room at 80 columns.
+ */
 function layoutOf(snapshot: RunSnapshot, options: RenderOptions): Layout {
   const marks = marksFor(options.ascii);
-  const participantWidth = Math.max(4, ...snapshot.agents.map((agent) => agent.agentId.length));
+  const participantWidth = Math.max(
+    4,
+    ...snapshot.agents.map((agent) => participantLabel(agent.agentId, options.ascii).length),
+  );
   const stageWidth = Math.max(
     0,
-    ...snapshot.stages.map((stage) => stage.stageId.length),
-    ...(snapshot.checks ?? []).map((check) => check.length),
+    ...snapshot.stages.map((stage) => stageLabel(stage.stageId, options.ascii).length),
+    ...(snapshot.checks ?? []).map((check) => stageLabel(check, options.ascii).length),
   );
   // time, space, mark, space, participant, [space, stage,] two spaces.
   const prefixWidth =
@@ -170,9 +184,15 @@ function rowLines(row: Row, layout: Layout): string[] {
   const { marks, paint, options } = layout;
   const mark = pad(marks[row.mark], marks.width);
   const time = paint(timeOf(row.ts, options.timeZone), "dim");
-  const participant = pad(text(row.participant), layout.participantWidth);
+  // Clipped to the column the plan sized, so an id the plan did not name cannot shift the message.
+  const participant = pad(
+    clip(text(row.participant), layout.participantWidth, options.ascii),
+    layout.participantWidth,
+  );
   const stage =
-    layout.stageWidth === 0 ? "" : ` ${paint(pad(text(row.stage), layout.stageWidth), "dim")}`;
+    layout.stageWidth === 0
+      ? ""
+      : ` ${paint(pad(clip(text(row.stage), layout.stageWidth, options.ascii), layout.stageWidth), "dim")}`;
   const prefix = `${time} ${paint(mark, row.style)} ${participant}${stage}  `;
   const indent = " ".repeat(layout.prefixWidth);
   const lines: string[] = [];
@@ -189,36 +209,38 @@ function rowLines(row: Row, layout: Layout): string[] {
 // --- summary -------------------------------------------------------------------------------------
 
 function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string[] {
-  const { paint, marks } = layout;
+  const { paint, marks, options } = layout;
   const { status, result, snapshot } = end;
   const outcome = snapshot.outcome;
   const lines: string[] = ["", rule(layout)];
+  // Every summary line fits the width; a wrapped line continues under its text.
+  const emit = (line: string, style: Style | undefined) => {
+    for (const piece of wrapIndented(line, options.width, 2)) lines.push(paint(piece, style));
+  };
   if (outcome === null) {
-    lines.push(paint(`${marks.dot} Run not finished · ${text(status.status)}`, "dim"));
+    emit(`${marks.dot} Run not finished · ${text(status.status)}`, "dim");
     return lines;
   }
   const reason = text(outcome.reason);
   switch (outcome.outcome) {
     case "completed":
-      lines.push(paint(`${marks.ok} Completed · ${reason}`, "green"));
+      emit(`${marks.ok} Completed · ${reason}`, "green");
       break;
     case "failed":
-      lines.push(paint(`${marks.alert} Failed · ${reason}`, "red"));
+      emit(`${marks.alert} Failed · ${reason}`, "red");
       break;
     case "exhausted": {
       const limit = outcome.limit;
       const value = limit === null || snapshot.limits === null ? undefined : snapshot.limits[limit];
-      lines.push(
-        paint(
-          `${marks.alert} Exhausted · ${limit === null ? "limit" : text(limit)}${value === undefined ? "" : ` (${limit?.endsWith("Ms") === true ? duration(value) : String(value)})`}`,
-          "red",
-        ),
+      emit(
+        `${marks.alert} Exhausted · ${limit === null ? "limit" : text(limit)}${value === undefined ? "" : ` (${limit?.endsWith("Ms") === true ? duration(value) : String(value)})`}`,
+        "red",
       );
-      lines.push(reason);
+      emit(reason, undefined);
       break;
     }
     default:
-      lines.push(paint(`${marks.dot} Cancelled · ${reason}`, "dim"));
+      emit(`${marks.dot} Cancelled · ${reason}`, "dim");
   }
   const openedAt = Date.parse(snapshot.openedAt);
   const endedAt = Date.parse(outcome.at);
@@ -233,13 +255,11 @@ function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string
       `last at ${text(at.stageId)}${at.visit > 1 ? ` visit ${at.visit}` : ""}${at.attempt > 1 ? ` attempt ${at.attempt}` : ""}`,
     );
   }
-  lines.push(paint(facts.join(" · "), "dim"));
+  emit(facts.join(" · "), "dim");
   if (result?.blocked != null && outcome.outcome !== "completed") {
-    lines.push(
-      paint(
-        `${marks.alert} still blocked at the end: ${words(result.blocked.reason)} · ${text(result.blocked.agentId)}`,
-        "red",
-      ),
+    emit(
+      `${marks.alert} still blocked at the end: ${words(result.blocked.reason)} · ${text(result.blocked.agentId)}`,
+      "red",
     );
   }
   lines.push("");
@@ -247,8 +267,13 @@ function summaryLines(end: RunEnd, opening: RunSnapshot, layout: Layout): string
   return lines;
 }
 
+/**
+ * The accepted artifacts of the completing revision. `review` appears only when
+ * the result names one: a review that approved an earlier revision is not
+ * presented as the run's review, and no line stands in for it.
+ */
 function artifactLines(result: RunResult | null, runDir: string, layout: Layout): string[] {
-  const { paint } = layout;
+  const { paint, options } = layout;
   const items: Array<[string, string]> = [];
   if (result !== null) {
     const { completion, review, verification } = result.artifacts;
@@ -258,9 +283,14 @@ function artifactLines(result: RunResult | null, runDir: string, layout: Layout)
   }
   if (items.length === 0) return [paint("ARTIFACTS · none accepted", "dim")];
   const width = Math.max(...items.map(([label]) => label.length));
+  const column = width + 2;
   return [
     paint("ARTIFACTS · relative to run directory", "dim"),
-    ...items.map(([label, path]) => `${pad(label, width)}  ${sanitize(path)}`),
+    ...items.flatMap(([label, path]) =>
+      wrapPath(sanitize(path), options.width - column).map((piece, index) =>
+        index === 0 ? `${pad(label, width)}  ${piece}` : `${" ".repeat(column)}${piece}`,
+      ),
+    ),
   ];
 }
 
@@ -299,11 +329,17 @@ function blockedLines(status: RunStatusView, ctx: RowContext, layout: Layout): s
       : entry?.paneId != null
         ? ` (pane ${text(entry.paneId)})`
         : "";
+  const width = layout.options.width;
+  const command = "  supported action: woof run cancel ";
   return [
-    paint(`${marks.alert} Blocked: ${words(block.reason)} · ${text(block.agentId)}${where}`, "red"),
-    ...wrap(sanitize(block.requiredAction), Math.max(20, layout.options.width - 2)).map(
-      (piece) => `  ${piece}`,
+    ...wrapIndented(
+      `${marks.alert} Blocked: ${words(block.reason)} · ${text(block.agentId)}${where}`,
+      width,
+      2,
+    ).map((piece) => paint(piece, "red")),
+    ...wrap(sanitize(block.requiredAction), Math.max(20, width - 2)).map((piece) => `  ${piece}`),
+    ...wrapPath(text(status.runDir), Math.max(8, width - command.length)).map((piece, index) =>
+      paint(index === 0 ? `${command}${piece}` : `${" ".repeat(command.length)}${piece}`, "dim"),
     ),
-    paint(`  supported action: woof run cancel ${text(status.runDir)}`, "dim"),
   ];
 }
