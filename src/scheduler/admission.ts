@@ -1,6 +1,14 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
+import {
+  CHECKOUT_KEY,
+  peelCheckout,
+  type CheckoutMode,
+  type CheckoutSpec,
+  type ResolvedCheckout,
+} from "../contracts/checkout.js";
+import { sha256Hex } from "../contracts/canonical-json.js";
 import type { RejectionDetail } from "../contracts/envelope.js";
 import type { AdmissionReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
@@ -13,10 +21,10 @@ import {
 } from "../domain/types.js";
 import type { LockOptions } from "../journal/lock.js";
 import { openRun, type OpenRunInput } from "../state/store.js";
-import type { WorkflowDefinition } from "./definition.js";
+import type { InputArtifact, WorkflowDefinition } from "./definition.js";
 import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
-import { revisionOf, type RevisionResult } from "./revision.js";
+import { gitCommonDir, revisionOf, treeStatus, type RevisionResult } from "./revision.js";
 
 /**
  * Workflow admission (p3, extended in p4): everything checked before a run
@@ -70,11 +78,55 @@ export type AdmissionResult<Input> =
       ok: true;
       input: Input;
       plan: RunPlan;
+      /** The top level of the checkout the run works in (`checkout.path`). */
       repository: string;
       revision: Revision;
       provenance: AdmissionProvenance;
+      checkout: ResolvedCheckout;
+      /** Input artifacts whose digests admission checked; the run open copies them in. */
+      inputArtifacts: InputArtifact[];
     }
-  | { ok: false; reason: AdmissionReason; message: string; details: RejectionDetail[] };
+  | {
+      ok: false;
+      reason: AdmissionReason;
+      message: string;
+      details: RejectionDetail[];
+      /** A worktree this admission created before it refused the run: the caller removes it. */
+      created?: ResolvedCheckout;
+    };
+
+/** A worktree the host created for a run; the fields `run.opened.checkout` records. */
+export type CreatedWorktree =
+  | { ok: true; path: string; branch: string; base: string | null; workspaceId: string }
+  | { ok: false; reason: AdmissionReason; message: string };
+
+/**
+ * How admission resolves the run's checkout (docs/design/composition.md). Without it every
+ * run works in the repository its definition names (`current`), and asking for a worktree
+ * is `checkout_unsupported`.
+ */
+export interface AdmissionCheckout {
+  /** The mode when the input names none (default "current"). */
+  defaultMode?: "current" | "worktree";
+  /** Creates a Herdr worktree of `source`; absent means worktrees are unsupported here. */
+  createWorktree?: (request: {
+    source: string;
+    branch: string;
+    base: string | null;
+    label: string;
+  }) => Promise<CreatedWorktree>;
+  /** Default branch and label of a created worktree. */
+  names?: { branch: string; label: string };
+  /** A nested run: work in this parent checkout; the input may only ask for `current`. */
+  inherit?: { path: string };
+  /** A checkout another process (the launcher) already resolved for this run. */
+  resolved?: ResolvedCheckout;
+  /**
+   * Directory prefixes (`dir/`) whose changes do not make a `current` or `path` tree dirty: the
+   * project's own configuration directory, which is not work in progress.
+   */
+  cleanPrefixes?: readonly string[];
+}
 
 type Called<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -84,6 +136,7 @@ export async function admitWorkflow<Input>(options: {
   /** Absolute run directory; agents get write access to it. */
   runDir: string;
   configuration?: AdmissionConfiguration;
+  checkout?: AdmissionCheckout;
 }): Promise<AdmissionResult<Input>> {
   const { definition, configuration } = options;
   // The run directory is used verbatim in launch arguments and requests: absolute and bounded.
@@ -95,7 +148,11 @@ export async function admitWorkflow<Input>(options: {
     const message = `the run directory path is longer than ${MAX_RUN_DIR_BYTES} bytes`;
     return reject("input_invalid", message, [{ field: "runDir", message }]);
   }
-  const validated = call("validateInput", () => definition.validateInput(options.input));
+  // The reserved checkout key is the engine's, never the definition's (composition.md).
+  const peeled = peelCheckout(options.input);
+  if (!peeled.ok) return reject("input_invalid", "the checkout policy is invalid", peeled.details);
+  const spec = peeled.spec;
+  const validated = call("validateInput", () => definition.validateInput(peeled.input));
   if (!validated.ok) return invalidDefinition("validateInput", validated.message);
   const verdict: unknown = validated.value;
   if (!isObject(verdict) || typeof verdict["ok"] !== "boolean") {
@@ -274,6 +331,16 @@ export async function admitWorkflow<Input>(options: {
     ),
     limits: composed,
     checks: definition.stages.flatMap((stage) => (stage.kind === "check" ? [stage.checkId] : [])),
+    // Only a definition with workflow stages lists them, so every other plan keeps its shape.
+    ...(definition.stages.some((stage) => stage.kind === "workflow")
+      ? {
+          workflows: definition.stages.flatMap((stage) =>
+            stage.kind === "workflow"
+              ? [{ stageId: stage.stageId, workflow: stage.workflow.name }]
+              : [],
+          ),
+        }
+      : {}),
   };
   const checked = validateRunPlan(plan);
   if (!checked.ok) {
@@ -286,13 +353,218 @@ export async function admitWorkflow<Input>(options: {
     });
     return reject("plan_invalid", "the resolved run plan is invalid", details);
   }
+  const artifacts = inputArtifactsOf(definition, input);
+  if (!artifacts.ok) return artifacts;
+
+  const settled = await resolveCheckout(
+    options.checkout,
+    spec,
+    repository,
+    definition as WorkflowDefinition<unknown>,
+  );
+  if (!settled.ok) return settled;
+  const checkout = settled.checkout;
+  const created = checkout.created ? { created: checkout } : {};
+  let runRevision = revision.revision;
+  if (realpathOrSelf(checkout.path) !== realpathOrSelf(repository)) {
+    let moved: RevisionResult;
+    try {
+      moved = await revisionOf(checkout.path);
+    } catch (error) {
+      moved = { ok: false, reason: "repo_invalid", message: (error as Error).message };
+    }
+    if (!moved.ok)
+      return {
+        ...reject("repo_invalid", `checkout ${checkout.path}: ${moved.message}`),
+        ...created,
+      };
+    if (realpathOrSelf(checkout.path) !== realpathOrSelf(moved.root)) {
+      const message = `the checkout ${checkout.path} is not the top level of its git work tree ${moved.root}`;
+      return { ...reject("repo_invalid", message, [{ field: CHECKOUT_KEY, message }]), ...created };
+    }
+    const moverlap = runDirOverlap(checkout.path, options.runDir);
+    if (moverlap !== undefined)
+      return {
+        ...reject("input_invalid", moverlap, [{ field: "runDir", message: moverlap }]),
+        ...created,
+      };
+    runRevision = moved.revision;
+  }
+  // A writable workflow never starts on the operator's uncommitted work (composition.md).
+  if (
+    !checkout.created &&
+    !checkout.inherited &&
+    (definition.checkout ?? "writable") === "writable"
+  ) {
+    const cleanPrefixes = options.checkout?.cleanPrefixes;
+    const status = await treeStatus(
+      checkout.path,
+      cleanPrefixes !== undefined ? { ignore: cleanPrefixes } : {},
+    );
+    if (!status.ok) return reject("repo_invalid", status.message);
+    if (status.dirty) {
+      const shown = status.entries.slice(0, 5).join(", ");
+      const message = `the ${checkout.mode} checkout ${checkout.path} has uncommitted or untracked changes (${shown}${status.entries.length > 5 ? ", …" : ""}); workflow ${definition.name} writes to its tree, so commit or stash them, or run it in a worktree (checkout {"mode":"worktree"})`;
+      return reject("checkout_dirty", message, [{ field: CHECKOUT_KEY, message }]);
+    }
+  }
   return {
     ok: true,
     input,
     plan: checked.plan,
-    repository,
-    revision: revision.revision,
+    repository: checkout.path,
+    revision: runRevision,
     provenance,
+    checkout,
+    inputArtifacts: artifacts.value,
+  };
+}
+
+/**
+ * The definition's input artifacts, each an existing file whose bytes hash to the sha256 the
+ * input names: a missing or changed file is `input_invalid` naming its label.
+ */
+function inputArtifactsOf<Input>(
+  definition: WorkflowDefinition<Input>,
+  input: Input,
+): { ok: true; value: InputArtifact[] } | Refused {
+  if (definition.inputArtifacts === undefined) return { ok: true, value: [] };
+  const listed = call("inputArtifacts", () => definition.inputArtifacts?.(input));
+  if (!listed.ok) return invalidDefinition<never>("inputArtifacts", listed.message) as Refused;
+  const value: unknown = listed.value;
+  if (!Array.isArray(value))
+    return invalidDefinition<never>(
+      "inputArtifacts",
+      "returned no array of { label, path, sha256 }",
+    ) as Refused;
+  const labels = new Set<string>();
+  const details: RejectionDetail[] = [];
+  const artifacts: InputArtifact[] = [];
+  for (const item of value) {
+    if (
+      !isObject(item) ||
+      typeof item["label"] !== "string" ||
+      item["label"] === "" ||
+      labels.has(item["label"]) ||
+      typeof item["path"] !== "string" ||
+      !isAbsolute(item["path"]) ||
+      typeof item["sha256"] !== "string" ||
+      !/^[0-9a-f]{64}$/.test(item["sha256"])
+    ) {
+      return invalidDefinition<never>(
+        "inputArtifacts",
+        "returned an entry that is not { label: unique non-empty string, path: absolute, sha256: hex }",
+      ) as Refused;
+    }
+    const artifact = { label: item["label"], path: item["path"], sha256: item["sha256"] };
+    labels.add(artifact.label);
+    let actual: string;
+    try {
+      actual = sha256Hex(readFileSync(artifact.path));
+    } catch (error) {
+      details.push({
+        field: `inputArtifacts.${artifact.label}`,
+        message: `${artifact.path} is unreadable: ${(error as Error).message}`,
+      });
+      continue;
+    }
+    if (actual !== artifact.sha256) {
+      details.push({
+        field: `inputArtifacts.${artifact.label}`,
+        message: `${artifact.path} has sha256 ${actual}, not ${artifact.sha256}`,
+      });
+      continue;
+    }
+    artifacts.push(artifact);
+  }
+  if (details.length > 0)
+    return reject<never>(
+      "input_invalid",
+      "an input artifact is missing or changed",
+      details,
+    ) as Refused;
+  return { ok: true, value: artifacts };
+}
+
+type Refused = Extract<AdmissionResult<never>, { ok: false }>;
+
+type CheckoutResolution =
+  { ok: true; checkout: ResolvedCheckout } | Extract<AdmissionResult<never>, { ok: false }>;
+
+/** Resolves the checkout for an admitted source repository; a worktree is created last. */
+async function resolveCheckout(
+  options: AdmissionCheckout | undefined,
+  spec: CheckoutSpec | undefined,
+  source: string,
+  definition: WorkflowDefinition<unknown>,
+): Promise<CheckoutResolution> {
+  const base = {
+    source,
+    branch: null,
+    base: null,
+    workspaceId: null,
+    created: false,
+    keep: true,
+    inherited: false,
+  };
+  const inherit = options?.inherit;
+  if (inherit !== undefined) {
+    if (spec !== undefined && spec.mode !== "current") {
+      const message = `a nested run inherits its parent's checkout ${inherit.path}; its input may only ask for {"mode":"current"}, not ${spec.mode}`;
+      return reject("input_invalid", message, [{ field: `${CHECKOUT_KEY}.mode`, message }]);
+    }
+    return {
+      ok: true,
+      checkout: { ...base, mode: "current", path: inherit.path, inherited: true },
+    };
+  }
+  const recorded = options?.resolved;
+  if (recorded !== undefined) {
+    if (realpathOrSelf(recorded.source) !== realpathOrSelf(source)) {
+      const message = `the checkout was resolved for ${recorded.source}, but workflow ${definition.name} names the repository ${source}`;
+      return {
+        ...reject("project_mismatch", message, [{ field: CHECKOUT_KEY, message }]),
+        ...(recorded.created ? { created: recorded } : {}),
+      };
+    }
+    return { ok: true, checkout: { ...recorded, source } };
+  }
+  const mode: CheckoutMode = spec?.mode ?? options?.defaultMode ?? "current";
+  if (mode === "current") return { ok: true, checkout: { ...base, mode, path: source } };
+  if (spec?.mode === "path") {
+    // A caller's own worktree must be one of the source repository's: configuration and roles
+    // were resolved for that repository, never for another.
+    const [own, given] = await Promise.all([gitCommonDir(source), gitCommonDir(spec.path)]);
+    if (!own.ok || !given.ok || own.dir !== given.dir) {
+      const message = `the checkout path ${spec.path} is not a worktree of the repository ${source}${!given.ok ? ` (${given.message})` : ""}`;
+      return reject("repo_invalid", message, [{ field: `${CHECKOUT_KEY}.path`, message }]);
+    }
+    return { ok: true, checkout: { ...base, mode, path: spec.path } };
+  }
+  const create = options?.createWorktree;
+  if (create === undefined) {
+    const message =
+      'a worktree checkout needs Herdr (HERDR_ENV=1 with the Herdr runtime): Herdr creates and owns worktrees; use {"mode":"current"} or {"mode":"path"} outside it';
+    return reject("checkout_unsupported", message, [{ field: `${CHECKOUT_KEY}.mode`, message }]);
+  }
+  const wanted = spec?.mode === "worktree" ? spec : undefined;
+  const branch = wanted?.branch ?? options?.names?.branch ?? `woof/${definition.name}`;
+  const label = wanted?.label ?? options?.names?.label ?? `woof:${definition.name}`;
+  const made = await create({ source, branch, base: wanted?.base ?? null, label });
+  if (!made.ok)
+    return reject(made.reason, made.message, [{ field: CHECKOUT_KEY, message: made.message }]);
+  return {
+    ok: true,
+    checkout: {
+      ...base,
+      mode: "worktree",
+      path: made.path,
+      branch: made.branch,
+      base: made.base,
+      workspaceId: made.workspaceId,
+      created: true,
+      keep: wanted?.keep ?? true,
+    },
   };
 }
 
@@ -448,6 +720,8 @@ export function openAdmittedRun<Input>(
     configuration?: unknown;
     /** The run host's claim, journaled as host.claimed under the same lock as run.opened. */
     host?: OpenRunInput["host"];
+    /** The parent's workflow step, for a child run (composition). */
+    parent?: OpenRunInput["parent"];
   },
 ): ReturnType<typeof openRun> {
   return openRun({
@@ -455,6 +729,9 @@ export function openAdmittedRun<Input>(
     runId: options.runId,
     plan: admitted.plan,
     input: admitted.input,
+    checkout: admitted.checkout,
+    ...(admitted.inputArtifacts.length > 0 ? { inputArtifacts: admitted.inputArtifacts } : {}),
+    ...(options.parent !== undefined ? { parent: options.parent } : {}),
     ...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
     ...(options.host !== undefined ? { host: options.host } : {}),
     ...(options.lock !== undefined ? { lock: options.lock } : {}),

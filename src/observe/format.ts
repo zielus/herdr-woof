@@ -91,6 +91,15 @@ export function formatHeader(input: HeaderInput, options: FormatOptions): string
     }`,
     `${label("owner")}${ownerOf(status.liveness)}`,
   ];
+  // Older status documents have no checkout field at all.
+  const checkout = (status as Partial<RunStatusView>).checkout ?? null;
+  if (checkout !== null) {
+    lines.push(
+      `${label("checkout")}${text(checkout.mode)}${checkout.inherited ? " (inherited)" : ""} ${text(checkout.path)}${
+        checkout.branch === null ? "" : ` branch ${text(checkout.branch)}`
+      }${checkout.workspaceId === null ? "" : ` workspace ${text(checkout.workspaceId)}`}`,
+    );
+  }
   for (const agent of input.agents) {
     const pane =
       agent.assignment === null

@@ -362,6 +362,8 @@ describe("woof herdr actions", () => {
           blockedWaitMs: 2000,
           deliveryTimeoutMs: 2000,
         },
+        // Inside Herdr a run defaults to a new worktree; this test is about the host's own tab.
+        checkout: { mode: "current" },
       }),
     );
     const started = action(s, "start", context);

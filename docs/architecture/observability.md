@@ -845,3 +845,45 @@ false,"reason"}`. There is no cross-run cursor: `--after` is single-run only.
   of that stream: a `== <short id>  run <id>  <run-dir>` line per run and the
   single-run event line behind the short run id (the id, or `~` and its last 11
   characters).
+
+## Implemented now (composition)
+
+Real shipped behavior for checkouts and workflow steps — the plan is
+[Checkout policy and workflow composition](../design/composition.md). Source:
+`src/journal/child-records.ts`, `src/state/{reducer,snapshot}.ts`,
+`src/observe/{events,render-rows,render-opening,render}.ts`, `src/inspect/runs.ts`.
+
+- **`run.opened` gains three optional fields** (additive at schemaVersion 1; a
+  journal without them reads unchanged): `checkout` (where the run works),
+  `parent: {runId, runDir, stageId, visit, attempt}` on a child run, and
+  `inputArtifacts: [{label, path: "inputs/<n>/<file>", sha256, bytes, source}]`
+  for artifacts the run open copied in. The snapshot projects them as
+  `checkout` and `parent` (`null` when absent) and `inputArtifacts` (`[]`).
+- **Two new records, one event each.** `stage.child_opened {stageId, visit,
+attempt, child: {runId, runDir, workflow: {name, version}}, input: {sha256,
+bytes}}` opens a workflow step's attempt; `stage.child_result {stageId, visit,
+attempt, child: {runId, outcome, reason, limit?}, status, verdict, receiptId,
+artifact, artifacts}` accepts it with the child's terminal result. Their event
+  subject is `{stageId, visit, attempt}`. The reducer refuses a step the plan does
+  not list as a workflow stage (`stage_unknown`), one not newer than the stage's
+  latest attempt (`attempt_open_conflict`), a result for a step that is not open
+  or names another child run (`invalid_transition`), and any
+  `attempt.opened`/`submission.accepted`/`request.dispatched`/`run.blocked` for a
+  workflow step.
+- **Snapshot shape.** A workflow stage's `stages[]` entry carries `workflow`
+  (the child workflow's name; agent stages have no such key) and the four
+  outcomes as `verdicts`; its attempts have `agentId: null` and a `child: {runId,
+runDir, workflow, outcome, reason, artifacts}` (agent attempts have no `child`
+  key). `outputs.latestAcceptedByStage` names each step's `result.json`, so
+  `RunResult.artifacts.lastAcceptedByStage` does too.
+- **Inspection.** `woof runs` adds `parent: {runId, stageId, visit}` to a child
+  run's entry. The run view prints `parent <run> · step <stage>` and the
+  `checkout` line in the opening block, draws a workflow stage as `<stage>
+(workflow <name>)` (or `<stage>: runs workflow <name>` beside a built-in's
+  stage map), shows `Workflow started · <workflow> v<version> → run <child>`
+  and `Workflow completed|failed|exhausted|cancelled · run <child>` rows, counts
+  `N workflow steps` in the summary (a step's verdict is not a review) and lists
+  each step's `result.json` under ARTIFACTS. A child run is an ordinary run with
+  its own view, status and events; `woof events --all` reads it like any other.
+- `foldEvents(events) == readSnapshot` holds for parents and children alike
+  (`test/composition.cli.test.ts`, `test/checkout.cli.test.ts`).

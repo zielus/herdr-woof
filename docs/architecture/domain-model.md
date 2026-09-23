@@ -656,3 +656,114 @@ verdict marker — not design intent. Source: `src/workflows/catalog.ts`,
   with no further plumbing. `test/fixtures/p1-journal.jsonl` and
   `p2-journal.jsonl`, written before this field existed, still replay clean
   through `readJournal`.
+
+## Implemented now (composition: checkout)
+
+Real shipped behavior for the checkout policy — the plan and its reasoning are in
+[Checkout policy and workflow composition](../design/composition.md). Source:
+`src/contracts/checkout.ts`, `src/scheduler/admission.ts`, `src/host/checkout.ts`,
+`src/host/launch.ts`.
+
+- **`checkout` is a reserved top-level key of every workflow input.** Admission
+  peels it off before the definition's `validateInput` runs (so no definition
+  lists it, and `input.json` records the input without it) and validates it
+  once: `{"mode":"current"}`, `{"mode":"worktree", "branch"?, "base"?,
+"label"?, "keep"?}` or `{"mode":"path", "path"}`; anything else is
+  `input_invalid` naming `checkout.<field>`.
+- **Defaults.** A top-level run started with `HERDR_ENV=1` and the Herdr
+  runtime (no `--runtime-module`) works in a new Herdr worktree; any other
+  top-level run works in the repository its input names (`current`). A
+  worktree needs Herdr: outside it, asking for one is `checkout_unsupported`.
+  `herdr worktree create --cwd <repo> --branch <branch> [--base <ref>] --label
+<label> --no-focus` makes it (branch default `woof/<runId>`, label default
+  `woof:<workflow>`; `--trust-repository` is never passed); a Herdr failure is
+  `checkout_failed` (exit 3).
+- **Admission validates the source, then relocates.** `repository(input)` is
+  still checked as the git top level and, with configuration, as the project
+  (`project_mismatch`); the run then works in the checkout: the revision,
+  the run-directory overlap check, `config.json`'s `repository`, every pane,
+  check and fingerprint use the checkout path.
+- **A `path` checkout must belong to the source repository.** Its canonical
+  common Git directory must be the source's (`git rev-parse --git-common-dir`);
+  another repository is `repo_invalid` naming `checkout.path`.
+- **Writable workflows refuse a dirty tree.** A definition may declare
+  `checkout: "any" | "writable"` (default `writable`). A writable workflow
+  refuses a `current` or `path` checkout whose `git status --porcelain` lists
+  anything outside `.woof/` as `checkout_dirty`; `any` accepts it. A created
+  worktree is not checked.
+- **Where the host runs.** `woof run start --host herdr-pane` resolves the
+  checkout in the launcher (after a built-in's pre-admission). With a new
+  worktree the host runs in that workspace's root pane instead of a new tab,
+  with `HERDR_WORKSPACE_ID` set to it, so every agent tab of the run opens in
+  the worktree's workspace; `launch.json` carries the resolved checkout to the
+  host, which admits into it. A foreground host inside Herdr creates the
+  worktree itself and gives the runtime its workspace. Any refusal after the
+  worktree exists removes it again.
+- **Recorded.** `run.opened.checkout` (additive at schemaVersion 1) is `{mode,
+path, source, branch, base, workspaceId, created, keep, inherited}`; the
+  snapshot and `woof status` carry it as `checkout` (`null` for older runs),
+  `woof status --pretty` prints a `checkout` line and the run view's opening
+  block a `checkout …` line. The launcher's `started` output includes it.
+- **Cleanup.** Created worktrees are kept. With `keep: false` the host removes
+  the worktree (`herdr worktree remove --workspace <id> --force`) after a
+  completed run, as its very last act, and says so in `host.log`; the branch
+  stays. Removal is not journaled: only `host.exited` may follow
+  `run.terminated`.
+
+## Implemented now (composition: workflow steps)
+
+"A workflow can be a step" — shipped behavior. Source: `src/scheduler/{definition,core,driver}.ts`,
+`src/host/child.ts`, `src/state/{reducer,store}.ts`, `src/domain/plan.ts`.
+
+- **Stage kind `workflow`.** `{kind: "workflow", stageId, workflow: {name},
+input(ctx), next(ctx)}` runs the named workflow — resolved like `--workflow`,
+  project, user or built-in — as a child run. `start` and `roundStage` may name a
+  workflow stage; a definition whose steps are all workflows may declare no
+  agents. The plan lists such stages as `workflows: [{stageId, workflow}]`
+  (optional; `agents` and `stages` may then be empty).
+- **One child run per visit.** The core opens a visit (bounded by
+  `maxVisitsPerStage`, and `maxRounds` for the round stage), calls `input(ctx)`
+  — the child's raw input, which must be a JSON value (else
+  `definition_contract_violated`) — and emits `open_child`. The host admits the
+  child (a refusal ends the parent `failed` with `child_rejected: <stage>:
+<reason>: <message>`), opens it and drives its scheduler in the background;
+  the parent journals `stage.child_opened` and keeps ticking (`wait
+awaiting_child`), so its deadline, cancellation and agent observation go on.
+  A child that ended with an infrastructure error (for example an agent pane it
+  could not stop) fails the parent `child_error` even when its outcome was
+  recorded, so no next step shares the checkout with it. When the child ends
+  cleanly, `record_child` publishes its `RunResult` as
+  `accepted/<stage>/visit-<v>/attempt-1/result.json`, copies each child stage's
+  latest accepted artifact (checked against the child's digest) to
+  `accepted/<stage>/visit-<v>/attempt-1/<childStage>/<file>`, and journals
+  `stage.child_result`. The step is then gated like an agent stage: a revision
+  is computed and `next(ctx)` routes on `ctx.accepted.verdict`, the child's
+  outcome (`completed`, `failed`, `exhausted`, `cancelled`); `status` is
+  `completed` exactly when the child completed. A child that ended without a
+  result fails the parent `child_error`.
+- **Identity and checkout.** The child is `<parentRunId>.<stageId>.<visit>` in
+  the parent's runs directory, with `run.opened.parent` pointing back and its
+  own journal, locator, `config.json`, `input.json`, `host.log` and host claim
+  (held by the same process, which also journals its `host.claimed` and
+  `host.exited`). It is admitted into the parent's repository with
+  `checkout.inherited: true`; its input may only say `{"mode":"current"}`.
+- **Data between steps.** `ctx.history.children[stageId]` is the latest child
+  result of each step: `{runId, runDir, workflow, outcome, reason, artifacts}`,
+  the artifacts being `AcceptedRef`s to the parent's copies. An `InputRef` may
+  name `{stageId}` (the step's `result.json`), `{stageId, artifact:
+"<childStage>"}` (one copied child artifact) or `{input: "<label>"}` (an input
+  artifact); every input is re-hashed before a request is rendered. A definition
+  may declare `inputArtifacts(input) → [{label, path, sha256}]`: admission
+  checks each digest (`input_invalid` naming `inputArtifacts.<label>`), and the
+  run open copies each file into `inputs/<n>/<file>` (read-only), recorded on
+  `run.opened.inputArtifacts`.
+- **Cancellation and limits.** Aborting the parent (a signal, or `woof run
+cancel <parent>`, which its next tick settles) aborts the running child, which
+  cancels itself with the reason `parent run cancelled` or `parent run ended`;
+  the parent's settle waits (at most 60 s) for it to record that. Cancelling only
+  the child is the step's result (`cancelled`) and the parent's `next` decides.
+  The child's limits are its own; the parent bounds the step with its own visit
+  and round limits and `runTimeoutMs`.
+- **Status.** A run that has opened a workflow step is `running` (like one that
+  has dispatched a request), so a run whose steps are all workflows does not
+  read `created` while its children work.

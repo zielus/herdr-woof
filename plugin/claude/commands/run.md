@@ -12,8 +12,12 @@ Task from the user: $ARGUMENTS
 
 If `$ARGUMENTS` starts with `--workflow <name>`, that name is the workflow and
 the rest is the task; otherwise the workflow is the configured default. Built in:
-`build-review` (builder, reviewer) and `plan-build-review` (a planner ahead of
-them, whose plan every builder turn receives as an input). A project may define
+`build-review` (builder, reviewer), `plan-build-review` (a planner ahead of
+them, whose plan every builder turn receives as an input), `plan` (a planner
+only; `publish: {"path": "<repo path>"}` also commits the plan) and
+`auto-build` (runs `plan`, then `build-review` with that plan, as two child
+runs on one branch; it takes `plan-build-review`'s input plus `publish`). A
+project may define
 others in its `.woof/workflows/`; `WOOF config show --workflow <name>` says
 whether a name resolves and from where.
 
@@ -42,7 +46,7 @@ Write one JSON object:
 - `task.title`, `task.description` and a non-empty `task.acceptanceCriteria`
   list of strings, stated concretely from the user's request and this
   conversation.
-- `constraints`, for `plan-build-review` only: a non-empty array of non-empty
+- `constraints`, for `plan-build-review`, `plan` and `auto-build` only: a non-empty array of non-empty
   strings the plan must respect, when the user named any. Omit it otherwise.
 - `verify`: only when the user or the project names a verification command. It
   is an object with exactly two fields: `command`, a non-empty array of strings
@@ -50,6 +54,11 @@ Write one JSON object:
   `timeoutMs`, a required integer number of milliseconds.
 - Omit `agents` unless the user asked for specific agent kinds or models; the
   Woof configuration supplies them.
+- Omit `checkout` unless the user said where the run should work. Inside
+  Herdr a run defaults to a new Herdr worktree on branch `woof/<runId>`; add
+  `"checkout": {"mode": "current"}` to work in the repository itself (its tree
+  must be clean for a workflow that edits it), or `{"mode": "worktree",
+"branch": "<name>", "base": "<ref>"}` to choose the branch and its base.
 - Never add permission-bypass arguments on the user's behalf.
 
 Both built-in workflows take the shape below. A workflow that is neither takes

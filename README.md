@@ -512,6 +512,30 @@ workflow run via `/woof:run --workflow scribe`). See
 [the acceptance evidence](docs/acceptance/v1-evidence.md) for the full
 contracts and evidence.
 
+### Worktrees and workflows as steps
+
+Where a run works is part of its input: the reserved key `checkout` is
+`{"mode":"current"}`, `{"mode":"worktree","branch"?,"base"?,"keep"?}` or
+`{"mode":"path","path"}`. Started inside Herdr, a run defaults to a new Herdr
+worktree (branch `woof/<runId>`) whose workspace holds the run host and every
+agent tab; outside Herdr it works in the repository itself. A workflow that
+edits the tree refuses a `current` checkout with uncommitted changes.
+
+A workflow can also be a step of another. The built-in `auto-build` runs the
+built-in `plan` workflow and then `build-review` as two child runs on one
+branch, handing the accepted `plan.md` to the builder and reviewer as a
+digest-checked input:
+
+```sh
+woof run start --workflow auto-build --input input.json   # plan-build-review's input shape
+```
+
+Each child is an ordinary run next to its parent (`<runId>.plan.1`,
+`<runId>.build.1`) that `woof runs`, `woof status` and `woof watch` show with
+its parent link; cancelling the parent cancels the running child. See
+[composition](docs/design/composition.md) and
+[initial workflows](docs/workflows/initial-workflows.md#plan-and-auto-build-composition).
+
 ## Web UI
 
 `woof ui` serves a dashboard for the runs under a runs directory, plus the API

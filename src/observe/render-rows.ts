@@ -348,6 +348,34 @@ export function rowsOf(event: FormattableEvent, state: RowState, ctx: RowContext
       case "run.activity":
         return activityRows(base, data, state);
 
+      case "stage.child_opened": {
+        const child = isObject(data["child"]) ? data["child"] : {};
+        const workflow = isObject(child["workflow"]) ? child["workflow"] : {};
+        return [
+          base({
+            mark: "dispatch",
+            phase: true,
+            message: `Workflow started · ${text(workflow["name"])} v${text(workflow["version"])} → run ${text(child["runId"])}${visit !== undefined && visit > 1 ? ` · visit ${visit}` : ""}`,
+          }),
+        ];
+      }
+
+      case "stage.child_result": {
+        const child = isObject(data["child"]) ? data["child"] : {};
+        const outcome = text(child["outcome"]);
+        const run = `run ${text(child["runId"])}`;
+        if (outcome === "completed")
+          return [base({ mark: "ok", style: "green", message: `Workflow completed · ${run}` })];
+        return [
+          base({
+            mark: "alert",
+            style: outcome === "cancelled" ? "yellow" : "red",
+            message: `Workflow ${outcome} · ${run}`,
+            detail: [text(child["reason"])],
+          }),
+        ];
+      }
+
       default:
         return [base({ style: "dim", message: `· ${text(event.type)}` })];
     }

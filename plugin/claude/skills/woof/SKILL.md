@@ -9,7 +9,7 @@ Woof runs a workflow of coding agents in Herdr panes. Every step is recorded in
 a run journal; a run ends `completed`, `failed`, `exhausted` (a limit) or
 `cancelled`.
 
-Two workflows are built in:
+Four workflows are built in:
 
 - `build-review` (the default): a builder changes the repository and a reviewer
   approves or rejects the change, with an optional verification command.
@@ -17,6 +17,14 @@ Two workflows are built in:
   receives that accepted plan as an input, addressed by path and digest. A failed
   review routes to a repair, never back to the planner, and there is no
   plan-approval gate.
+- `plan`: a planner writes `plan.md`; with `publish: {path}` it also commits the
+  plan into the repository, and the run checks that commit.
+- `auto-build`: two workflow steps, `plan` then `build-review` with the accepted
+  plan as an input, each a child run of its own on the same branch and checkout.
+
+Inside Herdr a run works in a new Herdr worktree (branch `woof/<runId>`) unless
+its input says otherwise with `"checkout": {"mode": "current"}` (or `"worktree"`
+with a `branch`/`base`, or `"path"`).
 
 A project can define its own workflow in `<repo>/.woof/workflows/<name>.{mjs,js,ts}`; it
 runs through the same commands, and `woof config show --workflow <name>` says

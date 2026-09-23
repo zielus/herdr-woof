@@ -99,7 +99,27 @@ export interface RunPlan {
   limits: Limits;
   /** Engine-run check ids (p3, optional): unique, disjoint from stage ids. */
   checks?: string[];
+  /**
+   * Workflow stages (composition, optional): each runs the named workflow as a child run.
+   * Stage ids are unique across stages, checks and workflows. A plan with workflow stages
+   * may have no agents and no agent stages.
+   */
+  workflows?: WorkflowStageSpec[];
 }
+
+export interface WorkflowStageSpec {
+  stageId: string;
+  /** The child workflow's name, resolved like `--workflow` (project, user, built-in). */
+  workflow: string;
+}
+
+/** The verdicts of a workflow stage: its child run's terminal outcome. */
+export const WORKFLOW_STAGE_VERDICTS: readonly TerminalOutcome[] = [
+  "completed",
+  "failed",
+  "exhausted",
+  "cancelled",
+];
 
 export interface AttemptRef {
   stageId: string;

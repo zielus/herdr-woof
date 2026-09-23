@@ -1533,6 +1533,9 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
     expect(hostLog).toMatch(/Z run ended$/m);
     expect(hostLog).not.toContain("Task dispatched");
 
+    // A writable workflow never starts on uncommitted work: the first run's change is committed.
+    git(ws.repo, "add", "-A");
+    git(ws.repo, "commit", "-q", "-m", "first run");
     const plainDir = join(ws.root, "run-plain");
     const plain = woofIn(ws, startArgs(ws, plainDir, ["--host", "foreground", "--plain"]), {
       HERDR_ENV: undefined,
@@ -1670,10 +1673,19 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
       ]),
     );
     const runDir = join(ws.root, "run");
-    // No --runtime-module: the real Herdr CLI adapter drives the fake Herdr.
-    const args = startArgs(ws, runDir, ["--host", "foreground"]).filter(
-      (arg) => arg !== "--runtime-module" && arg !== runtimeModule,
+    // No --runtime-module: the real Herdr CLI adapter drives the fake Herdr. Inside Herdr that
+    // would default to a new worktree; this test is about the current tree's tabs.
+    const currentInput = join(ws.root, "input-current.json");
+    writeFileSync(
+      currentInput,
+      JSON.stringify({
+        ...(JSON.parse(readFileSync(ws.inputPath, "utf8")) as object),
+        checkout: { mode: "current" },
+      }),
     );
+    const args = startArgs(ws, runDir, ["--host", "foreground"])
+      .filter((arg) => arg !== "--runtime-module" && arg !== runtimeModule)
+      .map((arg) => (arg === ws.inputPath ? currentInput : arg));
     const result = woofIn(ws, args);
     expect(result.status, result.stdout + result.stderr).toBe(4);
     expect(JSON.stringify(result.json)).toContain("agent_start_failed");

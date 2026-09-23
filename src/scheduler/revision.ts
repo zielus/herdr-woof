@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,4 +168,63 @@ function runGit(
       },
     );
   });
+}
+
+/**
+ * Whether the work tree at `repo` has uncommitted or untracked (not ignored) changes:
+ * `git status --porcelain` printed anything outside the `ignore` directory prefixes (the
+ * caller's own configuration directory). The caller's tree policy decides what that means.
+ */
+export async function treeStatus(
+  repo: string,
+  options: { timeoutMs?: number; ignore?: readonly string[] } = {},
+): Promise<{ ok: true; dirty: boolean; entries: string[] } | { ok: false; message: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+  for (const key of ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
+    Reflect.deleteProperty(env, key);
+  const status = await runGit(
+    "git",
+    ["-C", repo, "status", "--porcelain", "--untracked-files=normal"],
+    env,
+    undefined,
+    options.timeoutMs ?? GIT_TIMEOUT_MS,
+  );
+  if (!status.ok) return { ok: false, message: `git status in ${repo} failed: ${status.message}` };
+  const ignore = options.ignore ?? [];
+  const entries = status.stdout
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .filter((line) => {
+      // `XY path` or `XY "quoted path"`.
+      const path = line.slice(3).replace(/^"/, "");
+      return !ignore.some((prefix) => path.startsWith(prefix));
+    });
+  return { ok: true, dirty: entries.length > 0, entries };
+}
+
+/**
+ * The canonical common Git directory of the work tree at `repo` (`git rev-parse
+ * --git-common-dir`, resolved): every worktree of one repository shares it.
+ */
+export async function gitCommonDir(
+  repo: string,
+): Promise<{ ok: true; dir: string } | { ok: false; message: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+  for (const key of ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
+    Reflect.deleteProperty(env, key);
+  const common = await runGit(
+    "git",
+    ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    env,
+    undefined,
+    GIT_TIMEOUT_MS,
+  );
+  if (!common.ok)
+    return { ok: false, message: `git rev-parse in ${repo} failed: ${common.message}` };
+  const dir = common.stdout.trim();
+  try {
+    return { ok: true, dir: realpathSync(dir) };
+  } catch {
+    return { ok: true, dir };
+  }
 }

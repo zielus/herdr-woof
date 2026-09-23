@@ -240,3 +240,59 @@ function excerpt(text: string): string {
 function fail(error: RuntimeError): HerdrOutcome {
   return { ok: false, error };
 }
+
+export type WorktreeCreated =
+  | {
+      ok: true;
+      /** Absolute checkout path of the new worktree. */
+      path: string;
+      branch: string;
+      workspaceId: string;
+      /** The root pane of the worktree's workspace, and its tab. */
+      rootPaneId: string;
+      tabId: string;
+    }
+  | {
+      ok: false;
+      message: string;
+      /** The workspace Herdr named, when it did: the worktree exists and can be removed by it. */
+      workspaceId: string | undefined;
+    };
+
+/**
+ * The `result` of `herdr worktree create` (herdr 0.9.1, docs/design/composition.md):
+ * `worktree.path` and `worktree.branch`, `workspace.workspace_id` and the workspace's
+ * `root_pane` with its `tab_id`. Every id must agree with the others.
+ */
+export function parseWorktreeCreated(result: Record<string, unknown>): WorktreeCreated {
+  const worktree = isPlainObject(result["worktree"]) ? result["worktree"] : {};
+  const workspace = isPlainObject(result["workspace"]) ? result["workspace"] : {};
+  const root = isPlainObject(result["root_pane"]) ? result["root_pane"] : {};
+  const workspaceId = stringOrNull(workspace["workspace_id"]) ?? stringOrNull(root["workspace_id"]);
+  const refuse = (message: string): WorktreeCreated => ({
+    ok: false,
+    message,
+    workspaceId: workspaceId ?? undefined,
+  });
+  if (result["type"] !== "worktree_created")
+    return refuse(`worktree create returned ${String(result["type"])}, not worktree_created`);
+  const path = stringOrNull(worktree["path"]);
+  const branch = stringOrNull(worktree["branch"]);
+  const rootPaneId = stringOrNull(root["pane_id"]);
+  const tabId = stringOrNull(root["tab_id"]);
+  if (workspaceId === null) return refuse("worktree create returned no workspace_id");
+  if (path === null || !path.startsWith("/"))
+    return refuse("worktree create returned no absolute worktree path");
+  if (branch === null) return refuse("worktree create returned no branch");
+  if (rootPaneId === null || tabId === null)
+    return refuse("worktree create returned no root pane with a tab");
+  const rootWorkspace = stringOrNull(root["workspace_id"]);
+  if (rootWorkspace !== null && rootWorkspace !== workspaceId)
+    return refuse(
+      `worktree create returned workspace ${workspaceId} with a root pane of workspace ${rootWorkspace}`,
+    );
+  const opened = stringOrNull(worktree["open_workspace_id"]);
+  if (opened !== null && opened !== workspaceId)
+    return refuse(`worktree create opened workspace ${opened}, not ${workspaceId}`);
+  return { ok: true, path, branch, workspaceId, rootPaneId, tabId };
+}

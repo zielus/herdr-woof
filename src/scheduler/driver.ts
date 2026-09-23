@@ -1,9 +1,9 @@
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { AttemptRef, Limits } from "../domain/types.js";
-import { acceptedCopyProblem, hashFile } from "../journal/accepted-copy.js";
+import { acceptedCopyProblem, hashFile, readRegularFile } from "../journal/accepted-copy.js";
 import type { ActivityKind, RunActivityRecord } from "../journal/activity-records.js";
 import type { LockOptions } from "../journal/lock.js";
 import type {
@@ -23,6 +23,10 @@ import {
   cancelRun,
   reconcileDelivery,
   recordActivity,
+  CHILD_RESULT_FILE,
+  childAcceptedDir,
+  recordChildOpened,
+  recordChildResult,
   recordDispatch,
   recordGate,
   recordLifecycleChanged,
@@ -43,6 +47,8 @@ import {
   latestCheckEvidence,
   type Action,
   type AgentRuntimeView,
+  type ChildEnd,
+  type ChildView,
   type GateEvidence,
 } from "./core.js";
 import { agentStageOf, type WorkflowDefinition } from "./definition.js";
@@ -88,6 +94,11 @@ export interface RunWorkflowOptions<Input> {
   pollMs?: number;
   /** Leave agent panes open when the run ends. */
   keepPanes?: boolean;
+  /**
+   * Hosts the child runs of workflow stages (composition): the run host passes one; without it
+   * a workflow stage ends the run `definition_contract_violated`.
+   */
+  children?: ChildHost;
   clock?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Called with every action before it runs (progress reporting). */
@@ -100,6 +111,38 @@ export interface RunWorkflowOptions<Input> {
   onWarning?: (warning: SchedulerWarning) => void;
   lock?: LockOptions;
 }
+
+/** A workflow step's child run, as the scheduler asks its host for one (composition). */
+export interface ChildRequest {
+  parent: { runId: string; runDir: string; stageId: string; visit: number; attempt: number };
+  /** The parent's repository: the child works in the same checkout. */
+  repository: string;
+  workflow: string;
+  input: unknown;
+  /** Aborted when the parent ends first: the child then cancels itself. */
+  signal: AbortSignal;
+}
+
+export type ChildOpened =
+  | { ok: false; reason: string; message: string }
+  | {
+      ok: true;
+      runId: string;
+      /** Absolute run directory of the open child run. */
+      runDir: string;
+      workflow: { name: string; version: string };
+      input: { sha256: string; bytes: number };
+      /** Settles when the child run has ended and its host let go of it; never rejects. */
+      done: Promise<ChildEnd>;
+    };
+
+/** Admits, opens and drives child runs in this process (the run host implements it). */
+export interface ChildHost {
+  open(request: ChildRequest): Promise<ChildOpened>;
+}
+
+/** Longest a settling parent waits for a cancelled child run to record its own end. */
+const CHILD_SETTLE_MS = 60_000;
 
 /** An observability record the scheduler could not journal; the run went on without it. */
 export interface SchedulerWarning {
@@ -213,6 +256,9 @@ export async function runWorkflow<Input>(
   let observeNext: string | null = null;
   // Admission's resolved repository; the definition's `repository(input)` is never called again.
   const repository = options.repository;
+  /** Child runs of workflow steps this scheduler started, by `stage/visit/attempt`. */
+  const children: Record<string, ChildView> = dict();
+  const childRuns: Array<{ controller: AbortController; done: Promise<ChildEnd> }> = [];
 
   const read = (): { ok: true; snapshot: RunSnapshot } | { ok: false; message: string } => {
     const started = performance.now();
@@ -402,6 +448,21 @@ export async function runWorkflow<Input>(
 
   const settle = async (): Promise<RunWorkflowResult> => {
     const cleanup: string[] = [];
+    // A child run still going ends with its parent: it cancels itself and records that, and the
+    // parent's host waits (bounded) until it has, so no child outlives the process hosting it.
+    const running = childRuns.filter((child) => !child.controller.signal.aborted);
+    for (const child of running) child.controller.abort(`parent run ended`);
+    if (childRuns.length > 0) {
+      let timer: NodeJS.Timeout | undefined;
+      const late = await Promise.race([
+        Promise.all(childRuns.map((child) => child.done)).then(() => false),
+        new Promise<boolean>((resolveLate) => {
+          timer = setTimeout(() => resolveLate(true), CHILD_SETTLE_MS);
+        }),
+      ]);
+      if (timer !== undefined) clearTimeout(timer);
+      if (late) cleanup.push(`a child run did not settle within ${CHILD_SETTLE_MS} ms`);
+    }
     if (options.keepPanes !== true) {
       for (const view of Object.values(agents)) {
         // An agent last observed gone has no pane left to close.
@@ -642,6 +703,7 @@ export async function runWorkflow<Input>(
       input: options.input,
       runDir,
       agents,
+      children,
       evidence,
       now: clock(),
       aborted: options.signal?.aborted === true,
@@ -661,7 +723,11 @@ export async function runWorkflow<Input>(
             ? cancelRun({
                 runDir,
                 source: options.cancelSource ?? "abort_signal",
-                reason: action.reason,
+                // A child run cancelled by its parent says so (the abort carries the reason).
+                reason:
+                  typeof options.signal?.reason === "string"
+                    ? options.signal.reason.slice(0, 500)
+                    : action.reason,
                 probeHost: false,
                 endOpenActivities: true,
                 ...lock,
@@ -851,16 +917,52 @@ export async function runWorkflow<Input>(
               unresolved = `${ref.label}: stage ${ref.from.stageId} has no accepted artifact`;
               break;
             }
+            const identity = {
+              stageId: latest.stageId,
+              visit: latest.visit,
+              attempt: latest.attempt,
+              receiptId: acceptedRef.receiptId,
+            };
+            const childStage = ref.from.artifact;
+            if (childStage !== undefined) {
+              // One copied child artifact of a workflow step, re-hashed like any accepted copy.
+              const copy = attempt?.child?.artifacts.find((item) => item.stageId === childStage);
+              if (copy === undefined) {
+                unresolved = `${ref.label}: workflow step ${ref.from.stageId} has no artifact of child stage ${childStage}`;
+                break;
+              }
+              altered = acceptedCopyProblem(runDir, copy);
+              if (altered !== undefined) break;
+              inputs.push({
+                label: ref.label,
+                path: join(runDir, copy.acceptedPath),
+                sha256: copy.sha256,
+                accepted: identity,
+                childStage,
+              });
+              continue;
+            }
             inputs.push({
               label: ref.label,
               path: acceptedRef.acceptedPath,
               sha256: acceptedRef.sha256,
-              accepted: {
-                stageId: latest.stageId,
-                visit: latest.visit,
-                attempt: latest.attempt,
-                receiptId: acceptedRef.receiptId,
-              },
+              accepted: identity,
+            });
+          } else if ("input" in ref.from) {
+            // An input artifact the run open copied into the run, re-hashed before every use.
+            const label = ref.from.input;
+            const item = snapshot.inputArtifacts.find((entry) => entry.label === label);
+            if (item === undefined) {
+              unresolved = `${ref.label}: the run has no input artifact ${label}`;
+              break;
+            }
+            altered = acceptedCopyProblem(runDir, { acceptedPath: item.path, ...item });
+            if (altered !== undefined) break;
+            inputs.push({
+              label: ref.label,
+              path: join(runDir, item.path),
+              sha256: item.sha256,
+              inputLabel: label,
             });
           } else {
             const found = latestCheckEvidence(snapshot, runDir, ref.from.checkId);
@@ -1219,6 +1321,154 @@ export async function runWorkflow<Input>(
             );
           }
         }
+        break;
+      }
+
+      case "open_child": {
+        const host = options.children;
+        if (host === undefined) {
+          written = await end(
+            "failed",
+            `definition_contract_violated: ${action.stageId} is a workflow stage, and this scheduler has no host for child runs`,
+          );
+          break;
+        }
+        if (expired(snapshot)) {
+          written = await runTimedOut(snapshot);
+          break;
+        }
+        const key = `${action.stageId}/${action.visit}/${action.attempt}`;
+        const controller = new AbortController();
+        // The child follows its parent's cancellation, with the parent's reason.
+        const parentSignal = options.signal;
+        if (parentSignal !== undefined) {
+          if (parentSignal.aborted) controller.abort("parent run cancelled");
+          else
+            parentSignal.addEventListener("abort", () => controller.abort("parent run cancelled"), {
+              once: true,
+            });
+        }
+        const opened = await host.open({
+          parent: {
+            runId: snapshot.runId,
+            runDir,
+            stageId: action.stageId,
+            visit: action.visit,
+            attempt: action.attempt,
+          },
+          repository,
+          workflow: action.workflow,
+          input: action.input,
+          signal: controller.signal,
+        });
+        if (!opened.ok) {
+          // A child the host refuses is the definition's mapping or configuration at fault.
+          written = await end(
+            "failed",
+            `child_rejected: ${action.stageId}: ${opened.reason}: ${opened.message}`,
+          );
+          break;
+        }
+        children[key] = { state: "running" };
+        const done = opened.done.then((ended) => {
+          children[key] = { state: "ended", end: ended };
+          return ended;
+        });
+        childRuns.push({ controller, done });
+        written = await write(() =>
+          recordChildOpened({
+            runDir,
+            stageId: action.stageId,
+            visit: action.visit,
+            attempt: action.attempt,
+            child: { runId: opened.runId, runDir: opened.runDir, workflow: opened.workflow },
+            input: opened.input,
+            ...lockWithin(snapshot),
+          }),
+        );
+        // A step the parent could not record must not run on unobserved: settle cancels it.
+        if (!written.ok) controller.abort("the parent could not record its workflow step");
+        break;
+      }
+
+      case "record_child": {
+        const result = action.end.result;
+        // A child that ended with an infrastructure error (an agent pane it could not stop) is not
+        // a clean result: the next step would share the checkout with whatever still runs.
+        if (result === null || action.end.error !== null) {
+          written = await end(
+            "failed",
+            `child_error: ${action.stageId} visit ${action.visit}: ${action.end.error ?? "the child run ended without a result"}${result !== null ? ` (child outcome ${result.outcome})` : ""}`,
+          );
+          break;
+        }
+        const dir = childAcceptedDir(action.stageId, action.visit, action.attempt);
+        const published = engineFile(
+          `${dir}/${CHILD_RESULT_FILE}`,
+          Buffer.from(`${JSON.stringify(result, null, 2)}\n`, "utf8"),
+        );
+        if (!published.ok) {
+          written = await end("failed", published.reason);
+          break;
+        }
+        // The child's accepted artifacts become the step's, each checked against the digest the
+        // child's result names before the parent's own immutable copy is made.
+        const copies: Array<{
+          stageId: string;
+          acceptedPath: string;
+          sha256: string;
+          bytes: number;
+        }> = [];
+        let problem: string | undefined;
+        for (const [childStage, ref] of Object.entries(result.artifacts.lastAcceptedByStage)) {
+          let bytes: Buffer;
+          try {
+            bytes = readRegularFile(ref.acceptedPath);
+          } catch (error) {
+            problem = `input_artifact_altered: child ${result.runId} ${childStage}: ${(error as Error).message}`;
+            break;
+          }
+          const copy = engineFile(`${dir}/${childStage}/${basename(ref.acceptedPath)}`, bytes);
+          if (!copy.ok) {
+            problem = copy.reason;
+            break;
+          }
+          if (copy.sha256 !== ref.sha256) {
+            problem = `input_artifact_altered: child ${result.runId} ${childStage} ${ref.acceptedPath} no longer matches its acceptance`;
+            break;
+          }
+          copies.push({
+            stageId: childStage,
+            acceptedPath: `${dir}/${childStage}/${basename(ref.acceptedPath)}`,
+            sha256: copy.sha256,
+            bytes: copy.bytes,
+          });
+        }
+        if (problem !== undefined) {
+          written = await end("failed", problem);
+          break;
+        }
+        written = await write(() =>
+          recordChildResult({
+            runDir,
+            stageId: action.stageId,
+            visit: action.visit,
+            attempt: action.attempt,
+            child: {
+              runId: result.runId,
+              outcome: result.outcome,
+              reason: result.reason,
+              ...(result.limit !== null ? { limit: result.limit } : {}),
+            },
+            result: {
+              acceptedPath: `${dir}/${CHILD_RESULT_FILE}`,
+              sha256: published.sha256,
+              bytes: published.bytes,
+            },
+            artifacts: copies,
+            ...lockWithin(snapshot),
+          }),
+        );
         break;
       }
 

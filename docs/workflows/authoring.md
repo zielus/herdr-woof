@@ -276,3 +276,28 @@ Real shipped behavior proving the authoring contract generalizes beyond
   whose downstream stage must act on an upstream artifact should say so in
   the request** — an agent cannot infer an artifact's authority from the
   artifact itself, only from what the request tells it about that artifact.
+
+## Implemented now (composition)
+
+- **Checkout.** A definition does not validate where it runs: `checkout` is a
+  reserved top-level input key the engine peels off before `validateInput`
+  (see [domain model](../architecture/domain-model.md#implemented-now-composition-checkout)).
+  `repository(input)` names the source repository; the run may work in a
+  worktree made from it. A definition that only reads the tree can declare
+  `checkout: "any"` so callers may run it on a dirty `current` tree; the
+  default, `"writable"`, refuses one (`checkout_dirty`).
+- **A workflow can be a step.** Add `{kind: "workflow", stageId, workflow:
+{name}, input(ctx), next(ctx)}` to `stages` and list it in `edges` like any
+  stage. `input(ctx)` maps the parent's validated input and
+  `ctx.history.children` (earlier steps' outcomes and copied artifacts) to the
+  child's raw input; the child's own `validateInput` checks it. `next(ctx)`
+  routes on `ctx.accepted.verdict`: `completed`, `failed`, `exhausted` or
+  `cancelled`. A later agent stage names a step's output with `{from: {stageId}}`
+  (the child's `result.json`) or `{from: {stageId, artifact: "<child stage>"}}`.
+  See [domain model](../architecture/domain-model.md#implemented-now-composition-workflow-steps).
+- **Check commands see their subject.** `command(input, ctx)` receives
+  `ctx.subject`, the accepted artifact the check is about (absent when a view
+  only shows the command), so a check can compare the repository with it.
+- **Input artifacts.** `inputArtifacts(input) → [{label, path, sha256}]` names
+  files from outside the run; they are checked, copied into the run and named in
+  requests with `{from: {input: "<label>"}}`.

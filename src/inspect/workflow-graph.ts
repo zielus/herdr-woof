@@ -14,8 +14,8 @@ import type { WorkflowDefinition } from "../scheduler/definition.js";
 
 /**
  * The graph of `definition` for a run planned as `plan`, with check commands
- * resolved from `input` when it validates. Null when the definition's agent
- * stages and checks are not exactly the plan's.
+ * resolved from `input` when it validates. Null when the definition's agent and
+ * workflow stages and checks are not exactly the plan's.
  */
 export function graphOf(
   definition: WorkflowDefinition<unknown>,
@@ -27,7 +27,10 @@ export function graphOf(
 ): WorkflowGraph | null {
   const planStages = new Set(plan.stages.map((stage) => stage.stageId));
   const planChecks = new Set(plan.checks ?? []);
-  const agentStages = definition.stages.filter((stage) => stage.kind === "agent");
+  // Agent and workflow stages both appear as the run's stages (a workflow stage in `workflows`).
+  const agentStages = definition.stages.filter(
+    (stage) => stage.kind === "agent" || stage.kind === "workflow",
+  );
   const checkStages = definition.stages.filter((stage) => stage.kind === "check");
   if (
     agentStages.length !== planStages.size ||
@@ -55,6 +58,14 @@ export function graphOf(
         kind: "agent",
         bindsRevision: stage.bindsRevision,
         command: null,
+      };
+    }
+    if (stage.kind === "workflow") {
+      return {
+        id: stage.stageId,
+        kind: "workflow",
+        bindsRevision: false,
+        command: stage.workflow.name,
       };
     }
     let command: string | null = null;

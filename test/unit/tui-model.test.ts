@@ -8,6 +8,9 @@ import {
   attempt,
   blocked,
   checkGate,
+  childOpened,
+  childResult,
+  COMPOSITE_PLAN,
   dispatched,
   gate,
   hostClaimed,
@@ -866,5 +869,41 @@ describe("runRowOf and titleOf", () => {
     expect(model.titleOf({ task: { title: 7 } })).toBeUndefined();
     expect(model.titleOf("a string")).toBeUndefined();
     expect(model.titleOf(undefined)).toBeUndefined();
+  });
+});
+
+describe("deriveRunModel: workflow steps (composition)", () => {
+  it("a step has no agent: its owner is the child run, its attempt names the child, a running step waits on its child", () => {
+    const plan = {
+      ...COMPOSITE_PLAN,
+      workflows: [
+        { stageId: "plan", workflow: "plan" },
+        { stageId: "build", workflow: "build-review" },
+      ],
+    };
+    const built = build([
+      opened(plan),
+      hostClaimed(),
+      childOpened("plan"),
+      childResult(4, "plan"),
+      gate(4, "plan", 1, 1, {
+        verdict: "completed",
+        reason: "planned",
+        next: { stageId: "build" },
+      }),
+      childOpened("build"),
+    ]);
+    const run = modelOf(built, {
+      graph: graphOf(builtInWorkflow("auto-build"), plan, undefined),
+    });
+    const step = run.steps.find((item) => item.id === "stage:plan:1");
+    expect(step?.participant).toBe("run run-1.plan.1");
+    expect(step?.details.map((item) => item.value).join("\n")).toContain("child run run-1.plan.1");
+    expect(step?.details.map((item) => item.value).join("\n")).not.toContain("not dispatched");
+    const running = run.steps.find((item) => item.id === "stage:build:1");
+    expect(running?.participant).toBe("run run-1.build.1");
+    expect(running?.details).toContainEqual(
+      expect.objectContaining({ label: "waiting", value: "child run run-1.build.1" }),
+    );
   });
 });

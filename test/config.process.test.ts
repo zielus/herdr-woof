@@ -736,6 +736,9 @@ describe("woof config show: configuration matrix", () => {
     expect(bypassWarnings(safe)).toEqual([]);
     expect(safe.stderr).not.toContain("permission_bypass_configured");
 
+    // A writable workflow never starts on uncommitted work: the first run's change is committed.
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "first run");
     const unsafe = startForeground(
       env,
       baseInput(env, {

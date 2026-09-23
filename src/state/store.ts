@@ -7,9 +7,18 @@ import {
   openSync,
   readFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { sha256Hex } from "../contracts/canonical-json.js";
+import type { ResolvedCheckout } from "../contracts/checkout.js";
+import type {
+  ChildArtifactCopy,
+  StageChildOpenedRecord,
+  StageChildResultRecord,
+} from "../journal/child-records.js";
+
+// The workflow-step paths the scheduler publishes into, from the record contract that checks them.
+export { CHILD_RESULT_FILE, childAcceptedDir } from "../journal/child-records.js";
 import { isId, type RejectionDetail } from "../contracts/envelope.js";
 import type { StoreReason } from "../contracts/reasons.js";
 import { validateRunPlan } from "../domain/plan.js";
@@ -65,7 +74,9 @@ import {
   type JournalRecord,
   type NewJournalRecord,
   type RequestDispatchedRecord,
+  type RunInputArtifact,
   type RunOpenedRecord,
+  type RunParent,
   type RunTerminatedRecord,
 } from "../journal/records.js";
 import { writeAll } from "../journal/write-all.js";
@@ -110,6 +121,15 @@ export interface OpenRunInput {
    * workflow; it records what the run was admitted with.
    */
   configuration?: unknown;
+  /** The resolved checkout, recorded on run.opened (composition). */
+  checkout?: ResolvedCheckout;
+  /** The parent's workflow step, for a child run (composition). */
+  parent?: RunParent;
+  /**
+   * Input artifacts to copy into `inputs/<n>/<file>` (composition): each source's bytes must
+   * still hash to its sha256, else the open is refused `input_invalid`.
+   */
+  inputArtifacts?: Array<{ label: string; path: string; sha256: string }>;
   /**
    * The run host's claim. `host.claimed` is then appended right after
    * `run.opened` under the same journal lock, so no other writer (a cancel) can
@@ -369,12 +389,43 @@ export async function openRun(input: OpenRunInput): Promise<OpenRunOutcome> {
         if (written !== undefined) return rejected("run_exists", written);
         configRef = { path: CONFIG_FILE, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
       }
+      const copied: RunInputArtifact[] = [];
+      for (const [index, artifact] of (input.inputArtifacts ?? []).entries()) {
+        const rel = `inputs/${index + 1}/${basename(artifact.path)}`;
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(artifact.path);
+        } catch (error) {
+          return rejected(
+            "input_invalid",
+            `input artifact ${artifact.label} (${artifact.path}) is unreadable: ${(error as Error).message}`,
+          );
+        }
+        if (sha256Hex(bytes) !== artifact.sha256)
+          return rejected(
+            "input_invalid",
+            `input artifact ${artifact.label} (${artifact.path}) no longer has sha256 ${artifact.sha256}`,
+          );
+        mkdirSync(join(runDir, "inputs", String(index + 1)), { recursive: true });
+        const written = writeRunFile(runDir, rel, bytes);
+        if (written !== undefined) return rejected("run_exists", written);
+        copied.push({
+          label: artifact.label,
+          path: rel,
+          sha256: artifact.sha256,
+          bytes: bytes.byteLength,
+          source: artifact.path,
+        });
+      }
       const record = appendRecord(runDir, records, {
         type: "run.opened",
         runId: input.runId,
         plan: validated.plan,
         ...(inputRef !== undefined ? { input: inputRef } : {}),
         ...(configRef !== undefined ? { config: configRef } : {}),
+        ...(input.checkout !== undefined ? { checkout: { ...input.checkout } } : {}),
+        ...(input.parent !== undefined ? { parent: { ...input.parent } } : {}),
+        ...(copied.length > 0 ? { inputArtifacts: copied } : {}),
       }) as RunOpenedRecord;
       // Same lock as run.opened: a cancel cannot close the run before its host is on record.
       // A host record is never required for the run: a failed write leaves `hostClaimed` null.
@@ -942,4 +993,76 @@ function rejected(
   details: RejectionDetail[] = [],
 ): { outcome: "rejected"; reason: StoreReason; message: string; details: RejectionDetail[] } {
   return { outcome: "rejected", reason, message, details };
+}
+
+export interface ChildOpenedInput extends StoreInput {
+  stageId: string;
+  visit: number;
+  attempt: number;
+  child: { runId: string; runDir: string; workflow: { name: string; version: string } };
+  input: { sha256: string; bytes: number };
+}
+
+/** Opens a workflow step's attempt for the child run it started (composition). */
+export async function recordChildOpened(
+  input: ChildOpenedInput,
+): Promise<StoreOutcome<StageChildOpenedRecord>> {
+  return appendFact<StageChildOpenedRecord>(input, {
+    type: "stage.child_opened",
+    stageId: input.stageId,
+    visit: input.visit,
+    attempt: input.attempt,
+    child: {
+      runId: input.child.runId,
+      runDir: input.child.runDir,
+      workflow: { name: input.child.workflow.name, version: input.child.workflow.version },
+    },
+    input: { sha256: input.input.sha256, bytes: input.input.bytes },
+  });
+}
+
+export interface ChildResultInput extends StoreInput {
+  stageId: string;
+  visit: number;
+  attempt: number;
+  child: { runId: string; outcome: TerminalOutcome; reason: string; limit?: keyof Limits };
+  /** The published `result.json`, relative to the run directory. */
+  result: { acceptedPath: string; sha256: string; bytes: number };
+  artifacts: ChildArtifactCopy[];
+}
+
+/**
+ * Accepts a workflow step with its child run's terminal result (composition). The receipt is
+ * derived from the record's own seq and the result's digest, under the journal lock.
+ */
+export async function recordChildResult(
+  input: ChildResultInput,
+): Promise<StoreOutcome<StageChildResultRecord>> {
+  const record = (seq: number): NewJournalRecord => ({
+    type: "stage.child_result",
+    stageId: input.stageId,
+    visit: input.visit,
+    attempt: input.attempt,
+    child: {
+      runId: input.child.runId,
+      outcome: input.child.outcome,
+      reason: input.child.reason.slice(0, 500) || "no reason recorded",
+      ...(input.child.limit !== undefined ? { limit: input.child.limit } : {}),
+    },
+    status: input.child.outcome === "completed" ? "completed" : "failed",
+    verdict: input.child.outcome,
+    receiptId: `rcpt-${seq}-${input.result.sha256.slice(0, 12)}`,
+    artifact: {
+      path: input.result.acceptedPath,
+      acceptedPath: input.result.acceptedPath,
+      sha256: input.result.sha256,
+      bytes: input.result.bytes,
+    },
+    artifacts: input.artifacts.map((copy) => ({ ...copy })),
+  });
+  // Field contract first, outside the lock: a malformed fact is an engine bug.
+  candidateRecord([], record(1));
+  const outcome = await appendFacts(input, (state) => [record(state.revision + 1)]);
+  if (outcome.outcome === "rejected") return outcome;
+  return recorded(outcome.records[0] as StageChildResultRecord);
 }

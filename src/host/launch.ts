@@ -8,12 +8,24 @@ import {
   type ConfigFlags,
   type ResolvedConfiguration,
 } from "../config/resolve.js";
+import {
+  peelCheckout,
+  resolvedCheckoutProblem,
+  type ResolvedCheckout,
+} from "../contracts/checkout.js";
 import { isId, isPlainObject } from "../contracts/envelope.js";
 import { execHerdr, type ExecResult } from "../runtime/herdr/exec.js";
 import { paneWorkspaceId, parseTabCreated } from "../runtime/herdr/parse.js";
 import { admitWorkflow } from "../scheduler/admission.js";
 import { validateWorkflowDefinition } from "../scheduler/definition.js";
 import { readSnapshot } from "../state/snapshot.js";
+import {
+  createHerdrWorktree,
+  defaultCheckoutMode,
+  discardCreatedCheckout,
+  topLevelCheckout,
+  type HerdrWorktree,
+} from "./checkout.js";
 import { abandonHost } from "./claim.js";
 import { entryExists, readJsonFile, shellQuote, writeExclusiveFile } from "./files.js";
 import { sha256Hex } from "../contracts/canonical-json.js";
@@ -49,6 +61,8 @@ export interface LaunchRequest {
   runId: string;
   requestedAt: string;
   launcher: { pid: number; paneId: string | null };
+  /** The worktree the launcher created for the run (composition); the host admits into it. */
+  checkout?: ResolvedCheckout;
 }
 
 /** Why a run directory cannot take a new run, or undefined when it can. */
@@ -72,6 +86,10 @@ export function readLaunchRequest(runDir: string): LaunchRequest | string {
   if (value["projectDir"] !== null && typeof value["projectDir"] !== "string")
     return `${path}: projectDir is invalid`;
   if (!isPlainObject(value["flags"])) return `${path}: flags is invalid`;
+  if (value["checkout"] !== undefined) {
+    const problem = resolvedCheckoutProblem(value["checkout"]);
+    if (problem !== undefined) return `${path}: ${problem}`;
+  }
   return value as unknown as LaunchRequest;
 }
 
@@ -114,6 +132,13 @@ export async function launchInPane(
   const runsDir = configuration.settings.runsDir.value;
   const runDir = options.runDir ?? join(runsDir, options.runId);
 
+  // The checkout is resolved once, here, before the host exists (composition.md): a worktree is
+  // created now so the host can run in its workspace's root pane.
+  const herdr = { bin: options.herdrBin, env: options.env };
+  const defaultMode = defaultCheckoutMode(options.env, options.flags.runtimeModule);
+  let worktree: HerdrWorktree | undefined;
+  let checkout: ResolvedCheckout | undefined;
+  const workflowName = configuration.workflow?.value.name ?? options.workflow ?? "build-review";
   // Only a built-in workflow is admitted here: a project module's code runs once, in the host.
   // The digest of its admitted input is what the host's run.opened records (input.json).
   let expectedInputSha256: string | undefined;
@@ -132,21 +157,82 @@ export async function launchInPane(
       input: options.input,
       runDir,
       configuration: admissionConfiguration(configuration),
+      checkout: topLevelCheckout({
+        herdr,
+        defaultMode,
+        runId: options.runId,
+        workflow: workflowName,
+        created: (made) => {
+          worktree = made;
+        },
+      }),
     });
-    if (!admitted.ok) return rejected(admitted.reason, admitted.message, admitted.details);
+    if (!admitted.ok) {
+      const discarded = await discardCreatedCheckout(herdr, admitted.created);
+      return rejected(
+        admitted.reason,
+        discarded === undefined ? admitted.message : `${admitted.message}; ${discarded}`,
+        admitted.details,
+      );
+    }
+    if (admitted.checkout.created) checkout = admitted.checkout;
     expectedInputSha256 = sha256Hex(
       Buffer.from(`${JSON.stringify(admitted.input, null, 2)}\n`, "utf8"),
     );
+  } else {
+    // A project module is not loaded here: its worktree is made from the project, which
+    // admission in the host requires the workflow's repository to be.
+    const peeled = peelCheckout(options.input);
+    if (!peeled.ok)
+      return rejected("input_invalid", "the checkout policy is invalid", peeled.details);
+    const spec = peeled.spec;
+    if ((spec?.mode ?? defaultMode) === "worktree") {
+      const source = configuration.roots.project?.root ?? null;
+      if (source === null)
+        return rejected(
+          "project_mismatch",
+          "a worktree checkout is made from the project, and no project was resolved; pass --project <repo>",
+        );
+      const wanted = spec?.mode === "worktree" ? spec : undefined;
+      const made = await createHerdrWorktree(herdr, {
+        source,
+        branch: wanted?.branch ?? `woof/${options.runId}`,
+        base: wanted?.base ?? null,
+        label: wanted?.label ?? `woof:${workflowName}`,
+      });
+      if (!made.ok) return rejected(made.reason, made.message);
+      worktree = made;
+      checkout = {
+        mode: "worktree",
+        path: made.path,
+        source,
+        branch: made.branch,
+        base: made.base,
+        workspaceId: made.workspaceId,
+        created: true,
+        keep: wanted?.keep ?? true,
+        inherited: false,
+      };
+    }
   }
+  /** Every refusal from here removes the worktree this launch created. */
+  const refuseLaunch = async (reason: string, message: string, details: unknown[] = []) => {
+    const discarded = await discardCreatedCheckout(herdr, checkout);
+    return rejected(
+      reason,
+      discarded === undefined ? message : `${message}; ${discarded}`,
+      details,
+    );
+  };
 
   const occupied = runDirOccupied(runDir);
-  if (occupied !== undefined) return rejected("run_exists", occupied);
+  if (occupied !== undefined) return refuseLaunch("run_exists", occupied);
   try {
     if (options.runDir === undefined) mkdirSync(runsDir, { recursive: true, mode: 0o700 });
     mkdirSync(runDir, { recursive: true });
   } catch (error) {
     // A file at the runs directory makes mkdir fail with EEXIST: that is no run, it is infrastructure.
-    return rejected(
+    return refuseLaunch(
       "journal_write_failed",
       `cannot create the run directory ${runDir}: ${(error as Error).message}`,
     );
@@ -164,6 +250,7 @@ export async function launchInPane(
       runId: options.runId,
       requestedAt: new Date().toISOString(),
       launcher: { pid: process.pid, paneId: options.launcherPaneId },
+      ...(checkout !== undefined ? { checkout } : {}),
     };
     const bytes = Buffer.from(`${JSON.stringify(request, null, 2)}\n`, "utf8");
     launchSha256 = sha256Hex(bytes);
@@ -171,8 +258,11 @@ export async function launchInPane(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return code === "EEXIST"
-      ? rejected("run_exists", `${runDir} already holds a run (${LAUNCH_FILE})`)
-      : rejected("journal_write_failed", `cannot prepare ${runDir}: ${(error as Error).message}`);
+      ? refuseLaunch("run_exists", `${runDir} already holds a run (${LAUNCH_FILE})`)
+      : refuseLaunch(
+          "journal_write_failed",
+          `cannot prepare ${runDir}: ${(error as Error).message}`,
+        );
   }
 
   const exec = (args: string[]) =>
@@ -183,25 +273,11 @@ export async function launchInPane(
       graceMs: 2000,
     });
   const projectRoot = configuration.roots.project?.root ?? options.projectDir ?? process.cwd();
-  // The run host gets its own unfocused tab and runs in that tab's root pane. The tab goes to the
-  // workspace Herdr reports for the launcher's (or the action's focused) pane; HERDR_WORKSPACE_ID,
-  // which can be absent or stale, is only the fallback, and with neither Herdr's default decides.
-  const workspaceId = await launchWorkspaceId(
-    exec,
-    options.workspacePaneId ?? options.launcherPaneId,
-    options.env,
-  );
-  const createArgs = [
-    "tab",
-    "create",
-    ...(workspaceId !== undefined ? ["--workspace", workspaceId] : []),
-    "--cwd",
-    projectRoot,
-    "--label",
-    `woof:${configuration.workflow?.value.name ?? options.workflow ?? "host"}`,
-    "--no-focus",
-  ];
-  const created = await exec(createArgs);
+  /** Closes what this launch opened for its host: the worktree it created, else the host's tab. */
+  const closeHostTab = async (tabId: string): Promise<string> =>
+    worktree !== undefined
+      ? ((await discardCreatedCheckout(herdr, checkout)) ?? "")
+      : closeTab(exec, tabId);
   // A launch this launcher reports as failed must never start later: close the unclaimed directory.
   // An abandonment that succeeds proves no host claimed the directory, so the tab created for that
   // host is closed too; a directory a host did claim keeps its tab (that host may still run there).
@@ -209,22 +285,53 @@ export async function launchInPane(
     const closed = closeRunDir(runDir, "woof run start");
     const tabNote =
       createdTabId === undefined
-        ? ""
+        ? worktree !== undefined && closed.ok
+          ? `; ${await closeHostTab("")}`
+          : ""
         : closed.ok
-          ? `; ${await closeTab(exec, createdTabId)}`
+          ? `; ${await closeHostTab(createdTabId)}`
           : `; the created tab ${createdTabId} is left open`;
     return rejected("host_pane_failed", `${message}; ${closed.message}${tabNote}`);
   };
-  const reply = created.exitCode === 0 ? resultOf(created.stdout) : undefined;
-  if (reply === undefined) {
-    return paneFailed(
-      `herdr tab create failed: ${created.spawnErrorMessage ?? (created.stderr.trim().split("\n")[0] || `exit ${created.exitCode ?? created.signal ?? "unknown"}, stdout ${JSON.stringify(created.stdout.slice(0, 200))}`)}`,
-      undefined,
+  let tab: { paneId: string; tabId: string; workspaceId: string };
+  if (worktree !== undefined) {
+    // The host runs in the root pane of the run's own worktree workspace, where every agent tab
+    // of the run then opens too (composition.md).
+    tab = { paneId: worktree.rootPaneId, tabId: worktree.tabId, workspaceId: worktree.workspaceId };
+  } else {
+    // The run host gets its own unfocused tab and runs in that tab's root pane. The tab goes to
+    // the workspace Herdr reports for the launcher's (or the action's focused) pane;
+    // HERDR_WORKSPACE_ID, which can be absent or stale, is only the fallback, and with neither
+    // Herdr's default decides.
+    const workspaceId = await launchWorkspaceId(
+      exec,
+      options.workspacePaneId ?? options.launcherPaneId,
+      options.env,
     );
+    const createArgs = [
+      "tab",
+      "create",
+      ...(workspaceId !== undefined ? ["--workspace", workspaceId] : []),
+      "--cwd",
+      projectRoot,
+      "--label",
+      `woof:${configuration.workflow?.value.name ?? options.workflow ?? "host"}`,
+      "--no-focus",
+    ];
+    const created = await exec(createArgs);
+    const reply = created.exitCode === 0 ? resultOf(created.stdout) : undefined;
+    if (reply === undefined) {
+      return paneFailed(
+        `herdr tab create failed: ${created.spawnErrorMessage ?? (created.stderr.trim().split("\n")[0] || `exit ${created.exitCode ?? created.signal ?? "unknown"}, stdout ${JSON.stringify(created.stdout.slice(0, 200))}`)}`,
+        undefined,
+      );
+    }
+    // Herdr has created the tab by now: a reply that does not verify still names the tab to close.
+    const parsed = parseTabCreated(reply, workspaceId);
+    if (!parsed.ok)
+      return paneFailed(`herdr tab create failed: ${parsed.message}`, parsed.createdTabId);
+    tab = parsed;
   }
-  // Herdr has created the tab by now: a reply that does not verify still names the tab to close.
-  const tab = parseTabCreated(reply, workspaceId);
-  if (!tab.ok) return paneFailed(`herdr tab create failed: ${tab.message}`, tab.createdTabId);
   const { paneId, tabId } = tab;
   // The verified workspace of the host's tab travels to the host process (`env` works in any
   // shell), whose runtime adapter creates the agents' tabs there whatever the pane inherited.
@@ -286,10 +393,19 @@ export async function launchInPane(
         // An abandonment that succeeds proves no host owns the directory: its tab is closed too.
         const closed = closeRunDir(runDir, "woof run start after the run host's claim failed");
         // oxlint-disable-next-line no-await-in-loop
-        const tabNote = closed.ok ? `; ${await closeTab(exec, tabId)}` : "";
+        const tabNote = closed.ok ? `; ${await closeHostTab(tabId)}` : "";
         return {
           code: 3,
           output: { ...own, message: `${String(own["message"])}; ${closed.message}${tabNote}` },
+        };
+      }
+      if (own["outcome"] === "rejected" && worktree !== undefined) {
+        // The host refused the run: the worktree created for it goes too (its pane with it).
+        // oxlint-disable-next-line no-await-in-loop
+        const discarded = await closeHostTab(tabId);
+        return {
+          code: isHostInfraReason(reason) ? 3 : 2,
+          output: { ...own, message: `${String(own["message"])}; ${discarded}` },
         };
       }
       return {
@@ -306,7 +422,7 @@ export async function launchInPane(
           return rejected(
             "host_not_started",
             // oxlint-disable-next-line no-await-in-loop
-            `the run host in pane ${paneId} did not claim ${runDir} within ${timeoutMs} ms; the run directory is closed (abandoned) and no run will start there; ${await closeTab(exec, tabId)}`,
+            `the run host in pane ${paneId} did not claim ${runDir} within ${timeoutMs} ms; the run directory is closed (abandoned) and no run will start there; ${await closeHostTab(tabId)}`,
           );
         }
         hostSeenAt = now;
@@ -406,7 +522,12 @@ function startedOutput(
   runDir: string,
   rootPaneId: string,
   tabId: string,
-  snapshot: { runId: string; workflow: unknown; config: { sha256: string } | null },
+  snapshot: {
+    runId: string;
+    workflow: unknown;
+    config: { sha256: string } | null;
+    checkout: ResolvedCheckout | null;
+  },
 ): Record<string, unknown> {
   const host = readHostInfo(runDir);
   const recorded = readJsonFile(join(runDir, "config.json")) as
@@ -431,6 +552,7 @@ function startedOutput(
       tabId,
       pid: host?.pid ?? null,
     },
+    checkout: snapshot.checkout,
     configuration: {
       sha256: snapshot.config?.sha256 ?? null,
       agents,

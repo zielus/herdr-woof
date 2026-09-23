@@ -5,6 +5,7 @@ import {
   isVerdictMarker,
   type RejectionDetail,
 } from "../contracts/envelope.js";
+import type { CheckoutAccess } from "../contracts/checkout.js";
 import { jsonValueProblem } from "../contracts/json-value.js";
 import {
   LIMIT_KEYS,
@@ -15,6 +16,8 @@ import {
 } from "../domain/types.js";
 import type { AcceptedRef, EvidenceRef } from "../state/result.js";
 import type { SnapshotGate } from "../state/snapshot.js";
+
+export type { AcceptedRef } from "../state/result.js";
 
 /**
  * Workflow definition contract (p3, unstable until v1). A definition is an ES
@@ -51,13 +54,28 @@ export interface WorkflowDefinition<Input = unknown> {
   resolveLimits(input: Input): Partial<Limits>;
   /** Built-in value per limit key, below input and configuration (p4, optional). */
   limitDefaults?: Partial<Limits>;
-  /** Absolute path of the git work tree the agents work in. */
+  /**
+   * Absolute path of the git work tree the input names: the source of the run's checkout. The
+   * run works there (`current`), in a worktree created from it, or in a caller-named `path`;
+   * admission resolves which, from the reserved input key `checkout` (composition.md).
+   */
   repository(input: Input): string;
-  /** An agent stage id. */
+  /**
+   * What the workflow's agents do to the tree (default "writable"): a writable workflow refuses
+   * a `current` or `path` checkout with uncommitted or untracked changes (`checkout_dirty`).
+   */
+  checkout?: CheckoutAccess;
+  /**
+   * Artifacts from outside the run that its stages may name as inputs (`{from: {input: label}}`),
+   * by path and sha256 (composition, optional). Admission checks each digest; the run open copies
+   * each file into the run directory, where every agent of the run can read it.
+   */
+  inputArtifacts?(input: Input): InputArtifact[];
+  /** An agent or workflow stage id. */
   start: string;
-  /** Entering this agent stage starts a round; null when the workflow has no rounds. */
+  /** Entering this agent or workflow stage starts a round; null when the workflow has no rounds. */
   roundStage: string | null;
-  stages: Array<AgentStage<Input> | CheckStage<Input>>;
+  stages: Array<AgentStage<Input> | CheckStage<Input> | WorkflowStage<Input>>;
   /** Every stage and check id → allowed next ids and terminal outcomes ("completed", "failed"). */
   edges: Record<string, EdgeTarget[]>;
 }
@@ -88,10 +106,42 @@ export interface AgentStage<Input = unknown> {
   next(ctx: StageGateContext<Input>): Transition;
 }
 
+/**
+ * A workflow as a step (composition): the stage runs the named workflow as a child run in the
+ * parent's checkout. `input` maps the parent's validated input and history to the child's raw
+ * input, which the child's own definition validates. The step's verdict is the child's terminal
+ * outcome (`completed`, `failed`, `exhausted` or `cancelled`) and `next` routes on it; its
+ * accepted artifact is the child's `RunResult` (`result.json`), and the child's latest accepted
+ * artifact per child stage is copied with it (`history.children[stageId].artifacts`).
+ */
+export interface WorkflowStage<Input = unknown> {
+  kind: "workflow";
+  stageId: string;
+  workflow: { name: string };
+  input(ctx: RequestContext<Input>): unknown;
+  next(ctx: StageGateContext<Input>): Transition;
+}
+
+export interface InputArtifact {
+  label: string;
+  /** Absolute path of the file to copy into the run. */
+  path: string;
+  sha256: string;
+}
+
 export interface CheckStage<Input = unknown> {
   kind: "check";
   checkId: string;
-  command(input: Input): { argv: string[]; timeoutMs: number };
+  /**
+   * The command to run. `ctx.subject` is the accepted artifact the check is about (composition,
+   * optional to read); `ctx.start` is the repository revision recorded on the run's first request
+   * dispatch, before any agent acted (null when nothing was dispatched). `ctx` is absent when a
+   * presentation layer asks for the command to show it.
+   */
+  command(
+    input: Input,
+    ctx?: { subject: AcceptedRef; start: Revision | null },
+  ): { argv: string[]; timeoutMs: number };
   next(ctx: CheckGateContext<Input>): Transition;
 }
 
@@ -111,14 +161,32 @@ export type Transition = { decision: "pass" | "reject"; reason: string } & (
 
 export interface InputRef {
   label: string;
-  /** Latest accepted artifact of a stage, or latest evidence of a check. */
-  from: { stageId: string } | { checkId: string };
+  /**
+   * Latest accepted artifact of a stage, or latest evidence of a check. For a workflow stage,
+   * `artifact` names a child stage whose copied artifact is wanted instead of `result.json`.
+   * `input` names one of the run's input artifacts (`inputArtifacts`) by label.
+   */
+  from: { stageId: string; artifact?: string } | { checkId: string } | { input: string };
+}
+
+/** The latest child result of a workflow stage, as definitions see it. */
+export interface ChildRef {
+  runId: string;
+  /** Absolute run directory of the child run. */
+  runDir: string;
+  workflow: { name: string; version: string };
+  outcome: "completed" | "failed" | "exhausted" | "cancelled";
+  reason: string;
+  /** The parent's own immutable copy of the child's latest accepted artifact per child stage. */
+  artifacts: Record<string, AcceptedRef>;
 }
 
 export interface RunHistory {
   gates: SnapshotGate[];
   /** Latest accepted artifact per stage id. */
   latestAccepted: Record<string, AcceptedRef>;
+  /** Latest child result per workflow stage id (composition). */
+  children: Record<string, ChildRef>;
 }
 
 interface BaseContext<Input> {
@@ -158,6 +226,8 @@ export type ValidateDefinitionResult<Input> =
 const OUTCOME_TARGETS: ReadonlySet<string> = new Set(["completed", "failed"]);
 const ARTIFACT_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DEFINITION_FUNCTIONS = ["validateInput", "resolveAgents", "resolveLimits", "repository"];
+/** The verdicts a workflow stage routes on: its child run's terminal outcome. */
+export const WORKFLOW_VERDICTS = ["completed", "failed", "exhausted", "cancelled"] as const;
 
 /**
  * Validates a definition's static shape before any input is read: schema
@@ -182,6 +252,11 @@ export function validateWorkflowDefinition<Input = unknown>(
   for (const field of DEFINITION_FUNCTIONS) {
     if (typeof value[field] !== "function") fail(field, "must be a function");
   }
+  const access = value["checkout"];
+  if (access !== undefined && access !== "any" && access !== "writable")
+    fail("checkout", 'must be "any" or "writable"');
+  if (value["inputArtifacts"] !== undefined && typeof value["inputArtifacts"] !== "function")
+    fail("inputArtifacts", "must be a function");
   const limitDefaults = value["limitDefaults"];
   if (limitDefaults !== undefined) {
     if (!isPlainObject(limitDefaults)) {
@@ -206,7 +281,11 @@ export function validateWorkflowDefinition<Input = unknown>(
 
   const agentIds = new Set<string>();
   const agents = value["agents"];
-  if (!Array.isArray(agents) || agents.length === 0) {
+  // A definition whose steps are all workflows has no agents of its own (composition).
+  const composite =
+    Array.isArray(value["stages"]) &&
+    value["stages"].some((stage) => isPlainObject(stage) && stage["kind"] === "workflow");
+  if (!Array.isArray(agents) || (agents.length === 0 && !composite)) {
     fail("agents", "must be a non-empty array");
   } else {
     for (const [index, agent] of agents.entries()) {
@@ -224,7 +303,9 @@ export function validateWorkflowDefinition<Input = unknown>(
   }
 
   const agentStages = new Set<string>();
+  const workflowStages = new Set<string>();
   const checks = new Set<string>();
+  const taken = (id: string) => agentStages.has(id) || checks.has(id) || workflowStages.has(id);
   const stages = value["stages"];
   if (!Array.isArray(stages) || stages.length === 0) {
     fail("stages", "must be a non-empty array");
@@ -238,8 +319,7 @@ export function validateWorkflowDefinition<Input = unknown>(
       if (stage["kind"] === "agent") {
         const id = stage["stageId"];
         if (!isId(id)) fail(`${path}.stageId`, "must be a valid id");
-        else if (agentStages.has(id) || checks.has(id))
-          fail(`${path}.stageId`, `duplicates stage or check ${id}`);
+        else if (taken(id)) fail(`${path}.stageId`, `duplicates stage or check ${id}`);
         else agentStages.add(id);
         if (!isId(stage["agentId"]) || !agentIds.has(stage["agentId"])) {
           fail(`${path}.agentId`, "must name a declared agent");
@@ -272,31 +352,41 @@ export function validateWorkflowDefinition<Input = unknown>(
       } else if (stage["kind"] === "check") {
         const id = stage["checkId"];
         if (!isId(id)) fail(`${path}.checkId`, "must be a valid id");
-        else if (agentStages.has(id) || checks.has(id))
-          fail(`${path}.checkId`, `duplicates stage or check ${id}`);
+        else if (taken(id)) fail(`${path}.checkId`, `duplicates stage or check ${id}`);
         else checks.add(id);
         for (const field of ["command", "next"]) {
           if (typeof stage[field] !== "function") fail(`${path}.${field}`, "must be a function");
         }
+      } else if (stage["kind"] === "workflow") {
+        const id = stage["stageId"];
+        if (!isId(id)) fail(`${path}.stageId`, "must be a valid id");
+        else if (taken(id)) fail(`${path}.stageId`, `duplicates stage or check ${id}`);
+        else workflowStages.add(id);
+        const workflow = stage["workflow"];
+        if (!isPlainObject(workflow) || !isId(workflow["name"]))
+          fail(`${path}.workflow`, "must be { name: a workflow name }");
+        for (const field of ["input", "next"]) {
+          if (typeof stage[field] !== "function") fail(`${path}.${field}`, "must be a function");
+        }
       } else {
-        fail(`${path}.kind`, 'must be "agent" or "check"');
+        fail(`${path}.kind`, 'must be "agent", "check" or "workflow"');
       }
     }
   }
 
-  if (typeof value["start"] !== "string" || !agentStages.has(value["start"])) {
-    fail("start", "must name an agent stage");
-  }
+  const steps = (id: unknown) =>
+    typeof id === "string" && (agentStages.has(id) || workflowStages.has(id));
+  if (!steps(value["start"])) fail("start", "must name an agent or workflow stage");
   const roundStage = value["roundStage"];
-  if (roundStage !== null && (typeof roundStage !== "string" || !agentStages.has(roundStage))) {
-    fail("roundStage", "must be null or name an agent stage");
+  if (roundStage !== null && !steps(roundStage)) {
+    fail("roundStage", "must be null or name an agent or workflow stage");
   }
 
   const edges = value["edges"];
   if (!isPlainObject(edges)) {
     fail("edges", "must be an object");
   } else {
-    const known = new Set([...agentStages, ...checks]);
+    const known = new Set([...agentStages, ...checks, ...workflowStages]);
     for (const key of Object.keys(edges)) {
       if (!known.has(key)) fail(`edges.${key}`, "names no stage or check");
     }
@@ -446,13 +536,19 @@ export function stageRequestProblem(value: unknown): string | undefined {
     if (!isPlainObject(ref) || typeof ref["label"] !== "string" || ref["label"] === "")
       return `inputs[${index}] must be { label: non-empty string, from }`;
     const from = ref["from"];
-    const keys = isPlainObject(from) ? Object.keys(from) : [];
+    const keys = isPlainObject(from) ? Object.keys(from).toSorted() : [];
     const valid =
       isPlainObject(from) &&
-      keys.length === 1 &&
-      ((keys[0] === "stageId" && typeof from["stageId"] === "string") ||
-        (keys[0] === "checkId" && typeof from["checkId"] === "string"));
-    if (!valid) return `inputs[${index}].from must be { stageId: string } or { checkId: string }`;
+      ((keys.length === 1 && keys[0] === "stageId" && typeof from["stageId"] === "string") ||
+        (keys.length === 2 &&
+          keys[0] === "artifact" &&
+          keys[1] === "stageId" &&
+          typeof from["stageId"] === "string" &&
+          typeof from["artifact"] === "string") ||
+        (keys.length === 1 && keys[0] === "checkId" && typeof from["checkId"] === "string") ||
+        (keys.length === 1 && keys[0] === "input" && typeof from["input"] === "string"));
+    if (!valid)
+      return `inputs[${index}].from must be { stageId: string, artifact?: string }, { checkId: string } or { input: string }`;
   }
   const task = value["task"];
   if (
@@ -481,6 +577,14 @@ export function agentStageOf<Input>(
 ): AgentStage<Input> | undefined {
   const stage = definition.stages.find((item) => item.kind === "agent" && item.stageId === id);
   return stage?.kind === "agent" ? stage : undefined;
+}
+
+export function workflowStageOf<Input>(
+  definition: WorkflowDefinition<Input>,
+  id: string,
+): WorkflowStage<Input> | undefined {
+  const stage = definition.stages.find((item) => item.kind === "workflow" && item.stageId === id);
+  return stage?.kind === "workflow" ? stage : undefined;
 }
 
 export function checkStageOf<Input>(

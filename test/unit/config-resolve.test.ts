@@ -124,16 +124,28 @@ describe("configuration composition", () => {
     };
     // The catalog is the only source of workflow names: no branch in resolve.ts names one.
     expect(Object.keys(catalog.workflows).toSorted()).toEqual(builtInWorkflowNames().toSorted());
-    expect(builtInWorkflowNames().toSorted()).toEqual(["build-review", "plan-build-review"]);
+    expect(builtInWorkflowNames().toSorted()).toEqual([
+      "auto-build",
+      "build-review",
+      "plan",
+      "plan-build-review",
+    ]);
     expect(Object.keys(catalog.roles).toSorted()).toEqual(["builder", "planner", "reviewer"]);
     // Prototype-free: a workflow or role named after an Object.prototype key is simply absent.
     expect(Object.getPrototypeOf(catalog.workflows)).toBe(null);
     expect(Object.getPrototypeOf(catalog.roles)).toBe(null);
     expect(Object.hasOwn(catalog.workflows, "constructor")).toBe(false);
     expect(Object.hasOwn(catalog.roles, "toString")).toBe(false);
-    for (const entry of Object.values(catalog.workflows)) {
+    // Review loops get three rounds; plan and the composite auto-build have no rounds of their own.
+    const rounds: Record<string, number> = {
+      "auto-build": 1,
+      "build-review": 3,
+      plan: 1,
+      "plan-build-review": 3,
+    };
+    for (const [name, entry] of Object.entries(catalog.workflows)) {
       expect(entry.version).toBe("1");
-      expect(entry.limitDefaults?.["maxRounds"]).toBe(3);
+      expect(entry.limitDefaults?.["maxRounds"], name).toBe(rounds[name]);
     }
     for (const role of Object.values(catalog.roles)) {
       expect(role).toEqual({ kind: "claude", model: null, args: [] });

@@ -24,7 +24,9 @@ import {
   acceptedPathFor,
   receiptFromAccepted,
   receiptIdFor,
+  type AttemptOpenedRecord,
   type JournalRecord,
+  type SubmissionAcceptedRecord,
 } from "../journal/records.js";
 import { attemptKey, replay, verdictAllowed } from "../state/reducer.js";
 import {
@@ -221,7 +223,8 @@ function rejectionIdentity(
     const claimed = claimedIdentity(raw);
     if (claimed === undefined || claimed.runId !== runId) return undefined;
     const attempt = state.attempts.get(attemptKey(claimed.stageId, claimed.visit, claimed.attempt));
-    if (attempt === undefined || attempt.opened.agentId !== claimed.agentId) return undefined;
+    if (attempt === undefined || attempt.opened.type !== "attempt.opened") return undefined;
+    if (attempt.opened.agentId !== claimed.agentId) return undefined;
     const bound = attempt.opened.paneId;
     if (bound !== undefined && paneId !== undefined && bound !== paneId) return undefined;
     return claimed;
@@ -229,10 +232,13 @@ function rejectionIdentity(
   if (reason === "envelope_malformed" && paneId !== undefined) {
     const candidates = [...state.attempts.entries()].filter(
       ([key, attempt]) =>
-        attempt.status === "open" && attempt.opened.paneId === paneId && state.dispatches.has(key),
+        attempt.status === "open" &&
+        attempt.opened.type === "attempt.opened" &&
+        attempt.opened.paneId === paneId &&
+        state.dispatches.has(key),
     );
     if (candidates.length !== 1) return undefined;
-    const opened = (candidates[0] as (typeof candidates)[number])[1].opened;
+    const opened = (candidates[0] as (typeof candidates)[number])[1].opened as AttemptOpenedRecord;
     return {
       runId,
       agentId: opened.agentId,
@@ -332,22 +338,26 @@ function decide(
     );
   }
 
-  // 9. Owner.
+  // 9. Owner. A workflow step's attempt has no agent: its child run's result accepts it.
+  if (attempt.opened.type !== "attempt.opened") {
+    return reject("owner_mismatch", "a workflow step is accepted by its child run, not submitted", [
+      { field: "agentId", message: "no agent owns a workflow step" },
+    ]);
+  }
+  const opened = attempt.opened;
+  // Only a submission accepts an agent's attempt (the reducer refuses anything else).
+  const accepted = attempt.accepted as SubmissionAcceptedRecord | undefined;
   const ownerDetails: RejectionDetail[] = [];
-  if (envelope.agentId !== attempt.opened.agentId) {
+  if (envelope.agentId !== opened.agentId) {
     ownerDetails.push({
       field: "agentId",
-      message: `attempt is owned by ${attempt.opened.agentId}`,
+      message: `attempt is owned by ${opened.agentId}`,
     });
   }
-  if (
-    attempt.opened.paneId !== undefined &&
-    paneId !== undefined &&
-    paneId !== attempt.opened.paneId
-  ) {
+  if (opened.paneId !== undefined && paneId !== undefined && paneId !== opened.paneId) {
     ownerDetails.push({
       field: "paneId",
-      message: `attempt is bound to pane ${attempt.opened.paneId}, submitted from ${paneId}`,
+      message: `attempt is bound to pane ${opened.paneId}, submitted from ${paneId}`,
     });
   }
   if (ownerDetails.length > 0) {
@@ -360,16 +370,16 @@ function decide(
 
   // 10. Closed attempt: identical retry gets the prior receipt, but only while
   // the accepted copy is still a real in-run file matching the journal.
-  if (attempt.accepted !== undefined) {
-    const receipt = receiptFromAccepted(attempt.accepted);
-    if (attempt.accepted.envelopeDigest !== digest) {
+  if (accepted !== undefined) {
+    const receipt = receiptFromAccepted(accepted);
+    if (accepted.envelopeDigest !== digest) {
       return reject(
         "attempt_closed_conflict",
         `attempt was already accepted (${receipt.receiptId}) with a different envelope`,
-        [{ field: "envelope", message: `accepted digest ${attempt.accepted.envelopeDigest}` }],
+        [{ field: "envelope", message: `accepted digest ${accepted.envelopeDigest}` }],
       );
     }
-    const copyProblem = acceptedCopyProblem(runDir, attempt.accepted.artifact);
+    const copyProblem = acceptedCopyProblem(runDir, accepted.artifact);
     if (copyProblem !== undefined) {
       return rejection("journal_corrupt", `${receipt.receiptId}: ${copyProblem}`);
     }
@@ -393,7 +403,7 @@ function decide(
   }
 
   // 12. Verdict.
-  const allowed = attempt.opened.verdicts;
+  const allowed = opened.verdicts;
   if (!verdictAllowed(allowed, envelope.verdict)) {
     return reject(
       "verdict_not_allowed",
@@ -408,7 +418,7 @@ function decide(
   }
 
   // 13–16. Artifact scope, existence, content and size.
-  const artifact = resolveArtifact(runDir, attempt.opened.artifactDir, envelope.artifact.path);
+  const artifact = resolveArtifact(runDir, opened.artifactDir, envelope.artifact.path);
   if (!artifact.ok) {
     return reject(artifact.reason, artifact.message, [
       { field: "artifact.path", message: artifact.message },
@@ -425,7 +435,7 @@ function decide(
 
   // 17b. Opt-in artifact/envelope verdict agreement, on the first non-blank line.
   const mismatch = verdictMarkerMismatch(
-    attempt.opened.artifactVerdictMarker,
+    opened.artifactVerdictMarker,
     artifact.bytes,
     envelope.verdict,
   );

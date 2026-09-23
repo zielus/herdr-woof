@@ -88,7 +88,45 @@ function contextLines(
     ...wrapPath(dir, options.width - 4).map((piece, index) =>
       paint(index === 0 ? `dir ${piece}` : `    ${piece}`, "dim"),
     ),
+    ...checkoutLines(snapshot, layout),
   ];
+}
+
+/**
+ * `checkout worktree · woof/<run> · from <source>` and the checkout's path under it, when the run
+ * records one; a child run adds the parent run and step it belongs to.
+ */
+function checkoutLines(snapshot: RunSnapshot, layout: Layout): string[] {
+  const { paint, options } = layout;
+  const lines: string[] = [];
+  const parent = snapshot.parent;
+  if (parent !== null) {
+    lines.push(
+      ...wrap(
+        `parent ${text(parent.runId)} · step ${text(parent.stageId)}${parent.visit > 1 ? ` visit ${parent.visit}` : ""}`,
+        options.width,
+      ).map((piece) => paint(piece, "dim")),
+    );
+  }
+  const checkout = snapshot.checkout;
+  if (checkout === null) return lines;
+  const head = [
+    checkout.inherited ? `${text(checkout.mode)} (inherited)` : text(checkout.mode),
+    ...(checkout.branch === null ? [] : [text(checkout.branch)]),
+    ...(checkout.mode === "worktree"
+      ? [`from ${shortenHome(text(checkout.source), options.home)}`]
+      : []),
+    ...(checkout.created && !checkout.keep ? ["removed when completed"] : []),
+  ];
+  lines.push(...wrap(`checkout ${head.join(" · ")}`, options.width).map((p) => paint(p, "dim")));
+  if (checkout.mode !== "current" || checkout.inherited) {
+    lines.push(
+      ...wrapPath(shortenHome(text(checkout.path), options.home), options.width - 4).map((piece) =>
+        paint(`    ${piece}`, "dim"),
+      ),
+    );
+  }
+  return lines;
 }
 
 function rosterLines(snapshot: RunSnapshot, layout: Layout): string[] {
@@ -140,7 +178,11 @@ function mapLines(snapshot: RunSnapshot, graph: WorkflowGraph | null, layout: La
   let roundNoun = "rounds";
   const dim = (line: string) => wrapIndented(line, options.width, 2).map((p) => paint(p, "dim"));
   if (graph === null) {
-    const stages = snapshot.stages.map((stage) => text(stage.stageId));
+    const stages = snapshot.stages.map((stage) =>
+      stage.workflow === undefined
+        ? text(stage.stageId)
+        : `${text(stage.stageId)} (workflow ${text(stage.workflow)})`,
+    );
     const checks = snapshot.checks ?? [];
     lines.push(
       ...wrapIndented(
@@ -168,6 +210,10 @@ function mapLines(snapshot: RunSnapshot, graph: WorkflowGraph | null, layout: La
     const gates = graph.nodes.flatMap((node) => {
       if (node.kind === "check")
         return node.command === null ? [] : [`${text(node.id)}: ${sanitize(node.command)}`];
+      if (node.kind === "workflow")
+        return node.command === null
+          ? []
+          : [`${text(node.id)}: runs workflow ${text(node.command)}`];
       return node.bindsRevision ? [`${text(node.id)}: verdict + matching revision`] : [];
     });
     if (gates.length > 0) lines.push(...dim(gates.join(" · ")));

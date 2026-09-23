@@ -122,6 +122,7 @@ export type {
   SnapshotActivity,
   SnapshotAgent,
   SnapshotAgentLifecycle,
+  SnapshotChild,
   SnapshotAttempt,
   SnapshotBlocked,
   SnapshotGate,
@@ -173,6 +174,8 @@ export type {
   AgentStage,
   CheckGateContext,
   CheckStage,
+  ChildRef,
+  InputArtifact,
   InputRef,
   RequestContext,
   RunHistory,
@@ -181,11 +184,14 @@ export type {
   Transition,
   ValidateDefinitionResult,
   WorkflowDefinition,
+  WorkflowStage,
 } from "./scheduler/definition.js";
+export type { CheckoutAccess, CheckoutSpec, ResolvedCheckout } from "./contracts/checkout.js";
 export { loadWorkflowDefinition } from "./scheduler/loader.js";
 export type { LoadDefinitionResult, LoadReason } from "./scheduler/loader.js";
 export { admitWorkflow, openAdmittedRun } from "./scheduler/admission.js";
 export type {
+  AdmissionCheckout,
   AdmissionConfiguration,
   AdmissionProvenance,
   AdmissionReason,
@@ -193,11 +199,15 @@ export type {
 } from "./scheduler/admission.js";
 export { runWorkflow } from "./scheduler/driver.js";
 export type {
+  ChildHost,
+  ChildOpened,
+  ChildRequest,
   RunWorkflowOptions,
   RunWorkflowResult,
   SchedulerWarning,
 } from "./scheduler/driver.js";
-export type { Action, AgentRuntimeView } from "./scheduler/core.js";
+export type { Action, AgentRuntimeView, ChildEnd } from "./scheduler/core.js";
+export type { StageChildOpenedRecord, StageChildResultRecord } from "./journal/child-records.js";
 export { buildReviewWorkflow } from "./workflows/build-review.js";
 export type { BuildReviewInput } from "./workflows/build-review.js";
 export { planBuildReviewWorkflow } from "./workflows/plan-build-review.js";

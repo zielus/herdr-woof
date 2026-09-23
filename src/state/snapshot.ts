@@ -1,3 +1,4 @@
+import type { ResolvedCheckout } from "../contracts/checkout.js";
 import { isPositiveInteger } from "../contracts/envelope.js";
 import type {
   AttemptCause,
@@ -9,7 +10,9 @@ import type {
   Outcome,
   Revision,
   RunStatus,
+  TerminalOutcome,
 } from "../domain/types.js";
+import { WORKFLOW_STAGE_VERDICTS } from "../domain/types.js";
 import { probeHost, type HostInfo, type HostOwner } from "../host/probe.js";
 import { acceptedCopyProblem } from "../journal/accepted-copy.js";
 import type { ActivityKind } from "../journal/activity-records.js";
@@ -21,14 +24,16 @@ import type {
 } from "../journal/control-records.js";
 import { journalAnchor, readJournalPrefixSettled } from "../journal/journal.js";
 import type { CancelSource } from "../journal/lifecycle-records.js";
-import type { JournalRecord } from "../journal/records.js";
+import type { JournalRecord, RunInputArtifact, RunParent } from "../journal/records.js";
 import type { Lifecycle } from "../runtime/adapter.js";
 import {
   attemptKey,
   compareAttempts,
+  attemptOwner,
   copyDict,
   currentBlock,
   dict,
+  planStageIds,
   replay,
   type Counters,
   type RunState,
@@ -91,9 +96,10 @@ export interface SnapshotActivity {
 
 export interface SnapshotAttempt {
   attempt: number;
-  /** Seq of the attempt.opened record. */
+  /** Seq of the attempt.opened (or stage.child_opened) record. */
   seq: number;
-  agentId: string;
+  /** The owning agent; null for a workflow step, which no agent owns. */
+  agentId: string | null;
   status: AttemptStatus;
   cause: AttemptCause;
   openedAt: string;
@@ -123,12 +129,28 @@ export interface SnapshotAttempt {
     artifact: { path: string; acceptedPath: string; sha256: string; bytes: number };
     at: string;
   } | null;
+  /** Present only on a workflow step's attempt: the child run it opened and its result. */
+  child?: SnapshotChild;
+}
+
+/** A workflow step's child run as its parent's snapshot records it (composition). */
+export interface SnapshotChild {
+  runId: string;
+  runDir: string;
+  workflow: { name: string; version: string };
+  /** The child's terminal outcome once its result was accepted; null while it runs. */
+  outcome: TerminalOutcome | null;
+  reason: string | null;
+  /** The parent's copies of the child's latest accepted artifact per child stage. */
+  artifacts: Array<{ stageId: string; acceptedPath: string; sha256: string; bytes: number }>;
 }
 
 export interface SnapshotStage {
   stageId: string;
   agentId: string | null;
   verdicts: string[] | null;
+  /** Present only on a workflow stage (composition): the workflow its child runs are. */
+  workflow?: string;
   visits: Array<{ visit: number; attempts: SnapshotAttempt[] }>;
 }
 
@@ -201,6 +223,12 @@ export interface RunSnapshot {
   input: { path: string; sha256: string; bytes: number } | null;
   /** Digest of the recorded resolved configuration, when run.opened carries one (p4). */
   config: { path: string; sha256: string; bytes: number } | null;
+  /** The checkout the run works in, when run.opened records one (composition). */
+  checkout: ResolvedCheckout | null;
+  /** The parent's workflow step, when this run is a child run (composition). */
+  parent: RunParent | null;
+  /** Artifacts copied into the run at open, by label (composition). */
+  inputArtifacts: RunInputArtifact[];
   status: RunStatus;
   openedAt: string;
   updatedAt: string;
@@ -393,6 +421,9 @@ export function deriveSnapshot(
       workflow: state.plan === null ? null : { ...state.plan.workflow },
       input: first.input === undefined ? null : { ...first.input },
       config: first.config === undefined ? null : { ...first.config },
+      checkout: first.checkout === undefined ? null : { ...first.checkout },
+      parent: first.parent === undefined ? null : { ...first.parent },
+      inputArtifacts: structuredClone(first.inputArtifacts ?? []),
       status: state.status,
       openedAt: state.openedAt ?? first.ts,
       updatedAt: state.updatedAt ?? first.ts,
@@ -453,7 +484,11 @@ function deriveAgents(state: RunState, records: readonly JournalRecord[]): Snaps
     if (!terminated) {
       for (const attempt of state.attempts.values()) {
         const opened = attempt.opened;
-        if (attempt.status === "open" && opened.agentId === agentId && opened.seq > activeSeq) {
+        if (
+          attempt.status === "open" &&
+          attemptOwner(opened) === agentId &&
+          opened.seq > activeSeq
+        ) {
           active = { stageId: opened.stageId, visit: opened.visit, attempt: opened.attempt };
           activeSeq = opened.seq;
         }
@@ -510,9 +545,12 @@ function deriveActivity(state: RunState): SnapshotActivity[] {
 
 /** Plan stages in plan order, then other stages in order of first attempt. */
 function deriveStages(state: RunState, records: readonly JournalRecord[]): SnapshotStage[] {
-  const order: string[] = state.plan?.stages.map((stage) => stage.stageId) ?? [];
+  const order: string[] = state.plan === null ? [] : planStageIds(state.plan);
   for (const record of records) {
-    if (record.type === "attempt.opened" && !order.includes(record.stageId)) {
+    if (
+      (record.type === "attempt.opened" || record.type === "stage.child_opened") &&
+      !order.includes(record.stageId)
+    ) {
       order.push(record.stageId);
     }
   }
@@ -533,11 +571,11 @@ function deriveStages(state: RunState, records: readonly JournalRecord[]): Snaps
       list.push({
         attempt: opened.attempt,
         seq: opened.seq,
-        agentId: opened.agentId,
+        agentId: attemptOwner(opened),
         status: attempt.status === "open" && terminated ? "abandoned" : attempt.status,
         cause: attempt.cause,
         openedAt: opened.ts,
-        paneId: opened.paneId ?? null,
+        paneId: opened.type === "attempt.opened" ? (opened.paneId ?? null) : null,
         delivery: dispatch?.delivery ?? "undispatched",
         dispatch:
           dispatch === undefined
@@ -577,15 +615,40 @@ function deriveStages(state: RunState, records: readonly JournalRecord[]): Snaps
                 },
                 at: accepted.ts,
               },
+        // A workflow step's attempt names its child run (composition); an agent's has no key.
+        ...(opened.type === "stage.child_opened"
+          ? {
+              child: {
+                runId: opened.child.runId,
+                runDir: opened.child.runDir,
+                workflow: { ...opened.child.workflow },
+                outcome: accepted?.type === "stage.child_result" ? accepted.child.outcome : null,
+                reason: accepted?.type === "stage.child_result" ? accepted.child.reason : null,
+                artifacts:
+                  accepted?.type === "stage.child_result"
+                    ? structuredClone(accepted.artifacts)
+                    : [],
+              },
+            }
+          : {}),
       });
       visits.set(opened.visit, list);
     }
-    return {
+    const step = state.plan?.workflows?.find((stage) => stage.stageId === stageId);
+    const derived: SnapshotStage = {
       stageId,
       agentId: spec?.agentId ?? null,
-      verdicts: spec === undefined ? null : [...spec.verdicts],
+      verdicts:
+        spec !== undefined
+          ? [...spec.verdicts]
+          : step !== undefined
+            ? [...WORKFLOW_STAGE_VERDICTS]
+            : null,
       visits: [...visits.entries()].map(([visit, list]) => ({ visit, attempts: list })),
     };
+    // Only a workflow stage carries the key, so an agent stage's shape is unchanged.
+    if (step !== undefined) derived.workflow = step.workflow;
+    return derived;
   });
 }
 

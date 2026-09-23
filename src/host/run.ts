@@ -18,6 +18,14 @@ import { runWorkflow } from "../scheduler/driver.js";
 import { loadWorkflowDefinition } from "../scheduler/loader.js";
 import { readSnapshot } from "../state/snapshot.js";
 import { recordHostExited, type OpenRunInput } from "../state/store.js";
+import type { ResolvedCheckout } from "../contracts/checkout.js";
+import {
+  discardCreatedCheckout,
+  removeHerdrWorktree,
+  topLevelCheckout,
+  type HerdrAccess,
+} from "./checkout.js";
+import { createChildHost } from "./child.js";
 import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
@@ -49,6 +57,7 @@ const HOST_INFRA_REASONS: ReadonlySet<string> = new Set([
   "engine_invariant",
   "runtime_cleanup_failed",
   "host_interrupted",
+  "checkout_failed",
 ]);
 
 export function isHostInfraReason(reason: string): boolean {
@@ -60,6 +69,8 @@ export interface RuntimeContext {
   runId: string;
   plan: RunPlan;
   repo: string;
+  /** The Herdr workspace of the run's worktree checkout, where agent tabs go; null otherwise. */
+  workspaceId?: string | null;
 }
 
 export type RuntimeFactory = (
@@ -111,6 +122,16 @@ export interface HostWorkflowOptions {
   tabId?: string | null;
   /** Herdr metadata projection; null outside a Herdr pane. */
   metadata: { bin: string; env: NodeJS.ProcessEnv; hostPaneId: string } | null;
+  /**
+   * The run's checkout policy (composition.md): Herdr access for creating a worktree (null when
+   * worktrees are unavailable), the mode when the input names none, and a checkout the launcher
+   * already resolved (then nothing is created here).
+   */
+  checkout?: {
+    herdr: HerdrAccess | null;
+    defaultMode: "current" | "worktree";
+    resolved?: ResolvedCheckout;
+  };
   homeDir?: string;
   /** The technical log (`<runDir>/host.log`, and stdout with `--plain`). */
   log: (line: string) => void;
@@ -258,13 +279,34 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
+  /** A created worktree the run asked to discard (`keep: false`) after it completed. */
+  let discardAfter: ResolvedCheckout | undefined;
+  /** A worktree this host created for a run that is not open yet: an exception removes it. */
+  let unopened: ResolvedCheckout | undefined;
   try {
-    return await host();
+    const hosted = await host();
+    if (discardAfter !== undefined && options.checkout?.herdr != null) {
+      // Last: a host running in the worktree's own root pane may not survive its removal.
+      const removed = await removeHerdrWorktree(
+        options.checkout.herdr,
+        discardAfter.workspaceId as string,
+      );
+      log(`checkout: ${removed.message} (keep: false)`);
+    }
+    return hosted;
   } catch (error) {
+    // The failure is reported as it happened; removing the orphan worktree only adds to it.
+    const discarded =
+      unopened === undefined
+        ? undefined
+        : await discardCreatedCheckout(options.checkout?.herdr ?? null, unopened).catch(
+            (cleanup: unknown) =>
+              `the created worktree could not be removed: ${(cleanup as Error).message}`,
+          );
     return await finishJournaled(3, {
       outcome: "rejected",
       reason: "engine_invariant",
-      message: `the run host failed: ${(error as Error).message}`,
+      message: `the run host failed: ${(error as Error).message}${discarded === undefined ? "" : `; ${discarded}`}`,
       details: [],
     });
   } finally {
@@ -314,13 +356,49 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       definition = loaded.definition;
     }
 
+    const policy = options.checkout;
     const admitted = await admitWorkflow({
       definition,
       input: options.input,
       runDir,
       configuration: admissionConfiguration(configuration),
+      checkout:
+        policy?.resolved !== undefined
+          ? { resolved: policy.resolved }
+          : topLevelCheckout({
+              herdr: policy?.herdr ?? null,
+              defaultMode: policy?.defaultMode ?? "current",
+              runId,
+              workflow: definition.name,
+            }),
     });
-    if (!admitted.ok) return reject(admitted.reason, admitted.message, admitted.details);
+    if (!admitted.ok) {
+      const discarded = await discardCreatedCheckout(policy?.herdr ?? null, admitted.created);
+      return reject(
+        admitted.reason,
+        discarded === undefined ? admitted.message : `${admitted.message}; ${discarded}`,
+        admitted.details,
+      );
+    }
+    const checkout = admitted.checkout;
+    if (checkout.created && policy?.resolved === undefined) unopened = checkout;
+    if (checkout.created)
+      log(
+        `checkout: worktree ${checkout.path} (branch ${String(checkout.branch)}, workspace ${String(checkout.workspaceId)})`,
+      );
+    /** A refusal after the checkout exists removes a worktree this host created. */
+    const refuse = async (reason: string, message: string, details: unknown[] = []) => {
+      const discarded =
+        policy?.resolved === undefined
+          ? await discardCreatedCheckout(policy?.herdr ?? null, checkout)
+          : undefined;
+      unopened = undefined;
+      return reject(
+        reason,
+        discarded === undefined ? message : `${message}; ${discarded}`,
+        details,
+      );
+    };
     const recorded = recordConfiguration(configuration, admitted, {
       definitionVersion: definition.version,
       ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
@@ -331,12 +409,14 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       runId,
       plan: admitted.plan,
       repo: admitted.repository,
+      workspaceId: checkout.workspaceId,
     });
-    if (!runtime.ok) return reject("runtime_unavailable", runtime.message);
+    if (!runtime.ok) return refuse("runtime_unavailable", runtime.message);
 
     if (options.claimBeforeOpen) {
       const claim = claimHost(runDir, { paneId: options.paneId, workspaceId: options.workspaceId });
       if (!claim.ok) {
+        await discardCreatedCheckout(policy?.herdr ?? null, checkout);
         return finish(claim.reason === "run_host_claimed" ? 2 : 3, {
           outcome: "rejected",
           reason: claim.reason,
@@ -358,7 +438,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       configuration: recorded,
       ...(hostRecord !== undefined ? { host: hostRecord } : {}),
     });
-    if (opened.outcome === "rejected") return reject(opened.reason, opened.message, opened.details);
+    if (opened.outcome === "rejected") return refuse(opened.reason, opened.message, opened.details);
+    // The run is open: its worktree belongs to the run now, whatever happens next.
+    unopened = undefined;
     if (opened.hostClaimed !== null) journaled = true;
     else if (hostRecord !== undefined) log("cannot journal host.claimed: the journal write failed");
     // Configuration warnings are for the operator, not only the log (PI-004).
@@ -406,6 +488,18 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       cancelSource: "signal",
       pollMs,
       keepPanes: recorded.settings.keepPanes.value,
+      // Workflow steps run as child runs this same process hosts (composition).
+      children: createChildHost({
+        projectDir: options.projectDir,
+        flags: options.flags,
+        ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+        createRuntime: options.createRuntime,
+        submitCommand: options.submitCommand,
+        paneId: options.paneId,
+        workspaceId: options.workspaceId,
+        checkoutWorkspaceId: checkout.workspaceId,
+        log,
+      }),
       onAction: (action) => {
         const line = describeAction(action);
         if (action.type === "wait" && line === lastWait) return;
@@ -435,6 +529,8 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
         result: out.result,
       });
     }
+    if (checkout.created && !checkout.keep && out.result.outcome === "completed")
+      discardAfter = checkout;
     return finishJournaled(OUTCOME_EXIT_CODES[out.result.outcome], {
       outcome: "run",
       result: out.result,
@@ -502,5 +598,9 @@ export function describeAction(action: Action): string {
       return `reconcile ${action.stageId} attempt ${action.attempt}: ${action.resolution}`;
     case "settle":
       return "run ended";
+    case "open_child":
+      return `open child run: ${action.stageId} visit ${action.visit} runs workflow ${action.workflow}`;
+    case "record_child":
+      return `child run of ${action.stageId} visit ${action.visit} ended: ${action.end.result?.outcome ?? `no result (${action.end.error ?? "unknown"})`}`;
   }
 }

@@ -67,6 +67,7 @@ export type AttemptOpenReason =
 export type StoreReason =
   | InfraReason
   | "plan_invalid"
+  | "input_invalid"
   | "run_exists"
   | "run_mismatch"
   | "run_closed"
@@ -121,6 +122,9 @@ export const ADMISSION_REASONS = [
   "definition_not_found",
   "definition_syntax_unsupported",
   "definition_load_failed",
+  "checkout_dirty",
+  "checkout_unsupported",
+  "checkout_failed",
 ] as const;
 
 export type AdmissionReason = (typeof ADMISSION_REASONS)[number];
