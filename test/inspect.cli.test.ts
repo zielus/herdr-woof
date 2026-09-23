@@ -159,18 +159,18 @@ describe("woof status", () => {
     expect(woof(["status"]).status).toBe(1);
   });
 
-  it("I2: --wait on a terminated run exits with the outcome code and the derived result", () => {
+  it("I2: a terminated run prints the derived result and exits 0; --wait no longer exists", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
     terminateRunOk(runDir, "cancelled");
-    const waited = woof(["status", runDir, "--wait"], { timeoutMs: 20_000 });
-    expect(waited.status, waited.stdout).toBe(6);
-    expect(waited.stdout.trim().split("\n")).toHaveLength(1);
-    const json = waited.json as Json;
+    const shown = woof(["status", runDir]);
+    expect(shown.status, shown.stdout).toBe(0);
+    expect(shown.stdout.trim().split("\n")).toHaveLength(1);
+    const json = shown.json as Json;
     expect(json["status"]["status"]).toBe("cancelled");
     expect(json["result"]).toEqual(derivedResult(realpathSync(runDir), null));
-    // Without --wait the same read exits 0.
-    expect(woof(["status", runDir]).status).toBe(0);
+    for (const flag of ["--wait", "--allow-blocked", "--timeout-ms=10", "--poll-ms=10"])
+      expect(woof(["status", runDir, flag]).status, flag).toBe(1);
   });
 
   it("I2: a recorded configuration supplies the result's repository", () => {
@@ -178,27 +178,15 @@ describe("woof status", () => {
     const repo = tempDir("woof-status-repo-");
     openRunWith(runDir, "run-1", { repository: repo, roots: { project: { root: repo } } });
     terminateRunOk(runDir, "failed");
-    const waited = woof(["status", runDir, "--wait"], { timeoutMs: 20_000 });
-    expect(waited.status, waited.stdout).toBe(4);
-    const json = waited.json as Json;
+    const shown = woof(["status", runDir]);
+    expect(shown.status, shown.stdout).toBe(0);
+    const json = shown.json as Json;
     expect(json["status"]["config"]).toEqual({ sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(json["result"]).toEqual(derivedResult(realpathSync(runDir), repo));
     expect(json["result"]["repository"]["path"]).toBe(repo);
   });
 
-  it("I3: --wait on an open run exits 7 at the timeout", () => {
-    const runDir = makeRunDir();
-    openPlannedRun(runDir);
-    const started = Date.now();
-    const waited = woof(["status", runDir, "--wait", "--timeout-ms", "300", "--poll-ms", "50"], {
-      timeoutMs: 20_000,
-    });
-    expect(waited.status, waited.stdout).toBe(7);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
-    expect(waited.json).toMatchObject({ status: { status: "created" }, result: null });
-  });
-
-  it("I4: a blocked run exits 9 at once; --allow-blocked keeps waiting", () => {
+  it("I4: a blocked run names what it needs in attention.blocked", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
     runSdk(
@@ -206,23 +194,15 @@ describe("woof status", () => {
       `await store.assignAgent({ runDir, agentId: "worker", runtime: { adapter: "scripted", runtimeName: "w-worker", paneId: "w1:p1" }, terminalId: "term_1", sessionId: null });
 out = await store.blockRun({ runDir, agentId: "worker", reason: "blocked_on_input", requiredAction: "answer the prompt", observed: { runtimeStatus: "blocked", terminalId: "term_1", stateChangeSeq: 7 } });`,
     );
-    const started = Date.now();
-    const blocked = woof(["status", runDir, "--wait", "--timeout-ms", "10000"], {
-      timeoutMs: 20_000,
-    });
-    expect(blocked.status, blocked.stdout).toBe(9);
-    expect(Date.now() - started).toBeLessThan(5000);
+    const blocked = woof(["status", runDir]);
+    expect(blocked.status, blocked.stdout).toBe(0);
     expect(blocked.json).toMatchObject({
       status: { attention: { blocked: { agentId: "worker", reason: "blocked_on_input" } } },
+      result: null,
     });
-    const allowed = woof(
-      ["status", runDir, "--wait", "--allow-blocked", "--timeout-ms", "300", "--poll-ms", "50"],
-      { timeoutMs: 20_000 },
-    );
-    expect(allowed.status, allowed.stdout).toBe(7);
   });
 
-  it("exits 8 once the owner stays lost across two heartbeats, and a recorded outcome wins over lost", () => {
+  it("reports a lost owner, and a recorded outcome alongside it once the run ends", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
     // A claim whose process is gone on this host is lost.
@@ -241,20 +221,19 @@ out = await store.blockRun({ runDir, agentId: "worker", reason: "blocked_on_inpu
         heartbeatMs: 150,
       }),
     );
-    const started = Date.now();
-    const lost = woof(["status", runDir, "--wait", "--poll-ms", "50", "--timeout-ms", "10000"], {
-      timeoutMs: 20_000,
-    });
-    expect(lost.status, lost.stdout).toBe(8);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
-    expect(lost.json).toMatchObject({ status: { liveness: { owner: "lost" } } });
+    const lost = woof(["status", runDir]);
+    expect(lost.status, lost.stdout).toBe(0);
+    expect(lost.json).toMatchObject({ status: { liveness: { owner: "lost" } }, result: null });
     terminateRunOk(runDir, "cancelled");
-    const ended = woof(["status", runDir, "--wait"], { timeoutMs: 20_000 });
-    expect(ended.status, ended.stdout).toBe(6);
-    expect(ended.json).toMatchObject({ status: { liveness: { owner: "lost" } } });
+    const ended = woof(["status", runDir]);
+    expect(ended.status, ended.stdout).toBe(0);
+    expect(ended.json).toMatchObject({
+      status: { liveness: { owner: "lost" } },
+      result: { outcome: "cancelled" },
+    });
   });
 
-  it("PR #6 (status.ts:81): --wait exits 8 at once when the owner exited without a terminal record, with the host's outcome", () => {
+  it("PR #6 (status.ts:81): an owner that exited without a terminal record is shown with the host's outcome", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
     // What a pane host interrupted by a second signal before the run recorded its end leaves.
@@ -277,29 +256,26 @@ out = await store.blockRun({ runDir, agentId: "worker", reason: "blocked_on_inpu
       details: [],
     };
     writeFileSync(join(runDir, "outcome.json"), JSON.stringify(hostOutcome));
-    const started = Date.now();
-    const waited = woof(["status", runDir, "--wait", "--poll-ms", "50", "--timeout-ms", "10000"], {
-      timeoutMs: 20_000,
-    });
-    expect(waited.status, waited.stdout).toBe(8);
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect(waited.stdout.trim().split("\n")).toHaveLength(1);
-    expect(waited.json).toMatchObject({
+    const shown = woof(["status", runDir]);
+    expect(shown.status, shown.stdout).toBe(0);
+    expect(shown.stdout.trim().split("\n")).toHaveLength(1);
+    expect(shown.json).toMatchObject({
       outcome: "status",
       status: { status: "created", liveness: { owner: "exited", host: { exitCode: 130 } } },
       result: null,
       hostOutcome,
     });
-    // A foreground host writes no outcome.json: still 8, without hostOutcome.
+    // A foreground host writes no outcome.json: still exited, without hostOutcome.
     rmSync(join(runDir, "outcome.json"));
-    const foreground = woof(["status", runDir, "--wait", "--timeout-ms", "10000"], {
-      timeoutMs: 20_000,
-    });
-    expect(foreground.status, foreground.stdout).toBe(8);
+    const foreground = woof(["status", runDir]);
+    expect(foreground.json).toMatchObject({ status: { liveness: { owner: "exited" } } });
     expect(foreground.json).not.toHaveProperty("hostOutcome");
-    // A recorded end still wins over an exited owner.
+    // A recorded end is the answer: the host's outcome is no longer attached.
+    writeFileSync(join(runDir, "outcome.json"), JSON.stringify(hostOutcome));
     terminateRunOk(runDir, "cancelled");
-    expect(woof(["status", runDir, "--wait"], { timeoutMs: 20_000 }).status).toBe(6);
+    const ended = woof(["status", runDir]);
+    expect(ended.json).toMatchObject({ result: { outcome: "cancelled" } });
+    expect(ended.json).not.toHaveProperty("hostOutcome");
   });
 });
 
@@ -324,9 +300,9 @@ describe("woof status --pretty", () => {
     expect(woof(["status", runDir]).json).toMatchObject({ outcome: "status" });
 
     terminateRunOk(runDir, "cancelled");
-    const waited = woof(["status", runDir, "--wait", "--pretty"], { timeoutMs: 20_000 });
-    expect(waited.status, waited.stdout).toBe(6);
-    const lines = waited.stdout.trim().split("\n");
+    const ended = woof(["status", runDir, "--pretty"]);
+    expect(ended.status, ended.stdout).toBe(0);
+    const lines = ended.stdout.trim().split("\n");
     expect(lines[0]).toBe("run      run-1  report-review@1  cancelled");
     expect(lines.at(-1)).toBe("outcome  cancelled: test termination");
 
@@ -336,7 +312,7 @@ describe("woof status --pretty", () => {
     expect(refused.stdout).toMatch(/^woof status: run_dir_invalid: /);
   });
 
-  it("I9: --wait --pretty names the host outcome when the owner exited without a terminal record", () => {
+  it("I9: --pretty names the host outcome when the owner exited without a terminal record", () => {
     const runDir = makeRunDir();
     openPlannedRun(runDir);
     writeAliveHost(runDir);
@@ -359,11 +335,9 @@ describe("woof status --pretty", () => {
         details: [],
       }),
     );
-    const waited = woof(["status", runDir, "--wait", "--pretty", "--timeout-ms", "10000"], {
-      timeoutMs: 20_000,
-    });
-    expect(waited.status, waited.stdout).toBe(8);
-    expect(waited.stdout.trim().split("\n").at(-1)).toBe(
+    const shown = woof(["status", runDir, "--pretty"]);
+    expect(shown.status, shown.stdout).toBe(0);
+    expect(shown.stdout.trim().split("\n").at(-1)).toBe(
       "host     rejected host_interrupted: the run host received a second signal",
     );
   });
@@ -663,10 +637,10 @@ out = { outcomes: [claimed, cancelled, stranger, exited].map((item) => item.reas
     openPlannedRun(runDir);
     claimHostAs(runDir, process.pid, 2000);
     cancelHosted(runDir);
-    // The cursor `woof status --wait` returns with: the termination, no host.exited yet.
-    const waited = woof(["status", runDir, "--wait", "--timeout-ms", "5000"]);
-    expect(waited.status, waited.stdout).toBe(6);
-    const cursor = (waited.json as Json)["status"]["cursor"] as string;
+    // The cursor `woof status` reports once the run ended: the termination, no host.exited yet.
+    const shown = woof(["status", runDir]);
+    expect(shown.json).toMatchObject({ result: { outcome: "cancelled" } });
+    const cursor = (shown.json as Json)["status"]["cursor"] as string;
     expect(lines(woof(["events", runDir]).stdout).at(-1)).toMatchObject({ cursor, terminal: true });
     const resume = ["events", runDir, "--follow", "--after", cursor, "--poll-ms", "20"];
     const following = woofAsync([...resume, "--timeout-ms", "20000"]);
@@ -1176,7 +1150,7 @@ describe("inspection is read-only", () => {
     };
     const results = await Promise.all([
       woofAsync(["status", runDir], { env }),
-      woofAsync(["status", runDir, "--wait", "--timeout-ms", "400", "--poll-ms", "20"], { env }),
+      woofAsync(["status", runDir, "--verify-artifacts"], { env }),
       woofAsync(["runs", "--runs-dir", runsDir], { env }),
       woofAsync(["events", runDir], { env }),
       woofAsync(["events", runDir, "--follow", "--poll-ms", "20", "--timeout-ms", "400"], {
@@ -1188,7 +1162,7 @@ describe("inspection is read-only", () => {
       woofAsync(["events", runDir, "--pretty"], { env }),
       woofAsync(["status", runDir, "--pretty"], { env }),
     ]);
-    expect(results.map((result) => result.status)).toEqual([0, 7, 0, 0, 7, 0, 0, 7, 0, 0]);
+    expect(results.map((result) => result.status)).toEqual([0, 0, 0, 0, 7, 0, 0, 7, 0, 0]);
     const after = statSync(lockPath);
     expect(readFileSync(lockPath, "utf8")).toBe(sentinel);
     expect([after.ino, after.size, after.mtimeMs]).toEqual([

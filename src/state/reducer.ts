@@ -1,5 +1,6 @@
 import type { AttemptCause, DispatchDelivery, RunPlan, RunStatus } from "../domain/types.js";
 import type { ActivitySubject } from "../journal/activity-records.js";
+import type { NotifyTargetRecord } from "../journal/notify-records.js";
 import {
   parseRecordLine,
   type AgentAssignedRecord,
@@ -124,6 +125,8 @@ export interface RunState {
   reconciliations: Map<number, DeliveryReconciledRecord>;
   /** Host lifecycle facts the host (or the writer that found it lost) journaled. */
   host: HostFacts;
+  /** The caller the run host notifies (notify.target), when the run has one. */
+  notifyTarget?: NotifyTargetRecord;
   /** Cancellation requests in journal order. */
   cancelRequests: RunCancelRequestedRecord[];
   /** Unresolved observation loss per agent; removed by observation.recovered. */
@@ -504,6 +507,24 @@ function applyRecord(state: RunState, record: JournalRecord): Refusal | undefine
       return applyChildOpened(state, record);
     case "stage.child_result":
       return applyChildResult(state, record);
+    case "notify.target":
+      if (state.termination !== undefined) {
+        return ["run_closed", "notify.target after run.terminated"];
+      }
+      if (state.notifyTarget !== undefined) {
+        return ["invalid_transition", "the run's notification target is already recorded"];
+      }
+      state.notifyTarget = record;
+      return undefined;
+    case "notify.outcome":
+      // The host notifies until it exits: the `done` notification follows run.terminated.
+      if (state.host.exited !== undefined) {
+        return ["host_gone", "notify.outcome after host.exited"];
+      }
+      if (state.notifyTarget === undefined) {
+        return ["invalid_transition", "notify.outcome without a notification target"];
+      }
+      return undefined;
   }
 }
 

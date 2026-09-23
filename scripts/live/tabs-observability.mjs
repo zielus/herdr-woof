@@ -15,7 +15,7 @@
 //         integrity, the repository effect, the run index (`woof runs`, `woof
 //         status <runId>`, `woof events --all`) and the host lifecycle records.
 // Part B  a second run whose host is killed (-9) once it dispatched work and the
-//         journal lock is absent. Gates: owner lost, `--wait` exit 8, the index
+//         journal lock is absent. Gates: owner lost with no result, the index
 //         still lists it, cancel journals host.lost → run.cancel_requested →
 //         run.terminated{cancelled}, a late submit is refused, and the agent tabs
 //         are cleaned up or reported.
@@ -868,19 +868,15 @@ async function partA() {
   const records = recordsOf(run.runDir);
   if (ofType(records, "run.blocked").length > 0) blocked = true;
   const terminated = ofType(records, "run.terminated")[0];
-  const waited = woofSaved(
-    "A/status-wait-by-id.txt",
-    "status",
-    run.runId,
-    "--wait",
-    "--timeout-ms",
-    "30000",
-  );
+  const afterEnd = woofSaved("A/status-after-end.txt", "status", run.runId);
   gate(
     "A2",
-    "the run completed (journal and woof status <runId> --wait)",
-    ended && terminated?.outcome === "completed" && waited.status === 0,
-    `run.terminated ${terminated?.outcome ?? "none"} (${terminated?.reason ?? "-"}), status --wait exit ${waited.status}`,
+    "the run completed (journal and woof status <runId>)",
+    ended &&
+      terminated?.outcome === "completed" &&
+      afterEnd.status === 0 &&
+      afterEnd.json?.result?.outcome === "completed",
+    `run.terminated ${terminated?.outcome ?? "none"} (${terminated?.reason ?? "-"}), status result ${afterEnd.json?.result?.outcome ?? "none"}`,
   );
 
   const claimed = ofType(records, "host.claimed")[0];
@@ -1239,19 +1235,16 @@ async function partB() {
   }
 
   const shown = woofSaved("B/status-after-kill.txt", "status", run.runId);
-  const waited = woofSaved(
-    "B/status-wait-after-kill.txt",
-    "status",
-    run.runId,
-    "--wait",
-    "--timeout-ms",
-    "60000",
-  );
+  // A snapshot confirms the loss with a second read two heartbeats later.
+  await new Promise((resolve) => setTimeout(resolve, 2 * 2000));
+  const later = woofSaved("B/status-after-kill-later.txt", "status", run.runId);
   gate(
     "B3",
-    "woof status <runId> reports owner lost and --wait exits 8",
-    shown.json?.status?.liveness?.owner === "lost" && waited.status === 8,
-    `owner ${shown.json?.status?.liveness?.owner ?? "none"}, --wait exit ${waited.status}`,
+    "woof status <runId> reports owner lost, twice two heartbeats apart, with no result",
+    shown.json?.status?.liveness?.owner === "lost" &&
+      later.json?.status?.liveness?.owner === "lost" &&
+      later.json?.result === null,
+    `owner ${shown.json?.status?.liveness?.owner ?? "none"}, then ${later.json?.status?.liveness?.owner ?? "none"}`,
   );
 
   const listed = woofSaved("B/runs-after-kill.txt", "runs");

@@ -29,6 +29,7 @@ import { createChildHost } from "./child.js";
 import { claimHost } from "./claim.js";
 import { writeExclusiveFile } from "./files.js";
 import { createCoalescer, createMetadataReporter } from "./metadata.js";
+import { createNotifier, type NotifyChannel, type NotifySetting } from "./notify.js";
 import { readHostInfo } from "./probe.js";
 
 /**
@@ -147,6 +148,20 @@ export interface HostWorkflowOptions {
    * closed on every other exit path so a follow never keeps the host alive.
    */
   view?: HostView | null;
+  /**
+   * Caller notifications, resolved once the host's signal handlers are installed and before the
+   * run opens: the run's target, or why it has none (recorded in config.json), and with a target
+   * the channel that reads and prompts it, built above the host from the Herdr adapter. The host
+   * then journals and delivers the notifications. Absent: no target, nothing recorded.
+   */
+  notify?: () => Promise<NotifyOption>;
+}
+
+export interface NotifyOption {
+  setting: NotifySetting;
+  channel: NotifyChannel | null;
+  retryMs?: number;
+  drainMs?: number;
 }
 
 export interface HostWorkflowResult {
@@ -185,6 +200,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
   /** host.claimed is in the journal, so host.exited may follow it. */
   let journaled = false;
   let reportTimer: NodeJS.Timeout | undefined;
+  let notifyTimer: NodeJS.Timeout | undefined;
   const releaseClaim = (code: number) => {
     if (released || release === undefined) return;
     try {
@@ -313,6 +329,7 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     if (reportTimer !== undefined) clearInterval(reportTimer);
+    if (notifyTimer !== undefined) clearInterval(notifyTimer);
     options.view?.close();
     releaseClaim(result?.code ?? 3);
   }
@@ -432,10 +449,21 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     // run.opened and host.claimed go in under one journal lock: a cancel that arrives while the run
     // opens cannot close it before its host is on record (and so before host.exited may follow).
     const hostRecord = hostClaim();
+    const notify = await options.notify?.();
+    const notifySetting = notify?.setting;
     const opened = await openAdmittedRun(admitted, {
       runDir,
       runId,
-      configuration: recorded,
+      configuration:
+        notifySetting === undefined
+          ? recorded
+          : {
+              ...recorded,
+              notify:
+                notifySetting.target === null
+                  ? { target: null, reason: notifySetting.reason }
+                  : { target: notifySetting.target },
+            },
       ...(hostRecord !== undefined ? { host: hostRecord } : {}),
     });
     if (opened.outcome === "rejected") return refuse(opened.reason, opened.message, opened.details);
@@ -472,6 +500,26 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
     reportTimer =
       refresh === null ? undefined : setInterval(() => refresh.request(), Math.min(pollMs, 1000));
     reportTimer?.unref();
+
+    // The caller is notified by this host, so notifications outlive the process that started the run.
+    const notifier =
+      notifySetting?.target == null || notify?.channel == null
+        ? null
+        : await createNotifier({
+            runDir,
+            runId,
+            workflow: definition.name,
+            target: notifySetting.target,
+            channel: notify.channel,
+            log,
+            ...(notify.retryMs !== undefined ? { retryMs: notify.retryMs } : {}),
+            ...(notify.drainMs !== undefined ? { drainMs: notify.drainMs } : {}),
+          });
+    notifyTimer =
+      notifier === null
+        ? undefined
+        : setInterval(() => void notifier.tick(), notify?.retryMs ?? 1000);
+    notifyTimer?.unref();
 
     log(`run ${runId} in ${runDir}`);
     // The human view follows the journal from here; the driver's callbacks feed only the log.
@@ -519,6 +567,9 @@ export async function hostWorkflow(options: HostWorkflowOptions): Promise<HostWo
       const final = readSnapshot(runDir);
       if (final.ok) await reporter.finish(final.snapshot);
     }
+    if (notifyTimer !== undefined) clearInterval(notifyTimer);
+    // Bounded: the terminal notification, and whatever still waits for the caller, before the exit.
+    await notifier?.finish();
 
     if (out.error !== null || out.result === null) {
       return finishJournaled(3, {

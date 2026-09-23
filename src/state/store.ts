@@ -67,6 +67,13 @@ import type {
   RunCancelRequestedRecord,
 } from "../journal/lifecycle-records.js";
 import { withJournalLock, type LockOptions } from "../journal/lock.js";
+import type {
+  NotifyEvent,
+  NotifyOutcome,
+  NotifyOutcomeRecord,
+  NotifyReason,
+  NotifyTargetRecord,
+} from "../journal/notify-records.js";
 import {
   CONFIG_FILE,
   INPUT_FILE,
@@ -261,6 +268,21 @@ export interface HostExitedInput extends StoreInput {
   pid: number;
   exitCode: number;
   reason: string;
+}
+
+export interface NotifyTargetInput extends StoreInput {
+  paneId: string;
+  agentName: string;
+  agent: string;
+  sessionId: string | null;
+  terminalId: string | null;
+}
+
+export interface NotifyOutcomeInput extends StoreInput {
+  event: NotifyEvent | null;
+  key: string | null;
+  outcome: NotifyOutcome;
+  reason: NotifyReason;
 }
 
 export interface ObservationLostInput extends StoreInput {
@@ -781,6 +803,33 @@ export async function recordHostExited(
     type: "host.exited",
     pid: input.pid,
     exitCode: input.exitCode,
+    reason: input.reason,
+  });
+}
+
+/** Records the caller the run host notifies; written once, right after the run opens. */
+export async function recordNotifyTarget(
+  input: NotifyTargetInput,
+): Promise<StoreOutcome<NotifyTargetRecord>> {
+  return appendFact<NotifyTargetRecord>(input, {
+    type: "notify.target",
+    paneId: input.paneId,
+    agentName: input.agentName,
+    agent: input.agent,
+    sessionId: input.sessionId,
+    terminalId: input.terminalId,
+  });
+}
+
+/** Records what became of a notification, or that notifying stopped; allowed until host.exited. */
+export async function recordNotifyOutcome(
+  input: NotifyOutcomeInput,
+): Promise<StoreOutcome<NotifyOutcomeRecord>> {
+  return appendFact<NotifyOutcomeRecord>(input, {
+    type: "notify.outcome",
+    event: input.event,
+    key: input.key,
+    outcome: input.outcome,
     reason: input.reason,
   });
 }

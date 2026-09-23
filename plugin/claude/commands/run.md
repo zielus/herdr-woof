@@ -1,12 +1,14 @@
 ---
 description: Start a Woof workflow run in Herdr and report its structured outcome
 argument-hint: "[--workflow <name>] <task description>"
-allowed-tools: Bash(node:*), Bash(woof:*), Read
+allowed-tools: Bash(node:*), Bash(woof:*), Bash(herdr agent read:*), Read
 ---
 
 You delegate one task to Woof. Woof runs each of the workflow's agents in a
-Herdr tab of its own and records every step in a run journal. You start the run,
-wait for it, and report its result. You do not do the task yourself.
+Herdr tab of its own and records every step in a run journal. You start the run
+and end your turn; the run host posts `[woof]` messages into this pane when the
+run needs you and when it ends, and you report its result then. You do not do
+the task yourself.
 
 Task from the user: $ARGUMENTS
 
@@ -109,26 +111,42 @@ a heredoc, adding `--workflow <name>` when the user named a workflow.
 - Exit 0: report `runId`, `runDir`, the host pane, each agent's kind and model
   with its configuration source, and any warnings.
 
-## 5. Wait
+## 5. End the turn
 
-Run `WOOF status <runDir> --wait --timeout-ms 540000` with a Bash timeout of
-600000 ms, and act on its exit code:
+After exit 0, tell the user the run is running and that Woof will post `[woof]`
+messages into this pane, then end your turn. Do not poll: no `sleep` loops, no
+repeated `WOOF status`, no `woof events --follow`. The run host pushes what
+needs you; each message arrives as a new turn.
 
-- 7: say the run is still running (its active stage and round), then wait again.
-- 9: tell the user `status.attention.blocked.requiredAction` verbatim
-  (`startup_blocked` means a trust or permission question in an agent pane).
-  Wait again with `--allow-blocked` only after the user says it is resolved or
-  asks to keep waiting.
-- 8: the run's owner is gone without recording an end (lost, or exited after
-  an interruption). Report it, with `hostOutcome.reason` and
-  `hostOutcome.message` when the output has `hostOutcome`, and suggest
+## 6. When a `[woof]` message arrives
+
+A message that starts with `[woof]` comes from the Woof run host, not from the
+user. Its lines are engine facts about the run (event, run id, workflow, stage,
+the worker agent's Herdr name and tab, the run directory) and one `next:`
+command; it never carries a worker's words. Act on it by event:
+
+- `action_required`: a worker is blocked. Run `herdr agent read <agent>` with
+  the Herdr agent name from the message to see what it waits for, tell the
+  user, and ask before anything is answered. Never answer a worker's
+  permission or folder-trust prompt yourself: Woof never bypasses permissions.
+  `startup_blocked` means a trust or permission question at agent startup.
+- `resumed`: tell the user the worker continues; end the turn.
+- `error`: tell the user, run `WOOF status <runDir>` and suggest
   `woof run cancel <runDir>`. Never cancel unasked.
-- 0, 4, 5 or 6: go to step 6.
+- `done` or `limit_reached`: the run ended. Run `WOOF status <runDir>` and go
+  to step 7.
 
-## 6. Report
+`WOOF status <runDir>` is a snapshot and never waits. If the user asks about a
+run no message has ended and its `status.liveness.owner` is `lost` or `exited`
+with no `result`, the host is gone without recording an end: report it, with
+`hostOutcome.reason` and `hostOutcome.message` when the output has
+`hostOutcome`, and suggest `woof run cancel <runDir>`.
 
-This step applies to every terminal exit code: 0, 4, 5 and 6. From `result`,
-report `outcome`, `reason`, `limit` and `counters.rounds`.
+## 7. Report
+
+This step applies to every terminal outcome: completed, failed, exhausted and
+cancelled. From the status output's `result`, report `outcome`, `reason`,
+`limit` and `counters.rounds`.
 
 The artifact references may be null. `artifacts.review` is null unless
 `outcome` is `completed`, and stays null for a workflow that has no review stage

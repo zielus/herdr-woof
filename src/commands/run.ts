@@ -20,6 +20,7 @@ import {
   type HostView,
   type HostWorkflowOptions,
   type HostWorkflowResult,
+  type NotifyOption,
   type RuntimeFactory,
 } from "../host/run.js";
 import { createHostView } from "../inspect/host-view.js";
@@ -38,6 +39,7 @@ import {
   rejected,
   required,
 } from "./common.js";
+import { captureCaller, herdrNotifyChannel, notifyTimings } from "./notify.js";
 
 export const RUN_START_USAGE = `Usage: woof run start --input <path|-> [--workflow <name>] [--project <dir>] [--run-id <id>]
                       [--run-dir <dir> | --runs-dir <dir>] [--host herdr-pane|foreground]
@@ -66,17 +68,25 @@ current or path checkout with uncommitted changes (checkout_dirty).
 
 --host herdr-pane (default) needs HERDR_ENV=1 and HERDR_PANE_ID (or
 --split-from, which only stands in for HERDR_PANE_ID: nothing is split): it
-runs the scheduler in a Herdr pane and returns once that host has opened the
-run, printing {"outcome":"started"} with the run directory and the host's
-paneId and tabId; follow it with woof status <run-dir> --wait. With a worktree
-checkout (the default) the host runs in the root pane of the new worktree's
-workspace; otherwise in the root pane of a new, unfocused tab (woof:<workflow>).
-Every agent of the run gets its own tab (woof:<role>); the host's pane is the
-only pane Woof adds for the run and stays open after it, so its last lines
-remain readable. Agent tabs close
-when the run ends unless --keep-panes (or keepPanes) is set.
---host foreground runs the scheduler in this process and prints
-{"outcome":"run","result"} when the run ends.
+runs the scheduler in a Herdr pane and returns right after that host has
+opened the run, printing {"outcome":"started"} with the run id, the run
+directory and the host's paneId and tabId. With a worktree checkout (the
+default) the host runs in the root pane of the new worktree's workspace;
+otherwise in the root pane of a new, unfocused tab (woof:<workflow>). Every
+agent of the run gets its own tab (woof:<role>); the host's pane is the only
+pane Woof adds for the run and stays open after it, so its last lines remain
+readable. Agent tabs close when the run ends unless --keep-panes (or keepPanes)
+is set.
+The agent in the pane that ran woof run start is the run's notification
+target: the run host pushes [woof] messages into that pane (herdr agent
+prompt) when a worker is blocked or resumes, on an error, and once when the run
+ends (done, or limit_reached when it ended exhausted), and only while that pane
+still hosts the same agent session and the agent is idle. Messages carry engine
+facts only; config.json and the journal record the target (or why there is
+none) and what became of each message. Nothing needs to poll.
+--host foreground is the mode for tests, CI and scripted runtimes: it runs the
+scheduler in this process, notifies nobody, and prints {"outcome":"run","result"}
+and exits with the outcome's code when the run ends.
 The run host prints the human view of the run to its stdout (what woof watch
 <run-dir> --follow prints: opening block, one row per fact, outcome summary) and
 its technical log to <run-dir>/host.log. --plain prints that technical log to
@@ -384,6 +394,8 @@ export async function runHostCommand(args: string[]): Promise<number> {
       writeOutcome: true,
       launch,
       paneId,
+      // The agent in the pane that ran `woof run start` is the run's notification target.
+      notify: () => notifyOption(request.launcher.paneId ?? undefined),
     });
   } finally {
     process.off("SIGINT", deferSignal);
@@ -438,6 +450,8 @@ async function foreground(options: {
     projectDir: options.projectDir,
     input: options.input,
     flags: options.flags,
+    // The caller waits on this process, so it is never notified: the exit code is its answer.
+    notify: async () => ({ setting: { target: null, reason: "foreground" }, channel: null }),
     claimBeforeOpen: true,
     writeOutcome: false,
     paneId: nonEmpty(process.env["HERDR_PANE_ID"]) ?? null,
@@ -603,4 +617,15 @@ export function defaultRunId(workflow: string | undefined): string {
 
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
+}
+
+/** The host's notification option: the launcher's caller and a Herdr channel to it, if any. */
+async function notifyOption(launcherPaneId: string | undefined): Promise<NotifyOption> {
+  const herdr = { bin: herdrBin(), env: process.env };
+  const setting = await captureCaller(launcherPaneId, herdr);
+  return {
+    setting,
+    channel: setting.target === null ? null : herdrNotifyChannel(setting.target, herdr),
+    ...notifyTimings(process.env),
+  };
 }

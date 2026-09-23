@@ -553,7 +553,7 @@ function startedOutput(
       warnings: recorded?.warnings ?? [],
     },
     next: {
-      status: ["woof", "status", runDir, "--wait"],
+      status: ["woof", "status", runDir],
       cancel: ["woof", "run", "cancel", runDir],
     },
   };

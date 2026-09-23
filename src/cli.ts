@@ -93,9 +93,10 @@ function printHelp(): void {
   console.log("");
   console.log("Workflows (unstable):");
   console.log(
-    "  run start     Start a workflow run: the one way to run a workflow; --host foreground runs",
+    "  run start     Start a workflow run: the one way to run a workflow; inside Herdr it returns",
   );
-  console.log("                the scheduler in this process instead of a new Herdr tab");
+  console.log("                at once and the run host pushes [woof] messages into your pane;");
+  console.log("                --host foreground (tests, CI) stays attached until the run ends");
   console.log("  run cancel    Cancel a run");
   console.log("  run host      Host a launched run in this process (internal; run start uses it)");
   console.log(
@@ -103,7 +104,7 @@ function printHelp(): void {
   );
   console.log("");
   console.log("Inspection (read-only):");
-  console.log("  status        Print a run's status and owner liveness; --wait until it needs you");
+  console.log("  status        Print a snapshot of a run's status and owner liveness");
   console.log("  runs          List the runs under the runs directory");
   console.log("  events        Print a run's lifecycle events as NDJSON; --follow to keep reading");
   console.log(

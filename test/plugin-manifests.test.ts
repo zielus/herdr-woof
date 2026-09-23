@@ -195,7 +195,7 @@ describe("Claude Code plugin", () => {
     expect(fields).toEqual({
       description: "Start a Woof workflow run in Herdr and report its structured outcome",
       "argument-hint": '"[--workflow <name>] <task description>"',
-      "allowed-tools": "Bash(node:*), Bash(woof:*), Read",
+      "allowed-tools": "Bash(node:*), Bash(woof:*), Bash(herdr agent read:*), Read",
     });
     expect(body).not.toContain("bin/woof");
     expect(body).not.toMatch(/mcp/i);
@@ -224,10 +224,10 @@ describe("Claude Code plugin", () => {
     return end === -1 ? rest : rest.slice(0, end);
   }
 
-  it("PR #6 (run.md:105): the report step covers exit codes 0, 4, 5 and 6 and guards every nullable artifact reference", () => {
+  it("PR #6 (run.md:105): the report step covers every terminal outcome and guards every nullable artifact reference", () => {
     const text = readFileSync(join(claudeRoot, "commands", "run.md"), "utf8");
-    const report = section(text, "## 6. Report");
-    expect(report).toContain("every terminal exit code: 0, 4, 5 and 6");
+    const report = section(text, "## 7. Report");
+    expect(report).toContain("every terminal outcome: completed, failed, exhausted and\ncancelled");
     expect(report).toContain("The artifact references may be null.");
     expect(report).toContain("`artifacts.review` is null unless\n`outcome` is `completed`");
     expect(report).toContain("only for\na reference that is not null");
@@ -236,9 +236,16 @@ describe("Claude Code plugin", () => {
     );
     // No unconditional dereference or review read remains.
     expect(report).not.toMatch(/^Read the accepted review file and summarize its\nfindings\./m);
-    const wait = section(text, "## 5. Wait");
-    expect(wait).toContain("`hostOutcome.reason`");
-    expect(wait).toContain("- 0, 4, 5 or 6: go to step 6.");
+    // The caller ends its turn and acts on the run host's [woof] messages; it never polls.
+    expect(text).not.toContain("--wait");
+    expect(section(text, "## 5. End the turn")).toContain("Do not poll");
+    const messages = section(text, "## 6. When a `[woof]` message arrives");
+    expect(messages).toContain("`hostOutcome.reason`");
+    expect(messages).toContain("- `done` or `limit_reached`: the run ended.");
+    expect(messages).toContain("`herdr agent read <agent>`");
+    expect(messages).toContain(
+      "Never answer a worker's\n  permission or folder-trust prompt yourself",
+    );
   });
 
   it("PI-005, LV-001, LV-002: run.md always applies the trust gate, states the verify shape and stops after a second rejection", () => {
@@ -275,7 +282,7 @@ describe("Claude Code plugin", () => {
       "adding `--workflow <name>` when the user named a workflow",
     );
     // A workflow with no review stage completes with a null artifacts.review.
-    const report = section(text, "## 6. Report");
+    const report = section(text, "## 7. Report");
     expect(report).toContain("stays null for a workflow that has no review stage");
     expect(report).toContain("`artifacts.lastAcceptedByStage`");
     // The built-in example still validates; a definition this command does not

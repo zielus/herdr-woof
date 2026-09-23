@@ -390,28 +390,52 @@ claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
   exists but is not a valid run host claim" (after the usual re-reads),
   **never `"alive"`**. `"abandoned"` and `"exited"` claims still allow
   `pid: null`.
-- **`woof status <run-dir> [--wait]`** (`src/inspect/status.ts`,
-  `RunStatusView`) is the read-only wait primitive: `liveness`, the run's
-  `activeAttempts`, `lastGate`, `attention`, `counters`, `config: {sha256} |
-null` and `cursor`, plus `result` (`deriveRunResult`) once terminal.
-  Without `--wait`: exit 0, or 3 on `run_dir_invalid|journal_corrupt|
-journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
-  `--timeout-ms`, default 540 000 — one Bash call stays under its own
-  600 000 ms cap): a recorded terminal outcome always wins first (**0/4/5/6**
-  completed/failed/exhausted/cancelled); otherwise an unresolved
-  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise **8**
-  means the owner is gone with no recorded outcome — either `lost`,
-  confirmed on two probes at least `2 × heartbeatMs` apart, or `exited` with
-  no terminal journal record (a host interrupted, e.g. by a signal, before
-  the run recorded its own end; the CLI re-reads once more first, so a host
-  that exits just after its final journal write is not caught mid-write). In
-  the `exited` case `woof status`'s printed line also carries `hostOutcome`,
-  the host's own `outcome.json`, when that file exists (a foreground host
-  has none, so its exit 8 carries no `hostOutcome` — only the exit code
-  already visible in `liveness.host.exitCode`); `hostOutcome` is a CLI-only
-  addition to the printed JSON, not part of the `RunStatusView` type itself.
-  Otherwise the timeout elapsing is **7**. The last line printed is always
-  the status at return time.
+- **`woof status <run-dir>`** (`src/inspect/status.ts`, `RunStatusView`) is
+  a read-only snapshot: `liveness`, the run's `activeAttempts`, `lastGate`,
+  `attention`, `counters`, `config: {sha256} | null` and `cursor`, plus
+  `result` (`deriveRunResult`) once terminal. It never waits; the
+  `--wait` mode was removed with caller notifications (below). It exits 0, or
+  3 on `run_dir_invalid|journal_corrupt|journal_replaced`. When the owner is
+  `exited` with no terminal journal record (a host interrupted, e.g. by a
+  signal, before the run recorded its own end), the printed line also carries
+  `hostOutcome`, the host's own `outcome.json`, when that file exists (a
+  foreground host has none); `hostOutcome` is a CLI-only addition to the
+  printed JSON, not part of the `RunStatusView` type itself. A `lost` owner is
+  the read-time probe's verdict; reading again two heartbeats later confirms
+  it.
+- **Caller notifications (`src/host/notify.ts`).** The agent in the pane that
+  ran `woof run start` (`launch.json`'s launcher pane) is the run's
+  notification target; the pane host reads it with `herdr agent get <pane>`
+  before the run opens and records it in `config.json` (`notify: {target}`,
+  or `{target: null, reason}`: `foreground`, `outside_herdr`,
+  `no_caller_pane`, `no_agent`, `agent_unnamed`, `no_session`,
+  `caller_unreadable`) and, with a target, as the journal's
+  `notify.target {paneId, agentName, agent, sessionId, terminalId}`. The host
+  follows its run's journal (and the child runs its workflow steps open) and
+  pushes one `[woof]` message per event with `herdr agent prompt`, through
+  the Herdr runtime adapter's `deliver` (its started / not_delivered /
+  ambiguous taxonomy): `action_required` (`run.blocked`), `resumed`
+  (`run.unblocked`), `error` (`observation.lost` with code
+  `runtime_unavailable`, or `agent.lifecycle_changed` to `gone`) and one
+  terminal message per top-level run from `run.terminated` — `limit_reached`
+  when it ended exhausted, else `done`. A message is built from an allowlist
+  of engine facts (ids, enum values, the run directory, the worker's Herdr
+  agent name and tab); no record's free text (a reason, a required action, an
+  observation message) is ever interpolated. Before each send the host reads
+  the target pane: another agent or session there, or none, stops
+  notifications for the run (`stopped`: `target_changed` / `target_gone`);
+  a `working` or `blocked` caller keeps the message queued (Woof never types
+  into a turn in progress, which is why nothing is lost or sent twice); an
+  ambiguous delivery is never resent. Each message waits at most 10 minutes
+  while the run goes on, and the host waits at most 60 s after the run ended
+  for the queue to empty before it journals the rest `dropped`
+  (`host_exiting`) and exits. Every outcome is a
+  `notify.outcome {event, key, outcome, reason}` record (`key` is
+  `<runId>#<seq>` of the record it reports); both record types are additive at
+  schemaVersion 1, `notify.outcome` is allowed after `run.terminated` until
+  `host.exited`, and a run without a target journals neither. A foreground
+  host notifies nobody: its caller waits on it. A host that dies cannot notify:
+  `woof status` shows its owner `lost`.
 - **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
   (`src/inspect/runs.ts`) lists run directories under a runs directory
   (`--runs-dir` → the user setting `defaults.runsDir` → `~/.woof/runs`;
@@ -551,7 +575,7 @@ events`**, **`woof watch`** and **`woof tui`** are read-only and never take the 
   the echoed log already shows them, so they are printed once). Errors that
   abort the host still go to stderr; nothing else does, so a Herdr pane shows
   one coherent view. `outcome.json`, exit codes,
-  `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are
+  `host-exit.json`, `host.claimed`/`host.exited` and `woof status` are
   unchanged and do not depend on the host's stdout. There is no separate
   watch pane any more: one pane per run.
 - **Metadata is a display-only projection, never a source.** The run host
@@ -617,9 +641,9 @@ workspaceId, tabId?}`** — written by the run host together with `run.opened`, 
   the follow still ends `terminated` with exit 0. A late `submission.rejected`
   between the two is delivered with the exit, never on its own. `--follow --after <cursor
 at or past the termination>` applies the same rule: it delivers the exit
-  whether it was written before or after the follower started. `woof status
---wait` still returns on the recorded outcome at once — `host.exited` may
-  follow, and resuming from its `status.cursor` delivers it. The synchronous second-signal
+  whether it was written before or after the follower started. `woof status`
+  reports the recorded outcome at once — `host.exited` may follow, and
+  resuming from its `status.cursor` delivers it. The synchronous second-signal
   exit (130) cannot take the journal lock and leaves only `host-exit.json`.
   A refused or failed host record is logged and never affects the run. A
   scheduler driven without a host (`runWorkflow` from the SDK) journals no

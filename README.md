@@ -129,16 +129,15 @@ EOF
 woof doctor --json --repo /abs/path/to/git/worktree
 woof run start --workflow plan-build-review --input input.json \
   --project /abs/path/to/git/worktree
-woof status <run-dir> --wait
 ```
 
 `doctor --json` reports the repository's Claude folder-trust status. `--project`
 defaults to the working directory, and the input's `repo` must be that project's
-git top level. `run start` prints the run directory. `status --wait` polls it and
-returns when the run ends (completed, failed, exhausted or cancelled), when it is
-blocked and needs you, when its host is gone without a recorded outcome, or when
-`--timeout-ms` passes. Each case has its own exit code, listed under
-[Configuration, hosting and inspection](#configuration-hosting-and-inspection).
+git top level. `run start` returns as soon as the run is open, printing its id and
+directory. Nothing needs to poll: when an agent started the run, the run host
+posts [`[woof]` messages](#caller-notifications) into that agent's pane when the
+run needs it and when it ends. `woof status <run-dir>` prints a snapshot at any
+time.
 
 ## CLI
 
@@ -159,8 +158,7 @@ woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
   [--split-from <pane-id>] [--runtime-module <path>] \
   [--plain] [--ascii] [--preview summary|json]
-woof status <run-dir|run-id> [--wait] [--timeout-ms <n>] [--allow-blocked] \
-  [--poll-ms <n>] [--verify-artifacts] [--pretty]
+woof status <run-dir|run-id> [--verify-artifacts] [--pretty]
 woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
 woof runs --reindex [--prune] [--runs-dir <dir>]
 woof events <run-dir|run-id> [--after <cursor>] [--follow] [--timeout-ms <n>] \
@@ -368,19 +366,44 @@ woof config show
 ```
 
 `woof run start` resolves that configuration, launches a scheduler in a Herdr
-pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host foreground` to run
-in this process) — the root pane of the run's new worktree workspace by default,
-else of a new, unfocused tab (`woof:<workflow>`) — and returns once the pane
-host has claimed and opened the run:
+pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required) — the root pane of the run's
+new worktree workspace by default, else of a new, unfocused tab
+(`woof:<workflow>`) — and returns once the pane host has claimed and opened the
+run. `--host foreground` is the mode for tests, CI and scripted runtimes: it
+runs the scheduler in the calling process and exits with the outcome's code.
 
 ```sh
 woof run start --input input.json
 # {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…","tabId":"…",...},...}
-woof status /abs --wait
-# polls until a terminal outcome (exit 0/4/5/6), the owner gone without a
-# recorded outcome -- lost, or exited without a terminal record (exit 8) --
-# a block needing the operator (exit 9), or --timeout-ms (exit 7)
+woof status /abs
+# a snapshot: status, owner liveness (unhosted, alive, lost, exited), and the
+# result once the run ended; hostOutcome when the owner exited without an end
 ```
+
+### Caller notifications
+
+The agent in the pane that ran `woof run start` is the run's notification
+target. The run host (not the `run start` process, which has already exited)
+pushes a `[woof]` message into that pane with `herdr agent prompt` for each of
+these events, and only these: `action_required` (a worker is blocked, for
+example on a permission prompt), `resumed`, `error` (Herdr became unavailable to
+the run, or a worker agent is gone) and one terminal message, `done`, or
+`limit_reached` when the run ended exhausted. Blocks and errors inside a
+workflow step's child runs are included. A message holds engine facts only:
+event, run id, workflow, stage, the worker's Herdr agent name and tab, the run
+directory and the one command to use next (`herdr agent read <worker>`,
+`woof status <run>`, `woof run cancel <run>`). It never carries a worker's
+words.
+
+Before each message the host checks that the pane still hosts the same agent
+session. A caller that is working or blocked keeps the message queued, so Woof
+never types into a turn in progress; a message is dropped after 10 minutes of
+waiting while the run goes on, or once the host exits (it waits at most 60 s
+after the run ends). An ambiguous delivery is never resent, and a pane that now
+hosts another agent, or none, stops notifications for the run. `config.json`
+records the target, or why there is none (`foreground`, `no_agent`, …), and the
+journal records every outcome (`notify.target`, `notify.outcome`). A host that
+dies cannot report itself: `woof status` then shows the owner `lost`.
 
 The pane host claims the run exclusively (`host.json`, a heartbeat every
 2000 ms by default), so `woof status`/`woof runs` report the owner as
@@ -428,9 +451,10 @@ and `watch` actions that target the invocation's focused project and
 project run state as pane metadata tokens; `watch` opens a plugin pane running
 `woof watch --follow` for the project's single active run. The Claude Code plugin
 (`plugin/claude/`) ships `/woof:run <task description>`, which resolves the
-CLI, applies the operator-trust precondition below, starts a run and waits
-for it with `woof status --wait`, reporting the structured result, and a `woof`
-skill that describes the workflows and the inspection and cancel commands.
+CLI, applies the operator-trust precondition below, starts a run and ends its
+turn; it reports the structured result when the run host's `done` message
+arrives. Its `woof` skill describes the workflows, the `[woof]` messages and the
+inspection and cancel commands.
 
 ### Operator-trust precondition
 

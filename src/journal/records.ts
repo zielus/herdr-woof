@@ -53,6 +53,12 @@ import {
   paneProblem,
 } from "./record-fields.js";
 import {
+  notifyOutcomeProblem,
+  notifyTargetProblem,
+  type NotifyOutcomeRecord,
+  type NotifyTargetRecord,
+} from "./notify-records.js";
+import {
   stageChildOpenedProblem,
   stageChildResultProblem,
   type StageChildOpenedRecord,
@@ -202,7 +208,9 @@ export type JournalRecord =
   | AgentLifecycleChangedRecord
   | RunActivityRecord
   | StageChildOpenedRecord
-  | StageChildResultRecord;
+  | StageChildResultRecord
+  | NotifyTargetRecord
+  | NotifyOutcomeRecord;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -328,6 +336,10 @@ function recordProblem(value: Record<string, unknown>, seq: number): string | un
       return stageChildOpenedProblem(value);
     case "stage.child_result":
       return stageChildResultProblem(value, seq);
+    case "notify.target":
+      return notifyTargetProblem(value);
+    case "notify.outcome":
+      return notifyOutcomeProblem(value);
     default:
       return "unknown record type";
   }

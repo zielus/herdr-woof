@@ -23,7 +23,8 @@
 //      host holds the lock (that is carry-over C1's separate, documented limit,
 //      not this row).
 //   4. `kill -9` the host.
-//   5. `woof status` reports owner `lost`; `woof status --wait` exits 8.
+//   5. `woof status` reports owner `lost`, and still does two heartbeats later,
+//      with no result: the run did not end.
 //   6. `woof run cancel` exits 0 and records the cancellation.
 //   7. no `host-exit.json`: a killed host records no clean exit.
 //
@@ -251,9 +252,21 @@ try {
 const owner = status?.status?.liveness?.owner ?? status?.liveness?.owner ?? null;
 step("5a. woof status reports the owner as lost", owner === "lost", `owner ${String(owner)}`);
 
-const waited = woof("status", runDir, "--wait", "--timeout-ms", "60000");
-log(`woof status --wait exit ${waited.status}`);
-step("5b. woof status --wait exits 8 (owner lost), not 7 (still running)", waited.status === 8);
+// `woof status` is a snapshot: a loss is confirmed by a second read two heartbeats later.
+await new Promise((resolve) => setTimeout(resolve, 2 * 2000));
+const again = woof("status", runDir);
+log(`woof status exit ${again.status}: ${again.stdout}`);
+let later = null;
+try {
+  later = JSON.parse(again.stdout.split("\n").at(-1) ?? "null");
+} catch {
+  later = null;
+}
+step(
+  "5b. two heartbeats later woof status still reports owner lost and no result",
+  later?.status?.liveness?.owner === "lost" && later?.result === null,
+  `owner ${String(later?.status?.liveness?.owner)}, result ${JSON.stringify(later?.result ?? null)}`,
+);
 
 const cancelled = woof("run", "cancel", runDir, "--reason", "L7 runtime-loss probe");
 log(`woof run cancel exit ${cancelled.status}: ${cancelled.stdout}`);

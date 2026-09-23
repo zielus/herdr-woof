@@ -5,8 +5,9 @@ liveness, read-only inspection commands, a Herdr plugin and a Claude Code
 plugin. `woof run start` is the one engine entry point for running a
 workflow; an integration may only wrap it, never add its own way of starting
 runs or its own input format. The Herdr plugin exposes `doctor`, `status`,
-`cancel` and `watch`; `/woof:run` starts a run through `woof run start`, waits
-for it and reports the result. Every command and action below is an
+`cancel` and `watch`; `/woof:run` starts a run through `woof run start`, ends its
+turn, and reports the result when the run host's `[woof] done` message
+arrives. Every command and action below is an
 implemented surface.
 
 ## CLI
@@ -30,7 +31,7 @@ implemented surface.
   user or built-in), the file that supplied it and what it shadows. See
   [configuration](../architecture/configuration.md#implemented-now-p4).
 - Inspection (read-only; no journal lock, never contacts Herdr):
-  `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
+  `status <run-dir> [--pretty]` (a snapshot; it never waits), `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
 [--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--input summary|json]
 [--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`,
@@ -65,8 +66,9 @@ implemented surface.
   [observability](../architecture/observability.md#implemented-now-central-index).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
   the one way to run a workflow. It hosts the run in Herdr (`--host
-herdr-pane`, default) or in this process (`--host foreground`, which chooses
-  where the scheduler runs and stays attached until the run ends). Layout is one tab per participant: the first
+herdr-pane`, default), returning as soon as the run is open, or in this
+  process with `--host foreground`, the mode for tests, CI and scripted
+  runtimes, which stays attached until the run ends and notifies nobody. Layout is one tab per participant: the first
   tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
   holds the run host in its root pane, and every agent of the run gets its
   own unfocused tab (`woof:<role>`); agents are never pane splits. With a new
@@ -208,16 +210,18 @@ herdr plugin action invoke watch --plugin herdr-woof
    fixes every field the details name and retries once. If the retry is
    rejected too, it reports and stops — never an interactive menu, since no
    run exists yet for anyone watching to see.
-5. Waits with `status <run-dir> --wait --timeout-ms 540000` (Bash timeout
-   600000), acting on exit 7 (still running — reports the stage and round,
-   then waits again), 9 (blocked — reports `attention.blocked.requiredAction`
-   verbatim, waits again with `--allow-blocked` only once the user says it is
-   resolved), 8 (the owner is gone without a recorded outcome — `lost`, or
-   `exited` before the run recorded its own end; reports `hostOutcome`'s
-   `reason`/`message` when present, suggests `run cancel`, never cancels
-   unasked) or a terminal code (0/4/5/6).
-6. Reports `outcome`, `reason`, `limit`, `counters.rounds` and the artifact
-   references from `result`. `artifacts.review` is non-null only when
+5. Reports the run id and directory and ends its turn: it never polls. The
+   run host posts `[woof]` messages into the pane (see
+   [caller notifications](../architecture/observability.md)): on
+   `action_required` the command looks with `herdr agent read <worker>` and
+   asks the user before anything is answered; on `error` it reports and
+   suggests `run cancel`, never cancelling unasked; on `done` or
+   `limit_reached` it reads `status <run-dir>`. A snapshot whose owner is
+   `lost`, or `exited` with no result, means the host is gone without a
+   recorded outcome; it reports `hostOutcome`'s `reason`/`message` when
+   present.
+6. On the terminal message, reports `outcome`, `reason`, `limit`,
+   `counters.rounds` and the artifact references from `result`. `artifacts.review` is non-null only when
    `outcome` is `completed` (never on `failed`/`exhausted`/`cancelled`), and
    `artifacts.completion`/`artifacts.verification` can each be `null` too (no
    completing gate reached, or no `verify` command configured); the command
