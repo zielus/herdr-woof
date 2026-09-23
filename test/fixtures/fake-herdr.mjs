@@ -11,7 +11,13 @@
 // extra env and stdio appended to `log` (default FAKE_HERDR_LOG + ".spawn"). It
 // stands in for `herdr pane run` typing a command into a fresh pane. The spawn
 // happens before `hangMs` delays the reply, so an entry with both starts the
-// command and still reports failure.
+// command and still reports failure. Detached, the spawned process is its own
+// session and process group leader (pgid === its own pid, whatever pid a shell
+// or `env` exec chain inside it ends up as); that pgid is appended to
+// FAKE_HERDR_LOG + ".pgids" so a test can wait out or terminate the whole group
+// a pane host's own Herdr calls (report-metadata, notification show) make from
+// inside it — those are separate, non-detached processes a single-pid wait
+// never sees, and one can outlive an abruptly killed host (F-002).
 // An entry may add `worktree: { dir, workspaceId, paneId? }` (composition) for
 // `herdr worktree create`: a real `git worktree add -b <branch> <dir>/<branch
 // with / as ->` [base] from `--cwd`, answered in herdr 0.9.1's worktree_created
@@ -66,6 +72,13 @@ if (entry?.spawn !== undefined) {
     stdio: ["ignore", out, out],
     env: { ...process.env, ...entry.spawn.env },
   });
+  if (logPath !== undefined) {
+    try {
+      appendFileSync(`${logPath}.pgids`, `${child.pid}\n`);
+    } catch {
+      // Best effort: a missing marker only weakens a test's teardown, never the scenario.
+    }
+  }
   child.unref();
 }
 

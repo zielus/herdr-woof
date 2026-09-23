@@ -41,6 +41,37 @@ afterEach(async () => {
       process.kill(hostPid, "SIGKILL");
     await waitFor(() => !processAlive(hostPid), `host ${hostPid} to exit`, 15_000);
   }
+  // A pane host's own Herdr calls (report-metadata, notification show) are separate processes that
+  // share the host's process group without being visible to the single-pid wait above: fake Herdr
+  // spawns the host detached (its own session and process group leader), so one of those calls can
+  // outlive an abruptly killed host, still writing into the workspace (F-002, run-start.cli.test.ts).
+  // Fake Herdr records every pane host's group in FAKE_HERDR_LOG + ".pgids"; each is waited out
+  // here, escalating to a signal only once a grace period shows it is not exiting on its own.
+  for (const dir of dirs) {
+    let pgids: number[];
+    try {
+      pgids = readFileSync(join(dir, "herdr.log.pgids"), "utf8")
+        .split("\n")
+        .filter((line) => line !== "")
+        .map(Number)
+        .filter((pgid) => Number.isInteger(pgid));
+    } catch {
+      continue;
+    }
+    for (const pgid of pgids) {
+      if (!groupAlive(pgid)) continue;
+      const graceDeadline = Date.now() + 2000;
+      while (groupAlive(pgid) && Date.now() < graceDeadline) await delay(50);
+      if (groupAlive(pgid)) {
+        signalGroup(pgid, "SIGTERM");
+        const termDeadline = Date.now() + 1000;
+        while (groupAlive(pgid) && Date.now() < termDeadline) await delay(50);
+      }
+      if (groupAlive(pgid)) signalGroup(pgid, "SIGKILL");
+      const deadline = Date.now() + 10_000;
+      while (groupAlive(pgid) && Date.now() < deadline) await delay(50);
+    }
+  }
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
@@ -51,6 +82,25 @@ function processAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** True while any process in the group led by `pgid` still exists (see the afterEach above). */
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Signals every process in the group led by `pgid`; a group that is already gone is not an error. */
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // already gone
   }
 }
 
