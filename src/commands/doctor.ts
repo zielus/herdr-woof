@@ -84,7 +84,11 @@ export interface DoctorKind {
   /** Resolved role names whose kind this is (none when configuration did not resolve). */
   roles: string[];
   /** Readiness probes of those roles, one per distinct model/provider selection. */
-  readiness: Array<{ roles: string[]; subject: string; ready: boolean; detail: string }>;
+  /**
+   * Readiness probes of those roles, one per distinct model/provider selection. `ready` is null
+   * for a selection past MAX_READINESS_PROBES, which is reported but not probed.
+   */
+  readiness: Array<{ roles: string[]; subject: string; ready: boolean | null; detail: string }>;
   /** The kind's advisory folder-trust warning for the repository, when a role uses it. */
   trust: { code: string; message: string } | null;
 }
@@ -129,7 +133,8 @@ export async function doctorReport(repo: string): Promise<DoctorReport> {
   for (const kind of kinds) {
     if (kind.kind === "claude" || kind.roles.length === 0) continue;
     if (kind.status !== "available") problems.push(`${kind.kind}_unavailable`);
-    if (kind.readiness.some((check) => !check.ready)) problems.push(`${kind.kind}_not_ready`);
+    if (kind.readiness.some((check) => check.ready === false))
+      problems.push(`${kind.kind}_not_ready`);
     if (kind.trust !== null) problems.push(kind.trust.code as DoctorProblem);
   }
   return {
@@ -207,6 +212,9 @@ function renderReport(report: DoctorReport): string {
 /** Bound on each probe of an external executable, so a hung CLI cannot block doctor. */
 const PROBE_TIMEOUT_MS = 10_000;
 
+/** Readiness probes run per kind; they run together, so a kind adds at most one probe bound. */
+const MAX_READINESS_PROBES = 4;
+
 interface Probe {
   status: ProbeStatus;
   code: number | null;
@@ -272,21 +280,35 @@ async function kindReport(
     entry.roles.push(name);
     selections.set(key, entry);
   }
-  // One selection at a time: however many roles a project defines, a kind runs one probe at once.
-  const readiness: DoctorKind["readiness"] = [];
-  for (const selection of selections.values()) {
+  const checks = [...selections.values()].flatMap((selection) => {
     const check = version.status === "available" ? spec.readinessProbe?.(selection) : undefined;
-    if (check === undefined || check === null) continue;
-    // oxlint-disable-next-line no-await-in-loop
-    const result = await probe(spec.executable, check.args);
-    readiness.push({
-      roles: selection.roles,
-      subject: check.subject,
-      ...(result.status === "not_found"
-        ? { ready: false, detail: `${spec.executable} not found` }
-        : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr })),
-    });
-  }
+    return check === undefined || check === null ? [] : [{ selection, check }];
+  });
+  // At most MAX_READINESS_PROBES run, together: doctor waits one probe bound per kind, however
+  // many roles a project defines. The rest are listed as not probed, never as not ready.
+  const readiness: DoctorKind["readiness"] = await Promise.all(
+    checks.map(async ({ selection, check }, index) => {
+      if (index >= MAX_READINESS_PROBES) {
+        return {
+          roles: selection.roles,
+          subject: check.subject,
+          ready: null,
+          detail: `not probed: doctor probes at most ${MAX_READINESS_PROBES} selections per kind`,
+        };
+      }
+      const result = await probe(spec.executable, check.args);
+      const outcome =
+        result.status === "not_found"
+          ? { ready: false, detail: `${spec.executable} not found` }
+          : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr });
+      return {
+        roles: selection.roles,
+        subject: check.subject,
+        ready: outcome.ready,
+        detail: outcome.detail,
+      };
+    }),
+  );
   const warning = used.length > 0 ? (spec.trustWarning?.(dir, {}) ?? null) : null;
   return {
     kind: spec.kind,

@@ -1222,6 +1222,45 @@ echo "Not logged in" >&2; exit 1
     expect((result.json as Json)["problems"]).toContain("pi_unavailable");
   }, 40_000);
 
+  it("agent kinds: hung readiness probes keep doctor bounded; selections past the cap are not probed", () => {
+    const root = tempDir("woof-doctor-cap-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    // --version answers; every `auth check` hangs and ignores SIGTERM.
+    writeFileSync(
+      join(bin, "pi"),
+      "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 0.86.0; exit 0; fi\ntrap '' TERM\nsleep 60\n",
+      { mode: 0o755 },
+    );
+    mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+    for (const index of [1, 2, 3, 4, 5]) {
+      writeFileSync(
+        join(repo, ".woof", "roles", `role${index}.json`),
+        JSON.stringify({ schemaVersion: 1, kind: "pi", provider: `p${index}`, model: null }),
+      );
+    }
+    const started = Date.now();
+    const result = woof(["doctor", "--json", "--repo", repo], {
+      env: { ...doctorEnv(home, bin), PATH: path },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // Five hung selections, one 10 s probe bound: not five of them.
+    expect(Date.now() - started).toBeLessThan(30_000);
+    const pi = ((result.json as Json)["kinds"] as Json[]).find((kind) => kind["kind"] === "pi");
+    const readiness = pi?.["readiness"] as Json[];
+    expect(readiness.map((check) => check["ready"])).toEqual([false, false, false, false, null]);
+    expect(readiness[4]).toMatchObject({
+      roles: ["role5"],
+      detail: expect.stringContaining("not probed"),
+    });
+    // claude is not installed here, so its unconditional problems are listed too.
+    expect((result.json as Json)["problems"]).toContain("pi_not_ready");
+  }, 40_000);
+
   it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {
     const root = tempDir("woof-doctor-link-");
     const home = join(root, "home");

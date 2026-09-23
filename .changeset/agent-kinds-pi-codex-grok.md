@@ -16,10 +16,11 @@ role onto that CLI's flags; Herdr starts every kind and reports its lifecycle.
 - Each kind's own permission-bypass flags are reported as `permission_bypass_configured`,
   and the warning now names the kind and the flags. pi gains an advisory
   `pi_trust_untrusted`/`pi_trust_unknown` pre-flight.
-- `woof doctor` probes every kind's CLI in parallel. For a pi role it runs
-  `pi auth check --no-refresh`, and for a codex role `codex login status`. Problems
-  for kinds other than claude count only when a resolved role uses that kind. The
-  JSON report gains `kinds`.
+- `woof doctor` probes every kind's CLI in parallel. For a pi role with a `provider`
+  (or a `provider/id` model) it runs `pi auth check --no-refresh`, and for a codex role
+  `codex login status`; at most 4 such checks run per kind, together, so doctor stays
+  bounded. Problems for kinds other than claude count only when a resolved role uses
+  that kind. The JSON report gains `kinds`.
 - `codex` and `grok` work requests end with a short sandbox note. The admission-time
   request bound reserves room for it, so the largest accepted `task` context is 171
   bytes smaller.

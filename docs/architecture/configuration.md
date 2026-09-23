@@ -219,8 +219,10 @@ bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
   other than `claude` that a resolved role uses, `<kind>_unavailable`,
   `<kind>_not_ready` and `<kind>_trust_untrusted`/`<kind>_trust_unknown`. The
   additive `kinds` array lists every admitted kind with its probe, the
-  resolved roles using it, their readiness probes and its trust warning. The
-  `claude` problems stay unconditional. `--strict` exits 2 when `problems` is
+  resolved roles using it, their readiness probes and its trust warning. Every
+  probe is killed at 10 s; a kind runs at most 4 readiness probes, together,
+  and lists further selections with `ready: null` ("not probed"), which is not
+  a problem. The `claude` problems stay unconditional. `--strict` exits 2 when `problems` is
   non-empty, in both modes; without it `doctor` still always exits 0.
 - **Non-goals.** Role instructions and context
   files are not part of configuration — per-run `instructions` stays in the
