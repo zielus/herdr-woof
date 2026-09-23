@@ -25,9 +25,11 @@ review passes on the exact repaired revision or a limit ends it.
 > **Status: 0.3.x, pre-release.**
 >
 > - The SDK and CLI surfaces are unstable until v1 (marked in `src/index.ts`).
-> - macOS and Linux only. Workflows need Herdr 0.9 or newer and Claude Code.
+> - macOS and Linux only. Workflows need Herdr 0.9 or newer and a supported coding-agent CLI:
+>   Claude Code (the default), pi, Codex or Grok Build. `codex` and `grok` have no live
+>   acceptance run yet.
 > - Not implemented yet: an MCP adapter, crash resume or re-hosting a lost run, parallel work
->   within a run, and a second agent kind besides `claude`.
+>   within a run, and agent kinds beyond `claude`, `pi`, `codex` and `grok`.
 
 ## Contents
 
@@ -53,8 +55,10 @@ review passes on the exact repaired revision or a limit ends it.
 - Node.js 22.18 or newer to run built artifacts.
 - Bun 1.3.2 for repository installation, scripts, and the Herdr plugin build
   step.
-- Herdr 0.9.0 or newer (the Herdr plugin's `min_herdr_version`) and Claude Code
-  to run workflows.
+- Herdr 0.9.0 or newer (the Herdr plugin's `min_herdr_version`) and the CLI of
+  each agent kind a workflow uses: Claude Code for the built-in roles, and pi,
+  Codex or Grok Build for roles that select them (see
+  [Agent kinds](docs/architecture/configuration.md#agent-kinds)).
 
 ## Trust model
 
@@ -175,13 +179,18 @@ woof run cancel <run-dir|run-id> [--reason <text>]
 woof herdr status|cancel|doctor|watch
 ```
 
-`doctor` reports whether Herdr and Claude Code can be invoked, the read-only
-Claude folder-trust status of a repository, resolved to that repository's git
-top level, and whether its configuration resolves (as text, or one JSON line
-with `--json`). Neither Herdr nor Claude Code is
-required for the command to complete. `doctor` exits 0 by default; `--strict`
-exits 2 when the report lists any problem (`herdr_unavailable`,
-`claude_unavailable`, `trust_untrusted`, `trust_unknown`, `config_invalid`).
+`doctor` reports whether Herdr and each supported agent CLI (`claude`, `pi`,
+`codex`, `grok`) can be invoked, the read-only Claude folder-trust status of a
+repository, resolved to that repository's git top level, and whether its
+configuration resolves (as text, or one JSON line with `--json`). For a
+configured `pi` role it runs `pi auth check` for the role's
+provider, and for a `codex` role `codex login status`. Neither Herdr nor any
+agent CLI is required for the command to complete. `doctor` exits 0 by
+default; `--strict` exits 2 when the report lists any problem
+(`herdr_unavailable`, `claude_unavailable`, `trust_untrusted`,
+`trust_unknown`, `config_invalid`, and for another kind a role uses
+`<kind>_unavailable`, `<kind>_not_ready`, `<kind>_trust_untrusted` or
+`<kind>_trust_unknown`).
 
 See [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 for `config show`, `run start`, the inspection commands and the plugins.
@@ -269,7 +278,7 @@ A scheduler runs the built-in `build-review` workflow end to end: build
 → repair, until a review passes on the exact repaired revision or a limit
 ends the run.
 
-It launches each `claude` agent in its own Herdr tab (`woof:<role>`)
+It launches each agent (`claude` by default) in its own Herdr tab (`woof:<role>`)
 (`HERDR_ENV=1` and `HERDR_PANE_ID` must be set). An interactive Claude agent it
 starts must already be allowed to run: the operator must have trusted the target
 repository in Claude Code at least once (open `claude` there and answer its
@@ -304,9 +313,13 @@ woof run start --workflow build-review --host foreground \
 # {"outcome":"run","result":{"outcome":"completed","limit":null,...}}
 ```
 
-`agents.builder`/`agents.reviewer` resolve `kind`, `model` and caller launch
-arguments. The engine adds only `--model <model>` (when given) and
-`--add-dir <runDir>`, never a permission flag. `limits` is optional (each
+`agents.builder`/`agents.reviewer` resolve `kind`, `model`, an optional
+`provider` and caller launch arguments. The engine adds only the kind's model
+flag (when given), a provider flag (`pi` only) and a run-directory grant for a
+kind that confines writes (`--add-dir <runDir>` for `claude` and `codex`),
+never a permission flag. An unsupported kind, a provider on a kind without
+provider selection, or an argument that sets an engine-owned flag is rejected
+before launch. `limits` is optional (each
 key optional, same bounds as elsewhere) and defaults to
 `maxAttemptsPerVisit: 2, maxVisitsPerStage: 3, maxRounds: 3,
 maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs: 180000,
@@ -364,6 +377,20 @@ EOF
 woof config show
 # {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
 ```
+
+A role can select another agent kind. For `pi`, `provider` picks the model
+provider (here the GitHub Copilot subscription pi is signed in to) and becomes
+`--provider`; only `pi` accepts a `provider`:
+
+```sh
+cat > .woof/roles/reviewer.json <<'EOF'
+{"schemaVersion":1,"kind":"pi","provider":"github-copilot","model":"gpt-5-mini","args":[]}
+EOF
+woof doctor   # pi: available (…) (roles: reviewer); provider github-copilot: ready (oauth)
+```
+
+Each kind's launch flags, refused arguments, bypass warnings and trust checks
+are listed under [Agent kinds](docs/architecture/configuration.md#agent-kinds).
 
 `woof run start` resolves that configuration, launches a scheduler in a Herdr
 pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required) — the root pane of the run's
