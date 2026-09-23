@@ -368,7 +368,12 @@ export function describeSource(value: { source: ConfigSource; path: string | nul
 }
 
 function roleValue(role: RoleValue): RoleValue {
-  return { kind: role.kind, model: role.model, args: [...role.args] };
+  return {
+    kind: role.kind,
+    model: role.model,
+    ...(role.provider !== undefined ? { provider: role.provider } : {}),
+    args: [...role.args],
+  };
 }
 
 function provenance<T>(layers: Layer<T>[]): Provenance<T> | null {

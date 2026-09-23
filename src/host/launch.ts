@@ -531,6 +531,8 @@ function startedOutput(
     agents[agentId] = {
       kind: agent.value.kind,
       model: agent.value.model,
+      // Only an agent that selects a provider names one, so other summaries keep their shape.
+      ...(agent.value.provider !== undefined ? { provider: agent.value.provider } : {}),
       source: agent.source,
       path: agent.path,
     };

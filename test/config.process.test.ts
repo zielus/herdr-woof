@@ -844,3 +844,133 @@ console.log(JSON.stringify(out));`;
     expect(out.json).toMatchObject({ reason: "config_invalid", details: [{ field: "project" }] });
   });
 });
+
+describe("agent kinds: pi (per-kind launch specs)", () => {
+  /** The launch arguments `run.opened` recorded for each planned agent. */
+  function plannedArgs(out: { runDir: string }): Record<string, string[]> {
+    const opened = JSON.parse(
+      readFileSync(join(out.runDir, "journal.jsonl"), "utf8").split("\n")[0] as string,
+    ) as Json;
+    return Object.fromEntries(
+      (opened["plan"]["agents"] as Json[]).map((agent) => [agent["agentId"], agent["args"]]),
+    );
+  }
+  const pi = (value: Json) => role({ kind: "pi", ...value });
+
+  it("K1: a pi role's provider and model become --provider and --model, recorded with provenance", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      pi({ provider: "github-copilot", model: "gpt-5-mini", args: ["--thinking", "low"] }),
+    );
+    const shown = show(env, ["--project", env.repo]);
+    expect(shown.status, shown.stdout).toBe(0);
+    expect(shown.json?.["configuration"]["roles"]["builder"]).toMatchObject({
+      source: "project",
+      path,
+      value: { kind: "pi", model: "gpt-5-mini", provider: "github-copilot" },
+    });
+
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    const args = plannedArgs(out);
+    expect(args["builder"]).toEqual([
+      "--provider",
+      "github-copilot",
+      "--model",
+      "gpt-5-mini",
+      "--thinking",
+      "low",
+    ]);
+    // pi confines no writes, so it gets no run-directory grant; the claude reviewer still does.
+    expect(args["reviewer"]).toEqual(["--add-dir", out.runDir]);
+    expect(recordedConfig(out)["agents"]["builder"]).toMatchObject({
+      source: "project",
+      path,
+      value: { kind: "pi", model: "gpt-5-mini", provider: "github-copilot" },
+    });
+  }, 60_000);
+
+  it("K2: a provider on a kind that takes none is role_invalid, never dropped", () => {
+    const env = setup();
+    writeJson(join(env.repo, ".woof", "roles", "builder.json"), role({ provider: "x" }));
+    const out = show(env, ["--project", env.repo]);
+    expect(out.status).toBe(2);
+    expect(out.json).toMatchObject({ reason: "role_invalid", details: [{ pointer: "/provider" }] });
+
+    const input = setup();
+    const run = startForeground(
+      input,
+      baseInput(input, {
+        agents: { builder: { kind: "claude", model: null, provider: "x", args: [] } },
+      }),
+    );
+    expect(run.status, run.stdout + run.stderr).toBe(2);
+    expect(run.json).toMatchObject({
+      reason: "role_invalid",
+      details: [{ field: "agents.builder.provider" }],
+    });
+    expect(existsSync(join(run.runDir, "journal.jsonl"))).toBe(false);
+  }, 60_000);
+
+  it("K3: pi args that set --model or --provider, or pass --add-dir, are role_invalid; --models is not", () => {
+    for (const [args, pointer] of [
+      [["--provider", "x"], "/args/0"],
+      [["--model=x"], "/args/0"],
+      [["--thinking", "low", "--add-dir", "/tmp"], "/args/2"],
+    ] as const) {
+      const env = setup();
+      writeJson(join(env.repo, ".woof", "roles", "builder.json"), pi({ args }));
+      const out = show(env, ["--project", env.repo]);
+      expect(out.status, JSON.stringify(args)).toBe(2);
+      expect(out.json).toMatchObject({ reason: "role_invalid", details: [{ pointer }] });
+    }
+    const env = setup();
+    writeJson(join(env.repo, ".woof", "roles", "builder.json"), pi({ args: ["--models", "a,b"] }));
+    expect(show(env, ["--project", env.repo]).status).toBe(0);
+  });
+
+  it("K4: an input pi agent carries its provider; --approve is reported as a bypass", () => {
+    const env = setup();
+    const out = startForeground(
+      env,
+      baseInput(env, {
+        agents: {
+          builder: { kind: "pi", model: "gpt-5-mini", provider: "github-copilot", args: ["-a"] },
+        },
+      }),
+    );
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(plannedArgs(out)["builder"]).toEqual([
+      "--provider",
+      "github-copilot",
+      "--model",
+      "gpt-5-mini",
+      "-a",
+    ]);
+    const recorded = recordedConfig(out);
+    expect(recorded["agents"]["builder"]).toMatchObject({
+      source: "input",
+      value: { kind: "pi", provider: "github-copilot" },
+    });
+    expect(recorded["warnings"]).toContainEqual({
+      code: "permission_bypass_configured",
+      message: expect.stringContaining("set by the workflow input"),
+    });
+  }, 60_000);
+
+  it("K5: a project whose .pi/ settings pi would ask to trust gets the advisory pi_trust_untrusted warning", () => {
+    const env = setup();
+    writeJson(join(env.repo, ".pi", "settings.json"), {});
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "pi settings");
+    writeJson(join(env.repo, ".woof", "roles", "builder.json"), pi({}));
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(recordedConfig(out)["warnings"]).toContainEqual({
+      code: "pi_trust_untrusted",
+      message: expect.stringContaining(".pi/settings.json"),
+      path: join(env.home, ".pi", "agent", "trust.json"),
+    });
+  }, 60_000);
+});

@@ -1,4 +1,5 @@
 import { claude } from "./claude.js";
+import { pi } from "./pi.js";
 import type { AgentKindSpec } from "./spec.js";
 
 export type {
@@ -13,7 +14,7 @@ export type {
  * `agent_kind_unsupported`; Herdr supporting a kind does not make Woof admit it.
  */
 const SPECS: Readonly<Record<string, AgentKindSpec>> = Object.freeze(
-  Object.assign(Object.create(null) as Record<string, AgentKindSpec>, { claude }),
+  Object.assign(Object.create(null) as Record<string, AgentKindSpec>, { claude, pi }),
 );
 
 export const SUPPORTED_AGENT_KINDS: readonly string[] = Object.freeze(Object.keys(SPECS));

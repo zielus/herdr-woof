@@ -42,6 +42,7 @@ export function admissionConfiguration(
     roles[name] = {
       kind: role.value.kind,
       model: role.value.model,
+      ...(role.value.provider !== undefined ? { provider: role.value.provider } : {}),
       args: [...role.value.args],
       source: role.source,
       path: role.path,
@@ -82,7 +83,12 @@ export function recordConfiguration(
 ): ResolvedConfiguration {
   const agents: ResolvedConfiguration["agents"] = {};
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
-    const value: RoleValue = { kind: agent.kind, model: agent.model, args: [...agent.args] };
+    const value: RoleValue = {
+      kind: agent.kind,
+      model: agent.model,
+      ...(agent.provider !== undefined ? { provider: agent.provider } : {}),
+      args: [...agent.args],
+    };
     // Own entries only: an unconfigured role named `constructor` must not find Object.prototype's.
     const role = Object.hasOwn(configuration.roles, agent.role)
       ? configuration.roles[agent.role]

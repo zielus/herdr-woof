@@ -10,7 +10,15 @@ import type {
   WorkflowDefinition,
 } from "../scheduler/definition.js";
 import { MAX_REQUEST_BYTES } from "../scheduler/request.js";
-import { exactKeys, integerIn, limitsProblem, nonEmpty } from "./input.js";
+import {
+  copyInputAgent,
+  exactKeys,
+  inputAgentProblem,
+  integerIn,
+  limitsProblem,
+  nonEmpty,
+  type InputAgent,
+} from "./input.js";
 import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
 
 /**
@@ -28,9 +36,7 @@ export interface BuildReviewInput {
   instructions?: { builder?: string; reviewer?: string };
   verify?: { command: string[]; timeoutMs: number };
   /** Per-run agent overrides; a role left out comes from configuration (p4). */
-  agents?: Partial<
-    Record<"builder" | "reviewer", { kind: string; model: string | null; args: string[] }>
-  >;
+  agents?: Partial<Record<"builder" | "reviewer", InputAgent>>;
   /** Per-run limit overrides; other keys come from configuration, then the defaults below. */
   limits?: Partial<Limits>;
   /**
@@ -150,17 +156,7 @@ function validateInput(
     for (const role of ["builder", "reviewer"]) {
       const agent = agents[role];
       if (agent === undefined) continue;
-      if (!isPlainObject(agent)) {
-        fail(`agents.${role}`, "must be an object with kind, model and args");
-        continue;
-      }
-      exactKeys(agent, ["kind", "model", "args"], `agents.${role}.`, fail);
-      if (!nonEmpty(agent["kind"])) fail(`agents.${role}.kind`, "must be a non-empty string");
-      if (agent["model"] !== null && !nonEmpty(agent["model"]))
-        fail(`agents.${role}.model`, "must be a non-empty string or null");
-      const args = agent["args"];
-      if (!Array.isArray(args) || !args.every((item) => typeof item === "string"))
-        fail(`agents.${role}.args`, "must be an array of strings");
+      inputAgentProblem(agent, role, fail);
     }
   }
 
@@ -287,11 +283,10 @@ export const buildReviewWorkflow: WorkflowDefinition<BuildReviewInput> = {
   ],
   // Only the roles the input names; admission fills the others from configured roles.
   resolveAgents: (input) => {
-    const agents: Record<string, { kind: string; model: string | null; args: string[] }> = {};
+    const agents: Record<string, InputAgent> = {};
     for (const role of ["builder", "reviewer"] as const) {
       const agent = input.agents?.[role];
-      if (agent !== undefined)
-        agents[role] = { kind: agent.kind, model: agent.model, args: [...agent.args] };
+      if (agent !== undefined) agents[role] = copyInputAgent(agent);
     }
     return agents;
   },

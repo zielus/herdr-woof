@@ -2,7 +2,10 @@ import { isId, isPlainObject } from "../contracts/envelope.js";
 import {
   engineOwnedArgIndexes,
   engineOwnedFlags,
+  engineOwnedHint,
   permissionBypassArgs,
+  providerRefusal,
+  refusedArgs,
 } from "../scheduler/launch.js";
 import {
   COUNT_LIMIT_KEYS,
@@ -58,6 +61,8 @@ export interface RoleValue {
   kind: string;
   model: string | null;
   args: string[];
+  /** The provider the kind selects its model from; absent means the kind's own default. */
+  provider?: string;
 }
 
 export interface RoleFile extends RoleValue {
@@ -80,7 +85,7 @@ const DEFAULTS_KEYS = [
   "hostStartTimeoutMs",
   "runsDir",
 ];
-const ROLE_KEYS = ["schemaVersion", "kind", "model", "args", "description"];
+const ROLE_KEYS = ["schemaVersion", "kind", "model", "provider", "args", "description"];
 export const CONFIG_LIMIT_KEYS: readonly LimitKey[] = [
   ...COUNT_LIMIT_KEYS,
   ...OPTIONAL_COUNT_LIMIT_KEYS,
@@ -198,6 +203,13 @@ export function validateRoleFile(
   if (!Object.hasOwn(value, "model")) fail("/model", "is required (a model name or null)");
   else if (model !== null && (typeof model !== "string" || model.trim() === ""))
     fail("/model", "must be a non-empty string or null");
+  const provider = value["provider"];
+  if (
+    provider !== undefined &&
+    provider !== null &&
+    (typeof provider !== "string" || provider.trim() === "")
+  )
+    fail("/provider", "must be a non-empty string or null");
   const args = value["args"];
   if (
     args !== undefined &&
@@ -219,10 +231,40 @@ export function validateRoleFile(
     return {
       ok: false,
       reason: "role_invalid",
-      message: `${file.path}: args must not set ${engineOwnedFlags(kind as string).join(" or ")}; use the model field (the engine adds both)`,
+      message: `${file.path}: args must not set ${engineOwnedFlags(kind as string).join(" or ")}; ${engineOwnedHint(kind as string)}`,
       details: engineOwned.map((index) => ({
         field: `${file.path}#/args/${index}`,
         message: `${argv[index]} is set by the engine`,
+        path: file.path,
+        pointer: `/args/${index}`,
+      })),
+    };
+  }
+  const providerProblem = providerRefusal(kind as string, provider as string | null | undefined);
+  if (providerProblem !== undefined) {
+    return {
+      ok: false,
+      reason: "role_invalid",
+      message: `${file.path}: ${providerProblem}`,
+      details: [
+        {
+          field: `${file.path}#/provider`,
+          message: providerProblem,
+          path: file.path,
+          pointer: "/provider",
+        },
+      ],
+    };
+  }
+  const refused = refusedArgs(kind as string, argv);
+  if (refused.length > 0) {
+    return {
+      ok: false,
+      reason: "role_invalid",
+      message: `${file.path}: ${refused.map((item) => item.message).join("; ")}`,
+      details: refused.map(({ index, message }) => ({
+        field: `${file.path}#/args/${index}`,
+        message,
         path: file.path,
         pointer: `/args/${index}`,
       })),
@@ -233,6 +275,7 @@ export function validateRoleFile(
     role: {
       kind: kind as string,
       model: model as string | null,
+      ...(typeof provider === "string" ? { provider } : {}),
       args: [...argv],
       ...(description !== undefined ? { description: description as string } : {}),
     },

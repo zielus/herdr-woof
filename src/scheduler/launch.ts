@@ -15,7 +15,8 @@ import { flagIndexes } from "../runtime/kinds/spec.js";
  */
 
 export type LaunchResult =
-  { ok: true; args: string[] } | { ok: false; reason: "agent_kind_unsupported"; message: string };
+  | { ok: true; args: string[] }
+  | { ok: false; reason: "agent_kind_unsupported" | "role_invalid"; message: string };
 
 export { SUPPORTED_AGENT_KINDS };
 
@@ -34,6 +35,29 @@ export function engineOwnedFlags(kind: string): readonly string[] {
 export function engineOwnedArgIndexes(kind: string, args: readonly string[]): number[] {
   const spec = agentKindSpec(kind);
   return spec !== undefined ? spec.ownedArgIndexes(args) : flagIndexes(args, UNLISTED_OWNED_FLAGS);
+}
+
+/**
+ * Why a role's provider cannot be used with its kind, or undefined when it can: a provider is
+ * refused, never dropped, for a listed kind that takes no provider selection. An unlisted kind
+ * is refused at admission for its kind alone.
+ */
+export function providerRefusal(
+  kind: string,
+  provider: string | null | undefined,
+): string | undefined {
+  const spec = agentKindSpec(kind);
+  if (spec === undefined || provider === null || provider === undefined) return undefined;
+  if (spec.providerFlag !== null) return undefined;
+  return `agent kind ${JSON.stringify(kind)} takes no provider selection, but provider ${JSON.stringify(provider)} is set; select the provider in that CLI's own configuration, or leave provider unset`;
+}
+
+/** How a refusal of engine-owned flags tells the author where the value belongs instead. */
+export function engineOwnedHint(kind: string): string {
+  const flags = engineOwnedFlags(kind);
+  const fields =
+    agentKindSpec(kind)?.providerFlag != null ? "model and provider fields" : "model field";
+  return `use the ${fields} (the engine adds ${flags.length === 2 ? "both" : "these"})`;
 }
 
 /** Caller arguments the kind's spec refuses, with the reason for each. */
@@ -86,6 +110,8 @@ export function trustWarnings(
 export function launchArgs(agent: {
   kind: string;
   model: string | null;
+  /** Absent or null: the kind's own default provider. */
+  provider?: string | null;
   args: readonly string[];
   runDir: string | null;
 }): LaunchResult {
@@ -97,10 +123,13 @@ export function launchArgs(agent: {
       message: `agent kind ${JSON.stringify(agent.kind)} is not supported; supported kinds: ${SUPPORTED_AGENT_KINDS.join(", ")}`,
     };
   }
+  const provider = agent.provider ?? null;
+  const refused = providerRefusal(agent.kind, provider);
+  if (refused !== undefined) return { ok: false, reason: "role_invalid", message: refused };
   return {
     ok: true,
     args: [
-      ...spec.engineArgs({ model: agent.model, provider: null, runDir: agent.runDir }),
+      ...spec.engineArgs({ model: agent.model, provider, runDir: agent.runDir }),
       ...agent.args,
     ],
   };

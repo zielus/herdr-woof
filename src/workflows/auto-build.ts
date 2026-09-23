@@ -2,7 +2,7 @@ import { isPlainObject, type RejectionDetail } from "../contracts/envelope.js";
 import type { Limits } from "../domain/types.js";
 import type { AcceptedRef, Transition, WorkflowDefinition } from "../scheduler/definition.js";
 import { buildReviewWorkflow, type BuildReviewInput } from "./build-review.js";
-import { exactKeys, limitsProblem } from "./input.js";
+import { exactKeys, limitsProblem, type InputAgent } from "./input.js";
 import { planWorkflow, type PlanInput } from "./plan.js";
 
 /**
@@ -16,7 +16,7 @@ import { planWorkflow, type PlanInput } from "./plan.js";
  * child does not complete fails the run; there is no retry here, each child bounds its own work.
  */
 
-type Agent = { kind: string; model: string | null; args: string[] };
+type Agent = InputAgent;
 
 export interface AutoBuildInput {
   schemaVersion: 1;

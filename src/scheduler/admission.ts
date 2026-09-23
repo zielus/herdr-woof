@@ -22,7 +22,13 @@ import {
 import type { LockOptions } from "../journal/lock.js";
 import { openRun, type OpenRunInput } from "../state/store.js";
 import type { InputArtifact, WorkflowDefinition } from "./definition.js";
-import { engineOwnedArgIndexes, engineOwnedFlags, launchArgs } from "./launch.js";
+import {
+  engineOwnedArgIndexes,
+  engineOwnedFlags,
+  engineOwnedHint,
+  launchArgs,
+  refusedArgs,
+} from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
 import { gitCommonDir, revisionOf, treeStatus, type RevisionResult } from "./revision.js";
 
@@ -58,7 +64,10 @@ export interface AdmissionConfiguration {
    */
   projectRoot?: string | null;
   /** Effective role per role name. */
-  roles: Record<string, { kind: string; model: string | null; args: string[] } & AdmissionSource>;
+  roles: Record<
+    string,
+    { kind: string; model: string | null; provider?: string; args: string[] } & AdmissionSource
+  >;
   /** Limit values set by configuration layers above the definition's defaults. */
   limits: Partial<Record<keyof Limits, { value: number } & AdmissionSource>>;
   /** Directories that were searched for role files, named in `role_unresolved`. */
@@ -66,9 +75,16 @@ export interface AdmissionConfiguration {
 }
 
 export interface AdmissionProvenance {
+  /** `provider` is present only when the agent selects one. */
   agents: Record<
     string,
-    { role: string; kind: string; model: string | null; args: string[] } & AdmissionSource
+    {
+      role: string;
+      kind: string;
+      model: string | null;
+      provider?: string;
+      args: string[];
+    } & AdmissionSource
   >;
   limits: Partial<Record<keyof Limits, { value: number } & AdmissionSource>>;
 }
@@ -262,18 +278,29 @@ export async function admitWorkflow<Input>(options: {
         return reject("role_unresolved", message, [{ field: `agents.${agentId}`, message }]);
       }
       source = { source: configured.source, path: configured.path };
-      agent = { kind: configured.kind, model: configured.model, args: configured.args };
+      agent = {
+        kind: configured.kind,
+        model: configured.model,
+        args: configured.args,
+        ...(configured.provider !== undefined ? { provider: configured.provider } : {}),
+      };
       if (!isAgentChoice(agent)) {
-        const message = `role ${role} from ${describe(source)} is not { kind: string, model: string | null, args: string[] }`;
+        const message = `role ${role} from ${describe(source)} is not { kind: string, model: string | null, provider?: string | null, args: string[] }`;
         return reject("role_invalid", message, [{ field: `roles.${role}`, message }]);
       }
     } else if (!isAgentChoice(agent)) {
       return invalidDefinition(
         "resolveAgents",
-        `agent ${agentId} is not { kind: string, model: string | null, args?: string[] }`,
+        `agent ${agentId} is not { kind: string, model: string | null, provider?: string | null, args?: string[] }`,
       );
     }
-    const choice = agent as { kind: string; model: string | null; args?: string[] };
+    const choice = agent as {
+      kind: string;
+      model: string | null;
+      provider?: string | null;
+      args?: string[];
+    };
+    const provider = typeof choice.provider === "string" ? choice.provider : null;
     // Whatever supplied the agent (input, definition or configuration), the engine owns these flags.
     const owned = engineOwnedArgIndexes(choice.kind, choice.args ?? []);
     if (owned.length > 0) {
@@ -281,7 +308,7 @@ export async function admitWorkflow<Input>(options: {
       const setBy = configured
         ? describe(source)
         : `the workflow input or definition (resolveAgents for ${agentId})`;
-      const message = `agent ${agentId} (role ${role}) args must not set ${engineOwnedFlags(choice.kind).join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
+      const message = `agent ${agentId} (role ${role}) args must not set ${engineOwnedFlags(choice.kind).join(" or ")}: the engine sets them; ${engineOwnedHint(choice.kind)} (set by ${setBy})`;
       return reject(
         "role_invalid",
         message,
@@ -291,9 +318,25 @@ export async function admitWorkflow<Input>(options: {
         })),
       );
     }
+    const refused = refusedArgs(choice.kind, choice.args ?? []);
+    if (refused.length > 0) {
+      const configured = source.source !== "input";
+      const setBy = configured
+        ? describe(source)
+        : `the workflow input or definition (resolveAgents for ${agentId})`;
+      return reject(
+        "role_invalid",
+        `agent ${agentId} (role ${role}): ${refused.map((item) => item.message).join("; ")} (set by ${setBy})`,
+        refused.map(({ index, message }) => ({
+          field: configured ? `roles.${role}.args.${index}` : `agents.${agentId}.args.${index}`,
+          message,
+        })),
+      );
+    }
     const launch = launchArgs({
       kind: choice.kind,
       model: choice.model,
+      provider,
       args: choice.args ?? [],
       runDir: options.runDir,
     });
@@ -302,8 +345,10 @@ export async function admitWorkflow<Input>(options: {
       const message = configured
         ? `${launch.message} (role ${role} from ${describe(source)})`
         : launch.message;
+      // A kind the engine cannot launch is the kind's fault; a provider it cannot select, the provider's.
+      const key = launch.reason === "agent_kind_unsupported" ? "kind" : "provider";
       return reject(launch.reason, message, [
-        { field: configured ? `roles.${role}.kind` : `agents.${agentId}.kind`, message },
+        { field: configured ? `roles.${role}.${key}` : `agents.${agentId}.${key}`, message },
       ]);
     }
     agents.push({ agentId, role, kind: choice.kind, model: choice.model, args: launch.args });
@@ -311,6 +356,7 @@ export async function admitWorkflow<Input>(options: {
       role,
       kind: choice.kind,
       model: choice.model,
+      ...(provider !== null ? { provider } : {}),
       args: [...(choice.args ?? [])],
       ...source,
     };
@@ -691,11 +737,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isAgentChoice(
   value: unknown,
-): value is { kind: string; model: string | null; args?: string[] } {
+): value is { kind: string; model: string | null; provider?: string | null; args?: string[] } {
   return (
     isObject(value) &&
     typeof value["kind"] === "string" &&
     (value["model"] === null || typeof value["model"] === "string") &&
+    (value["provider"] === undefined ||
+      value["provider"] === null ||
+      typeof value["provider"] === "string") &&
     (value["args"] === undefined ||
       (Array.isArray(value["args"]) && value["args"].every((item) => typeof item === "string")))
   );
