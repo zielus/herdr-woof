@@ -26,7 +26,7 @@ export interface KindReadinessProbe {
   /** What the probe checks, for example `provider github-copilot`. */
   subject: string;
   args: string[];
-  read(result: { status: number | null; stdout: string }): {
+  read(result: { status: number | null; stdout: string; stderr: string }): {
     ready: boolean;
     detail: string;
   };

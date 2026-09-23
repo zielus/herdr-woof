@@ -1155,8 +1155,8 @@ echo '{"status":"not_ready","provider":"'"$4"'","reason":"provider_not_found"}';
       join(bin, "codex"),
       `#!/bin/sh
 if [ "$1" = "--version" ]; then echo codex-cli 0.0.0-fake; exit 0; fi
-if [ "$1 $2" = "login status" ] && [ -f ${JSON.stringify(codexLogin)} ]; then echo "Logged in using ChatGPT"; exit 0; fi
-echo "Not logged in"; exit 1
+if [ "$1 $2" = "login status" ] && [ -f ${JSON.stringify(codexLogin)} ]; then echo "Logged in using ChatGPT" >&2; exit 0; fi
+echo "Not logged in" >&2; exit 1
 `,
       { mode: 0o755 },
     );

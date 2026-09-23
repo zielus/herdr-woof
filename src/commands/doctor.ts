@@ -211,6 +211,7 @@ interface Probe {
   status: ProbeStatus;
   code: number | null;
   stdout: string;
+  stderr: string;
 }
 
 /** Runs one probe without a shell, bounded by PROBE_TIMEOUT_MS. */
@@ -220,13 +221,15 @@ function probe(command: string, args: readonly string[]): Promise<Probe> {
       command,
       [...args],
       { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
-        if (error === null) return done({ status: "available", code: 0, stdout });
-        if (error.code === "ENOENT") return done({ status: "not_found", code: null, stdout: "" });
+      (error, stdout, stderr) => {
+        if (error === null) return done({ status: "available", code: 0, stdout, stderr });
+        if (error.code === "ENOENT")
+          return done({ status: "not_found", code: null, stdout: "", stderr: "" });
         return done({
           status: "failed",
           code: typeof error.code === "number" ? error.code : null,
           stdout: typeof stdout === "string" ? stdout : "",
+          stderr: typeof stderr === "string" ? stderr : "",
         });
       },
     );
@@ -273,7 +276,7 @@ async function kindReport(
           subject: check.subject,
           ...(result.status === "not_found"
             ? { ready: false, detail: `${spec.executable} not found` }
-            : check.read({ status: result.code, stdout: result.stdout })),
+            : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr })),
         })),
       ];
     }),

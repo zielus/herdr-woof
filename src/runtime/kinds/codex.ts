@@ -84,9 +84,12 @@ export const codex: AgentKindSpec = {
   readinessProbe: () => ({
     subject: "login",
     args: ["login", "status"],
-    read: ({ status, stdout }) => ({
+    // Exit status decides (0 logged in, 1 not); codex prints its text on stderr.
+    read: ({ status, stdout, stderr }) => ({
       ready: status === 0,
-      detail: stdout.trim().split("\n")[0] || (status === 0 ? "logged in" : "not logged in"),
+      detail:
+        (stdout.trim() || stderr.trim()).split("\n")[0] ||
+        (status === 0 ? "logged in" : "not logged in"),
     }),
   }),
 };
