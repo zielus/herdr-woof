@@ -202,7 +202,7 @@ Two built-ins added with workflow composition — see
   the run committed it: a commit since the revision on the run's first dispatch
   touches the path. When that exact plan was already committed there, no commit is
   possible, so the run fails with `not_changed`.
-  Access `writable`: it never starts on a dirty `current` tree.
+  Access `writable`: it never starts on a dirty `current` or `path` checkout.
 - **`auto-build`**: two workflow steps and no agents. `plan` runs the `plan`
   workflow; `build` runs `build-review` with the accepted `plan.md` as the input
   artifact `plan` (the builder is told to follow it and to commit each turn's

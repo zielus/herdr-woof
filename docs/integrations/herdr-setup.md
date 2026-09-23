@@ -1,6 +1,6 @@
 # Set up the Woof Herdr plugin
 
-The Herdr plugin is a checkout-based integration in Woof 0.2.0. Installing the
+The Herdr plugin is a checkout-based integration in Woof 0.3.1. Installing the
 `woof` CLI from npm does not register it because the published package excludes
 the root `herdr-plugin.toml` and `bin/woof` files used by the manifest.
 

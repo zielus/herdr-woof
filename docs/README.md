@@ -1,6 +1,6 @@
 # Woof documentation
 
-These pages describe Woof 0.2.0: what it is, how the current engine and
+These pages describe Woof 0.3.1: what it is, how the current engine and
 integrations behave, how to extend it, and which capabilities are not supported.
 
 ## Reading order
@@ -41,12 +41,12 @@ integrations behave, how to extend it, and which capabilities are not supported.
 - [Set up the Woof Herdr plugin](integrations/herdr-setup.md)
 - [Open proposals](design/proposals.md), clearly separated from implemented
   behavior
-- [Human-readable run output](design/run-output.md), approved design brief and
-  visual reference for implementation
-- [Terminal UI](design/tui.md), terminal-native runs browser, expandable steps and
-  keyboard navigation with an interactive prototype
-- [Checkout policy and workflow composition](design/composition.md): worktree
-  checkouts, workflows as steps, `plan` and `auto-build`
+- [Human-readable run output](design/run-output.md), the implemented design brief
+  and visual reference for `woof watch` and the run host's view
+- [Terminal UI](design/tui.md), the design behind `woof tui`: terminal-native runs
+  browser, expandable steps and keyboard navigation with an interactive prototype
+- [Checkout policy and workflow composition](design/composition.md), implemented:
+  worktree checkouts, workflows as steps, `plan` and `auto-build`
 
 ### Contribution and release
 
@@ -60,7 +60,7 @@ integrations behave, how to extend it, and which capabilities are not supported.
 [acceptance evidence](acceptance/v1-evidence.md), its machine-readable evidence
 and `research/*.log` files record results for the revisions named in those
 files. They are retained because tests and evidence tooling parse them; they do
-not claim fresh 0.2.x acceptance. The
+not claim fresh 0.3.x acceptance. The
 [composition evidence](acceptance/composition-evidence.md) records the live
 proof of checkouts and workflow composition.
 

@@ -22,7 +22,7 @@ review passes on the exact repaired revision or a limit ends it.
 
 ![Woof workflow demo](assets/woof-workflow-readme.gif)
 
-> **Status: 0.1.x, pre-release.**
+> **Status: 0.3.x, pre-release.**
 >
 > - The SDK and CLI surfaces are unstable until v1 (marked in `src/index.ts`).
 > - macOS and Linux only. Workflows need Herdr 0.9 or newer and Claude Code.
@@ -153,7 +153,7 @@ woof doctor [--json] [--strict] [--repo <dir>]
 woof attempt open --run-dir <dir> --run <id> --agent <id> --stage <id> \
   --visit <n> --attempt <n> [--verdicts a,b] [--pane <pane-id>]
 woof submit --envelope <path|-> [--run-dir <dir>]
-woof run show <run-dir> [--verify-artifacts]
+woof run show <run-dir|run-id> [--verify-artifacts]
 woof config show [--project <dir>] [--workflow <name>]
 woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--run-id <id>] [--run-dir <dir> | --runs-dir <dir>] \
@@ -161,20 +161,26 @@ woof run start --input <path|-> [--workflow <name>] [--project <dir>] \
   [--keep-panes|--no-keep-panes] [--host-start-timeout-ms <n>] \
   [--split-from <pane-id>] [--runtime-module <path>] \
   [--plain] [--ascii] [--preview summary|json]
-woof status <run-dir> [--wait] [--timeout-ms <n>] [--allow-blocked] \
+woof status <run-dir|run-id> [--wait] [--timeout-ms <n>] [--allow-blocked] \
   [--poll-ms <n>] [--verify-artifacts] [--pretty]
 woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]
-woof events <run-dir> [--after <cursor>] [--follow] [--timeout-ms <n>] \
+woof runs --reindex [--prune] [--runs-dir <dir>]
+woof events <run-dir|run-id> [--after <cursor>] [--follow] [--timeout-ms <n>] \
   [--poll-ms <n>] [--stats] [--pretty]
-woof watch [<run-dir>] [--follow] [--after <cursor>] [--poll-ms <n>] \
-  [--timeout-ms <n>]
+woof events --all [--follow] [--project <dir>] [--since <iso>] \
+  [--runs-dir <dir>] [--max-runs <n>] [--timeout-ms <n>] [--poll-ms <n>] [--pretty]
+woof watch [<run-dir|run-id>] [--follow] [--input summary|json] [--ascii] \
+  [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]
+woof watch --all [--follow] [--project <dir>] [--since <iso>] \
+  [--runs-dir <dir>] [--max-runs <n>] [--poll-ms <n>] [--timeout-ms <n>]
 woof tui [--project <dir>] [--runs-dir <dir>] [--ascii] [--poll-ms <n>]
+woof tui --frames [--cols <n>] [--rows <n>] [--project <dir>] [--runs-dir <dir>]
 woof ui [--port <n>] [--host <addr>] [--runs-dir <dir>] [--token <secret>] \
   [--allow-host <name>] [--allow-origin <origin>] [--poll-ms <n>] [--no-open]
 woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>] \
   [--plain] [--ascii] [--preview summary|json]
-woof run cancel <run-dir> [--reason <text>]
+woof run cancel <run-dir|run-id> [--reason <text>]
 woof herdr status|start|cancel|doctor|watch
 woof agent start <role> [--split right|down | --pane <pane-id>] \
   [--name <agent-name>] [--project <dir>]
@@ -191,9 +197,10 @@ role name). Prints `{"outcome":"started","role","roleSource","agent"}`. Exits
 the pane/agent start failed (a pane this command split is then closed, and
 `paneClosed` in the rejection says whether that worked), 1 a usage error.
 
-`doctor` reports whether Herdr and Claude Code can be invoked, and (with
-`--json`) the read-only Claude folder-trust status of a repository, resolved
-to that repository's git top level. Neither Herdr nor Claude Code is
+`doctor` reports whether Herdr and Claude Code can be invoked, the read-only
+Claude folder-trust status of a repository, resolved to that repository's git
+top level, and whether its configuration resolves (as text, or one JSON line
+with `--json`). Neither Herdr nor Claude Code is
 required for the command to complete. `doctor` exits 0 by default; `--strict`
 exits 2 when the report lists any problem (`herdr_unavailable`,
 `claude_unavailable`, `trust_untrusted`, `trust_unknown`, `config_invalid`).
@@ -292,7 +299,7 @@ A scheduler runs the built-in `build-review` workflow end to end: build
 → repair, until a review passes on the exact repaired revision or a limit
 ends the run.
 
-It launches `claude` agents in Herdr panes next to the scheduler's own
+It launches each `claude` agent in its own Herdr tab (`woof:<role>`)
 (`HERDR_ENV=1` and `HERDR_PANE_ID` must be set). An interactive Claude agent it
 starts must already be allowed to run: the operator must have trusted the target
 repository in Claude Code at least once (open `claude` there and answer its
@@ -322,6 +329,7 @@ cat > input.json <<'EOF'
 }
 EOF
 woof run build-review --input input.json --run-dir /tmp/woof-run
+# … the human view of the run, then as the last line:
 # {"outcome":"run","result":{"outcome":"completed","limit":null,...}}
 ```
 
@@ -334,7 +342,9 @@ maxFormatRepairs: 2, runTimeoutMs: 7200000, readinessWaitMs: 180000,
 blockedWaitMs: 600000, deliveryTimeoutMs: 60000`.
 
 `--poll-ms` must be an integer of at least 1 (usage error otherwise).
-Progress goes to stderr; stdout prints exactly one JSON line. Exit codes:
+The human view of the run (what `woof watch --follow` prints) goes to stdout,
+the technical log to `<run-dir>/host.log` (`--plain` prints the log to stdout
+instead), and the last stdout line is the result JSON. Exit codes:
 
 - `0` completed, `4` failed, `5` exhausted, `6` cancelled.
 - `2` rejected before launch: bad input, a repository that is not the git work
@@ -348,7 +358,7 @@ Progress goes to stderr; stdout prints exactly one JSON line. Exit codes:
   plus an attached `runtime_cleanup_failed` error.
 - `1` a usage error.
 
-`woof run cancel <run-dir>` records `run.terminated{outcome:"cancelled"}` for a
+`woof run cancel <run-dir|run-id>` records `run.terminated{outcome:"cancelled"}` for a
 scheduler that may still be running elsewhere (its own next tick then stops
 it). Exit `0` when recorded, `2` when the run is already terminated, `3` on a
 journal failure.
@@ -381,14 +391,15 @@ woof config show
 # {"outcome":"config","configuration":{...,"roles":{"builder":{"source":"project","path":".woof/roles/builder.json",...}}}}
 ```
 
-`woof run start` resolves that configuration, launches a scheduler in a
-Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host
-foreground` to run in this process), and returns once the pane host has
-claimed and opened the run:
+`woof run start` resolves that configuration, launches a scheduler in a Herdr
+pane (`HERDR_ENV=1` and `HERDR_PANE_ID` required, or `--host foreground` to run
+in this process) — the root pane of the run's new worktree workspace by default,
+else of a new, unfocused tab (`woof:<workflow>`) — and returns once the pane
+host has claimed and opened the run:
 
 ```sh
 woof run start --input input.json
-# {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…"},...}
+# {"outcome":"started","runId":"br-…","runDir":"/abs","host":{"mode":"herdr-pane","paneId":"…","tabId":"…",...},...}
 woof status /abs --wait
 # polls until a terminal outcome (exit 0/4/5/6), the owner gone without a
 # recorded outcome -- lost, or exited without a terminal record (exit 8) --
@@ -400,20 +411,29 @@ The pane host claims the run exclusively (`host.json`, a heartbeat every
 `unhosted`, `alive`, `lost` or `exited`. A killed host is reported `lost`,
 never silently as running, and its only resolution is still
 `woof run cancel <run-dir>` (no crash resume). `woof runs`, `woof events`,
-`woof watch` and `woof config show` are read-only and never take the journal
-lock or contact Herdr.
+`woof watch`, `woof tui` and `woof config show` are read-only and never take the
+journal lock or contact Herdr; `woof runs --reindex` writes only the run index.
+
+Opening a run registers a locator in the run index (`~/.woof/index`, or
+`WOOF_INDEX_DIR`), so `woof status`, `events`, `watch`, `run show` and
+`run cancel` take a run id as well as a run directory, and `woof runs` and `woof
+tui` without `--runs-dir` also list runs opened with their own
+`--run-dir`. `woof events --all` and `woof watch --all` stream every known run
+at once. `woof tui` is an interactive, read-only run browser for the terminal: a
+runs list and a run view with steps, activity and config tabs.
 
 To follow or debug a run in a terminal, `woof watch` prints one readable
 account of it: an opening block (workflow, repository, run id and directory,
 agent roster, stage map, limits, input preview), one plain-English row per
 meaningful fact and, when the run ends, an outcome summary with the accepted
-artifact paths. `--follow` keeps reading until the run's terminal record, with
-the exit codes of `woof events --follow`; `woof watch --plain` (and `woof
+artifact paths. `--follow` keeps reading until the run's terminal record (and,
+while its host is alive, the host's `host.exited`), with the exit codes of
+`woof events --follow`; `woof watch --plain` (and `woof
 events --pretty`) prints the technical view instead — a status header and one
 line per journal event — and `woof status <run-dir> --pretty` prints only that
 header instead of JSON. Colors appear only when stdout is a terminal and
 `NO_COLOR` is unset or empty. A pane-hosted `woof run start` opens the run
-host in its own Herdr tab, and the host prints that same human view in its
+host in a Herdr pane of its own, and the host prints that same human view in its
 pane as its own journal grows (its technical log goes to `<run-dir>/host.log`;
 `--plain` prints the log instead); every agent gets a tab of its own. The
 host's tab stays open after the run so its last lines remain readable;
@@ -433,7 +453,8 @@ project run state as pane metadata tokens; `watch` opens a plugin pane running
 `woof watch --follow` for the project's single active run. The Claude Code plugin
 (`plugin/claude/`) ships `/woof:run <task description>`, which resolves the
 CLI, applies the operator-trust precondition below, starts a run and waits
-for it with `woof status --wait`, reporting the structured result.
+for it with `woof status --wait`, reporting the structured result, and a `woof`
+skill that describes the workflows and the inspection and cancel commands.
 
 ### Operator-trust precondition
 
@@ -515,11 +536,12 @@ contracts and evidence.
 ### Worktrees and workflows as steps
 
 Where a run works is part of its input: the reserved key `checkout` is
-`{"mode":"current"}`, `{"mode":"worktree","branch"?,"base"?,"keep"?}` or
+`{"mode":"current"}`, `{"mode":"worktree","branch"?,"base"?,"label"?,"keep"?}` or
 `{"mode":"path","path"}`. Started inside Herdr, a run defaults to a new Herdr
 worktree (branch `woof/<runId>`) whose workspace holds the run host and every
-agent tab; outside Herdr it works in the repository itself. A workflow that
-edits the tree refuses a `current` checkout with uncommitted changes.
+agent tab; outside Herdr it works in the repository itself, and a worktree is
+refused `checkout_unsupported`. A workflow that edits the tree refuses a
+`current` or `path` checkout with uncommitted changes (`checkout_dirty`).
 
 A workflow can also be a step of another. The built-in `auto-build` runs the
 built-in `plan` workflow and then `build-review` as two child runs on one
@@ -571,8 +593,9 @@ model, the development loop and the known gaps.
 
 ## Integrations and scope
 
-The Herdr plugin exposes `doctor`, `status`, `start` and `cancel` actions; the
-Claude Code plugin's `/woof:run` command starts and waits on a run. Neither
+The Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and `watch` actions; the
+Claude Code plugin's `/woof:run` command starts and waits on a run, and its `woof`
+skill describes the CLI. Neither
 ships tools, hooks, a background process or a transport adapter beyond what
 [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 and [plugins.md](docs/integrations/plugins.md) describe. MCP is deferred and is

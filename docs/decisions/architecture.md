@@ -2,7 +2,7 @@
 
 This page is the concise entry point for Woof's architecture. The linked
 reference pages describe the current contracts in detail. The acceptance evidence
-records results from the revisions named in that file; it is not fresh 0.2.x
+records results from the revisions named in that file; it is not fresh 0.3.x
 acceptance.
 
 ## Settled product direction
@@ -59,8 +59,9 @@ A hosted run has one heartbeat-tracked scheduler process in a Herdr pane, giving
 the run a visible owner that can outlive its caller. The layout is one Herdr tab
 per participant: the host in the root pane of its own tab, where it prints the
 human view of its own run (the technical log goes to `<run-dir>/host.log`),
-and every agent in its own tab, never a pane split;
-the tab ids are journaled with `host.claimed` and `agent.assigned`. The scheduler uses the same
+and every agent in its own tab, never a pane split (with a new worktree
+checkout, the default inside Herdr, the host runs in the root pane of the run's
+worktree workspace instead); the tab ids are journaled with `host.claimed` and `agent.assigned`. The scheduler uses the same
 derived snapshot an observer reads, performs one bounded action at a time and
 records control decisions before exposing them. Foreground runs remain available.
 See [Domain model](../architecture/domain-model.md) and
@@ -69,8 +70,9 @@ See [Domain model](../architecture/domain-model.md) and
 ### Workflow definitions and reuse
 
 Workflow definitions are validated TypeScript or JavaScript modules with static
-edges. `build-review`, `plan-build-review` and discovered project/user workflows
-use the same admission and scheduling path. See
+edges. `build-review`, `plan-build-review`, `plan`, `auto-build` and discovered
+project/user workflows use the same admission and scheduling path. A workflow can
+be a step of another, run as a child run in the parent's checkout. See
 [Authoring a workflow](../workflows/authoring.md) and
 [Initial workflows](../workflows/initial-workflows.md).
 
@@ -196,10 +198,10 @@ alter a public contract, trust boundary or execution model.
   killed leaves them open: `host.lost` and `woof run cancel` close nothing, and
   no record says a tab was closed. Direction: let cancel (or a later host) close
   the journaled tabs of a lost host once Herdr ownership of them can be checked.
-- Per-agent runtime lifecycle transitions (ready, working, blocked, gone) are not
-  journaled; only host, cancel-request and observation-loss transitions are.
-  Direction: journal them as transitions if a consumer needs history rather than
-  the live overlay.
+- Per-agent runtime lifecycle transitions (`agent.lifecycle_changed`) and engine
+  activities (`run.activity`) are journaled best effort: an append the store
+  refuses or cannot complete is only a warning, so their history can miss a
+  transition.
 - The run index (`~/.woof/index`) is a per-user set of locators, never state. A
   run id is unique only by convention: an id that the index and `<runs-dir>/<id>`
   resolve to different runs is rejected as `run_id_ambiguous`, but the CLI does
@@ -220,4 +222,4 @@ alter a public contract, trust boundary or execution model.
 The [v1 acceptance evidence](../acceptance/v1-evidence.md#pr-fix-4-untested-paths)
 also records four narrow full-disk or two-host cases that were historically
 unverified. This documentation pass did not rerun them and does not claim that
-their behavior has been confirmed for 0.2.0.
+their behavior has been confirmed for 0.3.1.

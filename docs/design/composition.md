@@ -1,6 +1,6 @@
 # Checkout policy and workflow composition
 
-Status: implemented on `feat/composition` (phases 0–4); live-proven, see
+Status: implemented (phases 0–4) and released in 0.3.0; live-proven, see
 [composition evidence](../acceptance/composition-evidence.md) (12/12 gates).
 The shipped contracts are in the "Implemented now (composition…)" sections of
 the [domain model](../architecture/domain-model.md) and
@@ -324,4 +324,5 @@ of the phase.
 - Parallel child runs, crash resume of a parent or child, re-hosting.
 - Following child rows inside the parent's host view (the child has its own
   `woof watch`; the parent shows start and end rows).
-- Pushing from the `plan` workflow; journaling worktree removal.
+- Verifying a push from the `plan` workflow (`publish.push` only asks the
+  planner to push); journaling worktree removal.

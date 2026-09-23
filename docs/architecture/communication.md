@@ -121,9 +121,10 @@ open` and the run-facts store call it from inside their own locked
   Without an identity-bearing rejection, a format-repair request quotes "none
   — no submission was recorded"; with one, it quotes the rejection.
 - **In-process transport only.** `woof submit` opens and locks the journal
-  itself, in the calling process. There is no daemon, socket, or live run
-  owner to submit to; a future run owner would call the same `submitResult`
-  function behind its own transport.
+  itself, in the calling process. There is no daemon or socket, and the run
+  host (p4) is not a submission endpoint: it reads submissions from the
+  journal. Another transport would call the same `submitResult` function
+  behind it.
 - **No automatic stale-lock recovery.** A lock left behind by a crashed
   writer makes every subsequent writer report `journal_busy` after the
   timeout, naming the lock file and its recorded holder, until a person
@@ -162,8 +163,9 @@ v1`) for one attempt: run/workflow/agent/role identity; stage, visit,
   repository path and the exact revision (`tree`/`HEAD`) the request was sent
   against; the goal, task (title, description, acceptance criteria, optional
   JSON context) and optional per-role project instructions; an "Inputs" section
-  listing each input's absolute path plus, for an accepted artifact, its stage,
-  visit, attempt, receipt id and sha256 (or, for check evidence, its sha256);
+  listing each input's absolute path plus, for an accepted artifact, its stage
+  (and child stage, for a copied child artifact), visit, attempt, receipt id and
+  sha256 (or, for a run input artifact or check evidence, its sha256);
   the artifact destination and size cap (32 MiB); and the exact `woof submit`
   command line, shell-quoted. A format-repair request replaces the goal/task
   with the previous attempt's journaled rejections (or "none — no submission

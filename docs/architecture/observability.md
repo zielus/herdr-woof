@@ -420,7 +420,8 @@ journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
 - **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
   (`src/inspect/runs.ts`) lists run directories under a runs directory
   (`--runs-dir` → the user setting `defaults.runsDir` → `~/.woof/runs`;
-  project scope is refused for this setting): every non-terminal run plus the
+  project scope is refused for this setting), plus the run index without
+  `--runs-dir` (see [central index](#implemented-now-central-index)): every non-terminal run plus the
   20 most recent terminal runs by default, sorted by `openedAt` descending.
   `--project` filters by the run's recorded `config.json` project root
   (`realpath`); a p3 run with no `config.json` shows `project: null` and is
@@ -494,7 +495,7 @@ M repairs` and ARTIFACTS (completion, review, verification from
   without UTF-8, uses `+ -> v ~ ! .`. **`woof watch --plain`** (and **`woof
 events --pretty`**, the same output) keeps the technical projection from
   `src/observe/format.ts`: a header (run, workflow, active attempts,
-  `liveness.owner`, each agent's role, kind, model and assigned pane, the
+  `liveness.owner`, each agent's role, kind, model and assigned pane and tab, the
   outcome once recorded), one line per event (local `HH:MM:SS`, `#seq`,
   type, subject and a type-specific summary; an unknown type prints its data
   as compact JSON) and a `-- end (<reason>) cursor <cursor>` line. Both views
@@ -503,8 +504,9 @@ events --pretty`**, the same output) keeps the technical projection from
   spaces). `woof status --pretty` prints the technical header instead of the
   JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
-events`**, **`woof watch`** and **`woof run show`** are read-only and never take the journal
-  lock or contact Herdr; see
+events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-only and never take the journal
+  lock or contact Herdr (`woof runs --reindex` writes run-index locators, never a
+  run directory: see [central index](#implemented-now-central-index)); see
   [configuration](configuration.md#implemented-now-p4). **`woof doctor
 [--json]`** is not part of that guarantee: it is non-mutating, but it
   probes the Herdr and Claude executables for diagnostics — JSON mode
