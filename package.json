@@ -1,6 +1,6 @@
 {
   "name": "herdr-woof",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Multi-agent workflow engine for Herdr: plan, build, review, repair, every hand-off verified.",
   "keywords": [
     "herdr",

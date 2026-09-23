@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The project uses
 request adds; versions up to 0.1.2 follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.1
+
+### Patch Changes
+
+- [#27](https://github.com/zielus/herdr-woof/pull/27) [`7709ae6`](https://github.com/zielus/herdr-woof/commit/7709ae62d8cd9d84ab3c74a3a95d59d3bbc145e2) Thanks [@zielus](https://github.com/zielus)! - Test suite: the `woof run start` process tests wait for every spawned run host to
+  exit before removing their temporary workspace ([#26](https://github.com/zielus/herdr-woof/issues/26)). This fixes an intermittent
+  `ENOTEMPTY` teardown failure on macOS CI; package behaviour is unchanged.
+
 ## 0.3.0
 
 ### Minor Changes

@@ -3,7 +3,7 @@
 # invocation context (HERDR_PLUGIN_CONTEXT_JSON).
 id = "herdr-woof"
 name = "Woof"
-version = "0.3.0"
+version = "0.3.1"
 min_herdr_version = "0.9.0"
 description = "Start, inspect, watch and cancel Woof workflow runs; runs report state as pane metadata."
 platforms = ["linux", "macos"]
