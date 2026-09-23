@@ -6,6 +6,251 @@ All notable changes to this project are documented here. The project uses
 request adds; versions up to 0.1.2 follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.0
+
+### Minor Changes
+
+- [#25](https://github.com/zielus/herdr-woof/pull/25) [`d095fc9`](https://github.com/zielus/herdr-woof/commit/d095fc95329aa13800ca93f4cd6e517ed27f31fc) Thanks [@zielus](https://github.com/zielus)! - A workflow can be a step: workflow definitions may run other workflows as child runs.
+
+  A stage `{kind: "workflow", stageId, workflow: {name}, input(ctx), next(ctx)}`
+  runs the named workflow (project, user or built-in) as a child run hosted by the
+  same process, in the parent's checkout. `input(ctx)` maps the parent's input and
+  earlier steps' results (`ctx.history.children`) to the child's input; `next`
+  routes on the child's outcome. The child is an ordinary run next to its parent
+  (`<parent>.<stage>.<visit>`, with `run.opened.parent`), and the parent journals
+  `stage.child_opened` and `stage.child_result`, accepting the child's `RunResult`
+  as the step's `result.json` together with copies of the child's accepted
+  artifacts, which later stages can take as inputs (`{from: {stageId, artifact}}`).
+  Cancelling the parent cancels the running child; the parent's visit, round and
+  time limits bound its steps. Definitions may also declare `inputArtifacts` whose
+  digests admission checks and the run copies in (`{from: {input: label}}`).
+  `woof runs`, `woof status`, the run view, events and snapshots show both runs
+  and their link; all additions are additive at schemaVersion 1.
+
+- [#22](https://github.com/zielus/herdr-woof/pull/22) [`a1e38d0`](https://github.com/zielus/herdr-woof/commit/a1e38d0619f875492d6d9106bff4ebd710efb149) Thanks [@zielus](https://github.com/zielus)! - The journal now records which Herdr tab each participant runs in.
+
+  `agent.assigned` gains an optional `tabId` (the tab opened for that agent) and
+  `host.claimed` an optional `tabId` (the host tab the launcher created, passed to
+  the host process as `WOOF_HOST_TAB_ID`). Snapshots project the agent's tab as
+  `agents[].assignment.tabId` (`null` when none was journaled), and `woof watch`,
+  `woof status` and the `agent.assigned` event line show it next to the pane id.
+  Both fields are additive at schemaVersion 1: journals written without them read
+  as before.
+
+- [#24](https://github.com/zielus/herdr-woof/pull/24) [`8f5797c`](https://github.com/zielus/herdr-woof/commit/8f5797c52813cbbb80dc774b26105afb77b85075) Thanks [@zielus](https://github.com/zielus)! - New command `woof tui`: a read-only, interactive terminal run browser with a
+  runs list and a run view (steps, activity, config tabs), reading the same
+  journals as `woof watch` and `woof status` with no journal lock and no control
+  actions.
+
+- [#22](https://github.com/zielus/herdr-woof/pull/22) [`a1e38d0`](https://github.com/zielus/herdr-woof/commit/a1e38d0619f875492d6d9106bff4ebd710efb149) Thanks [@zielus](https://github.com/zielus)! - Workflow runs now use one Herdr tab per participant instead of pane splits.
+
+  `woof run start --host herdr-pane` (and the Herdr `start` action) opens the run
+  host in the root pane of a new, unfocused tab labelled `woof:<workflow>`, and
+  every agent of the run gets its own tab labelled `woof:<role>`. The started
+  output's `host` gains `tabId`.
+
+  When a run ends, Woof closes the agent tabs it created (unless `keepPanes` is
+  set) and never a tab it did not create. The host's tab stays open so its last
+  lines remain readable. A launch that
+  fails before any host owns the run directory — `pane run` failed, the host's
+  claim failed, no host claimed in time, or the `tab create` reply did not verify
+  — closes the host tab it created; a tab whose host did claim the directory is
+  kept.
+
+  Tabs go to the workspace Herdr reports for the launcher's pane (for a Herdr
+  action, the focused pane), falling back to `HERDR_WORKSPACE_ID` and then to
+  Herdr's default. `tab create` replies are verified as a whole (tab id, root
+  pane, matching tab and workspace ids) before a tab is used, and the host
+  process receives the verified workspace so agent tabs open next to it.
+
+  The runtime adapter contract's `openPane` takes `placement: "tab"` with a
+  `label` and returns `{ paneId, tabId }`; `stop` reports `tabClosed` when it
+  closed an owned tab. `woof agent start` still splits a pane.
+
+- [#25](https://github.com/zielus/herdr-woof/pull/25) [`d095fc9`](https://github.com/zielus/herdr-woof/commit/d095fc95329aa13800ca93f4cd6e517ed27f31fc) Thanks [@zielus](https://github.com/zielus)! - Runs choose where they work through the input: a reserved `checkout` key.
+
+  Every workflow input may carry `checkout`: `{"mode":"current"}`,
+  `{"mode":"worktree","branch"?,"base"?,"label"?,"keep"?}` or
+  `{"mode":"path","path"}`. The engine peels it off before the workflow's own
+  validation. Inside Herdr with the Herdr runtime a run now defaults to a new
+  Herdr worktree (branch `woof/<runId>`): `woof run start` hosts the run in the
+  root pane of that worktree's workspace, and every agent tab opens there.
+  Outside Herdr the default stays the repository itself, and a worktree is
+  refused `checkout_unsupported`. A workflow that edits the tree (the default,
+  `checkout: "writable"` in its definition) refuses a `current` or `path`
+  checkout with uncommitted changes as `checkout_dirty`; `checkout: "any"`
+  accepts one. `run.opened.checkout` records the result (additive at
+  schemaVersion 1), and snapshots, `woof status` and the run view show it.
+  Created worktrees are kept; `keep: false` removes one after a completed run
+  (the branch stays).
+
+- [#22](https://github.com/zielus/herdr-woof/pull/22) [`a1e38d0`](https://github.com/zielus/herdr-woof/commit/a1e38d0619f875492d6d9106bff4ebd710efb149) Thanks [@zielus](https://github.com/zielus)! - Runs can now be found and followed from one place, wherever their directories are.
+
+  Opening a run registers a small locator under `~/.woof/index/runs/<runId>.json`
+  (`WOOF_INDEX_DIR` overrides the index root). The locator only says where the run
+  directory is: status and events still come from the run's own journal, and a
+  locator that no longer leads to its run is reported under `skipped`.
+
+  - `woof runs` with no `--runs-dir` also lists indexed runs, so a run started with
+    its own `--run-dir` shows up. `woof runs --reindex` writes missing locators;
+    with `--prune` it also removes those whose run directory is gone.
+  - `woof status`, `events`, `watch`, `run show` and `run cancel` accept a run id as
+    well as a run directory.
+  - `woof events --all [--follow] [--project <dir>] [--since <iso>]` streams the
+    events of every known run as NDJSON, and `woof watch --all` prints the same
+    stream as readable lines. `woof ui` without `--runs-dir` lists indexed runs too.
+
+- [#23](https://github.com/zielus/herdr-woof/pull/23) [`ac8c986`](https://github.com/zielus/herdr-woof/commit/ac8c9863868355740599684832d874ab6d480451) Thanks [@zielus](https://github.com/zielus)! - One pane per run: the run host prints the human run view itself, and the watch
+  split is gone.
+
+  `woof run host` (what `woof run start --host herdr-pane` types into the root
+  pane of the host's tab), `woof run start --host foreground` and `woof run
+build-review` now print to their stdout exactly what `woof watch <run-dir>
+--follow` prints — the opening block, one history row per fact as the journal
+  records land, the outcome summary — followed by the result JSON line. The host
+  follows its own journal through the same read-only, lock-free observe stream
+  `woof watch` uses, so its pane and a separate observer agree by construction,
+  and the follow never delays the host's exit. The technical log (scheduler
+  actions, warnings, metadata-report failures) goes to `<run-dir>/host.log`, one
+  timestamped line per entry, and no longer to stderr; `--plain` prints that log
+  to stdout instead of the human view, and `--ascii` and `--preview summary|json`
+  (`--input summary|json` on `run host`) shape the view like `woof watch`'s
+  flags. Colors follow `NO_COLOR` and whether stdout is a terminal.
+
+  Removed: the `woof watch --follow` pane split below the host, the
+  `--watch`/`--no-watch` flags of `woof run start` (now usage errors), the
+  `watch` field of the started output and the Herdr `start` action's watch pane.
+  `--keep-panes`/`--no-keep-panes` keep deciding whether the agent tabs close
+  when the run ends; the host's tab always stays open. `outcome.json`, exit
+  codes, `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait`
+  are unchanged.
+
+- [#22](https://github.com/zielus/herdr-woof/pull/22) [`a1e38d0`](https://github.com/zielus/herdr-woof/commit/a1e38d0619f875492d6d9106bff4ebd710efb149) Thanks [@zielus](https://github.com/zielus)! - The journal now records host lifecycle, cancellation requests and observation
+  loss, and followers read through to the host's exit.
+
+  New journal records (and therefore events, one-to-one): `host.claimed`,
+  `host.exited`, `host.lost`, `run.cancel_requested`, `observation.lost` and
+  `observation.recovered`. Every cancel path (`woof run cancel`, the Web UI, the
+  Herdr action, a host signal, `runWorkflow({signal})`) goes through the shared
+  `cancelRun`, which journals who asked and the termination under one lock. The
+  snapshot gains `lifecycle {host, cancelRequested, observationLost}`.
+  `host.exited` is the one record allowed after `run.terminated`.
+
+  `woof events --follow`, `woof watch --follow` and the Web UI's event stream no
+  longer end at `run.terminated` while the run's host is still alive: they wait
+  for its `host.exited` (at most three host heartbeats, and not at all when the
+  host is provably gone), also when resumed with `--after` at the terminated
+  cursor. Exit codes are unchanged. `woof status --wait` still returns on the
+  recorded outcome at once; `host.exited` may follow, and resuming from its
+  `status.cursor` delivers it.
+
+  `openRun` takes an optional `host` and journals `host.claimed` under the same
+  lock as `run.opened` (returned as `hostClaimed`), so a cancel racing the open can
+  no longer leave a hosted run without host records. The scheduler derives
+  unresolved observation losses from the snapshot instead of its own memory.
+
+- [#23](https://github.com/zielus/herdr-woof/pull/23) [`ac8c986`](https://github.com/zielus/herdr-woof/commit/ac8c9863868355740599684832d874ab6d480451) Thanks [@zielus](https://github.com/zielus)! - The journal now records agent lifecycle transitions and engine activity, on
+  change only.
+
+  New journal records (and therefore events, one-to-one): `agent.lifecycle_changed`
+  `{agentId, from, to, terminalId, raw?, replaced?}`, written by the scheduler
+  when an agent's observed lifecycle differs from its last journaled one (a
+  replaced pane occupant is a transition too), and `run.activity` `{kind, phase,
+agentId?, stageId?, visit?, attempt?, detail?, result?}`, written at the start
+  and end of a `readiness_wait`, `revision_check`, `check_run` or
+  `delivery_check`. Neither is a poll sample: the scheduler derives "last
+  journaled" from the snapshot and repeated observations write nothing. Both
+  records are best effort: an append the store refuses or cannot complete is
+  reported through `runWorkflow({onWarning})` and never changes the run's course.
+  Every scheduler-owned termination ends the activities still open under the same
+  journal lock as `run.terminated` (`terminateRun`/`cancelRun` with
+  `endOpenActivities: true`), and the reducer closes whatever an earlier writer
+  left open at termination, so `activity.open` is empty once a run is terminated.
+
+  The snapshot gains `agents[].lifecycle {state, since, seq, terminalId} | null`,
+  `activity.open[]` and the counters `lifecycleChangesByAgent` and
+  `activitiesByKind`; a journal written before these records reads unchanged
+  (`lifecycle: null`, `activity.open: []`). The reducer refuses a transition from
+  a lifecycle other than the journaled one (`lifecycle_mismatch`), a no-op
+  transition (`lifecycle_unchanged`), a second start of an open activity
+  (`activity_open`) and an end of one that is not open (`activity_not_open`).
+  `woof watch` and `woof events --pretty` print one-line summaries of both.
+
+- [#23](https://github.com/zielus/herdr-woof/pull/23) [`ac8c986`](https://github.com/zielus/herdr-woof/commit/ac8c9863868355740599684832d874ab6d480451) Thanks [@zielus](https://github.com/zielus)! - `woof watch` now tells the run's story in plain English.
+
+  By default it prints an opening block (workflow, repository and branch, run id
+  and directory, the agent roster with kind, model and stages, the stage map with
+  its gates and repair routes, the resolved limits and a preview of the input),
+  then one history row per meaningful fact — `HH:MM:SS  mark  participant  stage
+message`, with `gate` and `run` as participants beside the agents — and, when
+  the run ends, an outcome summary with duration, review and repair counts and the
+  accepted artifact paths relative to the run directory. `--input json` shows the
+  input as indented JSON, cut with an explicit marker; `--ascii` (or a locale
+  without UTF-8) uses `+ -> v ~ ! .` for the marks; `--plain` keeps the technical
+  view (status header and one line per journal event), which `woof events
+--pretty` still prints. Stopping the observer prints `-- observer stopped
+(<reason>); the run continues`, distinct from the run's end. The renderer is
+  exported as `createRunRenderer` so a run host can print the same lines from the
+  same facts.
+
+- [#18](https://github.com/zielus/herdr-woof/pull/18) [`2342cc7`](https://github.com/zielus/herdr-woof/commit/2342cc79f4f89db740c51ab93ddc252578fdd76f) Thanks [@zielus](https://github.com/zielus)! - New command `woof ui`: a local dashboard for your runs.
+
+  It serves a run list and a run detail view on `http://127.0.0.1:4317`, reading
+  the same journals `woof runs`, `woof status` and `woof events` read — no new
+  state and no journal lock. The run view shows the stage and agent state, a live
+  event timeline over server-sent events that resumes from its cursor after a
+  reconnect, and the blocked agent's required action when there is one. Cancelling
+  a run from the UI goes through the same call `woof run cancel` makes.
+
+  What the engine cannot do, the UI will not pretend to: answering a blocked
+  agent, retrying an attempt and starting a run are shown disabled with the reason
+  they are unavailable, and their endpoints answer `501`.
+
+  It binds loopback by default, checks the `Host` header against an allowlist,
+  requires a matching `Origin` on anything that writes, and refuses `--host`
+  beyond loopback unless you pass `--token`. Run `woof ui --help` for the flags;
+  `docs/architecture/web-ui.md` covers the security model, reaching it from a
+  phone, and the known gaps.
+
+  The package still declares no runtime dependencies.
+
+- [#25](https://github.com/zielus/herdr-woof/pull/25) [`d095fc9`](https://github.com/zielus/herdr-woof/commit/d095fc95329aa13800ca93f4cd6e517ed27f31fc) Thanks [@zielus](https://github.com/zielus)! - Two built-in workflows: `plan` and the composite `auto-build`.
+
+  `plan` runs one planner that writes `plan.md`; with `publish: {path, push?}` the
+  planner also commits the plan at that repository path (and pushes), and an
+  engine-run check confirms the commit before the run completes. `auto-build`
+  has no agents of its own: it runs `plan` and then `build-review` as two child
+  runs in the same checkout, mapping its input to each and handing the accepted
+  `plan.md` to the builder and reviewer as a digest-checked input artifact. Its
+  input is `plan-build-review`'s plus `publish`, and both children's inputs are
+  validated before any step runs. `build-review` accepts `inputs: [{label, path,
+sha256}]`, files every request names by path and digest after the run copies
+  them in. A run whose steps are all workflows reads as `running` while a child
+  runs.
+
+### Patch Changes
+
+- [#22](https://github.com/zielus/herdr-woof/pull/22) [`a1e38d0`](https://github.com/zielus/herdr-woof/commit/a1e38d0619f875492d6d9106bff4ebd710efb149) Thanks [@zielus](https://github.com/zielus)! - The run index no longer guesses, forgets or polls without bound.
+
+  - A run id that names two different runs (one in the run index, another at
+    `<runs-dir>/<id>`) is rejected as `run_id_ambiguous` (exit 3) by `status`,
+    `events`, `watch`, `run show` and `run cancel` instead of silently picking one;
+    the run directory always works. A second run with the same id no longer takes
+    over the locator of a run that still exists: the first locator stays and the
+    newcomer is reported on stderr, without failing its open.
+  - `woof runs --reindex` keeps locators whose run directory cannot be reached and
+    lists them under `unavailable`, so a volume that is not mounted does not lose
+    its runs. `--reindex --prune` removes the locators whose directory does not
+    exist.
+  - `woof events --all --follow` and `woof watch --all --follow` poll at most
+    `--max-runs <n>` runs at a time (default 64), runs that have not ended and the
+    most recent first, and stop polling a run once it has ended. A run that has to
+    wait is reported once as `{"kind":"woof.events.skipped",…,"reason":"follow_cap"}`
+    and followed from where it stood when a follower ends.
+  - A locator whose `runDir` is not an absolute path is `locator_invalid` and is
+    never followed against the current directory; a locator's directory is
+    resolved on every load.
+
 ## 0.2.0
 
 ### Minor Changes
