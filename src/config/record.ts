@@ -1,4 +1,4 @@
-import { claudeTrustStatus } from "../runtime/claude/trust.js";
+import { trustWarnings } from "../scheduler/launch.js";
 import type { AdmissionConfiguration, AdmissionProvenance } from "../scheduler/admission.js";
 import type { WorkflowDefinition } from "../scheduler/definition.js";
 import { builtInWorkflow } from "../workflows/catalog.js";
@@ -69,7 +69,7 @@ export function admissionConfiguration(
  * The configuration recorded in `config.json`: agents with their sources (an
  * input override shadows the configured role), limits including input
  * overrides, the admitted repository, the loaded definition's version, and the
- * advisory Claude trust warning when a planned agent is `claude`.
+ * advisory folder-trust warning of each planned kind whose spec can read one.
  */
 export function recordConfiguration(
   configuration: ResolvedConfiguration,
@@ -135,7 +135,7 @@ export function recordConfiguration(
   );
   const reported = new Set<string>();
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
-    if (!configuresPermissionBypass(agent.args)) continue;
+    if (!configuresPermissionBypass(agent.kind, agent.args)) continue;
     const path = agent.source === "input" ? null : agent.path;
     if (path !== null) {
       if (reported.has(path)) continue;
@@ -151,25 +151,14 @@ export function recordConfiguration(
       ...(path !== null ? { path } : {}),
     });
   }
-  if (admitted.plan.agents.some((agent) => agent.kind === "claude")) {
-    const trust = claudeTrustStatus(
+  // Each admitted kind whose spec can read its own folder-trust state adds an advisory warning.
+  warnings.push(
+    ...trustWarnings(
+      admitted.plan.agents.map((agent) => agent.kind),
       admitted.repository,
       options.homeDir !== undefined ? { homeDir: options.homeDir } : {},
-    );
-    if (trust.status === "untrusted") {
-      warnings.push({
-        code: "claude_trust_untrusted",
-        message: `Claude Code has no accepted folder trust for ${trust.dir}: the operator must open claude there once and accept its trust question (Woof never answers it)`,
-        path: trust.path,
-      });
-    } else if (trust.status === "unknown") {
-      warnings.push({
-        code: "claude_trust_unknown",
-        message: `Claude Code folder trust for ${trust.dir} could not be read from ${trust.path}; an untrusted folder blocks the agent at startup`,
-        path: trust.path,
-      });
-    }
-  }
+    ),
+  );
   const workflow =
     configuration.workflow === null
       ? null

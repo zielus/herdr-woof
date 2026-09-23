@@ -1,5 +1,9 @@
 import { isId, isPlainObject } from "../contracts/envelope.js";
-import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes } from "../scheduler/launch.js";
+import {
+  engineOwnedArgIndexes,
+  engineOwnedFlags,
+  permissionBypassArgs,
+} from "../scheduler/launch.js";
 import {
   COUNT_LIMIT_KEYS,
   DURATION_LIMIT_KEYS,
@@ -66,11 +70,6 @@ export const MIN_HOST_START_TIMEOUT_MS = 1000;
 export const MAX_HOST_START_TIMEOUT_MS = 600_000;
 export const MAX_POLL_MS = 3_600_000;
 const MAX_DESCRIPTION = 500;
-
-const BYPASS_FLAGS: ReadonlySet<string> = new Set([
-  "--dangerously-skip-permissions",
-  "--allow-dangerously-skip-permissions",
-]);
 
 const SETTINGS_KEYS = ["schemaVersion", "defaults"];
 const DEFAULTS_KEYS = [
@@ -215,12 +214,12 @@ export function validateRoleFile(
 
   const argv = (args as string[] | undefined) ?? [];
   // A role that sets an engine-owned flag would silently override the resolved values.
-  const engineOwned = engineOwnedArgIndexes(argv);
+  const engineOwned = engineOwnedArgIndexes(kind as string, argv);
   if (engineOwned.length > 0) {
     return {
       ok: false,
       reason: "role_invalid",
-      message: `${file.path}: args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}; use the model field (the engine adds both)`,
+      message: `${file.path}: args must not set ${engineOwnedFlags(kind as string).join(" or ")}; use the model field (the engine adds both)`,
       details: engineOwned.map((index) => ({
         field: `${file.path}#/args/${index}`,
         message: `${argv[index]} is set by the engine`,
@@ -240,14 +239,12 @@ export function validateRoleFile(
   };
 }
 
-/** Whether launch arguments explicitly configure a permission bypass (reported, never added). */
-export function configuresPermissionBypass(args: readonly string[]): boolean {
-  return args.some(
-    (arg, index) =>
-      BYPASS_FLAGS.has(arg) ||
-      arg === "--permission-mode=bypassPermissions" ||
-      (arg === "--permission-mode" && args[index + 1] === "bypassPermissions"),
-  );
+/**
+ * Whether an agent's launch arguments explicitly configure a permission bypass for its kind
+ * (reported, never added). Each kind's spec names its own bypass flags.
+ */
+export function configuresPermissionBypass(kind: string, args: readonly string[]): boolean {
+  return permissionBypassArgs(kind, args).length > 0;
 }
 
 function invalid(path: string, details: ConfigDetail[]): ConfigFailure {

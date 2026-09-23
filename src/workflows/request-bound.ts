@@ -6,6 +6,7 @@ import {
   type RequestContext,
   type WorkflowDefinition,
 } from "../scheduler/definition.js";
+import { longestSubmitNoteBytes } from "../scheduler/launch.js";
 import {
   MAX_QUOTED_REJECTIONS,
   MAX_REJECTION_MESSAGE_BYTES,
@@ -142,6 +143,7 @@ export function largestRequestBytes<Input>(
       artifactFile: stage.artifactFile,
       verdicts: stage.verdicts,
       submitCommand: [longPath("n"), longPath("c")],
+      ...worstSubmitNote(),
       goal: request.goal,
       instructions: request.instructions,
       inputs,
@@ -171,6 +173,7 @@ export function largestRequestBytes<Input>(
       artifactFile: stage.artifactFile,
       verdicts: stage.verdicts,
       submitCommand: [longPath("n"), longPath("c")],
+      ...worstSubmitNote(),
       goal: request.goal,
       instructions: request.instructions,
       inputs: [],
@@ -186,4 +189,10 @@ export function largestRequestBytes<Input>(
     largest = Math.max(largest, rendered.bytes, repair.bytes);
   }
   return largest;
+}
+
+/** The longest submit note any admitted kind adds to a request, so the bound covers every kind. */
+function worstSubmitNote(): { submitNote?: string } {
+  const bytes = longestSubmitNoteBytes();
+  return bytes > 0 ? { submitNote: "x".repeat(bytes) } : {};
 }

@@ -193,7 +193,7 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
         ...(resolved.path !== null ? { path: resolved.path } : {}),
       });
     }
-    if (configuresPermissionBypass(resolved.value.args)) {
+    if (configuresPermissionBypass(resolved.value.kind, resolved.value.args)) {
       warnings.push({
         code: "permission_bypass_configured",
         message: `role ${name} configures a permission bypass in its args; Woof never adds one`,

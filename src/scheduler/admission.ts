@@ -22,7 +22,7 @@ import {
 import type { LockOptions } from "../journal/lock.js";
 import { openRun, type OpenRunInput } from "../state/store.js";
 import type { InputArtifact, WorkflowDefinition } from "./definition.js";
-import { ENGINE_OWNED_FLAGS, engineOwnedArgIndexes, launchArgs } from "./launch.js";
+import { engineOwnedArgIndexes, engineOwnedFlags, launchArgs } from "./launch.js";
 import { MAX_RUN_DIR_BYTES } from "./request.js";
 import { gitCommonDir, revisionOf, treeStatus, type RevisionResult } from "./revision.js";
 
@@ -275,13 +275,13 @@ export async function admitWorkflow<Input>(options: {
     }
     const choice = agent as { kind: string; model: string | null; args?: string[] };
     // Whatever supplied the agent (input, definition or configuration), the engine owns these flags.
-    const owned = engineOwnedArgIndexes(choice.args ?? []);
+    const owned = engineOwnedArgIndexes(choice.kind, choice.args ?? []);
     if (owned.length > 0) {
       const configured = source.source !== "input";
       const setBy = configured
         ? describe(source)
         : `the workflow input or definition (resolveAgents for ${agentId})`;
-      const message = `agent ${agentId} (role ${role}) args must not set ${ENGINE_OWNED_FLAGS.join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
+      const message = `agent ${agentId} (role ${role}) args must not set ${engineOwnedFlags(choice.kind).join(" or ")}: the engine sets them from the model and the run directory (set by ${setBy})`;
       return reject(
         "role_invalid",
         message,
