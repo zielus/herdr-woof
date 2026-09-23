@@ -53,6 +53,7 @@ import {
 } from "./core.js";
 import { agentStageOf, type WorkflowDefinition } from "./definition.js";
 import { writeEngineFile } from "./files.js";
+import { submitNoteOf } from "./launch.js";
 import { renderRequest, type ResolvedInput } from "./request.js";
 import { revisionOf, type RevisionResult } from "./revision.js";
 
@@ -1005,6 +1006,7 @@ export async function runWorkflow<Input>(
           break;
         }
         const planAgent = snapshot.agents.find((item) => item.agentId === action.agentId);
+        const submitNote = planAgent?.kind != null ? submitNoteOf(planAgent.kind) : null;
         const rendered = renderRequest({
           runId: snapshot.runId,
           workflow: snapshot.workflow ?? { name: definition.name, version: definition.version },
@@ -1029,6 +1031,7 @@ export async function runWorkflow<Input>(
             ? { roleInstructions: action.request.roleInstructions }
             : {}),
           ...(action.previous !== null ? { previous: action.previous } : {}),
+          ...(submitNote !== null ? { submitNote } : {}),
         });
         if (!rendered.ok) {
           written = await end(

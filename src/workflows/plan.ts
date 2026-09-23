@@ -4,7 +4,14 @@ import { jsonValueProblem } from "../contracts/json-value.js";
 import type { Limits } from "../domain/types.js";
 import type { CheckStage, InputRef, WorkflowDefinition } from "../scheduler/definition.js";
 import { MAX_REQUEST_BYTES } from "../scheduler/request.js";
-import { exactKeys, limitsProblem, nonEmpty } from "./input.js";
+import {
+  copyInputAgent,
+  exactKeys,
+  inputAgentProblem,
+  limitsProblem,
+  nonEmpty,
+  type InputAgent,
+} from "./input.js";
 import { largestRequestBytes, type RequestBoundCase } from "./request-bound.js";
 
 /**
@@ -29,7 +36,7 @@ export interface PlanInput {
   instructions?: { planner?: string };
   /** Commit the plan into the repository at `path` (relative to the top level). */
   publish?: { path: string; push?: boolean };
-  agents?: { planner?: { kind: string; model: string | null; args: string[] } };
+  agents?: { planner?: InputAgent };
   limits?: Partial<Limits>;
 }
 
@@ -182,7 +189,7 @@ export function taskProblem(task: unknown, fail: (field: string, message: string
   }
 }
 
-/** Per-role agent overrides `{kind, model, args}` for the listed roles. */
+/** Per-role agent overrides `{kind, model, args, provider?}` for the listed roles. */
 export function agentsProblem(
   agents: unknown,
   roles: readonly string[],
@@ -197,17 +204,7 @@ export function agentsProblem(
   for (const role of roles) {
     const agent = agents[role];
     if (agent === undefined) continue;
-    if (!isPlainObject(agent)) {
-      fail(`agents.${role}`, "must be an object with kind, model and args");
-      continue;
-    }
-    exactKeys(agent, ["kind", "model", "args"], `agents.${role}.`, fail);
-    if (!nonEmpty(agent["kind"])) fail(`agents.${role}.kind`, "must be a non-empty string");
-    if (agent["model"] !== null && !nonEmpty(agent["model"]))
-      fail(`agents.${role}.model`, "must be a non-empty string or null");
-    const args = agent["args"];
-    if (!Array.isArray(args) || !args.every((item) => typeof item === "string"))
-      fail(`agents.${role}.args`, "must be an array of strings");
+    inputAgentProblem(agent, role, fail);
   }
 }
 
@@ -227,9 +224,7 @@ export const planWorkflow: WorkflowDefinition<PlanInput> = {
   agents: [{ agentId: "planner", role: "planner" }],
   resolveAgents: (input) => {
     const planner = input.agents?.planner;
-    return planner === undefined
-      ? {}
-      : { planner: { kind: planner.kind, model: planner.model, args: [...planner.args] } };
+    return planner === undefined ? {} : { planner: copyInputAgent(planner) };
   },
   resolveLimits: (input) => ({ ...input.limits }),
   limitDefaults: { ...PLAN_DEFAULT_LIMITS },

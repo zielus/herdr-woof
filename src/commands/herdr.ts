@@ -227,6 +227,10 @@ async function doctor(root: string): Promise<number> {
       root,
       `herdr ${probeLine(report.herdr.status, report.herdr.version)}`,
       `claude ${probeLine(report.claude.status, report.claude.version)}`,
+      // Another kind appears only when a resolved role uses it.
+      ...report.kinds
+        .filter((kind) => kind.kind !== "claude" && kind.roles.length > 0)
+        .map((kind) => `${kind.kind} ${probeLine(kind.status, kind.version)}`),
       `trust ${report.trust.status}`,
       report.config.ok ? "config ok" : `config ${report.config.reason}: ${report.config.message}`,
     ].join("\n"),

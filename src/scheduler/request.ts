@@ -63,6 +63,8 @@ export interface RenderRequestInput {
   inputs: readonly ResolvedInput[];
   task?: { title: string; description: string; acceptanceCriteria: string[]; context?: unknown };
   roleInstructions?: string;
+  /** Fixed text the agent's kind adds to the submit section (its spec's `submitNote`). */
+  submitNote?: string;
   /** Required for a format repair: the previous attempt and its journaled rejections. */
   previous?: {
     attempt: number;
@@ -195,6 +197,7 @@ export function renderRequest(input: RenderRequestInput): RenderRequestResult {
     "   Exit 2 prints a rejection with reason and details: fix the envelope or artifact and run the same command again.",
     "   Exit 3 is an infrastructure problem: say so and end your turn.",
     `Do not edit files under ${input.runDir} other than ${artifactDir}. Do not message other agents.`,
+    ...(input.submitNote !== undefined ? [input.submitNote] : []),
     "",
   );
 

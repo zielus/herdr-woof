@@ -1,10 +1,15 @@
-import { claudeTrustStatus } from "../runtime/claude/trust.js";
+import { trustWarnings } from "../scheduler/launch.js";
 import type { AdmissionConfiguration, AdmissionProvenance } from "../scheduler/admission.js";
 import type { WorkflowDefinition } from "../scheduler/definition.js";
 import { builtInWorkflow } from "../workflows/catalog.js";
 import type { ConfigWarning } from "./discover.js";
 import type { Provenance, ResolvedConfiguration } from "./resolve.js";
-import { configuresPermissionBypass, type LimitKey, type RoleValue } from "./schema.js";
+import {
+  bypassSuffix,
+  configuresPermissionBypass,
+  type LimitKey,
+  type RoleValue,
+} from "./schema.js";
 
 /**
  * Bridges resolved configuration and admission (p4 §3.5): what admission
@@ -42,6 +47,7 @@ export function admissionConfiguration(
     roles[name] = {
       kind: role.value.kind,
       model: role.value.model,
+      ...(role.value.provider !== undefined ? { provider: role.value.provider } : {}),
       args: [...role.value.args],
       source: role.source,
       path: role.path,
@@ -69,7 +75,7 @@ export function admissionConfiguration(
  * The configuration recorded in `config.json`: agents with their sources (an
  * input override shadows the configured role), limits including input
  * overrides, the admitted repository, the loaded definition's version, and the
- * advisory Claude trust warning when a planned agent is `claude`.
+ * advisory folder-trust warning of each planned kind whose spec can read one.
  */
 export function recordConfiguration(
   configuration: ResolvedConfiguration,
@@ -82,7 +88,12 @@ export function recordConfiguration(
 ): ResolvedConfiguration {
   const agents: ResolvedConfiguration["agents"] = {};
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
-    const value: RoleValue = { kind: agent.kind, model: agent.model, args: [...agent.args] };
+    const value: RoleValue = {
+      kind: agent.kind,
+      model: agent.model,
+      ...(agent.provider !== undefined ? { provider: agent.provider } : {}),
+      args: [...agent.args],
+    };
     // Own entries only: an unconfigured role named `constructor` must not find Object.prototype's.
     const role = Object.hasOwn(configuration.roles, agent.role)
       ? configuration.roles[agent.role]
@@ -135,7 +146,7 @@ export function recordConfiguration(
   );
   const reported = new Set<string>();
   for (const [agentId, agent] of Object.entries(admitted.provenance.agents)) {
-    if (!configuresPermissionBypass(agent.args)) continue;
+    if (!configuresPermissionBypass(agent.kind, agent.args)) continue;
     const path = agent.source === "input" ? null : agent.path;
     if (path !== null) {
       if (reported.has(path)) continue;
@@ -147,29 +158,18 @@ export function recordConfiguration(
         : `${agent.source} ${path ?? "configuration"}`;
     warnings.push({
       code: "permission_bypass_configured",
-      message: `agent ${agentId} (role ${agent.role}) configures a permission bypass in its args, set by ${setBy}; Woof never adds one`,
+      message: `agent ${agentId} (role ${agent.role}) configures a permission bypass in its args, set by ${setBy}; Woof never adds one${bypassSuffix(agent.kind, agent.args)}`,
       ...(path !== null ? { path } : {}),
     });
   }
-  if (admitted.plan.agents.some((agent) => agent.kind === "claude")) {
-    const trust = claudeTrustStatus(
+  // Each admitted kind whose spec can read its own folder-trust state adds an advisory warning.
+  warnings.push(
+    ...trustWarnings(
+      admitted.plan.agents.map((agent) => agent.kind),
       admitted.repository,
       options.homeDir !== undefined ? { homeDir: options.homeDir } : {},
-    );
-    if (trust.status === "untrusted") {
-      warnings.push({
-        code: "claude_trust_untrusted",
-        message: `Claude Code has no accepted folder trust for ${trust.dir}: the operator must open claude there once and accept its trust question (Woof never answers it)`,
-        path: trust.path,
-      });
-    } else if (trust.status === "unknown") {
-      warnings.push({
-        code: "claude_trust_unknown",
-        message: `Claude Code folder trust for ${trust.dir} could not be read from ${trust.path}; an untrusted folder blocks the agent at startup`,
-        path: trust.path,
-      });
-    }
-  }
+    ),
+  );
   const workflow =
     configuration.workflow === null
       ? null

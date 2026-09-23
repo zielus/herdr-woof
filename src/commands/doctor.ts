@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,23 +7,30 @@ import { parseArgs } from "node:util";
 import { gitTopLevel } from "../config/discover.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { claudeTrustStatus } from "../runtime/claude/trust.js";
+import { agentKindSpecs, type AgentKindSpec } from "../runtime/kinds/index.js";
 import { VERSION } from "../version.js";
 import { parse } from "./common.js";
 import { herdrBin } from "./run.js";
 
 export const DOCTOR_USAGE = `Usage: woof doctor [--json] [--strict] [--repo <dir>]
 
-Reports Woof, Herdr and Claude Code availability, the read-only Claude
-folder-trust status of the repository and whether its configuration resolves.
+Reports Woof, Herdr and Claude Code availability, every supported agent kind's
+CLI, the read-only Claude folder-trust status of the repository and whether its
+configuration resolves.
 The repository is the git top level of --repo (or the working directory), or
 that directory itself outside a git work tree; trust is read for exactly that
 key, and an ancestor's trust does not count. The trust status is advisory: Woof
 never answers or bypasses Claude Code's trust question.
 
 --json prints the report as one JSON line; without it the same report is
-printed as text. Both run the same probes (herdr and claude --version).
-"problems" lists herdr_unavailable, claude_unavailable, trust_untrusted,
-trust_unknown and config_invalid when they apply.
+printed as text. Both run the same probes: herdr and every kind's CLI with
+--version, and, for a configured role whose kind has one, a readiness probe
+(pi: pi auth check for the role's provider or provider/model, without
+refreshing credentials). "kinds" lists each kind, the resolved roles that use
+it and those probes. "problems" lists herdr_unavailable, claude_unavailable,
+trust_untrusted, trust_unknown and config_invalid when they apply, and for a
+kind other than claude that a resolved role uses: <kind>_unavailable,
+<kind>_not_ready and <kind>_trust_untrusted or <kind>_trust_unknown.
 
 Exits 0, or 2 with --strict when the report lists any problem.`;
 
@@ -61,13 +68,38 @@ export type DoctorProblem =
   | "claude_unavailable"
   | "trust_untrusted"
   | "trust_unknown"
-  | "config_invalid";
+  | "config_invalid"
+  // A kind other than claude that a resolved role uses, e.g. pi_unavailable.
+  | `${string}_unavailable`
+  | `${string}_not_ready`
+  | `${string}_trust_untrusted`
+  | `${string}_trust_unknown`;
+
+/** One supported agent kind: its CLI probe, the resolved roles that use it, and their checks. */
+export interface DoctorKind {
+  kind: string;
+  executable: string;
+  status: ProbeStatus;
+  version: string | null;
+  /** Resolved role names whose kind this is (none when configuration did not resolve). */
+  roles: string[];
+  /** Readiness probes of those roles, one per distinct model/provider selection. */
+  /**
+   * Readiness probes of those roles, one per distinct model/provider selection. `ready` is null
+   * for a selection past MAX_READINESS_PROBES, which is reported but not probed.
+   */
+  readiness: Array<{ roles: string[]; subject: string; ready: boolean | null; detail: string }>;
+  /** The kind's advisory folder-trust warning for the repository, when a role uses it. */
+  trust: { code: string; message: string } | null;
+}
 
 /** What `woof doctor --json` prints, and `woof herdr doctor` reports for its project. */
 export interface DoctorReport {
   woof: { version: string; cli: string; node: string };
   herdr: { env: boolean; paneId: string | null; status: ProbeStatus; version: string | null };
   claude: { status: ProbeStatus; version: string | null };
+  /** Every supported kind, claude included, in the order the kinds are listed. */
+  kinds: DoctorKind[];
   trust: { dir: string; status: ReturnType<typeof claudeTrustStatus>["status"] };
   config:
     | { ok: true; project: string | null; warnings: unknown[] }
@@ -78,16 +110,33 @@ export interface DoctorReport {
 
 /** Probes Herdr and Claude Code and reads the repository's Claude trust and configuration (read-only). */
 export async function doctorReport(repo: string): Promise<DoctorReport> {
-  const herdr = versionOf(herdrBin());
-  const claude = versionOf("claude");
   const resolved = await resolveConfiguration({ projectDir: repo });
-  const trust = claudeTrustStatus(await trustDir(repo));
+  const dir = await trustDir(repo);
+  const roles = resolved.ok ? Object.entries(resolved.configuration.roles) : [];
+  // Every probe is bounded and they run together, so doctor waits for the slowest one only.
+  const [herdr, kinds] = await Promise.all([
+    versionOf(herdrBin()),
+    Promise.all(agentKindSpecs().map((spec) => kindReport(spec, roles, dir))),
+  ]);
+  const claude = kinds.find((kind) => kind.kind === "claude") ?? {
+    status: "not_found" as const,
+    version: null,
+  };
+  const trust = claudeTrustStatus(dir);
   const problems: DoctorProblem[] = [];
   if (herdr.status !== "available") problems.push("herdr_unavailable");
   if (claude.status !== "available") problems.push("claude_unavailable");
   if (trust.status === "untrusted") problems.push("trust_untrusted");
   if (trust.status === "unknown") problems.push("trust_unknown");
   if (!resolved.ok) problems.push("config_invalid");
+  // claude keeps its unconditional problems above; another kind counts only when a role uses it.
+  for (const kind of kinds) {
+    if (kind.kind === "claude" || kind.roles.length === 0) continue;
+    if (kind.status !== "available") problems.push(`${kind.kind}_unavailable`);
+    if (kind.readiness.some((check) => check.ready === false))
+      problems.push(`${kind.kind}_not_ready`);
+    if (kind.trust !== null) problems.push(kind.trust.code as DoctorProblem);
+  }
   return {
     woof: { version: VERSION, cli: cliPath, node: process.execPath },
     herdr: {
@@ -97,6 +146,7 @@ export async function doctorReport(repo: string): Promise<DoctorReport> {
       version: herdr.version,
     },
     claude: { status: claude.status, version: claude.version },
+    kinds,
     trust: { dir: trust.dir, status: trust.status },
     config: resolved.ok
       ? {
@@ -152,22 +202,133 @@ function renderReport(report: DoctorReport): string {
     `herdr: ${probeText(report.herdr.status, report.herdr.version)}`,
     `  env: ${env}`,
     `claude: ${probeText(report.claude.status, report.claude.version)}`,
+    ...report.kinds.flatMap(kindLines),
     `trust: ${report.trust.status} (${report.trust.dir})`,
     `config: ${config}`,
     `problems: ${report.problems.length === 0 ? "none" : report.problems.join(", ")}`,
   ].join("\n");
 }
 
-/** Bound on each probe of an external executable, so a hung `herdr` or `claude` cannot block doctor. */
+/** Bound on each probe of an external executable, so a hung CLI cannot block doctor. */
 const PROBE_TIMEOUT_MS = 10_000;
 
-function versionOf(command: string): {
-  status: "available" | "not_found" | "failed";
-  version: string | null;
-} {
-  const result = spawnSync(command, ["--version"], { encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
-  if (result.error !== undefined && "code" in result.error && result.error.code === "ENOENT")
-    return { status: "not_found", version: null };
-  if (result.status !== 0) return { status: "failed", version: null };
+/** Readiness probes run per kind; they run together, so a kind adds at most one probe bound. */
+const MAX_READINESS_PROBES = 4;
+
+interface Probe {
+  status: ProbeStatus;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** Runs one probe without a shell, bounded by PROBE_TIMEOUT_MS. */
+function probe(command: string, args: readonly string[]): Promise<Probe> {
+  return new Promise((done) => {
+    execFile(
+      command,
+      [...args],
+      // SIGKILL, not the default SIGTERM: a CLI that ignores SIGTERM must not outlive the bound.
+      {
+        encoding: "utf8",
+        timeout: PROBE_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        maxBuffer: 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        if (error === null) return done({ status: "available", code: 0, stdout, stderr });
+        if (error.code === "ENOENT")
+          return done({ status: "not_found", code: null, stdout: "", stderr: "" });
+        return done({
+          status: "failed",
+          code: typeof error.code === "number" ? error.code : null,
+          stdout: typeof stdout === "string" ? stdout : "",
+          stderr: typeof stderr === "string" ? stderr : "",
+        });
+      },
+    );
+  });
+}
+
+async function versionOf(
+  command: string,
+): Promise<{ status: ProbeStatus; version: string | null }> {
+  const result = await probe(command, ["--version"]);
+  if (result.status !== "available") return { status: result.status, version: null };
   return { status: "available", version: result.stdout.trim().split("\n")[0] ?? null };
+}
+
+/** A kind's CLI probe, the resolved roles that use it, their readiness probes and trust warning. */
+async function kindReport(
+  spec: AgentKindSpec,
+  roles: ReadonlyArray<
+    [string, { value: { kind: string; model: string | null; provider?: string } }]
+  >,
+  dir: string,
+): Promise<DoctorKind> {
+  const used = roles.filter(([, role]) => role.value.kind === spec.kind);
+  const version = await versionOf(spec.executable);
+  // One probe per distinct selection, run only when the CLI answered --version.
+  const selections = new Map<
+    string,
+    { roles: string[]; model: string | null; provider: string | null }
+  >();
+  for (const [name, role] of used) {
+    const provider = role.value.provider ?? null;
+    const key = JSON.stringify([role.value.model, provider]);
+    const entry = selections.get(key) ?? { roles: [], model: role.value.model, provider };
+    entry.roles.push(name);
+    selections.set(key, entry);
+  }
+  const checks = [...selections.values()].flatMap((selection) => {
+    const check = version.status === "available" ? spec.readinessProbe?.(selection) : undefined;
+    return check === undefined || check === null ? [] : [{ selection, check }];
+  });
+  // At most MAX_READINESS_PROBES run, together: doctor waits one probe bound per kind, however
+  // many roles a project defines. The rest are listed as not probed, never as not ready.
+  const readiness: DoctorKind["readiness"] = await Promise.all(
+    checks.map(async ({ selection, check }, index) => {
+      if (index >= MAX_READINESS_PROBES) {
+        return {
+          roles: selection.roles,
+          subject: check.subject,
+          ready: null,
+          detail: `not probed: doctor probes at most ${MAX_READINESS_PROBES} selections per kind`,
+        };
+      }
+      const result = await probe(spec.executable, check.args);
+      const outcome =
+        result.status === "not_found"
+          ? { ready: false, detail: `${spec.executable} not found` }
+          : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr });
+      return {
+        roles: selection.roles,
+        subject: check.subject,
+        ready: outcome.ready,
+        detail: outcome.detail,
+      };
+    }),
+  );
+  const warning = used.length > 0 ? (spec.trustWarning?.(dir, {}) ?? null) : null;
+  return {
+    kind: spec.kind,
+    executable: spec.executable,
+    status: version.status,
+    version: version.version,
+    roles: used.map(([name]) => name),
+    readiness,
+    trust: warning === null ? null : { code: warning.code, message: warning.message },
+  };
+}
+
+/** The text lines of one kind other than claude (claude has its own line above). */
+function kindLines(kind: DoctorKind): string[] {
+  if (kind.kind === "claude") return [];
+  return [
+    `${kind.kind}: ${probeText(kind.status, kind.version)}${kind.roles.length === 0 ? "" : ` (roles: ${kind.roles.join(", ")})`}`,
+    ...kind.readiness.map(
+      (check) => `  ${check.subject}: ${check.detail} (roles: ${check.roles.join(", ")})`,
+    ),
+    ...(kind.trust !== null ? [`  trust: ${kind.trust.code}: ${kind.trust.message}`] : []),
+  ];
 }

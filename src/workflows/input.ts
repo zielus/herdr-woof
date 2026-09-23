@@ -24,6 +24,49 @@ export function exactKeys(
   }
 }
 
+/**
+ * A per-run agent override: kind, model, launch arguments and, for a kind that selects one, a
+ * provider. `provider` is optional; null and absent both mean the kind's own default.
+ */
+export interface InputAgent {
+  kind: string;
+  model: string | null;
+  args: string[];
+  provider?: string | null;
+}
+
+/** Reports what is wrong with one per-run agent override at `agents.<role>`. */
+export function inputAgentProblem(agent: unknown, role: string, fail: Fail): void {
+  if (!isRecord(agent)) {
+    fail(`agents.${role}`, "must be an object with kind, model and args (and optionally provider)");
+    return;
+  }
+  exactKeys(agent, ["kind", "model", "args", "provider"], `agents.${role}.`, fail);
+  if (!nonEmpty(agent["kind"])) fail(`agents.${role}.kind`, "must be a non-empty string");
+  if (agent["model"] !== null && !nonEmpty(agent["model"]))
+    fail(`agents.${role}.model`, "must be a non-empty string or null");
+  const args = agent["args"];
+  if (!Array.isArray(args) || !args.every((item) => typeof item === "string"))
+    fail(`agents.${role}.args`, "must be an array of strings");
+  const provider = agent["provider"];
+  if (provider !== undefined && provider !== null && !nonEmpty(provider))
+    fail(`agents.${role}.provider`, "must be a non-empty string or null");
+}
+
+/** A copy of a validated override; a provider is carried only when one is set. */
+export function copyInputAgent(agent: InputAgent): InputAgent {
+  return {
+    kind: agent.kind,
+    model: agent.model,
+    args: [...agent.args],
+    ...(typeof agent.provider === "string" ? { provider: agent.provider } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
 }

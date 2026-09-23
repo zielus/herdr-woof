@@ -858,6 +858,7 @@ describe("woof doctor --json", () => {
       },
       herdr: { env: false, paneId: null, status: "available", version: "herdr 0.0.0-fake" },
       claude: { status: "available", version: "9.9.9 (Claude Code)" },
+      kinds: expect.any(Array),
       trust: { dir: repo, status: "unknown" },
       config: { ok: true, project: repo, warnings: [] },
       problems: ["trust_unknown"],
@@ -1036,6 +1037,229 @@ describe("woof doctor --json", () => {
     expect(healthyHuman.status).toBe(0);
     expect(healthyHuman.stdout).toMatch(/^problems: none$/m);
   });
+
+  it("agent kinds: probes every kind; a kind other than claude is a problem only when a role uses it", () => {
+    const root = tempDir("woof-doctor-kinds-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({ projects: { [repo]: { hasTrustDialogAccepted: true } } }),
+    );
+    const env = { ...doctorEnv(home, bin), PATH: path };
+    const doctor = () => {
+      const result = woof(["doctor", "--json", "--repo", repo], { env });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      return result.json as Json;
+    };
+    const kind = (report: Json, name: string) =>
+      (report["kinds"] as Json[]).find((entry) => entry["kind"] === name) as Json;
+
+    // pi is not installed and no role uses it: reported, but not a problem.
+    const unused = doctor();
+    expect(kind(unused, "pi")).toEqual({
+      kind: "pi",
+      executable: "pi",
+      status: "not_found",
+      version: null,
+      roles: [],
+      readiness: [],
+      trust: null,
+    });
+    expect(kind(unused, "claude")).toMatchObject({
+      status: "available",
+      roles: ["builder", "planner", "reviewer"],
+    });
+    expect(unused["problems"]).toEqual([]);
+
+    // A pi role makes a missing pi a problem.
+    mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "pi", provider: "github-copilot", model: "m" }),
+    );
+    expect(doctor()["problems"]).toEqual(["pi_unavailable"]);
+
+    // A fake pi: --version, and `auth check` answering from its arguments (never real credentials).
+    const argvLog = join(root, "pi-argv.log");
+    writeFileSync(
+      join(bin, "pi"),
+      `#!/bin/sh
+echo "$@" >> ${JSON.stringify(argvLog)}
+if [ "$1" = "--version" ]; then echo 0.86.0; exit 0; fi
+if [ "$4" = "github-copilot" ]; then echo '{"status":"ready","provider":"github-copilot","authType":"oauth"}'; exit 0; fi
+echo '{"status":"not_ready","provider":"'"$4"'","reason":"provider_not_found"}'; exit 1
+`,
+      { mode: 0o755 },
+    );
+    const ready = doctor();
+    expect(kind(ready, "pi")).toEqual({
+      kind: "pi",
+      executable: "pi",
+      status: "available",
+      version: "0.86.0",
+      roles: ["builder"],
+      readiness: [
+        {
+          roles: ["builder"],
+          subject: "provider github-copilot",
+          ready: true,
+          detail: "ready (oauth)",
+        },
+      ],
+      trust: null,
+    });
+    expect(ready["problems"]).toEqual([]);
+    expect(readFileSync(argvLog, "utf8")).toBe(
+      "--version\nauth check --provider github-copilot --json --no-refresh\n",
+    );
+    const human = woof(["doctor", "--repo", repo], { env });
+    expect(human.stdout).toMatch(/^pi: available \(0\.86\.0\) \(roles: builder\)$/m);
+    expect(human.stdout).toMatch(
+      /^  provider github-copilot: ready \(oauth\) \(roles: builder\)$/m,
+    );
+
+    // A provider pi reports not ready is pi_not_ready.
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "pi", provider: "nosuch", model: "m" }),
+    );
+    const notReady = doctor();
+    expect(kind(notReady, "pi")["readiness"]).toEqual([
+      {
+        roles: ["builder"],
+        subject: "provider nosuch",
+        ready: false,
+        detail: "not ready (provider_not_found)",
+      },
+    ]);
+    expect(notReady["problems"]).toEqual(["pi_not_ready"]);
+
+    // A codex role: `codex login status` is its readiness probe.
+    writeFileSync(
+      join(repo, ".woof", "roles", "reviewer.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "codex", model: null }),
+    );
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "claude", model: null }),
+    );
+    expect(doctor()["problems"]).toEqual(["codex_unavailable"]);
+    const codexLogin = join(root, "codex-login");
+    writeFileSync(
+      join(bin, "codex"),
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo codex-cli 0.0.0-fake; exit 0; fi
+if [ "$1 $2" = "login status" ] && [ -f ${JSON.stringify(codexLogin)} ]; then echo "Logged in using ChatGPT" >&2; exit 0; fi
+echo "Not logged in" >&2; exit 1
+`,
+      { mode: 0o755 },
+    );
+    const loggedOut = doctor();
+    expect(kind(loggedOut, "codex")).toMatchObject({
+      status: "available",
+      version: "codex-cli 0.0.0-fake",
+      roles: ["reviewer"],
+      readiness: [{ roles: ["reviewer"], subject: "login", ready: false, detail: "Not logged in" }],
+      trust: null,
+    });
+    expect(loggedOut["problems"]).toEqual(["codex_not_ready"]);
+    writeFileSync(codexLogin, "");
+    const loggedIn = doctor();
+    expect(kind(loggedIn, "codex")["readiness"]).toEqual([
+      { roles: ["reviewer"], subject: "login", ready: true, detail: "Logged in using ChatGPT" },
+    ]);
+    expect(loggedIn["problems"]).toEqual([]);
+
+    // A grok role: grok has no readiness probe, only its --version.
+    writeFileSync(
+      join(repo, ".woof", "roles", "planner.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "grok", model: null }),
+    );
+    expect(doctor()["problems"]).toEqual(["grok_unavailable"]);
+    writeFileSync(join(bin, "grok"), "#!/bin/sh\necho 'grok 0.0.0-fake'\n", { mode: 0o755 });
+    const withGrok = doctor();
+    expect(kind(withGrok, "grok")).toEqual({
+      kind: "grok",
+      executable: "grok",
+      status: "available",
+      version: "grok 0.0.0-fake",
+      roles: ["planner"],
+      readiness: [],
+      trust: null,
+    });
+    expect(withGrok["problems"]).toEqual([]);
+  });
+
+  it("agent kinds: a CLI that ignores SIGTERM cannot hold doctor past its probe bound", () => {
+    const root = tempDir("woof-doctor-hang-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    writeFileSync(join(bin, "pi"), "#!/bin/sh\ntrap '' TERM\nsleep 60\n", { mode: 0o755 });
+    mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "pi", model: null }),
+    );
+    const started = Date.now();
+    const result = woof(["doctor", "--json", "--repo", repo], {
+      env: { ...doctorEnv(home, bin), PATH: path },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // The probe bound is 10 s; the kill must not wait for the 60 s sleep.
+    expect(Date.now() - started).toBeLessThan(30_000);
+    const pi = ((result.json as Json)["kinds"] as Json[]).find((kind) => kind["kind"] === "pi");
+    expect(pi).toMatchObject({ status: "failed", version: null });
+    expect((result.json as Json)["problems"]).toContain("pi_unavailable");
+  }, 40_000);
+
+  it("agent kinds: hung readiness probes keep doctor bounded; selections past the cap are not probed", () => {
+    const root = tempDir("woof-doctor-cap-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    // --version answers; every `auth check` hangs and ignores SIGTERM.
+    writeFileSync(
+      join(bin, "pi"),
+      "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 0.86.0; exit 0; fi\ntrap '' TERM\nsleep 60\n",
+      { mode: 0o755 },
+    );
+    mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+    for (const index of [1, 2, 3, 4, 5]) {
+      writeFileSync(
+        join(repo, ".woof", "roles", `role${index}.json`),
+        JSON.stringify({ schemaVersion: 1, kind: "pi", provider: `p${index}`, model: null }),
+      );
+    }
+    const started = Date.now();
+    const result = woof(["doctor", "--json", "--repo", repo], {
+      env: { ...doctorEnv(home, bin), PATH: path },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // Five hung selections, one 10 s probe bound: not five of them.
+    expect(Date.now() - started).toBeLessThan(30_000);
+    const pi = ((result.json as Json)["kinds"] as Json[]).find((kind) => kind["kind"] === "pi");
+    const readiness = pi?.["readiness"] as Json[];
+    expect(readiness.map((check) => check["ready"])).toEqual([false, false, false, false, null]);
+    expect(readiness[4]).toMatchObject({
+      roles: ["role5"],
+      detail: expect.stringContaining("not probed"),
+    });
+    // claude is not installed here, so its unconditional problems are listed too.
+    expect((result.json as Json)["problems"]).toContain("pi_not_ready");
+  }, 40_000);
 
   it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {
     const root = tempDir("woof-doctor-link-");

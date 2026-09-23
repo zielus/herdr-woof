@@ -270,7 +270,7 @@ describe("woof run start --host foreground: usage and admission", () => {
     });
 
     const agents = {
-      builder: { kind: "codex", model: null, args: [] },
+      builder: { kind: "gemini", model: null, args: [] },
       reviewer: { kind: "claude", model: null, args: [] },
     };
     writeInput(ws.inputPath, input(ws.repo, { agents }));

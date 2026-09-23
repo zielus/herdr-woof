@@ -80,8 +80,10 @@ describe("build-review input: the rendered request fits at admission", () => {
     // Pinned against the inline computation this extraction replaced, re-measured
     // whenever the repair request text changes: the repair is the binding case for
     // this bound, so LV-102's canonical-review sentence (276 bytes) moved it from
-    // 22 932 to 22 656. A blob of 22 656 bytes is the largest this input shape
-    // admits; 22 657 renders 32 769 bytes and is refused by one byte.
+    // 22 932 to 22 656, and the longest per-kind submit note (the codex note, 170
+    // bytes and its newline) moved it to 22 485. A blob of 22 485 bytes is the
+    // largest this input shape admits; 22 486 renders 32 769 bytes and is refused
+    // by one byte.
     const blob = (size: number): Json => ({
       schemaVersion: 1,
       repo: "/repo",
@@ -92,8 +94,8 @@ describe("build-review input: the rendered request fits at admission", () => {
         context: { blob: "x".repeat(size) },
       },
     });
-    expect(fieldsOf(blob(22_656))).toEqual([]);
-    const refused = fieldsOf(blob(22_657));
+    expect(fieldsOf(blob(22_485))).toEqual([]);
+    const refused = fieldsOf(blob(22_486));
     expect(refused).toEqual([
       {
         field: "task",

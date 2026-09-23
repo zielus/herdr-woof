@@ -7,6 +7,7 @@ import { discoverRoots, type ConfigWarning, type DiscoverOptions } from "./disco
 import { loadScope, type ScopeContent } from "./read.js";
 import {
   CONFIG_LIMIT_KEYS,
+  bypassSuffix,
   configuresPermissionBypass,
   type ConfigFailure,
   type ConfigScope,
@@ -193,10 +194,10 @@ export function composeConfiguration(input: ComposeInput): ResolveConfigurationR
         ...(resolved.path !== null ? { path: resolved.path } : {}),
       });
     }
-    if (configuresPermissionBypass(resolved.value.args)) {
+    if (configuresPermissionBypass(resolved.value.kind, resolved.value.args)) {
       warnings.push({
         code: "permission_bypass_configured",
-        message: `role ${name} configures a permission bypass in its args; Woof never adds one`,
+        message: `role ${name} configures a permission bypass in its args; Woof never adds one${bypassSuffix(resolved.value.kind, resolved.value.args)}`,
         ...(resolved.path !== null ? { path: resolved.path } : {}),
       });
     }
@@ -368,7 +369,12 @@ export function describeSource(value: { source: ConfigSource; path: string | nul
 }
 
 function roleValue(role: RoleValue): RoleValue {
-  return { kind: role.kind, model: role.model, args: [...role.args] };
+  return {
+    kind: role.kind,
+    model: role.model,
+    ...(role.provider !== undefined ? { provider: role.provider } : {}),
+    args: [...role.args],
+  };
 }
 
 function provenance<T>(layers: Layer<T>[]): Provenance<T> | null {

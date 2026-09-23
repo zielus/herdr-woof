@@ -469,7 +469,7 @@ console.log(JSON.stringify(admitted));`,
   it("names the role file when a configured role's kind is unsupported", () => {
     const { repo, runDir } = repoDir();
     const configured = roles(repo);
-    configured.builder.kind = "codex";
+    configured.builder.kind = "gemini";
     const out = admitWith(
       "build-review",
       { schemaVersion: 1, repo, task },

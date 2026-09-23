@@ -395,7 +395,7 @@ describe("launchArgs", () => {
   });
 
   it("refuses every other kind", () => {
-    for (const kind of ["codex", "Claude", ""]) {
+    for (const kind of ["gemini", "Claude", ""]) {
       expect(launchArgs({ kind, model: null, args: [], runDir: "/r" })).toMatchObject({
         ok: false,
         reason: "agent_kind_unsupported",

@@ -87,8 +87,8 @@ be a step of another, run as a child run in the parent's checkout. See
 
 `.woof/` and `~/.woof/` JSON files and workflow modules resolve with visible
 project, user and built-in provenance. Role files configure `kind`, `model`,
-`args` and an optional `description`; automatic role instruction or context-file
-injection is not implemented. See
+an optional `provider`, `args` and an optional `description`; automatic role
+instruction or context-file injection is not implemented. See
 [Configuration and project context](../architecture/configuration.md).
 
 ### Runtime observation
@@ -137,11 +137,20 @@ open contract choices.
 
 ### Runtime breadth and concurrency
 
-Only the `claude` agent kind is admitted by the built-in launch mapping. The
-Herdr CLI adapter is the default runtime; `--runtime-module` is an unstable
-extension point. Scheduling is sequential. A second built-in kind, stable runtime
-adapter and parallel workflows need their own capability, ordering and acceptance
-evidence. Stress coverage for more than two concurrent hosted runs remains open.
+The admitted agent kinds are `claude`, `pi`, `codex` and `grok`. Each has a
+small spec under `src/runtime/kinds/` (launch flags, engine-owned flags, refused
+and bypass arguments, trust pre-flight, request note, doctor probe);
+`scheduler/launch.ts` only looks a spec up by kind, and a kind without one is
+refused with `agent_kind_unsupported`. Herdr starts every kind and reports its
+lifecycle through its own hook integration; Woof adds no kind-specific
+observation. `claude` and `pi` (GitHub Copilot provider) have live build-review
+evidence; `codex` and `grok` are verified against their CLIs' help and docs
+only, with no live acceptance yet. Other Herdr kinds, including the standalone
+`copilot` CLI, need their own spec and evidence. The Herdr CLI adapter is the
+default runtime; `--runtime-module` is an unstable extension point. Scheduling
+is sequential. A stable runtime adapter and parallel workflows need their own
+capability, ordering and acceptance evidence. Stress coverage for more than two
+concurrent hosted runs remains open.
 
 ### Package layout
 
@@ -170,12 +179,16 @@ alter a public contract, trust boundary or execution model.
 
 - Workflow modules, `--runtime-module` and role `args` execute or pass through
   with the operator's privileges. Permission-bypass arguments are allowed with a
-  warning; Woof never adds one. Direction: a real sandbox or lower-trust mode,
-  plus an operator-approved allow/deny list for role arguments.
-- Workflow workers receive `--add-dir <runDir>` and can therefore read or edit
-  their run journal and accepted artifacts. Integrity checks detect changes but
-  do not create a same-user security boundary. Direction: narrow the added
-  directory or verify artifacts out of process.
+  warning; Woof never adds one. Permission defaults set in an agent CLI's own
+  configuration (for example codex `approval_policy`/`approvals_reviewer` or
+  grok `permission_mode`) are invisible to that warning. Direction: a real
+  sandbox or lower-trust mode, plus an operator-approved allow/deny list for
+  role arguments.
+- Workflow workers can read or edit their run journal and accepted artifacts:
+  `claude` and `codex` agents receive `--add-dir <runDir>`, and `pi` and a
+  `grok` without a sandbox confine no writes at all. Integrity checks detect
+  changes but do not create a same-user security boundary. Direction: narrow
+  the added directory or verify artifacts out of process.
 - A `CheckStage` runs without a sandbox in the repository the builder edited.
   Direction: run verification in a copy or container.
 - Run-directory creation does not provide a dirfd-based, whole-path trust

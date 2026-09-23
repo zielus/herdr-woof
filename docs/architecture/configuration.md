@@ -12,9 +12,10 @@ Precedence is project → user → built-in. Explicit per-run overrides are
 validated, visible to the caller and recorded with the run. Resolution explains
 which source supplied each effective role, workflow and setting.
 
-Role, agent kind and model are separate. For example, `reviewer` is a project
-responsibility that can resolve to a supported coding-agent CLI and a configured
-model. Model values are configuration, not a tested provider support matrix.
+Role, agent kind, provider and model are separate. For example, `reviewer` is a
+project responsibility that can resolve to a supported coding-agent CLI, a
+configured provider (for a kind that selects one) and a configured model. Model
+and provider values are configuration, not a tested provider support matrix.
 
 ## Recommended layout
 
@@ -92,9 +93,13 @@ resolve,record,index}.ts`, `src/runtime/claude/trust.ts`, `woof config show`
   (1–3 600 000), `keepPanes`, `hostStartTimeoutMs` (1000–600 000), `runsDir`
   (an absolute path, **user scope only** — a project `woof.json` setting it is
   `setting_scope_invalid`). A role file: `kind` (required, non-empty), `model`
-  (required: a string or `null`), `args` (optional, default `[]`, must not set
-  `--model` or `--add-dir` in split or `=`-joined form — `role_invalid`),
-  `description` (optional, ≤ 500 characters). A malformed or unreadable file
+  (required: a string or `null`), `provider` (optional: a non-empty string or
+  `null`; only a kind that selects a provider accepts one, else
+  `role_invalid`), `args` (optional, default `[]`, must not set a flag the
+  kind's engine owns, in split or `=`-joined form, nor an argument the kind
+  refuses — `role_invalid`; see [Agent kinds](#agent-kinds)), `description`
+  (optional, ≤ 500 characters). A kind with no spec keeps refusing `--model`
+  and `--add-dir`. A malformed or unreadable file
   in a scope that applies fails admission even when its role is unused.
 - **Discovery (D4).** The project root is `git rev-parse --show-toplevel` from
   `--project` (default the working directory); only `<root>/.woof` is read. A
@@ -171,10 +176,11 @@ shadowed:[]}` rather than picking up `Object.prototype`'s own `constructor`/
   never adds a permission flag, so an interactive agent with no explicit
   permission configuration stops at its own prompt and the run records
   `run.blocked{reason:"startup_blocked"}`. Args that configure a permission
-  bypass (`--dangerously-skip-permissions`,
-  `--allow-dangerously-skip-permissions`, `--permission-mode
-bypassPermissions`, split or `=`-joined) are allowed but produce warning
-  `permission_bypass_configured`, naming the source, in `run start` output
+  bypass for the role's kind (see [Agent kinds](#agent-kinds); for `claude`
+  `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`,
+  `--permission-mode bypassPermissions`, split or `=`-joined) are allowed but
+  produce warning `permission_bypass_configured`, naming the source, the kind
+  and the flags, in `run start` output
   and `config.json` — only for the agents actually admitted, once per role
   file, and with no path when the workflow input itself set the bypass. A
   role-file bypass an input agent's safe args replaced, or one on a role the
@@ -184,8 +190,8 @@ bypassPermissions`, split or `=`-joined) are allowed but produce warning
 - **Recording.** `openRun`/`openAdmittedRun` write `<runDir>/config.json`
   (mode 0444) holding the resolved configuration completed with the admitted
   `agents`, per-key `settings.limits` (including input overrides),
-  `repository`, and Claude-trust warnings; `run.opened` gains an optional
-  `config: {sha256, bytes}`, and the snapshot gains `config: {path, sha256,
+  `repository`, and each admitted kind's trust warnings; `run.opened` gains an
+  optional `config: {sha256, bytes}`, and the snapshot gains `config: {path, sha256,
 bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
   file mid-run changes nothing about that run.
 - **Claude Code trust (D10, advisory only).** `claudeTrustStatus(dir,
@@ -204,17 +210,77 @@ bytes} | null`. Nothing after admission re-reads `.woof/`: editing a role
   or that directory itself outside a git work tree. Trust is read for exactly
   that key; an ancestor's trust and a subdirectory's own key never count
   (D10's ancestor-trust rule is unchanged). Both `--json` and human-mode
-  output now render the same report from the same probes (`herdr`/`claude
---version`); JSON gains an additive `problems: string[]` (`DoctorProblem` in
-  `src/commands/doctor.ts`, not in the package index), populated in order from
-  `herdr_unavailable`, `claude_unavailable`, `trust_untrusted`,
-  `trust_unknown`, `config_invalid`. `--strict` exits 2 when `problems` is
+  output now render the same report from the same probes (`herdr` and every
+  admitted kind's CLI with `--version`, plus a kind's readiness probe for each
+  resolved role of that kind); JSON gains an additive `problems: string[]`
+  (`DoctorProblem` in `src/commands/doctor.ts`, not in the package index),
+  populated in order from `herdr_unavailable`, `claude_unavailable`,
+  `trust_untrusted`, `trust_unknown`, `config_invalid`, then, for each kind
+  other than `claude` that a resolved role uses, `<kind>_unavailable`,
+  `<kind>_not_ready` and `<kind>_trust_untrusted`/`<kind>_trust_unknown`. The
+  additive `kinds` array lists every admitted kind with its probe, the
+  resolved roles using it, their readiness probes and its trust warning. Every
+  probe is killed at 10 s; a kind runs at most 4 readiness probes, together,
+  and lists further selections with `ready: null` ("not probed"), which is not
+  a problem. The `claude` problems stay unconditional. `--strict` exits 2 when `problems` is
   non-empty, in both modes; without it `doctor` still always exits 0.
 - **Non-goals.** Role instructions and context
   files are not part of configuration — per-run `instructions` stays in the
   input, and the role file schema reserves no such key. A per-run `.herdr/`
   layer, TOML/YAML, and TypeScript config modules that execute at every
   `config show` are not implemented, by design.
+
+## Agent kinds
+
+Each admitted kind has one spec module under `src/runtime/kinds/`, verified
+against the CLI installed on the development machine (versions below). Herdr
+starts every kind with `herdr agent start --kind <kind>` and reports its
+lifecycle through its own hook integration (`herdr integration status`); Woof
+adds no kind-specific observation, prompt delivery or result path. The engine
+adds only the model, a provider where the kind selects one, and a run-directory
+grant where the kind confines writes; it never adds a permission flag.
+
+| Kind     | Verified against | Engine adds                                             | Engine owns                               | Refused at admission                                                 | Reported as a bypass                                                                                                                        | Trust pre-flight             | Doctor readiness                                         |
+| -------- | ---------------- | ------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------- |
+| `claude` | Claude Code 2.1  | `--model`, `--add-dir <runDir>`                         | `--model`, `--add-dir`                    | —                                                                    | `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions`                             | `~/.claude.json` (exact key) | —                                                        |
+| `pi`     | pi 0.86.0        | `--provider`, `--model` (no grant: pi confines nothing) | `--model`, `--provider` (not `--models`)  | `--add-dir` (pi has none)                                            | `--approve`, `-a`                                                                                                                           | `~/.pi/agent/trust.json`     | `pi auth check --provider/--model … --json --no-refresh` |
+| `codex`  | codex-cli 0.156  | `--model`, `--add-dir <runDir>`                         | `--model`, `-m`, `--add-dir`, `-c model=` | `read-only` sandbox, `-C`/`--cd`, `--worktree`                       | `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`, `--dangerously-bypass-hook-trust`, `danger-full-access` sandbox | none                         | `codex login status`                                     |
+| `grok`   | grok 1.0.41      | `--model` (no grant exists; default sandbox is off)     | `--model`, `-m`                           | `read-only`/`strict`/`workspace` sandbox, `-w`/`--worktree`, `--cwd` | `--always-approve`, `--permission-mode bypassPermissions`, `--dangerously-skip-permissions`, `--trust`                                      | none                         | none (`--version` only)                                  |
+
+- **Provider.** Only `pi` selects a provider (`--provider`, for example
+  `github-copilot`); a role's `provider` is refused, never dropped, for any
+  other kind. The provider is shown by `config show`, recorded in `config.json`
+  with the role's provenance and passed in the launch arguments; the journal's
+  plan records it only through those arguments. Nothing defaults to a vendor:
+  without `provider` and `model`, the CLI's own defaults apply.
+- **Startup questions.** An unanswered folder-trust, hook-review or permission
+  question at startup ends as `run.blocked{reason:"startup_blocked"}` when Herdr
+  reports the agent blocked, or `agent_start_failed` when the start times out.
+  The `claude` and `pi` pre-flights are advisory warnings
+  (`<kind>_trust_untrusted`/`<kind>_trust_unknown`) and never reject a run.
+  pi asks only when the checkout has trust-requiring resources (`.pi/`
+  settings, extensions, skills, prompts, themes, system prompts, or a project
+  `.agents/skills`) and no saved decision applies. codex asks to trust a
+  project its `config.toml` does not trust and to review new or changed hooks,
+  Herdr's state hook included; grok asks to trust a folder its
+  `trusted_folders.toml` does not. Woof does not pre-check codex or grok.
+- **Request note.** `codex` and `grok` requests end with one fixed sentence
+  about their sandbox and the run directory; the admission-time request bound
+  reserves room for the longest such note.
+- **Known limits.** `codex` and `grok` have no live acceptance run. A pi model
+  id unknown to its provider starts and then fails on its first turn; `pi auth
+check` does not validate the model, and it runs only for a role with a
+  `provider` or a `provider/id` model: pi reads an unqualified `--model` there
+  as a provider name and answers `invalid`. grok's built-in `read-only`,
+  `strict` and `workspace` sandboxes cannot write a run directory outside the
+  working directory, `~/.grok` and temp dirs; Woof refuses them in the
+  arguments, but not a custom profile or a sandbox set by `GROK_SANDBOX` or
+  grok's config.
+  Model or permission overrides in a CLI's own config or profile (`codex
+--profile`, grok `permission_mode`) are not visible to Woof.
+- **Not admitted.** Other Herdr kinds, including the standalone `copilot` CLI,
+  are refused with `agent_kind_unsupported` until they have a spec and
+  evidence.
 
 ## Decisions still needed
 

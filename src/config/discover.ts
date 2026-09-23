@@ -18,8 +18,9 @@ export interface ConfigWarning {
     | "nested_config_ignored"
     | "permission_bypass_configured"
     | "role_kind_unsupported"
-    | "claude_trust_untrusted"
-    | "claude_trust_unknown";
+    // An agent kind's advisory folder-trust pre-flight, e.g. claude_trust_untrusted.
+    | `${string}_trust_untrusted`
+    | `${string}_trust_unknown`;
   message: string;
   path?: string;
 }
