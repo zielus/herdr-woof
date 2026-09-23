@@ -3,7 +3,7 @@
 ## One source of run meaning
 
 The engine exposes current state and incremental updates. Herdr, Claude Code,
-logs, the Web UI and `woof tui` consume that contract. Consumers must not infer
+logs and `woof tui` consume that contract. Consumers must not infer
 stages or success by reading prompts, scraping terminals, or interpreting UI
 labels. Observability works when the Herdr Woof plugin is absent.
 
@@ -72,9 +72,7 @@ with `subscribeEvents` (`lockFree: true`, so it never takes the journal lock).
 Events are kept once per seq, so a reconnect resumes from the last cursor
 without repeating a row, and it re-reads the run's status on an interval to
 notice host liveness changes (`lost`/`exited`) that no event announces on its
-own. It calls no control operation and writes nothing to a run. The current Web
-UI uses the same snapshot, event and cancellation contracts over local HTTP and
-SSE.
+own. It calls no control operation and writes nothing to a run.
 
 Verify this with an external consumer that follows an active run, disconnects,
 reconnects, and reaches the same visible state as a fresh snapshot. Include a
@@ -85,11 +83,9 @@ blocked run and a terminated runtime, not just successful completion.
 Real shipped behavior for run snapshots, events and runtime observation — not
 design intent. Source: `src/state/snapshot.ts`,
 `src/observe/{cursor,events,subscribe}.ts`,
-`src/runtime/{adapter,tracker,overlay}.ts`, and `woof run show`
-(`src/cli.ts`).
+and `src/runtime/{adapter,tracker,overlay}.ts`.
 
-- **Snapshot shape.** `readSnapshot(runDir)` / `woof run show <run-dir>`
-  return a `RunSnapshot` (`schemaVersion: 1`, `kind: "woof.run.snapshot"`):
+- **Snapshot shape.** `readSnapshot(runDir)` returns a `RunSnapshot` (`schemaVersion: 1`, `kind: "woof.run.snapshot"`):
   `runId`, `revision` (seq of the last complete journal record), `cursor`,
   `journal {records, tailPending}`, `workflow` (`null` for plan-less runs),
   `status`, `openedAt`/`updatedAt`, `outcome` (`null` until termination),
@@ -106,7 +102,7 @@ design intent. Source: `src/state/snapshot.ts`,
   line 1 changes during a read, at most three reads in all; if line 1 still
   changed on the third read, they return the distinct reason
   `journal_replaced` ("the journal's line 1 changed during each of 3
-  consecutive reads") rather than `run_dir_invalid`. `woof run show` exits
+  consecutive reads") rather than `run_dir_invalid`. `woof status` exits
   `3` for any of the three: `{"outcome":"rejected","reason":"run_dir_invalid"
 | "journal_corrupt" | "journal_replaced",…}`.
 
@@ -210,8 +206,7 @@ records}`) is the proof of this by construction: it re-derives the
   (`{agentId, runtimeName, assignedTerminalId, observedTerminalId}`) instead
   of being silently overlaid with another terminal's occupant.
 
-- **`--verify-artifacts`** (`woof run show --verify-artifacts`,
-  `readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
+- **`--verify-artifacts`** (`readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
   copy against its journal record and reports `integrity.artifacts =
 {checked, altered: [{receiptId, acceptedPath, problem}]}`. This detects
   tampering or loss after acceptance; it does not prevent it (same-user
@@ -342,7 +337,7 @@ show`/`readEvents` project, so "an external observer agrees with the
   engine's state" holds by construction — there is no separate in-process
   state the scheduler consults instead.
 - **`liveness.owner` stays `"unhosted"` for a foreground scheduler
-  (unchanged).** `woof run build-review`/`--host foreground` run the
+  (unchanged).** `woof run start --host foreground` runs the
   scheduler in this process: a killed one leaves a non-terminal run, and the
   only resolution is `woof run cancel <run-dir>` (which records the
   termination a live scheduler would otherwise have written). p4 adds a real
@@ -395,28 +390,52 @@ claimProblem?}`; `OverlaidSnapshot` keeps the same fields alongside its own
   exists but is not a valid run host claim" (after the usual re-reads),
   **never `"alive"`**. `"abandoned"` and `"exited"` claims still allow
   `pid: null`.
-- **`woof status <run-dir> [--wait]`** (`src/inspect/status.ts`,
-  `RunStatusView`) is the read-only wait primitive: `liveness`, the run's
-  `activeAttempts`, `lastGate`, `attention`, `counters`, `config: {sha256} |
-null` and `cursor`, plus `result` (`deriveRunResult`) once terminal.
-  Without `--wait`: exit 0, or 3 on `run_dir_invalid|journal_corrupt|
-journal_replaced`. With `--wait` (poll every `--poll-ms`, default 1000;
-  `--timeout-ms`, default 540 000 — one Bash call stays under its own
-  600 000 ms cap): a recorded terminal outcome always wins first (**0/4/5/6**
-  completed/failed/exhausted/cancelled); otherwise an unresolved
-  `attention.blocked` is **9** (unless `--allow-blocked`); otherwise **8**
-  means the owner is gone with no recorded outcome — either `lost`,
-  confirmed on two probes at least `2 × heartbeatMs` apart, or `exited` with
-  no terminal journal record (a host interrupted, e.g. by a signal, before
-  the run recorded its own end; the CLI re-reads once more first, so a host
-  that exits just after its final journal write is not caught mid-write). In
-  the `exited` case `woof status`'s printed line also carries `hostOutcome`,
-  the host's own `outcome.json`, when that file exists (a foreground host
-  has none, so its exit 8 carries no `hostOutcome` — only the exit code
-  already visible in `liveness.host.exitCode`); `hostOutcome` is a CLI-only
-  addition to the printed JSON, not part of the `RunStatusView` type itself.
-  Otherwise the timeout elapsing is **7**. The last line printed is always
-  the status at return time.
+- **`woof status <run-dir>`** (`src/inspect/status.ts`, `RunStatusView`) is
+  a read-only snapshot: `liveness`, the run's `activeAttempts`, `lastGate`,
+  `attention`, `counters`, `config: {sha256} | null` and `cursor`, plus
+  `result` (`deriveRunResult`) once terminal. It never waits; the
+  `--wait` mode was removed with caller notifications (below). It exits 0, or
+  3 on `run_dir_invalid|journal_corrupt|journal_replaced`. When the owner is
+  `exited` with no terminal journal record (a host interrupted, e.g. by a
+  signal, before the run recorded its own end), the printed line also carries
+  `hostOutcome`, the host's own `outcome.json`, when that file exists (a
+  foreground host has none); `hostOutcome` is a CLI-only addition to the
+  printed JSON, not part of the `RunStatusView` type itself. A `lost` owner is
+  the read-time probe's verdict; reading again two heartbeats later confirms
+  it.
+- **Caller notifications (`src/host/notify.ts`).** The agent in the pane that
+  ran `woof run start` (`launch.json`'s launcher pane) is the run's
+  notification target; the pane host reads it with `herdr agent get <pane>`
+  before the run opens and records it in `config.json` (`notify: {target}`,
+  or `{target: null, reason}`: `foreground`, `outside_herdr`,
+  `no_caller_pane`, `no_agent`, `agent_unnamed`, `no_session`,
+  `caller_unreadable`) and, with a target, as the journal's
+  `notify.target {paneId, agentName, agent, sessionId, terminalId}`. The host
+  follows its run's journal (and the child runs its workflow steps open) and
+  pushes one `[woof]` message per event with `herdr agent prompt`, through
+  the Herdr runtime adapter's `deliver` (its started / not_delivered /
+  ambiguous taxonomy): `action_required` (`run.blocked`), `resumed`
+  (`run.unblocked`), `error` (`observation.lost` with code
+  `runtime_unavailable`, or `agent.lifecycle_changed` to `gone`) and one
+  terminal message per top-level run from `run.terminated` — `limit_reached`
+  when it ended exhausted, else `done`. A message is built from an allowlist
+  of engine facts (ids, enum values, the run directory, the worker's Herdr
+  agent name and tab); no record's free text (a reason, a required action, an
+  observation message) is ever interpolated. Before each send the host reads
+  the target pane: another agent or session there, or none, stops
+  notifications for the run (`stopped`: `target_changed` / `target_gone`);
+  a `working` or `blocked` caller keeps the message queued (Woof never types
+  into a turn in progress, which is why nothing is lost or sent twice); an
+  ambiguous delivery is never resent. Each message waits at most 10 minutes
+  while the run goes on, and the host waits at most 60 s after the run ended
+  for the queue to empty before it journals the rest `dropped`
+  (`host_exiting`) and exits. Every outcome is a
+  `notify.outcome {event, key, outcome, reason}` record (`key` is
+  `<runId>#<seq>` of the record it reports); both record types are additive at
+  schemaVersion 1, `notify.outcome` is allowed after `run.terminated` until
+  `host.exited`, and a run without a target journals neither. A foreground
+  host notifies nobody: its caller waits on it. A host that dies cannot notify:
+  `woof status` shows its owner `lost`.
 - **`woof runs [--runs-dir <dir>] [--project <dir>] [--all] [--limit <n>]`**
   (`src/inspect/runs.ts`) lists run directories under a runs directory
   (`--runs-dir` → the user setting `defaults.runsDir` → `~/.woof/runs`;
@@ -504,7 +523,7 @@ events --pretty`**, the same output) keeps the technical projection from
   spaces). `woof status --pretty` prints the technical header instead of the
   JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
-events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-only and never take the journal
+events`**, **`woof watch`** and **`woof tui`** are read-only and never take the journal
   lock or contact Herdr (`woof runs --reindex` writes run-index locators, never a
   run directory: see [central index](#implemented-now-central-index)); see
   [configuration](configuration.md#implemented-now-p4). **`woof doctor
@@ -522,7 +541,7 @@ events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-onl
   than hanging the command.
 - **The run host prints the human view of its own run.** `woof run host`
   (the pane host `run start` types into the root pane of the host's tab) and
-  `--host foreground`/`run build-review` print to their stdout exactly what
+  `--host foreground` print to their stdout exactly what
   `woof watch <run-dir> --follow` prints — the opening block once the run is
   open, one history row per fact as the journal records land, the outcome
   summary — followed by the result JSON line. The host follows its OWN
@@ -556,7 +575,7 @@ events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-onl
   the echoed log already shows them, so they are printed once). Errors that
   abort the host still go to stderr; nothing else does, so a Herdr pane shows
   one coherent view. `outcome.json`, exit codes,
-  `host-exit.json`, `host.claimed`/`host.exited` and `woof status --wait` are
+  `host-exit.json`, `host.claimed`/`host.exited` and `woof status` are
   unchanged and do not depend on the host's stdout. There is no separate
   watch pane any more: one pane per run.
 - **Metadata is a display-only projection, never a source.** The run host
@@ -588,7 +607,7 @@ unchanged. They are transitions, never poll samples.
 
 - **`run.cancel_requested {source, reason}`** — who asked, distinct from the
   termination it leads to. `source` is `cli` (`woof run cancel`), `web` (the
-  UI's cancel route), `herdr_action` (`woof herdr cancel`), `signal` (a run
+  removed web UI's cancel route; still read in older journals), `herdr_action` (`woof herdr cancel`), `signal` (a run
   host's SIGINT/SIGTERM) or `abort_signal` (`runWorkflow({signal})`, the
   default; `cancelSource` overrides it). All of them go through
   `cancelRun`, which appends the request and then
@@ -612,7 +631,7 @@ workspaceId, tabId?}`** — written by the run host together with `run.opened`, 
   the reducer allows after `run.terminated`, because a host exits after the
   run it hosted ended. A host records the termination, drains, and only then
   journals its exit, so a follower (`woof events --follow`, `woof watch
---follow`, the Web UI's SSE stream — all one `streamEvents` loop) does not
+--follow` — one `streamEvents` loop) does not
   end at `run.terminated`: it ends when the journal holds no `host.claimed`,
   or the host's `host.exited`/`host.lost` is recorded, or the read-time probe
   no longer sees a live host (exit marker, dead pid, stale heartbeat, no
@@ -622,9 +641,9 @@ workspaceId, tabId?}`** — written by the run host together with `run.opened`, 
   the follow still ends `terminated` with exit 0. A late `submission.rejected`
   between the two is delivered with the exit, never on its own. `--follow --after <cursor
 at or past the termination>` applies the same rule: it delivers the exit
-  whether it was written before or after the follower started. `woof status
---wait` still returns on the recorded outcome at once — `host.exited` may
-  follow, and resuming from its `status.cursor` delivers it. The synchronous second-signal
+  whether it was written before or after the follower started. `woof status`
+  reports the recorded outcome at once — `host.exited` may follow, and
+  resuming from its `status.cursor` delivers it. The synchronous second-signal
   exit (130) cannot take the journal lock and leaves only `host-exit.json`.
   A refused or failed host record is logged and never affects the run. A
   scheduler driven without a host (`runWorkflow` from the SDK) journals no
@@ -677,8 +696,8 @@ Real shipped behavior — not design intent. Source:
 ordinary journal records and therefore events, one-to-one, with a `subject`
 (the agent, and the stage/visit/attempt where present); both are additive at
 `schemaVersion: 1`, so a journal without them reads unchanged. They are
-written on **change**, never per poll: `woof watch`, the Web UI and the run
-host all read the same rows because there is nothing else to read.
+written on **change**, never per poll: `woof watch` and the run
+host both read the same rows because there is nothing else to read.
 
 - **`agent.lifecycle_changed {agentId, from, to, terminalId, raw?, replaced?}`**
   — written by the scheduler when a tracked observation's lifecycle
@@ -797,8 +816,7 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   `--runs-dir` passes the index (its output gains `indexDir`), so a run opened
   with its own `--run-dir` or `--runs-dir` is listed; an explicit `--runs-dir`
   lists that directory only. `--project`, `--all` and `--limit` apply to the
-  union. `woof ui` follows the same rule for `/api/runs` and for resolving a
-  run id. There is no `GET /api/events` for all runs.
+  union.
 - **`woof runs --reindex`** is the only inspection command that writes: it
   writes a locator for each readable run under the runs directory that has
   none (or one whose directory holds no such run) and prints
@@ -810,15 +828,15 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   run id already indexed at another directory that holds that run — or, without
   `--prune`, at a directory that cannot be reached — is left alone and listed
   under `conflicts`. It never touches a run directory.
-- **Run addressing by id.** `woof status|events|watch|run show|run cancel`
+- **Run addressing by id.** `woof status|events|watch|run cancel`
   resolve their argument: an existing directory always wins; else, for a bare
   run id, the locator (which must still lead to that run) and `<runs-dir>/<id>`
   are both looked at. When both hold a run with that id at different real
   directories the id is rejected as `run_id_ambiguous` (exit 3, the message
   names both directories) — `run cancel` never picks one of two runs — and the
   run directory still works. Directories under the runs directory whose name
-  differs from the run id they record are not searched by the CLI (`woof runs`
-  and the Web API, which read every journal, do see them).
+  differs from the run id they record are not searched by the CLI (`woof runs`,
+  which reads every journal, does see them).
   A bare id found nowhere is `run_dir_invalid` (exit 3). Any other path that
   does not exist is still treated as a run directory, so `events --follow` keeps
   waiting for a directory that is about to be created.

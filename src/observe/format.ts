@@ -122,7 +122,7 @@ export function formatHeader(input: HeaderInput, options: FormatOptions): string
   return lines;
 }
 
-/** The line `woof status --pretty` adds for a host outcome (exit 8). */
+/** The line `woof status --pretty` adds for a host outcome (an owner that exited without an end). */
 export function formatHostOutcome(hostOutcome: unknown, options: FormatOptions): string {
   const paint = painter(options.color);
   const value = isObject(hostOutcome) ? hostOutcome : {};
@@ -216,6 +216,10 @@ function summaryOf(type: string, raw: unknown): string {
         }${data["terminalId"] === null ? "" : ` terminal ${text(data["terminalId"])}`}${
           data["replaced"] === true ? " [pane occupant replaced]" : ""
         }`;
+      case "notify.target":
+        return `caller ${text(data["agentName"])} (${text(data["agent"])}) in pane ${text(data["paneId"])}`;
+      case "notify.outcome":
+        return `${data["event"] === null ? "notifications" : text(data["event"])} ${text(data["outcome"])} (${text(data["reason"])})`;
       case "run.activity":
         return `${text(data["kind"])} ${text(data["phase"])}${
           data["detail"] === undefined ? "" : `: ${clipped(data["detail"])}`

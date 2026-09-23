@@ -14,9 +14,9 @@ integrations behave, how to extend it, and which capabilities are not supported.
    [observability](architecture/observability.md) for the engine contracts.
 4. [Initial workflows](workflows/initial-workflows.md) and
    [workflow authoring](workflows/authoring.md) to use or extend workflows.
-5. [Integration surfaces](integrations/plugins.md),
-   [Herdr plugin setup](integrations/herdr-setup.md) and
-   [Web UI](architecture/web-ui.md) for operator-facing entry points.
+5. [Integration surfaces](integrations/plugins.md) and
+   [Herdr plugin setup](integrations/herdr-setup.md) for operator-facing entry
+   points.
 6. [Contributing](../CONTRIBUTING.md) and the
    [release process](decisions/release-process.md) for repository work and
    publishing.
@@ -31,7 +31,6 @@ integrations behave, how to extend it, and which capabilities are not supported.
 - [Communication and artifacts](architecture/communication.md)
 - [Configuration and project context](architecture/configuration.md)
 - [Observability](architecture/observability.md)
-- [Web UI](architecture/web-ui.md)
 
 ### Workflows and integrations
 

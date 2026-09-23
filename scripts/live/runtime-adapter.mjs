@@ -16,6 +16,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { showRun } from "./lib/snapshot.mjs";
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sdk = await import(pathToFileURL(join(repo, "dist", "index.js")).href);
 const probe = process.argv.includes("--probe");
@@ -365,18 +367,9 @@ async function runFull() {
     types.join(","),
   );
 
-  let shown;
-  try {
-    shown = JSON.parse(
-      execFileSync("node", [join(repo, "dist", "cli.js"), "run", "show", runDir], {
-        encoding: "utf8",
-      }),
-    );
-  } catch (error) {
-    shown = { outcome: "failed", message: error.message };
-  }
+  const shown = showRun(sdk.readSnapshot, runDir).json;
   const shownAttempt = shown.snapshot?.stages[0]?.visits[0]?.attempts[0];
-  print("woof run show", {
+  print("readSnapshot", {
     outcome: shown.outcome,
     status: shown.snapshot?.status,
     paneId: shown.snapshot?.agents[0]?.assignment?.paneId,
@@ -388,7 +381,7 @@ async function runFull() {
   });
   gate(
     9,
-    "run show: cancelled, pane recorded, attempt abandoned, delivery started, runtime null",
+    "snapshot: cancelled, pane recorded, attempt abandoned, delivery started, runtime null",
     shown.outcome === "snapshot" &&
       shown.snapshot.status === "cancelled" &&
       shown.snapshot.agents[0]?.assignment?.paneId === handle.paneId &&

@@ -122,8 +122,8 @@ export const MATRIX = [
     disposition: "cli",
     tests: [
       t(
-        "test/run-build-review.cli.test.ts",
-        "woof run build-review: usage and admission rejects invalid input before loading the runtime or writing a journal",
+        "test/run-foreground.cli.test.ts",
+        "woof run start --host foreground: usage and admission rejects invalid input before loading the runtime or writing a journal",
       ),
       t(
         "test/plan-build-review.cli.test.ts",
@@ -136,7 +136,7 @@ export const MATRIX = [
     ],
     gates: [],
     command:
-      "bun x vitest run test/run-build-review.cli.test.ts test/plan-build-review.cli.test.ts test/unit/build-review-input.test.ts",
+      "bun x vitest run test/run-foreground.cli.test.ts test/plan-build-review.cli.test.ts test/unit/build-review-input.test.ts",
     note: "",
   },
   {
@@ -380,12 +380,12 @@ export const MATRIX = [
         "scheduler blocking, delivery, cancellation and failures 9. cancellation stops owned panes and a late result cannot resurrect the run",
       ),
       t(
-        "test/run-build-review.cli.test.ts",
-        "woof run build-review: runs exits 6 on SIGTERM, records the cancellation and refuses a late submission",
+        "test/run-foreground.cli.test.ts",
+        "woof run start --host foreground: runs exits 6 on SIGTERM, records the cancellation and refuses a late submission",
       ),
     ],
     gates: [],
-    command: "bun x vitest run test/scheduler.process.test.ts test/run-build-review.cli.test.ts",
+    command: "bun x vitest run test/scheduler.process.test.ts test/run-foreground.cli.test.ts",
     note: "",
   },
   {

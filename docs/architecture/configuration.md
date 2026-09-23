@@ -112,15 +112,6 @@ resolve,record,index}.ts`, `src/runtime/claude/trust.ts`, `woof config show`
   each `limits.<key>` composes per key: input → project → user → the
   workflow definition's own `limitDefaults[key]`. The losing layers for a
   winning value are listed in `shadowed`, never merged into it.
-- **`woof agent start <role>` reuses the same role resolution outside any
-  run.** Project `.woof/roles/<role>.json` → user `~/.woof/roles/<role>.json`
-  → a built-in role (`builder`, `planner`, `reviewer`), else
-  `role_unresolved`. Its `model`/`args` become the launch flags exactly as
-  they would for a run, except no run directory exists, so no `--add-dir` is
-  added and there is no journal; a role that configures a permission bypass
-  still starts, with a warning on stderr, same as elsewhere. The project is
-  the git top level of `--project` (default the working directory), as for
-  `config show`.
 - **Provenance and `woof config show`.** `resolveConfiguration({projectDir,
 homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
   `kind: "woof.config.resolved"`): `roots`, `files` (every file read, with its

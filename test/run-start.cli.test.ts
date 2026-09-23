@@ -18,7 +18,14 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cliPath, distUrl, repoRoot, runNode, testPlan } from "./helpers/process.js";
+import {
+  cliPath,
+  distUrl,
+  readSnapshotOf,
+  repoRoot,
+  runNode,
+  testPlan,
+} from "./helpers/process.js";
 
 // `woof run start` / `woof run host` (plan T5) as real processes. The Herdr CLI
 // is the fake fixture by absolute path (WOOF_HERDR_BIN); its `pane run` entry
@@ -378,10 +385,10 @@ async function waitForOutcome(runDir: string, timeoutMs = 30_000): Promise<Json>
   return JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
 }
 
-function show(ws: Workspace, runDir: string): Json {
-  const shown = woofIn(ws, ["run", "show", runDir]);
-  expect(shown.status, shown.stdout + shown.stderr).toBe(0);
-  return shown.json?.["snapshot"] as Json;
+function show(runDir: string): Json {
+  const shown = readSnapshotOf(runDir);
+  expect(shown["ok"], JSON.stringify(shown)).toBe(true);
+  return shown["snapshot"] as Json;
 }
 
 describe("woof run start --host herdr-pane", () => {
@@ -410,7 +417,7 @@ describe("woof run start --host herdr-pane", () => {
         },
       },
       next: {
-        status: ["woof", "status", runDir, "--wait"],
+        status: ["woof", "status", runDir],
         cancel: ["woof", "run", "cancel", runDir],
       },
     });
@@ -504,8 +511,8 @@ describe("woof run start --host herdr-pane", () => {
     expect(hostLog).toMatch(/Z gate review pass \(approved\)$/m);
     expect(hostLog).toMatch(/Z run ended$/m);
     expect(hostLog).not.toContain("Task dispatched");
-    // The caller's wait returns the same result (plan §3.9 step 5).
-    const waited = woofIn(ws, ["status", runDir, "--wait", "--poll-ms", "50"]);
+    // The caller's status read returns the same result (plan §3.9 step 5).
+    const waited = woofIn(ws, ["status", runDir]);
     expect(waited.status, waited.stdout + waited.stderr).toBe(0);
     expect(waited.json?.["result"]).toEqual(outcome["result"]);
     expect(waited.json?.["status"]["liveness"]).toMatchObject({ owner: "exited" });
@@ -940,18 +947,11 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     await waitFor(() => !existsSync(join(runDir, "journal.lock")), "the journal lock to be free");
     const pid = await waitForHostPid(runDir);
     process.kill(pid, "SIGKILL");
-    await waitFor(() => show(ws, runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
-    const waitedLost = woofIn(ws, [
-      "status",
-      runDir,
-      "--wait",
-      "--poll-ms",
-      "50",
-      "--timeout-ms",
-      "15000",
-    ]);
-    expect(waitedLost.status, waitedLost.stdout).toBe(8);
-    expect(waitedLost.json?.["status"]["liveness"]).toMatchObject({ owner: "lost" });
+    await waitFor(() => show(runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
+    const shownLost = woofIn(ws, ["status", runDir]);
+    expect(shownLost.status, shownLost.stdout).toBe(0);
+    expect(shownLost.json?.["status"]["liveness"]).toMatchObject({ owner: "lost" });
+    expect(shownLost.json?.["result"]).toBeNull();
     // Inspection never writes: the probe said lost, but nothing journaled it yet.
     expect(records(runDir).some((record) => record["type"] === "host.lost")).toBe(false);
     const cancelled = woofIn(ws, ["run", "cancel", runDir]);
@@ -976,13 +976,13 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
       cancelRequest: { type: "run.cancel_requested" },
       hostLost: { type: "host.lost", pid },
     });
-    expect(show(ws, runDir)).toMatchObject({
+    expect(show(runDir)).toMatchObject({
       status: "cancelled",
       liveness: { owner: "lost", host: { state: "hosting", pid } },
       lifecycle: { host: { state: "lost", pid }, cancelRequested: { source: "cli" } },
     });
-    // A recorded outcome wins over a lost owner.
-    expect(woofIn(ws, ["status", runDir, "--wait"]).status).toBe(6);
+    // A recorded outcome is reported alongside the lost owner.
+    expect(woofIn(ws, ["status", runDir]).json?.["result"]).toMatchObject({ outcome: "cancelled" });
   }, 60_000);
 
   it("PI-001: a pane host signalled twice releases its claim with exit 130 and records outcome.json", async () => {
@@ -1768,5 +1768,149 @@ describe("woof run start: the run host's pane shows the human view; no watch spl
     expect(calls.filter((argv) => argv[1] === "split")).toEqual([]);
     // The tab Woof created for the agent is what gets closed, never a bare pane.
     expect(calls.filter((argv) => argv[1] === "close")).toEqual([["tab", "close", "w9:t5"]]);
+  }, 60_000);
+});
+
+/** `herdr agent get|prompt` output (Herdr 0.9.1 shape) for the caller agent in pane w9:p1. */
+const callerAgent = (status: string, session = "sess-caller") =>
+  JSON.stringify({
+    id: "cli:agent:get",
+    result: {
+      agent: {
+        agent: "claude",
+        agent_session: { agent: "claude", kind: "id", source: "herdr:claude", value: session },
+        agent_status: status,
+        name: "caller",
+        pane_id: "w9:p1",
+        revision: 3,
+        state_change_seq: 2,
+        tab_id: "w9:t1",
+        terminal_id: "term_caller",
+        workspace_id: "w9",
+      },
+      type: "agent_info",
+    },
+  });
+
+/** The launcher's pane (HERDR_PANE_ID w9:p1) hosts an agent named `caller` with `status`. */
+function withCaller(ws: Workspace, status: string): void {
+  const scenario = JSON.parse(readFileSync(ws.scenario, "utf8")) as Json[];
+  writeFileSync(
+    ws.scenario,
+    JSON.stringify([
+      { match: ["agent", "get", "w9:p1"], stdout: callerAgent(status) },
+      { match: ["agent", "get", "caller"], stdout: callerAgent(status) },
+      { match: ["agent", "prompt", "caller"], stdout: callerAgent("working") },
+      ...scenario,
+    ]),
+  );
+}
+
+describe("woof run start: the run host notifies the caller", () => {
+  it("records the calling agent as the target and prompts it once, after the run ended, with engine facts only", async () => {
+    const ws = workspace();
+    withCaller(ws, "idle");
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir, ["--run-id", "notify-run"]), {
+      WOOF_TEST_NOTIFY_RETRY_MS: "20",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    // run start returns as soon as the run is open; the host carries everything after that.
+    expect(started.json).toMatchObject({ outcome: "started", runId: "notify-run" });
+    const outcome = await waitForOutcome(runDir);
+    expect(outcome).toMatchObject({ outcome: "run", result: { outcome: "completed" } });
+
+    const journaled = records(runDir);
+    const types = journaled.map((record) => record["type"]);
+    expect(journaled.find((record) => record["type"] === "notify.target")).toMatchObject({
+      paneId: "w9:p1",
+      agentName: "caller",
+      agent: "claude",
+      sessionId: "sess-caller",
+      terminalId: "term_caller",
+    });
+    const end = journaled.find((record) => record["type"] === "run.terminated");
+    expect(journaled.filter((record) => record["type"] === "notify.outcome")).toMatchObject([
+      {
+        event: "done",
+        key: `notify-run#${String(end?.["seq"])}`,
+        outcome: "sent",
+        reason: "delivered",
+      },
+    ]);
+    // The terminal notification follows the termination and precedes the host's exit.
+    expect(types.indexOf("notify.outcome")).toBeGreaterThan(types.indexOf("run.terminated"));
+    expect(types.at(-1)).toBe("host.exited");
+    const prompts = fakeCalls(ws).filter((argv) => argv[0] === "agent" && argv[1] === "prompt");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.slice(0, 2)).toEqual(["agent", "prompt"]);
+    expect(prompts[0]?.[2]).toBe("caller");
+    expect(prompts[0]?.[3]).toBe(
+      [
+        "[woof] done: run notify-run (build-review)",
+        "The run ended: completed.",
+        `run dir: ${runDir}`,
+        `next: woof status ${runDir} for the result`,
+      ].join("\n"),
+    );
+    // config.json records the target with the run's resolved configuration.
+    const config = JSON.parse(readFileSync(join(runDir, "config.json"), "utf8")) as Json;
+    expect(config["notify"]).toEqual({
+      target: {
+        paneId: "w9:p1",
+        agentName: "caller",
+        agent: "claude",
+        sessionId: "sess-caller",
+        terminalId: "term_caller",
+      },
+    });
+  }, 60_000);
+
+  it("keeps the done notification queued while the caller works, and drops it, journaled, when the host exits", async () => {
+    const ws = workspace();
+    withCaller(ws, "working");
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir), {
+      WOOF_TEST_NOTIFY_RETRY_MS: "20",
+      WOOF_TEST_NOTIFY_DRAIN_MS: "300",
+    });
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    await waitForOutcome(runDir);
+    expect(
+      records(runDir)
+        .filter((record) => record["type"] === "notify.outcome")
+        .map((record) => [record["event"], record["outcome"], record["reason"]]),
+    ).toEqual([
+      ["done", "queued", "caller_working"],
+      ["done", "dropped", "host_exiting"],
+    ]);
+    expect(fakeCalls(ws).filter((argv) => argv[0] === "agent" && argv[1] === "prompt")).toEqual([]);
+  }, 60_000);
+
+  it("records no target, and journals nothing about notifying, when the caller's pane has no agent or the run is foreground", async () => {
+    const ws = workspace();
+    const runDir = join(ws.root, "run");
+    const started = woofIn(ws, startArgs(ws, runDir));
+    expect(started.status, started.stdout + started.stderr).toBe(0);
+    await waitForOutcome(runDir);
+    expect(records(runDir).some((record) => String(record["type"]).startsWith("notify."))).toBe(
+      false,
+    );
+    // The fake Herdr answers `agent get w9:p1` with an error: the caller cannot be read.
+    const config = JSON.parse(readFileSync(join(runDir, "config.json"), "utf8")) as Json;
+    expect(config["notify"]).toEqual({ target: null, reason: "caller_unreadable" });
+
+    // A foreground caller waits on the process: it is never a target, even with an agent in its pane.
+    const fg = workspace();
+    withCaller(fg, "idle");
+    const foregroundDir = join(fg.root, "fg-run");
+    const foreground = woofIn(fg, startArgs(fg, foregroundDir, ["--host", "foreground"]));
+    expect(foreground.status, foreground.stdout + foreground.stderr).toBe(0);
+    const recorded = JSON.parse(readFileSync(join(foregroundDir, "config.json"), "utf8")) as Json;
+    expect(recorded["notify"]).toEqual({ target: null, reason: "foreground" });
+    expect(fakeCalls(fg).filter((argv) => argv[0] === "agent")).toEqual([]);
+    expect(
+      records(foregroundDir).some((record) => String(record["type"]).startsWith("notify.")),
+    ).toBe(false);
   }, 60_000);
 });

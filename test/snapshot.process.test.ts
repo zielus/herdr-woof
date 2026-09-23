@@ -15,24 +15,26 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   cleanupRunDirs,
-  cliPath,
+  distUrl,
   makeRunDir,
   openAttemptOk,
   openPlannedRun,
+  readSnapshotOf,
   readyAttempt,
   repoRoot,
   runSdk,
   submit,
   terminateRunOk,
   testPlan,
-  woof,
 } from "./helpers/process.js";
 
+// `readSnapshot` of the built package, read in a child process as a consumer reads it. These
+// cases covered the removed `woof run show`, which printed exactly this result.
 afterEach(() => cleanupRunDirs());
 
 type Json = Record<string, unknown>;
 interface Shown {
-  outcome: string;
+  ok: boolean;
   reason?: string;
   message?: string;
   snapshot?: Json & {
@@ -47,24 +49,19 @@ interface Shown {
   };
 }
 
-function show(args: string[]): { status: number | null; json: Shown; stderr: string } {
-  const result = woof(["run", "show", ...args]);
-  return {
-    status: result.status,
-    json: JSON.parse(result.stdout || "{}") as Shown,
-    stderr: result.stderr,
-  };
+function show(runDir: string, verifyArtifacts = false): { ok: boolean; json: Shown } {
+  const json = readSnapshotOf(runDir, { verifyArtifacts }) as Shown;
+  return { ok: json.ok, json };
 }
 
-describe("woof run show", () => {
+describe("readSnapshot", () => {
   it("shows a p1-shaped run without a plan", () => {
     const { runDir, envelope } = readyAttempt();
     expect(submit(runDir, envelope).json?.outcome).toBe("accepted");
 
-    const { status, json } = show([runDir]);
+    const { ok, json } = show(runDir);
 
-    expect(status).toBe(0);
-    expect(json.outcome).toBe("snapshot");
+    expect(ok).toBe(true);
     expect(json.snapshot).toMatchObject({
       runId: "run-1",
       workflow: null,
@@ -85,9 +82,9 @@ describe("woof run show", () => {
       join(runDir, "journal.jsonl"),
     );
 
-    const { status, json } = show([runDir]);
+    const { ok, json } = show(runDir);
 
-    expect(status).toBe(0);
+    expect(ok).toBe(true);
     expect(json.snapshot).toMatchObject({ runId: "fixture-run", revision: 5 });
   });
 
@@ -118,9 +115,9 @@ describe("woof run show", () => {
     ).toBe("artifact_missing");
     terminateRunOk(runDir);
 
-    const { status, json } = show([runDir]);
+    const { ok, json } = show(runDir);
 
-    expect(status).toBe(0);
+    expect(ok).toBe(true);
     const snapshot = json.snapshot;
     expect(snapshot).toMatchObject({
       status: "cancelled",
@@ -152,17 +149,15 @@ describe("woof run show", () => {
     });
   });
 
-  it("reports a missing run directory and a corrupt journal with exit 3", () => {
-    const missing = show([join(makeRunDir(), "nope")]);
-    expect(missing.status).toBe(3);
-    expect(missing.json).toMatchObject({ outcome: "rejected", reason: "run_dir_invalid" });
+  it("reports a missing run directory and a corrupt journal", () => {
+    const missing = show(join(makeRunDir(), "nope"));
+    expect(missing.json).toMatchObject({ ok: false, reason: "run_dir_invalid" });
 
     const runDir = makeRunDir();
     openAttemptOk(runDir);
     appendFileSync(join(runDir, "journal.jsonl"), '{"not":"a record"}\n');
-    const corrupt = show([runDir]);
-    expect(corrupt.status).toBe(3);
-    expect(corrupt.json).toMatchObject({ outcome: "rejected", reason: "journal_corrupt", line: 3 });
+    const corrupt = show(runDir);
+    expect(corrupt.json).toMatchObject({ ok: false, reason: "journal_corrupt", line: 3 });
     expect(corrupt.json.message).toContain("line 3");
   });
 
@@ -171,9 +166,9 @@ describe("woof run show", () => {
     openAttemptOk(runDir);
     appendFileSync(join(runDir, "journal.jsonl"), '{"schemaVersion":1,"seq":3');
 
-    const { status, json } = show([runDir]);
+    const { ok, json } = show(runDir);
 
-    expect(status).toBe(0);
+    expect(ok).toBe(true);
     expect(json.snapshot).toMatchObject({
       revision: 2,
       journal: { records: 2, tailPending: true },
@@ -189,9 +184,9 @@ describe("woof run show", () => {
     );
 
     const started = Date.now();
-    const { status } = show([runDir]);
+    const { ok } = show(runDir);
 
-    expect(status).toBe(0);
+    expect(ok).toBe(true);
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
@@ -200,27 +195,18 @@ describe("woof run show", () => {
     openAttemptOk(runDir);
     const emptyBin = mkdtempSync(join(tmpdir(), "woof-no-herdr-"));
     try {
-      const result = spawnSync(process.execPath, [cliPath, "run", "show", runDir], {
-        encoding: "utf8",
-        env: { PATH: emptyBin },
-      });
+      const script = `const { readSnapshot } = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
+console.log(JSON.stringify(readSnapshot(process.argv[1])));`;
+      const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", script, runDir],
+        { encoding: "utf8", env: { PATH: emptyBin } },
+      );
       expect(result.status, result.stderr).toBe(0);
-      expect((JSON.parse(result.stdout) as Shown).outcome).toBe("snapshot");
+      expect((JSON.parse(result.stdout) as Shown).ok).toBe(true);
     } finally {
       rmSync(emptyBin, { recursive: true, force: true });
     }
-  });
-
-  it("requires exactly one run directory", () => {
-    for (const args of [[], ["a", "b"], ["--bogus", "a"]]) {
-      const result = woof(["run", "show", ...args]);
-      expect(result.status, args.join(" ")).toBe(1);
-      expect(result.stderr).toContain("Usage: woof run show");
-    }
-    expect(woof(["run", "list"]).status).toBe(1);
-    const help = woof(["run", "show", "--help"]);
-    expect(help.status).toBe(0);
-    expect(help.stdout).toContain("--verify-artifacts");
   });
 
   it("keeps prototype-named ids as ordinary keys and round-trips them through JSON", () => {
@@ -274,9 +260,9 @@ out = steps;`,
       "accepted",
     ]);
 
-    const { status, json } = show([runDir]);
+    const { ok, json } = show(runDir);
 
-    expect(status).toBe(0);
+    expect(ok).toBe(true);
     const snapshot = json.snapshot as NonNullable<Shown["snapshot"]> & {
       outputs: { latestAcceptedByStage: Record<string, Json> };
     };
@@ -295,25 +281,22 @@ out = steps;`,
       visit: 2,
       attempt: 1,
     });
-    // The CLI's JSON equals the SDK snapshot serialized in another process.
-    const viaSdk = runSdk<Json>(runDir, `out = snapshots.readSnapshot(runDir).snapshot;`);
-    expect(snapshot).toEqual(viaSdk);
   });
 
   it("verifies accepted copies on request", () => {
     const { runDir, envelope } = readyAttempt();
     const receipt = submit(runDir, envelope).json?.receipt;
     const copy = join(runDir, receipt?.artifact.acceptedPath ?? "missing");
-    expect(show([runDir, "--verify-artifacts"]).json.snapshot?.integrity.artifacts).toEqual({
+    expect(show(runDir, true).json.snapshot?.integrity.artifacts).toEqual({
       checked: 1,
       altered: [],
     });
 
     chmodSync(copy, 0o644);
     writeFileSync(copy, `${readFileSync(copy, "utf8")}tampered\n`);
-    const verified = show(["--verify-artifacts", runDir]);
+    const verified = show(runDir, true);
 
-    expect(verified.status).toBe(0);
+    expect(verified.ok).toBe(true);
     expect(verified.json.snapshot?.integrity.artifacts).toEqual({
       checked: 1,
       altered: [
@@ -324,6 +307,6 @@ out = steps;`,
         },
       ],
     });
-    expect(show([runDir]).json.snapshot?.integrity.artifacts).toBe("unchecked");
+    expect(show(runDir).json.snapshot?.integrity.artifacts).toBe("unchecked");
   });
 });

@@ -5,7 +5,7 @@ id = "herdr-woof"
 name = "Woof"
 version = "0.3.1"
 min_herdr_version = "0.9.0"
-description = "Start, inspect, watch and cancel Woof workflow runs; runs report state as pane metadata."
+description = "Inspect, watch and cancel Woof workflow runs; runs report state as pane metadata."
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -25,12 +25,6 @@ id = "status"
 title = "Woof: run status"
 description = "Show the active Woof runs of the focused project."
 command = ["bin/woof", "herdr", "status"]
-
-[[actions]]
-id = "start"
-title = "Woof: start from .woof/start.json"
-description = "Start the project's default workflow with the input in .woof/start.json."
-command = ["bin/woof", "herdr", "start"]
 
 [[actions]]
 id = "cancel"

@@ -23,11 +23,6 @@ const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as 
 if (!existsSync(join(repoRoot, "dist", "index.js"))) {
   throw new Error("dist/index.js is missing; run bun run build before smoke:package");
 }
-// The web UI bundle is built by a separate script, so it is the one shipped
-// artifact that can be absent while everything else builds cleanly.
-if (!existsSync(join(repoRoot, "dist-ui", "index.html"))) {
-  throw new Error("dist-ui/index.html is missing; run bun run build:ui before smoke:package");
-}
 
 const workDir = mkdtempSync(join(tmpdir(), "woof-package-smoke-"));
 const npmCache = join(workDir, "npm-cache");
@@ -58,14 +53,6 @@ try {
   const missingPlugin = pluginFiles.filter((path) => !shipped.includes(path));
   if (missingPlugin.length > 0) {
     throw new Error(`tarball is missing Claude Code plugin files: ${missingPlugin.join(", ")}`);
-  }
-  // `woof ui` serves dist-ui/ from the installed package: a bundle that builds
-  // locally and silently never ships is exactly what this catches.
-  if (!shipped.includes("dist-ui/index.html")) {
-    throw new Error("tarball is missing the web UI bundle (dist-ui/index.html)");
-  }
-  if (!shipped.some((path) => /^dist-ui\/assets\/.+\.js$/.test(path))) {
-    throw new Error("tarball ships dist-ui/index.html with no dist-ui/assets script");
   }
   const tarball = join(workDir, packInfo!.filename);
   const consumer = join(workDir, "consumer");
@@ -124,12 +111,10 @@ try {
     throw new Error(`installed woof doctor printed ${doctor}`);
   }
   submitRoundTrip(installedBin, consumer);
-  runShow(installedBin, consumer);
-  run(installedBin, ["run", "build-review", "--help"], consumer);
+  snapshotCheck(consumer);
   loaderCheck(consumer);
   inspection(installedBin, consumer, workDir);
   run(installedBin, ["run", "start", "--help"], consumer);
-  run(installedBin, ["ui", "--help"], consumer);
 
   console.log("installed package entry point ok");
   console.log("installed woof --help ok");
@@ -137,14 +122,11 @@ try {
   console.log("installed woof doctor ok");
   console.log("installed herdr-woof/testing entry point ok");
   console.log("installed scripted runtime + store round trip ok");
-  console.log("installed woof attempt open + submit (accepted, duplicate) ok");
-  console.log("installed woof run show ok");
-  console.log("installed woof run build-review --help ok");
+  console.log("installed openAttempt + woof submit (accepted, duplicate) ok");
+  console.log("installed readSnapshot ok");
   console.log("installed loadWorkflowDefinition + buildReviewWorkflow ok");
   console.log("installed woof config show, runs, status, events ok");
   console.log("installed woof run start --help ok");
-  console.log("installed woof ui --help ok");
-  console.log("tarball ships the web UI bundle ok");
   console.log("tarball ships the Claude Code plugin files ok");
 } finally {
   rmSync(workDir, { force: true, recursive: true });
@@ -152,32 +134,17 @@ try {
 
 function submitRoundTrip(installedBin: string, consumer: string): void {
   const runDir = join(consumer, "run");
+  // The scheduler opens attempts in-process; an agent only ever runs `woof submit`.
+  const openScript = [
+    'import { openAttempt } from "herdr-woof";',
+    'const opened = await openAttempt({ runDir: process.argv[1], runId: "smoke-run", agentId: "smoke-worker", stageId: "report", visit: 1, attempt: 1, verdicts: ["pass"] });',
+    "console.log(JSON.stringify(opened));",
+  ].join("\n");
   const opened = JSON.parse(
-    run(
-      installedBin,
-      [
-        "attempt",
-        "open",
-        "--run-dir",
-        runDir,
-        "--run",
-        "smoke-run",
-        "--agent",
-        "smoke-worker",
-        "--stage",
-        "report",
-        "--visit",
-        "1",
-        "--attempt",
-        "1",
-        "--verdicts",
-        "pass",
-      ],
-      consumer,
-    ),
+    run("node", ["--input-type=module", "--eval", openScript, runDir], consumer),
   ) as { outcome: string; attempt: { artifactDir: string } };
   if (opened.outcome !== "opened") {
-    throw new Error(`installed woof attempt open printed outcome ${opened.outcome}`);
+    throw new Error(`installed openAttempt returned outcome ${opened.outcome}`);
   }
 
   const content = "# Smoke report\n\nThe installed package accepted this artifact.\n";
@@ -277,21 +244,27 @@ function loaderCheck(consumer: string): void {
   run("node", ["--input-type=module", "--eval", script, definitionPath], consumer);
 }
 
-/** Runs the installed `woof run show` on the run the submit round trip created. */
-function runShow(installedBin: string, consumer: string): void {
-  const shown = JSON.parse(run(installedBin, ["run", "show", join(consumer, "run")], consumer)) as {
-    outcome: string;
+/** Reads the snapshot of the run the submit round trip created, through the installed SDK. */
+function snapshotCheck(consumer: string): void {
+  const script = [
+    'import { readSnapshot } from "herdr-woof";',
+    "console.log(JSON.stringify(readSnapshot(process.argv[1])));",
+  ].join("\n");
+  const shown = JSON.parse(
+    run("node", ["--input-type=module", "--eval", script, join(consumer, "run")], consumer),
+  ) as {
+    ok: boolean;
     snapshot?: {
       runId: string;
       stages: Array<{ visits: Array<{ attempts: Array<{ status: string }> }> }>;
     };
   };
   if (
-    shown.outcome !== "snapshot" ||
+    !shown.ok ||
     shown.snapshot?.runId !== "smoke-run" ||
     shown.snapshot.stages[0]?.visits[0]?.attempts[0]?.status !== "accepted"
   ) {
-    throw new Error(`installed woof run show printed ${JSON.stringify(shown)}`);
+    throw new Error(`installed readSnapshot returned ${JSON.stringify(shown)}`);
   }
 }
 

@@ -254,7 +254,7 @@ console.log(JSON.stringify({
   });
 });
 
-describe("woof attempt open", () => {
+describe("openAttempt", () => {
   it("only opens attempts newer than the stage's latest, within one run", () => {
     const runDir = makeRunDir();
     openAttemptOk(runDir, { visit: 2, attempt: 1 });

@@ -170,19 +170,52 @@ describe("woof CLI", () => {
     expect(result.stdout.trim()).toBe(pkg.version);
   });
 
-  it("lists the result-handoff and workflow commands in help", () => {
+  it("lists run start as the one way to run a workflow, and no other entry point", () => {
     const result = runCli("--help");
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("attempt open");
-    expect(result.stdout).toContain("submit");
-    expect(result.stdout).toContain("run show");
-    expect(result.stdout).toContain("run build-review");
-    expect(result.stdout).toContain("run cancel");
-    for (const command of ["run start", "status", "runs", "events", "config show", "doctor"]) {
+    for (const command of [
+      "run start",
+      "run cancel",
+      "submit",
+      "status",
+      "runs",
+      "events",
+      "config show",
+      "doctor",
+    ]) {
       expect(result.stdout).toMatch(new RegExp(`^  ${command} `, "m"));
     }
+    for (const removed of ["run build-review", "herdr start", "agent start", "attempt open"]) {
+      expect(result.stdout).not.toContain(removed);
+    }
+    expect(result.stdout).not.toMatch(/^ {2}run show /m);
     expect(result.stdout).not.toContain("not implemented");
+  });
+
+  it("refuses the removed entry points as usage errors", () => {
+    for (const args of [
+      ["run", "build-review", "--help"],
+      ["run", "show", "--help"],
+      ["attempt", "open", "--help"],
+      ["agent", "start", "--help"],
+      ["ui", "--help"],
+    ]) {
+      const result = runCli(...args);
+      expect(result.status, args.join(" ")).toBe(1);
+      expect(result.stdout, args.join(" ")).toBe("");
+    }
+  });
+
+  it("names every run subcommand in the run usage error, and prints help for a herdr action", () => {
+    const bare = runCli("run");
+    expect(bare.status).toBe(1);
+    expect(bare.stderr).toContain('expected "run start", "run cancel" or "run host"');
+    for (const action of ["status", "cancel", "doctor", "watch"]) {
+      const help = runCli("herdr", action, "--help");
+      expect(help.status, action).toBe(0);
+      expect(help.stdout, action).toContain("Usage: woof herdr <status|cancel|doctor|watch>");
+    }
   });
 
   it("rejects commands that do not exist", () => {

@@ -22,9 +22,9 @@
 // --fixture-only re-initializes, prints the fixture path and exits (p4 live check).
 //
 // It rebuilds the fixture repository at one fixed path, writes the input, runs
-// the real `woof run build-review` CLI with two Claude agents, samples `woof run
-// show` and Herdr agent status every 5 s, then prints the evidence and a
-// PASS/FAIL line per hard gate. It never reads pane text and never sends keys.
+// the real `woof run start --workflow build-review --host foreground` CLI with
+// two Claude agents, samples the run snapshot (readSnapshot) and Herdr agent
+// status every 5 s, then prints the evidence and a PASS/FAIL line per hard gate. It never reads pane text and never sends keys.
 // Exit 0 when every gate passes, 1 when one fails, 4 when the journal holds
 // run.blocked.
 //
@@ -51,6 +51,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { DEFAULT_GRACE_MS, observerDisagreements, workingWhileActive } from "./lib/observer.mjs";
+import { showRun } from "./lib/snapshot.mjs";
 
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
@@ -59,7 +60,8 @@ if (!existsSync(cliPath)) {
   process.exit(1);
 }
 const load = (rel) => import(pathToFileURL(join(woofRoot, "dist", rel)).href);
-const { createHerdrCliRuntime, deriveRunResult, readEvents, readJournal } = await load("index.js");
+const { createHerdrCliRuntime, deriveRunResult, readEvents, readJournal, readSnapshot } =
+  await load("index.js");
 const { revisionOf } = await load("scheduler/revision.js");
 
 const probe = process.argv.includes("--probe");
@@ -96,7 +98,6 @@ function sh(command, args, options = {}) {
 }
 
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
-const woof = (...args) => sh(process.execPath, [cliPath, ...args]);
 const identityOf = (record) =>
   JSON.stringify([
     record.paneId ?? null,
@@ -269,7 +270,13 @@ log(`input (${inputPath}):\n${readFileSync(inputPath, "utf8")}`, "input");
 // ---------------------------------------------------------------- run
 const cliArgs = [
   "run",
+  "start",
+  "--workflow",
   "build-review",
+  "--host",
+  "foreground",
+  "--project",
+  repo,
   "--input",
   inputPath,
   "--run-dir",
@@ -291,7 +298,7 @@ const herdr = createHerdrCliRuntime({ bin: "herdr" });
 const samples = [];
 let startupBlockReported = false;
 async function sample() {
-  const shown = woof("run", "show", runDir);
+  const shown = showRun(readSnapshot, runDir);
   if (shown.status !== 0) return;
   const snapshot = JSON.parse(shown.stdout).snapshot;
   const block = snapshot.attention?.blocked;
@@ -346,8 +353,8 @@ try {
 } catch {
   printed = null;
 }
-const shownFinal = woof("run", "show", "--verify-artifacts", runDir);
-section("woof run show --verify-artifacts");
+const shownFinal = showRun(readSnapshot, runDir, { verifyArtifacts: true });
+section("readSnapshot --verify-artifacts");
 log(shownFinal.stdout);
 const snapshot = shownFinal.status === 0 ? JSON.parse(shownFinal.stdout).snapshot : null;
 const read = readJournal(runDir);
@@ -441,7 +448,7 @@ if (probe) {
     JSON.stringify(JSON.parse(JSON.stringify(derived))) === JSON.stringify(printed.result);
   gate(
     1,
-    "CLI exit 0, completed, limit null, result equals deriveRunResult(run show)",
+    "CLI exit 0, completed, limit null, result equals deriveRunResult(readSnapshot)",
     exitCode === 0 &&
       printed?.result?.outcome === "completed" &&
       printed?.result?.limit === null &&

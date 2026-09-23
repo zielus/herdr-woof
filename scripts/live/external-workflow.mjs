@@ -43,6 +43,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { DEFAULT_GRACE_MS, observerDisagreements } from "./lib/observer.mjs";
+import { showRun } from "./lib/snapshot.mjs";
 
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
@@ -51,7 +52,7 @@ if (!existsSync(cliPath)) {
   process.exit(1);
 }
 const load = (rel) => import(pathToFileURL(join(woofRoot, "dist", rel)).href);
-const { createHerdrCliRuntime, readEvents, readJournal } = await load("index.js");
+const { createHerdrCliRuntime, readEvents, readJournal, readSnapshot } = await load("index.js");
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -188,7 +189,7 @@ const outcomePath = join(runDir, "outcome.json");
 const deadline = Date.now() + timeoutMs;
 let outcome = null;
 while (Date.now() < deadline) {
-  const shown = woof("run", "show", runDir);
+  const shown = showRun(readSnapshot, runDir);
   if (shown.status === 0) {
     const snapshot = JSON.parse(shown.stdout).snapshot;
     const row = {
@@ -239,8 +240,8 @@ if (existsSync(outcomePath)) {
 section("host outcome.json");
 log(existsSync(outcomePath) ? readFileSync(outcomePath, "utf8") : "(absent)");
 logged.add("result");
-const shownFinal = woof("run", "show", "--verify-artifacts", runDir);
-section("woof run show --verify-artifacts");
+const shownFinal = showRun(readSnapshot, runDir, { verifyArtifacts: true });
+section("readSnapshot --verify-artifacts");
 log(shownFinal.stdout);
 const snapshot = shownFinal.status === 0 ? JSON.parse(shownFinal.stdout).snapshot : null;
 const read = readJournal(runDir);

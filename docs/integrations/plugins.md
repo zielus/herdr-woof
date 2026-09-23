@@ -2,9 +2,13 @@
 
 Woof 0.3.1 provides the CLI and SDK, hosted runs with heartbeat-tracked
 liveness, read-only inspection commands, a Herdr plugin and a Claude Code
-plugin. The Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and
-`watch`; `/woof:run` starts a run, waits for it and reports the result. Every
-command and action below is an implemented surface.
+plugin. `woof run start` is the one engine entry point for running a
+workflow; an integration may only wrap it, never add its own way of starting
+runs or its own input format. The Herdr plugin exposes `doctor`, `status`,
+`cancel` and `watch`; `/woof:run` starts a run through `woof run start`, ends its
+turn, and reports the result when the run host's `[woof] done` message
+arrives. Every command and action below is an
+implemented surface.
 
 ## CLI
 
@@ -19,15 +23,15 @@ command and action below is an implemented surface.
   (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
   `trust_unknown`/`config_invalid`). Diagnostic only: exits 0, or 2 with
   `--strict` when `problems` is non-empty.
-- Result handoff (unstable): `attempt open`, `submit`, `run show
-<run-dir> [--verify-artifacts]` — see
+- Result handoff (unstable): `submit`, which an agent runs to report the
+  attempt the scheduler opened for it — see
   [communication.md](../architecture/communication.md#implemented-now-p1-prototype).
 - Configuration: `config show [--project <dir>] [--workflow <name>]` — prints
   the effective configuration and where each value came from (flag, project,
   user or built-in), the file that supplied it and what it shadows. See
   [configuration](../architecture/configuration.md#implemented-now-p4).
 - Inspection (read-only; no journal lock, never contacts Herdr):
-  `status <run-dir> [--wait] [--pretty]`, `runs [--runs-dir <dir>] [--project <dir>]
+  `status <run-dir> [--pretty]` (a snapshot; it never waits), `runs [--runs-dir <dir>] [--project <dir>]
 [--all] [--limit <n>]`, `events <run-dir> [--after <cursor>] [--follow]
 [--stats] [--pretty]`, `watch [<run-dir>] [--follow] [--input summary|json]
 [--ascii] [--plain] [--after <cursor>] [--poll-ms <n>] [--timeout-ms <n>]`,
@@ -47,8 +51,7 @@ command and action below is an implemented surface.
   keyboard (see [Terminal UI](../design/tui.md)); `--frames` is a
   non-interactive text mode for tests. See
   [observability](../architecture/observability.md#implemented-now-p4).
-- Runs across directories: `status`, `events`, `watch`, `run show` and
-  `run cancel` take a run id wherever they take `<run-dir>` (an existing
+- Runs across directories: `status`, `events`, `watch` and `run cancel` take a run id wherever they take `<run-dir>` (an existing
   directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is
   `run_dir_invalid` and an id that names two different runs `run_id_ambiguous`,
   both exit 3). `runs` without `--runs-dir` also lists every run
@@ -62,8 +65,10 @@ command and action below is an implemented surface.
   as readable lines behind a short run id. See
   [observability](../architecture/observability.md#implemented-now-central-index).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
-  starts a workflow hosted in Herdr (`--host herdr-pane`, default) or in this
-  process (`--host foreground`). Layout is one tab per participant: the first
+  the one way to run a workflow. It hosts the run in Herdr (`--host
+herdr-pane`, default), returning as soon as the run is open, or in this
+  process with `--host foreground`, the mode for tests, CI and scripted
+  runtimes, which stays attached until the run ends and notifies nobody. Layout is one tab per participant: the first
   tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
   holds the run host in its root pane, and every agent of the run gets its
   own unfocused tab (`woof:<role>`); agents are never pane splits. With a new
@@ -87,14 +92,12 @@ json`). The host's stdout is a TTY in a Herdr pane, so colors are on unless
   remain readable; `--keep-panes`/`--no-keep-panes` (or `keepPanes`) decide
   only whether the agent tabs close when the run ends. Nothing is split any
   more, and the started output has no `watch` field; `run cancel <run-dir>`;
-  `run build-review …` (foreground, kept as an alias for `run start
---workflow build-review --host foreground`, with the same view and log
-  behavior and flags); `run host <run-dir> [--plain] [--ascii] [--input
+  `run host <run-dir> [--plain] [--ascii] [--input
 summary|json]` (internal and unstable — hosts a launch request in this
   process; `run start` types this into the Herdr pane it opens).
 - Herdr plugin actions (unstable; the project comes from
   `HERDR_PLUGIN_CONTEXT_JSON`, never the working directory): `herdr status`,
-  `herdr start`, `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
+  `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
   plugin" below.
 
 See [domain model](../architecture/domain-model.md#implemented-now-p4) for
@@ -111,7 +114,7 @@ projection are [open proposals](../design/proposals.md). The behavior below
 describes the existing implementation.
 
 `herdr-plugin.toml` registers a build step (`bun install --frozen-lockfile`,
-`bun run build`), five parameterless actions, each running `bin/woof
+`bun run build`), four parameterless actions, each running `bin/woof
 herdr <action>` from the plugin's own checkout, and one plugin pane
 (`[[panes]] watch`, command `bin/woof watch --follow`):
 
@@ -125,15 +128,6 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
 (1 problem)` for one, and `Woof: doctor (N problems)` for N ≥ 2; the action
   still exits 0 either way.
 - **`status`** — notifies and prints the target project's non-terminal runs.
-- **`start`** — starts the project's default workflow with the input in
-  `<project>/.woof/start.json` (a missing file, or one that is not a regular
-  file — a FIFO, device or directory is `input_invalid` at once, without
-  blocking — is a notification and exit 2), hosted in the root pane of a new
-  tab, where the host prints the run's human view (see `run start` above; no
-  pane is split). An action process
-  has no `HERDR_PANE_ID` of its own: the tab goes to the workspace Herdr
-  reports for the context's `focused_pane_id` (`herdr pane get`), else to
-  `HERDR_WORKSPACE_ID`, and only with neither to Herdr's default workspace.
 - **`cancel`** — cancels the project's one non-terminal run. With none
   active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
 "message":"no active Woof run in <project>","details":[]}` (notification
@@ -216,16 +210,18 @@ herdr plugin action invoke watch --plugin herdr-woof
    fixes every field the details name and retries once. If the retry is
    rejected too, it reports and stops — never an interactive menu, since no
    run exists yet for anyone watching to see.
-5. Waits with `status <run-dir> --wait --timeout-ms 540000` (Bash timeout
-   600000), acting on exit 7 (still running — reports the stage and round,
-   then waits again), 9 (blocked — reports `attention.blocked.requiredAction`
-   verbatim, waits again with `--allow-blocked` only once the user says it is
-   resolved), 8 (the owner is gone without a recorded outcome — `lost`, or
-   `exited` before the run recorded its own end; reports `hostOutcome`'s
-   `reason`/`message` when present, suggests `run cancel`, never cancels
-   unasked) or a terminal code (0/4/5/6).
-6. Reports `outcome`, `reason`, `limit`, `counters.rounds` and the artifact
-   references from `result`. `artifacts.review` is non-null only when
+5. Reports the run id and directory and ends its turn: it never polls. The
+   run host posts `[woof]` messages into the pane (see
+   [caller notifications](../architecture/observability.md)): on
+   `action_required` the command looks with `herdr agent read <worker>` and
+   asks the user before anything is answered; on `error` it reports and
+   suggests `run cancel`, never cancelling unasked; on `done` or
+   `limit_reached` it reads `status <run-dir>`. A snapshot whose owner is
+   `lost`, or `exited` with no result, means the host is gone without a
+   recorded outcome; it reports `hostOutcome`'s `reason`/`message` when
+   present.
+6. On the terminal message, reports `outcome`, `reason`, `limit`,
+   `counters.rounds` and the artifact references from `result`. `artifacts.review` is non-null only when
    `outcome` is `completed` (never on `failed`/`exhausted`/`cancelled`), and
    `artifacts.completion`/`artifacts.verification` can each be `null` too (no
    completing gate reached, or no `verify` command configured); the command

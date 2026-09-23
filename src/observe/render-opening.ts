@@ -71,7 +71,7 @@ function contextLines(
           "dim",
         )}`;
   // A long run id continues under itself (split, never shortened: it is what
-  // `woof run show` takes); the run directory breaks at `/` and stays copyable.
+  // `woof status` takes); the run directory breaks at `/` and stays copyable.
   const dir = shortenHome(text(status.runDir), options.home);
   const runLines = wrap(text(snapshot.runId), options.width - 4).map((piece, index) =>
     index === 0 ? `run ${piece}` : `    ${piece}`,

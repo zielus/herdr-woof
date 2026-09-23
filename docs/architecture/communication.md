@@ -341,3 +341,16 @@ An MCP tool may wrap this operation later. It must not be the only path through
 which a worker can complete a stage. The stashed draft's MCP-only `woof_submit`
 proposal is superseded on this point. Exact transport and publication mechanics
 remain an implementation decision to prove with the acceptance scenarios.
+
+## Engine to caller: `[woof]` notifications
+
+The only messages Woof sends to the agent that started a run go the other way
+from results: the run host pushes them into that agent's Herdr pane with
+`herdr agent prompt`, so the caller neither polls nor follows a stream. They
+carry engine facts only — event, run id, workflow, stage, the worker's Herdr
+agent name and tab, the run directory and one next command — and never a
+worker's words, because the text arrives in the caller's pane with the human's
+authority. The caller treats them as facts about the run, investigates a
+blocked worker with `herdr agent read`, and asks the human before any worker's
+permission prompt is answered. Events, delivery rules, bounds and the journal
+records are in [observability](observability.md) ("Caller notifications").

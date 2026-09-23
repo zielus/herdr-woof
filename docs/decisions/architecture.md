@@ -9,13 +9,20 @@ acceptance.
 
 ### Product and ownership
 
-- Woof is one product across the SDK, CLI, Herdr plugin, Claude Code plugin and
-  Web UI. `HerdrAgentsSDK` owns workflow coordination independently of those
+- Woof is one product across the SDK, CLI, Herdr plugin and Claude Code plugin.
+  `HerdrAgentsSDK` owns workflow coordination independently of those
   presentation layers.
 - Herdr owns agent execution, panes, sessions, workspaces and worktrees. Woof
   uses those operations through a runtime adapter instead of recreating them.
 - The engine and configuration layers do not import plugin UI code. MCP remains
   optional and is not a workflow admission or result-submission dependency.
+- Woof is a workflow engine plus a Herdr agents library. `woof run start` is
+  the one engine entry point for running a workflow; an integration (the Herdr
+  plugin, `/woof:run`) may only wrap it and never adds its own way of starting
+  runs or its own input format. `--host foreground` chooses where the
+  scheduler runs, not a second way to run a workflow. The CLI keeps only what
+  serves running workflows: `run start`/`run host`/`run cancel`, the `submit`
+  agents call, inspection and setup diagnostics.
 
 ### Execution and artifacts
 
@@ -35,14 +42,14 @@ acceptance.
   events are engine-owned projections consumed by every interface.
 - Project configuration overrides user defaults, with built-ins below both.
   Resolution provenance is recorded once for the run and remains stable.
-- The CLI and SDK remain useful without a plugin UI. The Web UI is a consumer of
-  the same observation and cancellation contracts, not a second engine.
+- The CLI and SDK remain useful without a plugin UI. `woof tui` and the Herdr
+  plugin consume the same observation and cancellation contracts; neither is a
+  second engine.
 
 See [Domain model](../architecture/domain-model.md),
 [Communication and artifacts](../architecture/communication.md),
-[Configuration](../architecture/configuration.md),
-[Observability](../architecture/observability.md) and
-[Web UI](../architecture/web-ui.md).
+[Configuration](../architecture/configuration.md) and
+[Observability](../architecture/observability.md).
 
 ## Implemented decisions
 
@@ -174,9 +181,6 @@ alter a public contract, trust boundary or execution model.
 - Run-directory creation does not provide a dirfd-based, whole-path trust
   boundary. Configuration hashing follows symlinks by design. Direction: use a
   dirfd-based walk if the remaining race is shown to be exploitable.
-- Four paths start a run: `woof run start`, `woof run build-review`, the Herdr
-  plugin's `start` action and `/woof:run`. Direction: consolidate the verbs once
-  usage patterns are clear.
 - `journal_write_failed` covers both run-directory creation failures and journal
   lock-acquisition I/O errors. Direction: split the reason if a consumer needs
   the distinction.
@@ -206,18 +210,13 @@ alter a public contract, trust boundary or execution model.
   run id is unique only by convention: an id that the index and `<runs-dir>/<id>`
   resolve to different runs is rejected as `run_id_ambiguous`, but the CLI does
   not read every journal to find a same-id run in a differently named directory
-  (`woof runs` and the Web API do). A locator whose directory cannot be reached
+  (`woof runs` does). A locator whose directory cannot be reached
   is kept until `woof runs --reindex --prune`. Registration of a locator is a
   read-then-rename, not an exclusive create, so two runs with the same id opened
   at the same instant can still race for it.
 - `woof events|watch --all --follow` polls each followed run separately and caps
   them (`--max-runs`, default 64); runs over the cap are named and wait for a
-  free follower. There is no cross-run cursor and no `GET /api/events` for all
-  runs.
-- The Web UI cannot start, retry, answer a blocked agent, resume or re-host a
-  run. Unsupported actions return explicit errors; cancellation is the only
-  mutating UI action. Direction: add controls only after the engine exposes the
-  corresponding safe operations.
+  free follower. There is no cross-run cursor.
 
 The [v1 acceptance evidence](../acceptance/v1-evidence.md#pr-fix-4-untested-paths)
 also records four narrow full-disk or two-host cases that were historically

@@ -317,6 +317,31 @@ export function rowsOf(event: FormattableEvent, state: RowState, ctx: RowContext
       case "run.unblocked":
         return [base({ mark: "dispatch", style: "cyan", message: "Unblocked · agent continues" })];
 
+      case "notify.target":
+        return [];
+
+      case "notify.outcome": {
+        // What the caller was told, or why it was not: a queued notification is still on its way.
+        const outcome = text(data["outcome"]);
+        if (outcome === "queued") return [];
+        const what = data["event"] === null ? "" : ` ${words(data["event"])}`;
+        return [
+          base({
+            participant: "run",
+            ...(outcome === "sent"
+              ? { mark: "dispatch", style: "cyan", message: `Caller notified ·${what}` }
+              : {
+                  mark: "alert",
+                  style: "yellow",
+                  message:
+                    outcome === "stopped"
+                      ? `Caller notifications stopped · ${words(data["reason"])}`
+                      : `Caller not notified${what} · ${words(data["reason"])}`,
+                }),
+          }),
+        ];
+      }
+
       case "run.cancel_requested":
         return [
           base({

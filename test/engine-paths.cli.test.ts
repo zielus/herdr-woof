@@ -173,31 +173,21 @@ describe("journal file containment", () => {
     expect(lstatSync(lockPath).isSymbolicLink()).toBe(true);
   });
 
-  it("reports a FIFO at journal.jsonl as journal_corrupt without blocking submit or attempt open", () => {
+  it("reports a FIFO at journal.jsonl as journal_corrupt without blocking submit or openAttempt", () => {
     const runDir = makeRunDir();
     const journalPath = join(runDir, "journal.jsonl");
     mkfifo(journalPath);
     const envelopePath = writeEnvelope(runDir, envelopeFor());
-    const openArgs = [
-      "attempt",
-      "open",
-      "--run-dir",
-      runDir,
-      "--run",
-      "run-1",
-      "--agent",
-      "worker",
-      "--stage",
-      "report",
-      "--visit",
-      "1",
-      "--attempt",
-      "1",
-    ];
 
-    for (const args of [["submit", "--run-dir", runDir, "--envelope", envelopePath], openArgs]) {
+    for (const call of [
+      () =>
+        woof(["submit", "--run-dir", runDir, "--envelope", envelopePath], {
+          timeoutMs: BLOCKING_GUARD_MS,
+        }),
+      () => openAttempt(runDir, { verdicts: "" }, { timeoutMs: BLOCKING_GUARD_MS }),
+    ]) {
       const started = Date.now();
-      const result = woof(args, { timeoutMs: BLOCKING_GUARD_MS });
+      const result = call();
       const elapsed = Date.now() - started;
 
       expectRejected(result, "journal_corrupt", 3, "is not a regular file (FIFO)");

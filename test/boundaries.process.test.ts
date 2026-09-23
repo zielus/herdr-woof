@@ -102,19 +102,12 @@ const RULES: Record<string, { areas: string[]; modules?: string[] }> = {
       "state",
       "submission",
       "tui",
-      "web",
       "workflows",
     ],
     modules: ["version.js"],
   },
-  // p9: the web UI server reads through the inspection and observation areas and
-  // writes only through the state store, exactly as the CLI's own commands do.
-  // It is below commands/, so nothing in it may import a command handler.
-  web: {
-    areas: ["web", "inspect", "observe", "state", "contracts", "domain"],
-  },
   // The terminal UI observes through the inspection and observation areas only; it writes nothing.
-  // Like web/, it is below commands/: runs directory and project are resolved there and passed in.
+  // It is below commands/: runs directory and project are resolved there and passed in.
   tui: { areas: ["tui", "inspect", "observe", "state", "contracts", "domain"] },
   contracts: { areas: ["contracts"] },
   domain: { areas: ["domain", "contracts"] },

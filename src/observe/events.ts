@@ -73,6 +73,8 @@ function subjectOf(
     case "host.claimed":
     case "host.exited":
     case "host.lost":
+    case "notify.target":
+    case "notify.outcome":
       return {};
     case "agent.assigned":
     case "run.unblocked":

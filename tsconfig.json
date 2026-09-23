@@ -13,10 +13,7 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"],
-    // Only so the shadcn CLI can resolve components.json's "@/*" aliases into
-    // ui/src from the repository root; no file under include uses them.
-    "paths": { "@/*": ["./ui/src/*"] }
+    "types": ["node"]
   },
   "include": ["src", "scripts", "test"]
 }

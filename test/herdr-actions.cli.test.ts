@@ -11,7 +11,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,94 +22,10 @@ import { repoRoot, runSdk, testPlan } from "./helpers/process.js";
 const fakeHerdr = join(repoRoot, "test", "fixtures", "fake-herdr.mjs");
 const bin = join(repoRoot, "bin", "woof");
 const dirs: string[] = [];
-const hosted: string[] = [];
-afterEach(async () => {
-  // A detached host may still be writing into the test directory: stop it if it still holds the
-  // run, and wait until its process is gone before anything is removed (PI-007).
-  for (const runDir of hosted.splice(0)) {
-    let pid: number | undefined;
-    try {
-      const host = JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json;
-      if (host["state"] === "hosting" && typeof host["pid"] === "number") pid = host["pid"];
-    } catch {
-      // No claim: no host ever ran.
-    }
-    if (pid === undefined) continue;
-    const hostPid = pid;
-    if (!existsSync(join(runDir, "host-exit.json")) && processAlive(hostPid))
-      process.kill(hostPid, "SIGKILL");
-    await waitFor(() => !processAlive(hostPid), `host ${hostPid} to exit`, 15_000);
-  }
-  // A pane host's own Herdr calls (report-metadata, notification show) are separate processes that
-  // share the host's process group without being visible to the single-pid wait above: fake Herdr
-  // spawns the host detached (its own session and process group leader), so one of those calls can
-  // outlive an abruptly killed host, still writing into the workspace (F-002, run-start.cli.test.ts).
-  // Fake Herdr records every pane host's group in FAKE_HERDR_LOG + ".pgids"; each is waited out
-  // here, escalating to a signal only once a grace period shows it is not exiting on its own.
-  for (const dir of dirs) {
-    let pgids: number[];
-    try {
-      pgids = readFileSync(join(dir, "herdr.log.pgids"), "utf8")
-        .split("\n")
-        .filter((line) => line !== "")
-        .map(Number)
-        .filter((pgid) => Number.isInteger(pgid));
-    } catch {
-      continue;
-    }
-    for (const pgid of pgids) {
-      if (!groupAlive(pgid)) continue;
-      const graceDeadline = Date.now() + 2000;
-      while (groupAlive(pgid) && Date.now() < graceDeadline) await delay(50);
-      if (groupAlive(pgid)) {
-        signalGroup(pgid, "SIGTERM");
-        const termDeadline = Date.now() + 1000;
-        while (groupAlive(pgid) && Date.now() < termDeadline) await delay(50);
-      }
-      if (groupAlive(pgid)) signalGroup(pgid, "SIGKILL");
-      const deadline = Date.now() + 10_000;
-      while (groupAlive(pgid) && Date.now() < deadline) await delay(50);
-    }
-  }
+afterEach(() => {
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True while any process in the group led by `pgid` still exists (see the afterEach above). */
-function groupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Signals every process in the group led by `pgid`; a group that is already gone is not an error. */
-function signalGroup(pgid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pgid, signal);
-  } catch {
-    // already gone
-  }
-}
-
-async function waitFor(check: () => boolean, what: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await delay(50);
-  }
-}
 
 type Json = Record<string, any>; // oxlint-disable-line no-explicit-any
 
@@ -183,45 +98,7 @@ function setup(): Setup {
       return repo;
     },
   };
-  writeFileSync(
-    s.scenario,
-    JSON.stringify([
-      { match: ["notification", "show"], stdout: "{}" },
-      // Herdr places the pane the action was invoked from (focused_pane_id) in workspace w5.
-      {
-        match: ["pane", "get", "w5:p3"],
-        stdout: JSON.stringify({
-          id: "cli:pane:get",
-          result: { pane: { pane_id: "w5:p3", workspace_id: "w5" }, type: "pane_info" },
-        }),
-      },
-      {
-        match: ["tab", "create"],
-        call: 1,
-        stdout: JSON.stringify({
-          id: "cli:tab:create",
-          result: {
-            root_pane: { pane_id: "w5:p8", tab_id: "w5:t4", workspace_id: "w5" },
-            tab: { tab_id: "w5:t4", label: "woof:build-review", number: 4, pane_count: 1 },
-            type: "tab_created",
-          },
-        }),
-      },
-      // The run host, typed into the tab's root pane; no pane split is scripted, so a start that
-      // split anything would hit an unscripted fake and fail.
-      {
-        match: ["pane", "run"],
-        call: 1,
-        stdout: "{}",
-        spawn: {
-          commandIndex: 3,
-          env: { HERDR_ENV: "1", HERDR_PANE_ID: "w5:p8", WOOF_HOST_HEARTBEAT_MS: "200" },
-          log: join(root, "host.log"),
-        },
-      },
-      { match: ["pane", "report-metadata"], stdout: "{}" },
-    ]),
-  );
+  writeFileSync(s.scenario, JSON.stringify([{ match: ["notification", "show"], stdout: "{}" }]));
   return s;
 }
 
@@ -302,7 +179,7 @@ function statusOf(runDir: string): string {
 describe("woof herdr actions", () => {
   it("A1: without a project context each action notifies and exits 2", () => {
     const s = setup();
-    for (const name of ["status", "start", "cancel", "doctor", "watch"]) {
+    for (const name of ["status", "cancel", "doctor", "watch"]) {
       const result = action(s, name, undefined);
       expect(result.status, result.stdout + result.stderr).toBe(2);
       expect(result.json).toMatchObject({ outcome: "rejected", reason: "project_context_missing" });
@@ -315,7 +192,6 @@ describe("woof herdr actions", () => {
         title: "Woof: no project context",
         body: expect.stringContaining("HERDR_PLUGIN_CONTEXT_JSON"),
       },
-      { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
       { title: "Woof: no project context", body: expect.any(String) },
@@ -379,107 +255,6 @@ describe("woof herdr actions", () => {
     });
     expect(existsSync(s.guardLog)).toBe(false);
   });
-
-  it("A3: start needs .woof/start.json, then opens the host in the root pane of a new tab (no split), and the host runs to its end", async () => {
-    const s = setup();
-    const repo = s.repo("repo-a");
-    const context = { focused_pane_id: "w5:p3", focused_pane_cwd: repo };
-    const missing = action(s, "start", context);
-    expect(missing.status, missing.stdout + missing.stderr).toBe(2);
-    expect(missing.json).toMatchObject({ outcome: "rejected", reason: "input_invalid" });
-    expect(notifications(s)).toEqual([
-      {
-        title: "Woof: create .woof/start.json with a workflow input",
-        body: expect.stringContaining(join(repo, ".woof", "start.json")),
-      },
-    ]);
-    expect(calls(s).some((argv) => argv[0] === "pane")).toBe(false);
-
-    mkdirSync(join(repo, ".woof"));
-    writeFileSync(
-      join(repo, ".woof", "start.json"),
-      JSON.stringify({
-        schemaVersion: 1,
-        repo,
-        task: {
-          title: "Change the fixture",
-          description: "Write src/change.txt.",
-          acceptanceCriteria: ["the file exists"],
-        },
-        limits: {
-          runTimeoutMs: 20_000,
-          readinessWaitMs: 2000,
-          blockedWaitMs: 2000,
-          deliveryTimeoutMs: 2000,
-        },
-        // Inside Herdr a run defaults to a new worktree; this test is about the host's own tab.
-        checkout: { mode: "current" },
-      }),
-    );
-    const started = action(s, "start", context);
-    if (typeof started.json["runDir"] === "string") hosted.push(started.json["runDir"]);
-    expect(started.status, started.stdout + started.stderr).toBe(0);
-    expect(started.json).toMatchObject({
-      outcome: "started",
-      runDir: join(s.runsDir, started.json["runId"]),
-      host: { mode: "herdr-pane", paneId: "w5:p8", tabId: "w5:t4" },
-    });
-    // One pane per run: the host's root pane shows the run's human view; nothing is split.
-    expect(started.json).not.toHaveProperty("watch");
-    // The action process has no HERDR_WORKSPACE_ID: the tab goes to the workspace Herdr reports
-    // for the focused pane, never to Herdr's default workspace.
-    expect(calls(s).filter((argv) => argv[1] === "get" && argv[2] === "w5:p3")).toEqual([
-      ["pane", "get", "w5:p3"],
-    ]);
-    expect(calls(s).find((argv) => argv[0] === "tab")).toEqual([
-      "tab",
-      "create",
-      "--workspace",
-      "w5",
-      "--cwd",
-      repo,
-      "--label",
-      "woof:build-review",
-      "--no-focus",
-    ]);
-    expect(calls(s).filter((argv) => argv[0] === "pane" && argv[1] === "split")).toEqual([]);
-    const runDir = started.json["runDir"] as string;
-    expect(
-      calls(s)
-        .filter((argv) => argv[1] === "run")
-        .map((argv) => argv.slice(-3)),
-    ).toEqual([["run", "host", runDir]]);
-    // The host may notify after the action does: look for the action's notification, not the last one.
-    expect(notifications(s)).toContainEqual({
-      title: `Woof: started ${started.json["runId"]}`,
-      body: `run directory ${runDir}`,
-    });
-    // PI-007: the handed-off host opened the run and runs to its own end (the fake Herdr scripts no
-    // agent pane); the test waits for its exit record and for its process to be gone.
-    await waitFor(
-      () => existsSync(join(runDir, "host-exit.json")),
-      "the host to record its exit",
-      60_000,
-    );
-    const pid = (JSON.parse(readFileSync(join(runDir, "host.json"), "utf8")) as Json)[
-      "pid"
-    ] as number;
-    await waitFor(() => !processAlive(pid), "the host process to exit", 15_000);
-    const opened = JSON.parse(
-      readFileSync(join(runDir, "journal.jsonl"), "utf8").split("\n")[0] as string,
-    ) as Json;
-    expect(opened).toMatchObject({ type: "run.opened", runId: started.json["runId"] });
-    const exit = JSON.parse(readFileSync(join(runDir, "host-exit.json"), "utf8")) as Json;
-    const outcome = JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
-    expect(["run", "rejected"]).toContain(outcome["outcome"]);
-    expect(exit["exitCode"]).toEqual(expect.any(Number));
-    // The host's technical log is in the run directory; its pane (stdout) got the human view.
-    expect(readFileSync(join(runDir, "host.log"), "utf8")).toMatch(/Z run .* in /);
-    const pane = readFileSync(join(s.root, "host.log"), "utf8");
-    expect(pane).toContain("AGENTS");
-    expect(pane.trim().split("\n").at(-1)).toBe(JSON.stringify(outcome));
-    expect(existsSync(s.guardLog)).toBe(false);
-  }, 90_000);
 
   it("A5, PR #6 (herdr-plugin.toml:21): doctor checks the focused pane's project with its trust and configuration, not the working directory", () => {
     const s = setup();
@@ -551,24 +326,6 @@ describe("woof herdr actions", () => {
     expect(two.status).toBe(0);
     expect(two.json["problems"]).toEqual(["trust_untrusted", "config_invalid"]);
     expect(notifications(s).at(-1)?.title).toBe("Woof: doctor (2 problems)");
-  });
-
-  it("PR #6 (run.ts:414): start refuses a FIFO at .woof/start.json as input_invalid without blocking or splitting", () => {
-    const s = setup();
-    const repo = s.repo("repo-a");
-    mkdirSync(join(repo, ".woof"), { recursive: true });
-    expect(spawnSync("mkfifo", [join(repo, ".woof", "start.json")]).status).toBe(0);
-    const started = Date.now();
-    const result = action(s, "start", { focused_pane_id: "w5:p3", focused_pane_cwd: repo });
-    expect(result.status, result.stdout + result.stderr).toBe(2);
-    expect(result.json).toMatchObject({
-      outcome: "rejected",
-      reason: "input_invalid",
-      message: expect.stringContaining("is not a regular file"),
-    });
-    expect(Date.now() - started).toBeLessThan(10_000);
-    expect(calls(s).filter((argv) => argv[0] === "pane")).toEqual([]);
-    expect(existsSync(s.guardLog)).toBe(false);
   });
 
   it("A4: cancel ends the single active run and refuses when several are active", () => {

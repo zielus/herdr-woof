@@ -1,10 +1,6 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
 import { discoverRoots } from "../config/discover.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { isInfraReason } from "../contracts/reasons.js";
-import { launchInPane } from "../host/launch.js";
 import { clip } from "../host/metadata.js";
 import { listRuns, type RunListEntry } from "../inspect/runs.js";
 import { readRunStatus } from "../inspect/status.js";
@@ -12,9 +8,9 @@ import { execHerdr } from "../runtime/herdr/exec.js";
 import { cancelRun } from "../state/store.js";
 import { UsageError } from "./common.js";
 import { doctorReport } from "./doctor.js";
-import { cliPath, defaultRunId, herdrBin, readWorkflowInput } from "./run.js";
+import { herdrBin } from "./run.js";
 
-export const HERDR_USAGE = `Usage: woof herdr <status|start|cancel|doctor|watch>
+export const HERDR_USAGE = `Usage: woof herdr <status|cancel|doctor|watch>
 
 Herdr plugin actions (unstable). The project is the git top level of the
 invocation context's focused pane directory, else the workspace directory, else
@@ -23,9 +19,6 @@ working directory.
 Each action shows a Herdr notification and prints one JSON line.
 
   status  the project's runs that have not ended; exits 0
-  start   start the default workflow with <project>/.woof/start.json in a new
-          tab whose root pane runs the run host and shows the run's human
-          view; exits like woof run start
   cancel  cancel the project's single active run; exits 0 with outcome noop when
           none is active; refuses (exit 2) when several are
   doctor  woof doctor --json for the project: Herdr, Claude Code, folder trust and
@@ -54,20 +47,16 @@ type Outcome = { ok: true; project: Project } | { ok: false; reason: string; mes
 
 export async function herdrCommand(args: string[]): Promise<number> {
   const [action, ...extra] = args;
-  if (action === "--help" || action === "-h") {
+  if (isHelpFlag(action) || (extra.length === 1 && isHelpFlag(extra[0]))) {
     console.log(HERDR_USAGE);
     return 0;
   }
   if (
-    (action !== "status" &&
-      action !== "start" &&
-      action !== "cancel" &&
-      action !== "doctor" &&
-      action !== "watch") ||
+    (action !== "status" && action !== "cancel" && action !== "doctor" && action !== "watch") ||
     extra.length > 0
   ) {
     throw new UsageError(
-      `expected "herdr status", "herdr start", "herdr cancel", "herdr doctor" or "herdr watch"\n\n${HERDR_USAGE}`,
+      `expected "herdr status", "herdr cancel", "herdr doctor" or "herdr watch"\n\n${HERDR_USAGE}`,
     );
   }
   const context = process.env["HERDR_PLUGIN_CONTEXT_JSON"];
@@ -79,7 +68,6 @@ export async function herdrCommand(args: string[]): Promise<number> {
   const resolved = await projectOf(context);
   if (!resolved.ok) return refuseContext(resolved);
   const { project } = resolved;
-  if (action === "start") return start(project);
   let runs: RunListEntry[];
   let listed: ReturnType<typeof listRuns>;
   try {
@@ -108,53 +96,6 @@ export async function herdrCommand(args: string[]): Promise<number> {
   }
   if (action === "watch") return watch(project, runs);
   return cancel(project, runs);
-}
-
-async function start(project: Project): Promise<number> {
-  const inputPath = join(project.root, ".woof", "start.json");
-  const refuse = async (reason: string, message: string, code: number) => {
-    await notify(`Woof: rejected (${reason})`, message);
-    print({ outcome: "rejected", reason, message, details: [] });
-    return code;
-  };
-  if (!existsSync(inputPath)) {
-    const message = `${inputPath} does not exist; create it with a workflow input`;
-    await notify("Woof: create .woof/start.json with a workflow input", message);
-    print({ outcome: "rejected", reason: "input_invalid", message, details: [] });
-    return 2;
-  }
-  const input = await readWorkflowInput(inputPath);
-  if (!input.ok) return refuse("input_invalid", input.message, 2);
-  // The run host opens in a new tab, so the action needs no pane to split.
-  const paneId = nonEmpty(process.env["HERDR_PANE_ID"]);
-  const launched = await launchInPane({
-    runId: defaultRunId(undefined),
-    projectDir: project.root,
-    input: input.value,
-    flags: {},
-    launcherPaneId: paneId ?? null,
-    // The tab joins the workspace of the pane the action was invoked from, not Herdr's default.
-    workspacePaneId: project.focusedPaneId ?? paneId ?? null,
-    herdrBin: herdrBin(),
-    env: process.env,
-    nodePath: process.execPath,
-    cliPath,
-  });
-  const out = launched.output;
-  if (out["outcome"] === "started") {
-    await notify(`Woof: started ${String(out["runId"])}`, `run directory ${String(out["runDir"])}`);
-  } else {
-    const details = out["details"];
-    const first: unknown = Array.isArray(details) ? details[0] : undefined;
-    await notify(
-      `Woof: rejected (${String(out["reason"])})`,
-      isObject(first)
-        ? `${String(first["field"])}: ${String(first["message"])}`
-        : String(out["message"] ?? ""),
-    );
-  }
-  print(out);
-  return launched.code;
 }
 
 async function cancel(project: Project, runs: RunListEntry[]): Promise<number> {
@@ -380,8 +321,8 @@ function print(value: unknown): void {
   console.log(JSON.stringify(value));
 }
 
-function nonEmpty(value: string | undefined): string | undefined {
-  return value === undefined || value === "" ? undefined : value;
+function isHelpFlag(arg: string | undefined): boolean {
+  return arg === "--help" || arg === "-h";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

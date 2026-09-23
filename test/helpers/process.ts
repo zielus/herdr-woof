@@ -169,33 +169,68 @@ export interface AttemptSpec {
   pane?: string;
 }
 
-export function openAttempt(runDir: string, spec: AttemptSpec = {}): ProcessResult {
-  const args = [
-    "attempt",
-    "open",
-    "--run-dir",
+/**
+ * Opens an attempt through the compiled `openAttempt` in a child process, as the scheduler does:
+ * no CLI command opens attempts. The result mirrors a CLI call so callers can check it the same
+ * way: one JSON line, and status 0 when opened, 2 when refused, 3 on a run directory or journal
+ * failure, 1 when the input is refused as a TypeError (with the message on stderr).
+ */
+export function openAttempt(
+  runDir: string,
+  spec: AttemptSpec = {},
+  options: RunOptions = {},
+): ProcessResult {
+  return runNode(openAttemptScript(), [attemptInput(runDir, spec)], options);
+}
+
+/** `openAttempt` without blocking, for concurrency tests. */
+export function openAttemptAsync(
+  runDir: string,
+  spec: AttemptSpec = {},
+  options: RunOptions = {},
+): Promise<ProcessResult> {
+  return runNodeAsync(openAttemptScript(), [attemptInput(runDir, spec)], options);
+}
+
+function attemptInput(runDir: string, spec: AttemptSpec): string {
+  return JSON.stringify({
     runDir,
-    "--run",
-    spec.run ?? "run-1",
-    "--agent",
-    spec.agent ?? "worker",
-    "--stage",
-    spec.stage ?? "report",
-    "--visit",
-    String(spec.visit ?? 1),
-    "--attempt",
-    String(spec.attempt ?? 1),
-    "--verdicts",
-    spec.verdicts ?? "pass,fail",
-  ];
-  if (spec.pane !== undefined) args.push("--pane", spec.pane);
-  return woof(args);
+    runId: spec.run ?? "run-1",
+    agentId: spec.agent ?? "worker",
+    stageId: spec.stage ?? "report",
+    visit: spec.visit ?? 1,
+    attempt: spec.attempt ?? 1,
+    verdicts:
+      spec.verdicts === undefined
+        ? ["pass", "fail"]
+        : spec.verdicts === ""
+          ? []
+          : spec.verdicts.split(","),
+    ...(spec.pane !== undefined ? { paneId: spec.pane } : {}),
+  });
+}
+
+function openAttemptScript(): string {
+  return `
+const { openAttempt } = await import(${JSON.stringify(distUrl("submission/attempt.js"))});
+const { isInfraReason } = await import(${JSON.stringify(distUrl("contracts/reasons.js"))});
+let outcome;
+try {
+  outcome = await openAttempt(JSON.parse(process.argv[1]));
+} catch (error) {
+  if (!(error instanceof TypeError)) throw error;
+  console.error(error.message);
+  process.exit(1);
+}
+console.log(JSON.stringify(outcome));
+process.exitCode = outcome.outcome === "opened" ? 0 : isInfraReason(outcome.reason) ? 3 : 2;
+`;
 }
 
 /**
  * Opens an attempt declaring an artifact verdict marker (p5 D5), through the
- * compiled `openAttempt` in a child process. `woof attempt open` has no flag for
- * it: the marker is the scheduler's to pass, from the stage that declares it.
+ * compiled `openAttempt` in a child process: the marker is the scheduler's to
+ * pass, from the stage that declares it.
  */
 export function openAttemptWithMarker(
   runDir: string,
@@ -224,7 +259,7 @@ export function openAttemptWithMarker(
   if (out.outcome !== "opened") throw new Error(`openAttempt: ${JSON.stringify(out)}`);
 }
 
-/** Opens an attempt and fails loudly if the CLI does not report it opened. */
+/** Opens an attempt and fails loudly unless it is reported opened. */
 export function openAttemptOk(runDir: string, spec: AttemptSpec = {}): ProcessResult {
   const result = openAttempt(runDir, spec);
   if (result.status !== 0 || result.json?.outcome !== "opened") {
@@ -311,6 +346,27 @@ export function ofType(lines: readonly JournalLine[], type: string): JournalLine
 /** File URL of a compiled module, relative to dist/, e.g. "state/store.js". */
 export function distUrl(rel: string): string {
   return pathToFileURL(join(repoRoot, "dist", rel)).href;
+}
+
+type SnapshotRead = Record<string, any>; // oxlint-disable-line no-explicit-any
+
+/**
+ * The compiled `readSnapshot(runDir)` result, read in a child process as any consumer of the
+ * package reads it: `{ok: true, snapshot}` or `{ok: false, reason, message}`.
+ */
+export function readSnapshotOf(
+  runDir: string,
+  options: { verifyArtifacts?: boolean } & RunOptions = {},
+): SnapshotRead {
+  const { verifyArtifacts, ...run } = options;
+  const result = runNode(
+    `const { readSnapshot } = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
+console.log(JSON.stringify(readSnapshot(process.argv[1], { verifyArtifacts: process.argv[2] === "1" })));`,
+    [runDir, verifyArtifacts === true ? "1" : "0"],
+    run,
+  );
+  if (result.status !== 0) throw new Error(`readSnapshot failed: ${result.stdout}${result.stderr}`);
+  return JSON.parse(result.stdout.trim()) as SnapshotRead;
 }
 
 /** Runs an ES module script in a child `node` process without blocking. */

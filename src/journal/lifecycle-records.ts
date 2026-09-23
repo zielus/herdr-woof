@@ -11,7 +11,10 @@ import type { RecordBase } from "./records.js";
  * them replays unchanged.
  */
 
-/** Who asked for the cancellation that a `run.terminated{cancelled}` follows. */
+/**
+ * Who asked for the cancellation that a `run.terminated{cancelled}` follows. `web` was the removed
+ * web UI's cancel route; it stays so journals that recorded it still replay.
+ */
 export const CANCEL_SOURCES = ["cli", "web", "herdr_action", "signal", "abort_signal"] as const;
 export type CancelSource = (typeof CANCEL_SOURCES)[number];
 

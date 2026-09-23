@@ -193,7 +193,7 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
   observation's terminal — otherwise that agent's `runtime` stays `null` and
   the agent is listed in the result's `skipped` list instead of being
   overlaid with the wrong occupant's lifecycle. A derived snapshot on its
-  own (`deriveSnapshot`/`readSnapshot`/`woof run show`) always reports
+  own (`deriveSnapshot`/`readSnapshot`) always reports
   `agents[].runtime: null`: no lifecycle value completes, accepts or fails
   an attempt, and runtime observation is lossy by construction —
   transitions between two reads are not seen. See
@@ -430,8 +430,9 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
 …"}` naming every pane it could not close; the CLI prints its normal
   rejection line with that `result` attached and exits 3.
 
-- **`woof run build-review`** (`src/commands/run.ts`) is the CLI entry point for the
-  scheduler: parses flags, self-validates the built-in definition, reads and
+- **`woof run start`** (`src/commands/run.ts`; `--host foreground` runs it in
+  the calling process) is the CLI entry point for the scheduler: parses
+  flags, self-validates the built-in definition, reads and
   validates input, runs admission (`admitWorkflow`: input → repository/
   top-level/revision → run-dir/repository overlap check → agent kind
   resolution → limits → plan), resolves a runtime (the Herdr CLI adapter,
@@ -452,7 +453,7 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
   canonical and one as supplied. `woof run cancel <run-dir>` records
   `run.cancel_requested` and then `run.terminated{outcome:"cancelled"}`
   (`cancelRun`, one lock) for a scheduler that may still be running
-  elsewhere. Neither command runs in a pane: `run build-review` is a
+  elsewhere. Neither command runs in a pane: `run start --host foreground` is a
   foreground CLI process (since p4 it claims the run as a foreground host,
   below), and a killed scheduler leaves a non-terminal run whose only
   resolution is `woof run cancel`.
@@ -501,12 +502,11 @@ run host <run-dir>` into that tab's root pane. The workspace is the one
   run and drives the workflow to the end, writing `<runDir>/outcome.json`
   (mode 0444, the same line as the last line of its stdout, and, for a pane host, `launch:
 {sha256}` — the SHA-256 of the exact `launch.json` bytes it served) before
-  releasing the claim. `--host foreground` and `woof run build-review` claim
-  and run the same host code in this process instead of a pane (a
+  releasing the claim. `--host foreground` claims and runs the same host code in this process instead of a pane (a
   foreground host has no `launch` field: nothing else could ever read its
   `outcome.json`). Any entry at `journal.jsonl` (even empty), `host.json`,
   `host-exit.json`, `launch.json` **or `outcome.json`** in the target run
-  directory makes `run start`/`run build-review` refuse `run_exists` before
+  directory makes `run start` refuse `run_exists` before
   anything is written.
 - **The launcher reports `started` only for the journal this launch's own
   host opened, and only for a rejection this launch's own host wrote.**
@@ -573,11 +573,10 @@ create` reply that does not verify but names its tab. The tab is kept
 - **An unwritable runs directory, or a non-regular input file, is refused
   before anything else runs.** If the resolved runs directory cannot be
   created (a file already sits at that path, or a permission error) `woof
-run start`/`run build-review` — foreground or pane-hosted — reject
+run start` — foreground or pane-hosted — rejects
   `journal_write_failed` (exit 3), naming the directory and the underlying
   error, rather than throwing or misreporting `run_exists`. `--input <path>`
-  and, for the Herdr `start` action, `<project>/.woof/start.json` must both
-  be regular files: a FIFO, device or directory is `input_invalid` ("… is
+  must be a regular file: a FIFO, device or directory is `input_invalid` ("… is
   not a regular file") at once, before the file is opened for reading, so a
   named pipe with nothing writing to it can never block the command.
 - **Signals finalize the host exactly once, from the moment a claim
@@ -626,11 +625,10 @@ run start`/`run build-review` — foreground or pane-hosted — reject
   refused before any pane opens. For a discovered workflow they, and the
   loader reasons, are decided authoritatively only once the host pane already
   exists — see the launcher/host split above.
-- **Herdr plugin actions drive the same launcher (`src/commands/herdr.ts`).**
-  `woof herdr start` resolves the target project from
+- **Herdr plugin actions inspect and control runs; they never start one
+  (`src/commands/herdr.ts`).** Each resolves the target project from
   `HERDR_PLUGIN_CONTEXT_JSON` (focused pane directory → workspace directory
-  → worktree checkout) and calls `launchInPane` directly, opening the host
-  tab in the workspace of the invocation's focused pane (nothing is split); `woof herdr cancel` cancels the project's one
+  → worktree checkout); `woof herdr cancel` cancels the project's one
   non-terminal run, whatever its owner, and refuses when more than one is
   active.
 
