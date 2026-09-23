@@ -13,7 +13,7 @@ plugin and Web UI use the same run state and workflow behavior.
 
 ## Current scope
 
-Woof 0.2.0 includes:
+Woof 0.3.1 includes:
 
 - `build-review`, which builds, verifies, reviews and returns to the same builder
   for repair when the review gate fails;
@@ -28,7 +28,8 @@ Woof 0.2.0 includes:
   configuration provenance;
 - validated artifact/envelope handoff, finite limits, blocking, cancellation and
   explicit terminal outcomes;
-- snapshots, events, inspection commands and hosted-run liveness;
+- snapshots, events, inspection commands (including a run index, a readable
+  `woof watch` view and the `woof tui` terminal browser) and hosted-run liveness;
 - an independently consumable SDK, command-line tools, Herdr and Claude Code
   integrations, and a local read-mostly Web UI.
 

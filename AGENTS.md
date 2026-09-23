@@ -25,11 +25,11 @@ reference material, not instructions to restore or port anything.
 3. Test the engine with small synthetic workflows during SDK development. Prove
    one real agent-to-artifact handoff early enough to validate the runtime boundary.
 4. Add production workflows such as build-review and plan-build-review after the
-   SDK supports them. Keep additional interfaces, such as a future TUI, on the
+   SDK supports them. Keep additional interfaces, such as the TUI, on the
    shared observation and control contracts used by the current Web UI.
 
-Workflow execution belongs to the SDK; two production workflows
-(`build-review`, `plan-build-review`) exist, and further ones are added only
+Workflow execution belongs to the SDK; four built-in workflows
+(`build-review`, `plan-build-review`, `plan`, `auto-build`) exist, and further ones are added only
 after the SDK supports them. Avoid designing the entire engine without exercising it. Follow
 the current task's scope; a foundation task does not authorize building the SDK.
 

@@ -111,12 +111,12 @@ contract. Source: `src/domain/types.ts`, `src/domain/plan.ts`,
 
 - **Run-fact record types (p2).**
 
-  | Record type          | Fields                                                                                 | Refused as (reducer reason)                                                                                                                                                                                   |
-  | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `run.opened`         | `runId`, optional `plan`                                                               | a second one: `run_exists`; anything else before it: `invalid_transition`                                                                                                                                     |
-  | `agent.assigned`     | `agentId`, `runtime {adapter, runtimeName, paneId}`, optional `terminalId`/`sessionId` | unplanned agent: `agent_unknown`; reassigned to the same pane: `assignment_unchanged`; agent owns an open dispatched attempt: `agent_busy`; after termination: `run_closed`                                   |
-  | `request.dispatched` | `agentId, stageId, visit, attempt, delivery, reason`, optional `paneId`                | attempt never opened or no longer open: `attempt_unknown`; wrong owner: `owner_mismatch`; already dispatched: `dispatch_exists`; agent has no assignment: `agent_unassigned`; after termination: `run_closed` |
-  | `run.terminated`     | `outcome, reason`, `limit` required iff `outcome: "exhausted"`                         | a second one: `run_closed`                                                                                                                                                                                    |
+  | Record type          | Fields                                                                                         | Refused as (reducer reason)                                                                                                                                                                                   |
+  | -------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `run.opened`         | `runId`, optional `plan`                                                                       | a second one: `run_exists`; anything else before it: `invalid_transition`                                                                                                                                     |
+  | `agent.assigned`     | `agentId`, `runtime {adapter, runtimeName, paneId}`, optional `terminalId`/`sessionId`/`tabId` | unplanned agent: `agent_unknown`; reassigned to the same pane: `assignment_unchanged`; agent owns an open dispatched attempt: `agent_busy`; after termination: `run_closed`                                   |
+  | `request.dispatched` | `agentId, stageId, visit, attempt, delivery, reason`, optional `paneId`                        | attempt never opened or no longer open: `attempt_unknown`; wrong owner: `owner_mismatch`; already dispatched: `dispatch_exists`; agent has no assignment: `agent_unassigned`; after termination: `run_closed` |
+  | `run.terminated`     | `outcome, reason`, `limit` required iff `outcome: "exhausted"`                                 | a second one: `run_closed`                                                                                                                                                                                    |
 
   A later `agent.assigned` for the same agent on a different pane is a
   **replacement** (counted in `counters.replacementsByAgent`), not a
@@ -430,7 +430,7 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
 …"}` naming every pane it could not close; the CLI prints its normal
   rejection line with that `result` attached and exits 3.
 
-- **`woof run build-review`** (`src/cli.ts`) is the CLI entry point for the
+- **`woof run build-review`** (`src/commands/run.ts`) is the CLI entry point for the
   scheduler: parses flags, self-validates the built-in definition, reads and
   validates input, runs admission (`admitWorkflow`: input → repository/
   top-level/revision → run-dir/repository overlap check → agent kind
@@ -452,8 +452,9 @@ submit` after termination is refused `run_closed` (p1). Settling always keeps
   canonical and one as supplied. `woof run cancel <run-dir>` records
   `run.cancel_requested` and then `run.terminated{outcome:"cancelled"}`
   (`cancelRun`, one lock) for a scheduler that may still be running
-  elsewhere. Neither command is hosted: each is a foreground CLI
-  process, and a killed scheduler leaves a non-terminal run whose only
+  elsewhere. Neither command runs in a pane: `run build-review` is a
+  foreground CLI process (since p4 it claims the run as a foreground host,
+  below), and a killed scheduler leaves a non-terminal run whose only
   resolution is `woof run cancel`.
 
 ## Implemented now (p4)
@@ -483,8 +484,11 @@ run host <run-dir>` into that tab's root pane. The workspace is the one
   agreeing workspace id — and the verified workspace is what the host process
   receives, so the agents' tabs open in the host's workspace. The Herdr
   runtime adapter verifies its agent tabs the same way and resolves their
-  workspace from its own pane first. The live watch is a down split inside that tab, and
-  each agent later gets a tab of its own (`woof:<role>`). `woof run host` claims the run
+  workspace from its own pane first. The host prints the run's human view in
+  that pane (its technical log goes to `<runDir>/host.log`), and each agent
+  later gets a tab of its own (`woof:<role>`). With a new worktree checkout the
+  host runs in the worktree workspace's root pane instead of a new tab (see
+  [composition: checkout](#implemented-now-composition-checkout)). `woof run host` claims the run
   exclusively (`claimHost`, `host.json`), loads the definition (once, in this
   process) and re-admits the launch request authoritatively — for a
   discovered workflow this is the **only** admission it gets, so its loader
@@ -495,7 +499,7 @@ run host <run-dir>` into that tab's root pane. The workspace is the one
   reported through `outcome.json`, and surface to the caller only after that
   pane exists. The host then records the resolved configuration, opens the
   run and drives the workflow to the end, writing `<runDir>/outcome.json`
-  (mode 0444, the same line as its stdout, and, for a pane host, `launch:
+  (mode 0444, the same line as the last line of its stdout, and, for a pane host, `launch:
 {sha256}` — the SHA-256 of the exact `launch.json` bytes it served) before
   releasing the claim. `--host foreground` and `woof run build-review` claim
   and run the same host code in this process instead of a pane (a
@@ -625,8 +629,8 @@ run start`/`run build-review` — foreground or pane-hosted — reject
 - **Herdr plugin actions drive the same launcher (`src/commands/herdr.ts`).**
   `woof herdr start` resolves the target project from
   `HERDR_PLUGIN_CONTEXT_JSON` (focused pane directory → workspace directory
-  → worktree checkout) and calls `launchInPane` directly, splitting from the
-  invocation's focused pane; `woof herdr cancel` cancels the project's one
+  → worktree checkout) and calls `launchInPane` directly, opening the host
+  tab in the workspace of the invocation's focused pane (nothing is split); `woof herdr cancel` cancels the project's one
   non-terminal run, whatever its owner, and refuses when more than one is
   active.
 
@@ -637,8 +641,9 @@ verdict marker — not design intent. Source: `src/workflows/catalog.ts`,
 `src/journal/{records,record-fields}.ts`, `src/state/reducer.ts`.
 
 - **The built-in workflow catalog is a name-keyed, null-prototype registry
-  (D2).** `BUILT_IN_WORKFLOWS` (`src/workflows/catalog.ts`) holds both
-  `build-review` and `plan-build-review`; `builtInWorkflow(name)` and
+  (D2).** `BUILT_IN_WORKFLOWS` (`src/workflows/catalog.ts`) holds
+  `build-review` and `plan-build-review` (and, since composition, `plan` and
+  `auto-build`); `builtInWorkflow(name)` and
   `builtInWorkflowNames()` are the only readers, and both consult own keys
   only (`Object.hasOwn`), so a workflow literally named `constructor` or
   `toString` is `workflow_not_found` rather than resolving to an inherited

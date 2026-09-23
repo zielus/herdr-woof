@@ -1,6 +1,6 @@
 # Woof integration surfaces
 
-Woof 0.2.0 provides the CLI and SDK, hosted runs with heartbeat-tracked
+Woof 0.3.1 provides the CLI and SDK, hosted runs with heartbeat-tracked
 liveness, read-only inspection commands, a Herdr plugin and a Claude Code
 plugin. The Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and
 `watch`; `/woof:run` starts a run, waits for it and reports the result. Every
@@ -66,7 +66,9 @@ command and action below is an implemented surface.
   process (`--host foreground`). Layout is one tab per participant: the first
   tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
   holds the run host in its root pane, and every agent of the run gets its
-  own unfocused tab (`woof:<role>`); agents are never pane splits. Woof
+  own unfocused tab (`woof:<role>`); agents are never pane splits. With a new
+  worktree checkout (the default inside Herdr) Woof creates no host tab: the
+  host runs in the root pane of the worktree's workspace. Woof
   closes only the tabs it created, and it is the run host that closes the
   agent tabs when the run ends: a host killed mid-run leaves them open, and
   `run cancel` does not close them (close them with `herdr tab close`; the
@@ -178,8 +180,8 @@ host sends at most one at a time and folds every refresh requested while one
 is in flight into a single, fresh follow-up, so a slow Herdr call bounds
 reporting instead of delaying termination. Metadata is a display-only
 projection — nothing in Woof reads a token back, the journal stays
-authoritative, and a failed report only logs to stderr and never affects the
-run.
+authoritative, and a failed report is only logged to `<run-dir>/host.log` and
+never affects the run.
 
 For local wiring checks after a build:
 

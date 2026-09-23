@@ -28,6 +28,7 @@ precedence:
   roles/
   workflows/
   runs/
+  index/
 
 <project>/.woof/
   woof.json
@@ -36,7 +37,8 @@ precedence:
 ```
 
 (`runs/` is a user-scope-only default: `woof.json`'s `runsDir` setting is
-refused in a project file.)
+refused in a project file. `index/` is the run locator index, a fixed location
+that `WOOF_INDEX_DIR` overrides and no settings file configures.)
 
 Named roles and workflows use whole-definition replacement. Scalar defaults use
 explicit field-level precedence; limits compose per key. There is no implicit
@@ -79,7 +81,8 @@ resolve,record,index}.ts`, `src/runtime/claude/trust.ts`, `woof config show`
   Scopes are project (`<project root>/.woof`) and user (`~/.woof`), plus a
   built-in catalog: workflows `build-review` and `plan-build-review` (p5 D2 —
   a name-keyed, null-prototype registry, so adding a built-in workflow adds
-  no branch to configuration resolution); roles `builder`/`reviewer`, plus
+  no branch to configuration resolution), and since composition `plan` and
+  `auto-build`; roles `builder`/`reviewer`, plus
   `planner` (p5), a third built-in role a bare `plan-build-review` input
   resolves with no configuration at all.
   Every JSON file is an object with `schemaVersion: 1`, at most 64 KiB;
@@ -172,7 +175,7 @@ homeDir, flags})` returns a `ResolvedConfiguration` (`schemaVersion: 1`,
 shadowed:[]}` rather than picking up `Object.prototype`'s own `constructor`/
   `toString` as a phantom shadowed layer (or throwing, before this was
   fixed).
-- **Built-in roles and permission visibility.** `builder`/`reviewer` default
+- **Built-in roles and permission visibility.** `builder`/`planner`/`reviewer` default
   to `{kind:"claude", model:null, args:[]}`, `source:"builtin"` — the engine
   never adds a permission flag, so an interactive agent with no explicit
   permission configuration stops at its own prompt and the run records

@@ -3,8 +3,9 @@
 Status: authoring contract, plus an implemented definition contract and loader
 (p3), configuration-driven role/workflow discovery (p4), and a second built-in
 workflow plus an external, project-authored one proving the contract
-generalizes (p5). See "Implemented now (p3)", "Implemented now (p4)" and
-"Implemented now (p5)" below.
+generalizes (p5), and workflow steps, checkout and input artifacts
+(composition). See "Implemented now (p3)", "Implemented now (p4)",
+"Implemented now (p5)" and "Implemented now (composition)" below.
 
 A workflow defines how work progresses. Adding a new workflow should normally
 mean adding a definition, roles and artifact contracts, without adding a special
@@ -201,7 +202,7 @@ limitDefaults[key]`; without it (an external p3 definition with no
 - **Project and user workflow discovery.** `--workflow <name>` (else
   `defaults.workflow`, else `build-review`) resolves through
   `workflows/<name>.{mjs,js,ts}` in the project scope, then the user scope,
-  then the built-in catalog. `woof run start`'s launcher pre-admits only the
+  then the built-in catalog. `woof run start`'s launcher pre-admits only a
   built-in workflow; for a discovered file it does not import the module —
   **the module body runs exactly once, in the pane host** — so a project
   definition's top-level side effects never run twice (the launcher and the
@@ -284,8 +285,8 @@ Real shipped behavior proving the authoring contract generalizes beyond
   (see [domain model](../architecture/domain-model.md#implemented-now-composition-checkout)).
   `repository(input)` names the source repository; the run may work in a
   worktree made from it. A definition that only reads the tree can declare
-  `checkout: "any"` so callers may run it on a dirty `current` tree; the
-  default, `"writable"`, refuses one (`checkout_dirty`).
+  `checkout: "any"` so callers may run it on a dirty `current` or `path`
+  checkout; the default, `"writable"`, refuses one (`checkout_dirty`).
 - **A workflow can be a step.** Add `{kind: "workflow", stageId, workflow:
 {name}, input(ctx), next(ctx)}` to `stages` and list it in `edges` like any
   stage. `input(ctx)` maps the parent's validated input and
