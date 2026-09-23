@@ -26,7 +26,7 @@ reference material, not instructions to restore or port anything.
    one real agent-to-artifact handoff early enough to validate the runtime boundary.
 4. Add production workflows such as build-review and plan-build-review after the
    SDK supports them. Keep additional interfaces, such as the TUI, on the
-   shared observation and control contracts used by the current Web UI.
+   shared observation and control contracts.
 
 Workflow execution belongs to the SDK; four built-in workflows
 (`build-review`, `plan-build-review`, `plan`, `auto-build`) exist, and further ones are added only

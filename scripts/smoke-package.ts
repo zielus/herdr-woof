@@ -23,11 +23,6 @@ const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as 
 if (!existsSync(join(repoRoot, "dist", "index.js"))) {
   throw new Error("dist/index.js is missing; run bun run build before smoke:package");
 }
-// The web UI bundle is built by a separate script, so it is the one shipped
-// artifact that can be absent while everything else builds cleanly.
-if (!existsSync(join(repoRoot, "dist-ui", "index.html"))) {
-  throw new Error("dist-ui/index.html is missing; run bun run build:ui before smoke:package");
-}
 
 const workDir = mkdtempSync(join(tmpdir(), "woof-package-smoke-"));
 const npmCache = join(workDir, "npm-cache");
@@ -58,14 +53,6 @@ try {
   const missingPlugin = pluginFiles.filter((path) => !shipped.includes(path));
   if (missingPlugin.length > 0) {
     throw new Error(`tarball is missing Claude Code plugin files: ${missingPlugin.join(", ")}`);
-  }
-  // `woof ui` serves dist-ui/ from the installed package: a bundle that builds
-  // locally and silently never ships is exactly what this catches.
-  if (!shipped.includes("dist-ui/index.html")) {
-    throw new Error("tarball is missing the web UI bundle (dist-ui/index.html)");
-  }
-  if (!shipped.some((path) => /^dist-ui\/assets\/.+\.js$/.test(path))) {
-    throw new Error("tarball ships dist-ui/index.html with no dist-ui/assets script");
   }
   const tarball = join(workDir, packInfo!.filename);
   const consumer = join(workDir, "consumer");
@@ -129,7 +116,6 @@ try {
   loaderCheck(consumer);
   inspection(installedBin, consumer, workDir);
   run(installedBin, ["run", "start", "--help"], consumer);
-  run(installedBin, ["ui", "--help"], consumer);
 
   console.log("installed package entry point ok");
   console.log("installed woof --help ok");
@@ -143,8 +129,6 @@ try {
   console.log("installed loadWorkflowDefinition + buildReviewWorkflow ok");
   console.log("installed woof config show, runs, status, events ok");
   console.log("installed woof run start --help ok");
-  console.log("installed woof ui --help ok");
-  console.log("tarball ships the web UI bundle ok");
   console.log("tarball ships the Claude Code plugin files ok");
 } finally {
   rmSync(workDir, { force: true, recursive: true });

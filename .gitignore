@@ -26,6 +26,3 @@ assets/*.mp4
 
 # Per-user run input for the Herdr plugin "start" action and woof run start
 .woof/start.json
-
-# the built web UI bundle; build:ui writes it, the npm tarball ships it
-dist-ui/

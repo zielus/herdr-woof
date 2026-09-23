@@ -3,7 +3,7 @@
 ## One source of run meaning
 
 The engine exposes current state and incremental updates. Herdr, Claude Code,
-logs, the Web UI and `woof tui` consume that contract. Consumers must not infer
+logs and `woof tui` consume that contract. Consumers must not infer
 stages or success by reading prompts, scraping terminals, or interpreting UI
 labels. Observability works when the Herdr Woof plugin is absent.
 
@@ -72,9 +72,7 @@ with `subscribeEvents` (`lockFree: true`, so it never takes the journal lock).
 Events are kept once per seq, so a reconnect resumes from the last cursor
 without repeating a row, and it re-reads the run's status on an interval to
 notice host liveness changes (`lost`/`exited`) that no event announces on its
-own. It calls no control operation and writes nothing to a run. The current Web
-UI uses the same snapshot, event and cancellation contracts over local HTTP and
-SSE.
+own. It calls no control operation and writes nothing to a run.
 
 Verify this with an external consumer that follows an active run, disconnects,
 reconnects, and reaches the same visible state as a fresh snapshot. Include a
@@ -588,7 +586,7 @@ unchanged. They are transitions, never poll samples.
 
 - **`run.cancel_requested {source, reason}`** — who asked, distinct from the
   termination it leads to. `source` is `cli` (`woof run cancel`), `web` (the
-  UI's cancel route), `herdr_action` (`woof herdr cancel`), `signal` (a run
+  removed web UI's cancel route; still read in older journals), `herdr_action` (`woof herdr cancel`), `signal` (a run
   host's SIGINT/SIGTERM) or `abort_signal` (`runWorkflow({signal})`, the
   default; `cancelSource` overrides it). All of them go through
   `cancelRun`, which appends the request and then
@@ -612,7 +610,7 @@ workspaceId, tabId?}`** — written by the run host together with `run.opened`, 
   the reducer allows after `run.terminated`, because a host exits after the
   run it hosted ended. A host records the termination, drains, and only then
   journals its exit, so a follower (`woof events --follow`, `woof watch
---follow`, the Web UI's SSE stream — all one `streamEvents` loop) does not
+--follow` — one `streamEvents` loop) does not
   end at `run.terminated`: it ends when the journal holds no `host.claimed`,
   or the host's `host.exited`/`host.lost` is recorded, or the read-time probe
   no longer sees a live host (exit marker, dead pid, stale heartbeat, no
@@ -677,8 +675,8 @@ Real shipped behavior — not design intent. Source:
 ordinary journal records and therefore events, one-to-one, with a `subject`
 (the agent, and the stage/visit/attempt where present); both are additive at
 `schemaVersion: 1`, so a journal without them reads unchanged. They are
-written on **change**, never per poll: `woof watch`, the Web UI and the run
-host all read the same rows because there is nothing else to read.
+written on **change**, never per poll: `woof watch` and the run
+host both read the same rows because there is nothing else to read.
 
 - **`agent.lifecycle_changed {agentId, from, to, terminalId, raw?, replaced?}`**
   — written by the scheduler when a tracked observation's lifecycle
@@ -797,8 +795,7 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   `--runs-dir` passes the index (its output gains `indexDir`), so a run opened
   with its own `--run-dir` or `--runs-dir` is listed; an explicit `--runs-dir`
   lists that directory only. `--project`, `--all` and `--limit` apply to the
-  union. `woof ui` follows the same rule for `/api/runs` and for resolving a
-  run id. There is no `GET /api/events` for all runs.
+  union.
 - **`woof runs --reindex`** is the only inspection command that writes: it
   writes a locator for each readable run under the runs directory that has
   none (or one whose directory holds no such run) and prints
@@ -817,8 +814,8 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   directories the id is rejected as `run_id_ambiguous` (exit 3, the message
   names both directories) — `run cancel` never picks one of two runs — and the
   run directory still works. Directories under the runs directory whose name
-  differs from the run id they record are not searched by the CLI (`woof runs`
-  and the Web API, which read every journal, do see them).
+  differs from the run id they record are not searched by the CLI (`woof runs`,
+  which reads every journal, does see them).
   A bare id found nowhere is `run_dir_invalid` (exit 3). Any other path that
   does not exist is still treated as a run directory, so `events --follow` keeps
   waiting for a directory that is about to be created.

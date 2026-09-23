@@ -21,8 +21,7 @@ import { locateRun, readRunEntry } from "./runs.js";
  *    (and a follow still waits for a directory that does not exist yet).
  *
  * Directories under the runs directory whose name differs from the run id they
- * record are not searched: that needs every journal read (`woof runs` and the
- * Web API do it).
+ * record are not searched: that needs every journal read (`woof runs` does it).
  */
 export type ResolveRunTargetResult =
   | { ok: true; runDir: string; via: "path" | "index" | "runs_dir" }

@@ -265,6 +265,5 @@ Non-obvious decisions made while building `woof tui`:
   message instead of a truncated or garbled layout.
 
 Related: [run output](run-output.md),
-[observability](../architecture/observability.md),
-[domain model](../architecture/domain-model.md), and
-[Web UI capabilities](../architecture/web-ui.md).
+[observability](../architecture/observability.md) and
+[domain model](../architecture/domain-model.md).

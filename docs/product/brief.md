@@ -8,8 +8,8 @@ resolves roles, coordinates the work and returns a structured outcome with
 artifact references. Herdr runs the agents and owns their panes, sessions,
 workspaces and worktrees.
 
-`HerdrAgentsSDK` is the reusable engine. The CLI, Herdr plugin, Claude Code
-plugin and Web UI use the same run state and workflow behavior.
+`HerdrAgentsSDK` is the reusable engine. The CLI, Herdr plugin and Claude Code
+plugin use the same run state and workflow behavior.
 
 ## Current scope
 
@@ -30,8 +30,8 @@ Woof 0.3.1 includes:
   explicit terminal outcomes;
 - snapshots, events, inspection commands (including a run index, a readable
   `woof watch` view and the `woof tui` terminal browser) and hosted-run liveness;
-- an independently consumable SDK, command-line tools, Herdr and Claude Code
-  integrations, and a local read-mostly Web UI.
+- an independently consumable SDK, command-line tools, and Herdr and Claude Code
+  integrations.
 
 Project-authored workflows and roles use the same admission and scheduler
 contracts as the built-ins. The supported production agent kind is currently
@@ -65,8 +65,7 @@ practical.
 
 Woof does not currently provide crash resume or re-hosting, parallel workflow
 scheduling, a second production agent kind, per-role instruction/context files,
-or per-stage structural artifact schemas. The Web UI cannot start or retry work
-or answer blocked agents. Multi-machine orchestration and a large command palette
+or per-stage structural artifact schemas. Multi-machine orchestration and a large command palette
 are not current product goals. See
 [Architecture decisions](../decisions/architecture.md) for the open decisions and
 known limits.

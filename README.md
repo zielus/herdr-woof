@@ -42,7 +42,6 @@ review passes on the exact repaired revision or a limit ends it.
 - [Build-review loop](#build-review-loop)
 - [Configuration, hosting and inspection](#configuration-hosting-and-inspection)
 - [Plan-build-review and project workflows](#plan-build-review-and-project-workflows)
-- [Web UI](#web-ui)
 - [Integrations and scope](#integrations-and-scope)
 - [Development](#development)
 - [License](#license)
@@ -144,7 +143,7 @@ blocked and needs you, when its host is gone without a recorded outcome, or when
 ## CLI
 
 Executable behavior today spans diagnostics, result handoff, workflow
-hosting, read-only inspection, and a local web dashboard:
+hosting and read-only inspection:
 
 ```sh
 woof --help
@@ -175,8 +174,6 @@ woof watch --all [--follow] [--project <dir>] [--since <iso>] \
   [--runs-dir <dir>] [--max-runs <n>] [--poll-ms <n>] [--timeout-ms <n>]
 woof tui [--project <dir>] [--runs-dir <dir>] [--ascii] [--poll-ms <n>]
 woof tui --frames [--cols <n>] [--rows <n>] [--project <dir>] [--runs-dir <dir>]
-woof ui [--port <n>] [--host <addr>] [--runs-dir <dir>] [--token <secret>] \
-  [--allow-host <name>] [--allow-origin <origin>] [--poll-ms <n>] [--no-open]
 woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>] \
   [--poll-ms <n>] [--keep-panes] [--runtime-module <path>] \
   [--plain] [--ascii] [--preview summary|json]
@@ -557,39 +554,6 @@ Each child is an ordinary run next to its parent (`<runId>.plan.1`,
 its parent link; cancelling the parent cancels the running child. See
 [composition](docs/design/composition.md) and
 [initial workflows](docs/workflows/initial-workflows.md#plan-and-auto-build-composition).
-
-## Web UI
-
-`woof ui` serves a dashboard for the runs under a runs directory, plus the API
-behind it, from one process:
-
-```sh
-woof ui                              # http://127.0.0.1:4317, opens a browser
-woof ui --runs-dir ~/.woof/runs --no-open
-```
-
-It reads the same journals `woof runs`, `woof status` and `woof events` read —
-no new state, no journal lock, no Herdr. The run list shows status, workflow,
-stage, owner and age (cards on a phone, a table on a wide screen). A run's page
-shows its agents and stages, the gate decisions, a live event timeline over
-server-sent events that resumes from its cursor after a reconnect, and the
-required action when an agent is blocked. Cancelling a run goes through the same
-call `woof run cancel` makes.
-
-What the engine cannot do, the UI does not pretend to: answering a blocked
-agent, retrying an attempt and starting a run are shown disabled with the reason
-they are unavailable.
-
-It binds loopback, checks the `Host` header against an allowlist, and admits a
-write only when its `Origin` is this server's own — scheme, host and port — or
-one named by `--allow-origin`, with a JSON content type. `--host` beyond
-loopback is refused unless `--token` (at least 16 characters) is given; the
-token guards `/api/*`, not the static bundle, and is printed in the URL's
-fragment, which a browser never sends to a server. Reaching it from a phone
-needs an HTTPS origin in front of it, such as Tailscale Serve, with
-`--allow-host` and `--allow-origin` for that name. See
-[docs/architecture/web-ui.md](docs/architecture/web-ui.md) for the security
-model, the development loop and the known gaps.
 
 ## Integrations and scope
 

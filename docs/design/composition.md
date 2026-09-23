@@ -198,7 +198,7 @@ directory: `runDir = dirname(parentRunDir)/<childRunId>`, `childRunId =
 <parentRunId>.<stageId>.<visit>` (ids allow `.`; attempts of a visit are always
 1, see below). It is an ordinary run: its own journal, locator, `config.json`,
 `input.json`, host claim (same pid) and `host.claimed`/`host.exited`, so `woof
-runs`, the index, `woof status`, the Web UI and `woof watch` see it as a run.
+runs`, the index, `woof status` and `woof watch` see it as a run.
 `run.opened.parent` links back; the parent's journal links forward.
 
 **Journal (parent).** Two new records, additive at schemaVersion 1, each 1:1

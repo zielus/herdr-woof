@@ -63,15 +63,12 @@ const PACK_ALLOWED = [
   /^README\.md$/,
   /^package\.json$/,
   /^dist\//,
-  // The web UI bundle `woof ui` serves, built by `bun run build:ui`.
-  /^dist-ui\//,
   /^plugin\/claude\//,
 ];
 const PACK_REQUIRED = [
   "dist/index.js",
   "dist/cli.js",
   "dist/testing.js",
-  "dist-ui/index.html",
   "plugin/claude/.claude-plugin/plugin.json",
   "plugin/claude/commands/run.md",
   "plugin/claude/skills/woof/SKILL.md",
@@ -312,7 +309,7 @@ function packCheck(): CheckResult {
     return result(
       "pack",
       "pass",
-      `${files.length} file(s), all within LICENSE, README.md, package.json, dist/, dist-ui/, plugin/claude/`,
+      `${files.length} file(s), all within LICENSE, README.md, package.json, dist/, plugin/claude/`,
     );
   return result(
     "pack",
