@@ -253,12 +253,12 @@ describe("woof config show: configuration matrix", () => {
     const env = setup();
     const path = writeJson(
       join(env.repo, ".woof", "roles", "planner.json"),
-      role({ kind: "codex" }),
+      role({ kind: "gemini" }),
     );
     const out = show(env, ["--project", env.repo]);
     expect(out.status, out.stdout).toBe(0);
     expect(out.json?.["configuration"]["warnings"]).toEqual([
-      { code: "role_kind_unsupported", message: expect.stringContaining("codex"), path },
+      { code: "role_kind_unsupported", message: expect.stringContaining("gemini"), path },
     ]);
   });
 
@@ -596,7 +596,7 @@ describe("woof config show: configuration matrix", () => {
     const env = setup();
     const path = writeJson(
       join(env.repo, ".woof", "roles", "builder.json"),
-      role({ kind: "codex" }),
+      role({ kind: "gemini" }),
     );
     const used = startForeground(env, baseInput(env));
     expect(used.status, used.stdout).toBe(2);
@@ -606,7 +606,7 @@ describe("woof config show: configuration matrix", () => {
     const other = setup();
     const planner = writeJson(
       join(other.repo, ".woof", "roles", "planner.json"),
-      role({ kind: "codex" }),
+      role({ kind: "gemini" }),
     );
     const unused = startForeground(other, baseInput(other));
     expect(unused.status, unused.stdout + unused.stderr).toBe(0);
@@ -958,6 +958,65 @@ describe("agent kinds: pi (per-kind launch specs)", () => {
       message: expect.stringContaining("set by the workflow input"),
     });
   }, 60_000);
+
+  it("K6: a codex role gets --model and an --add-dir grant; its requests carry the codex submit note", () => {
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "codex", model: "gpt-5.6-terra", args: ["--sandbox", "workspace-write"] }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(plannedArgs(out)["builder"]).toEqual([
+      "--model",
+      "gpt-5.6-terra",
+      "--add-dir",
+      out.runDir,
+      "--sandbox",
+      "workspace-write",
+    ]);
+    expect(recordedConfig(out)["agents"]["builder"]).toMatchObject({
+      source: "project",
+      path,
+      value: { kind: "codex", model: "gpt-5.6-terra" },
+    });
+    const request = (stage: string) =>
+      readFileSync(
+        join(out.runDir, "requests", stage, "visit-1", "attempt-1", "request.md"),
+        "utf8",
+      );
+    expect(request("build")).toContain(
+      "Codex: --add-dir lets your sandbox write the run directory.",
+    );
+    // The claude reviewer's request carries no kind note.
+    expect(request("review")).not.toContain("Codex:");
+  }, 60_000);
+
+  it("K7: codex args with a read-only sandbox, -C or -m are role_invalid; --yolo is reported", () => {
+    for (const [args, pointer] of [
+      [["-s", "read-only"], "/args/0"],
+      [["-C", "/tmp"], "/args/0"],
+      [["-mgpt-5"], "/args/0"],
+    ] as const) {
+      const env = setup();
+      writeJson(join(env.repo, ".woof", "roles", "builder.json"), role({ kind: "codex", args }));
+      const out = show(env, ["--project", env.repo]);
+      expect(out.status, JSON.stringify(args)).toBe(2);
+      expect(out.json).toMatchObject({ reason: "role_invalid", details: [{ pointer }] });
+    }
+    const env = setup();
+    const path = writeJson(
+      join(env.repo, ".woof", "roles", "builder.json"),
+      role({ kind: "codex", args: ["--yolo"] }),
+    );
+    const out = show(env, ["--project", env.repo]);
+    expect(out.status, out.stdout).toBe(0);
+    expect(out.json?.["configuration"]["warnings"]).toContainEqual({
+      code: "permission_bypass_configured",
+      message: expect.any(String),
+      path,
+    });
+  });
 
   it("K5: a project whose .pi/ settings pi would ask to trust gets the advisory pi_trust_untrusted warning", () => {
     const env = setup();

@@ -1139,6 +1139,42 @@ echo '{"status":"not_ready","provider":"'"$4"'","reason":"provider_not_found"}';
       },
     ]);
     expect(notReady["problems"]).toEqual(["pi_not_ready"]);
+
+    // A codex role: `codex login status` is its readiness probe.
+    writeFileSync(
+      join(repo, ".woof", "roles", "reviewer.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "codex", model: null }),
+    );
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "claude", model: null }),
+    );
+    expect(doctor()["problems"]).toEqual(["codex_unavailable"]);
+    const codexLogin = join(root, "codex-login");
+    writeFileSync(
+      join(bin, "codex"),
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo codex-cli 0.0.0-fake; exit 0; fi
+if [ "$1 $2" = "login status" ] && [ -f ${JSON.stringify(codexLogin)} ]; then echo "Logged in using ChatGPT"; exit 0; fi
+echo "Not logged in"; exit 1
+`,
+      { mode: 0o755 },
+    );
+    const loggedOut = doctor();
+    expect(kind(loggedOut, "codex")).toMatchObject({
+      status: "available",
+      version: "codex-cli 0.0.0-fake",
+      roles: ["reviewer"],
+      readiness: [{ roles: ["reviewer"], subject: "login", ready: false, detail: "Not logged in" }],
+      trust: null,
+    });
+    expect(loggedOut["problems"]).toEqual(["codex_not_ready"]);
+    writeFileSync(codexLogin, "");
+    const loggedIn = doctor();
+    expect(kind(loggedIn, "codex")["readiness"]).toEqual([
+      { roles: ["reviewer"], subject: "login", ready: true, detail: "Logged in using ChatGPT" },
+    ]);
+    expect(loggedIn["problems"]).toEqual([]);
   });
 
   it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {

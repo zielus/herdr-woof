@@ -4,7 +4,12 @@ import type { WorkflowDefinition } from "../scheduler/definition.js";
 import { builtInWorkflow } from "../workflows/catalog.js";
 import type { ConfigWarning } from "./discover.js";
 import type { Provenance, ResolvedConfiguration } from "./resolve.js";
-import { configuresPermissionBypass, type LimitKey, type RoleValue } from "./schema.js";
+import {
+  bypassSuffix,
+  configuresPermissionBypass,
+  type LimitKey,
+  type RoleValue,
+} from "./schema.js";
 
 /**
  * Bridges resolved configuration and admission (p4 §3.5): what admission
@@ -153,7 +158,7 @@ export function recordConfiguration(
         : `${agent.source} ${path ?? "configuration"}`;
     warnings.push({
       code: "permission_bypass_configured",
-      message: `agent ${agentId} (role ${agent.role}) configures a permission bypass in its args, set by ${setBy}; Woof never adds one`,
+      message: `agent ${agentId} (role ${agent.role}) configures a permission bypass in its args, set by ${setBy}; Woof never adds one${bypassSuffix(agent.kind, agent.args)}`,
       ...(path !== null ? { path } : {}),
     });
   }

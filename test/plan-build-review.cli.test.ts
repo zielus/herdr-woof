@@ -192,8 +192,10 @@ describe("plan-build-review: the definition itself", () => {
     });
     // Re-measured with LV-102's canonical-review sentence in the repair request
     // (276 bytes), which moved this from 21 857: the repair is the binding case.
-    expect(workflow.validateInput(blob(21_581))).toMatchObject({ ok: true });
-    const refused = workflow.validateInput(blob(21_582));
+    // The longest per-kind submit note (codex, 170 bytes and its newline) moved it
+    // from 21 581.
+    expect(workflow.validateInput(blob(21_410))).toMatchObject({ ok: true });
+    const refused = workflow.validateInput(blob(21_411));
     expect(refused.ok).toBe(false);
     expect(refused.details?.[0]).toMatchObject({ field: "task" });
     expect(JSON.stringify(refused.details)).toContain("32769 bytes; the limit is 32768");

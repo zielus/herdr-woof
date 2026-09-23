@@ -175,3 +175,95 @@ describe("agent kind specs: pi", () => {
     ]);
   });
 });
+
+describe("agent kind specs: codex", () => {
+  it("maps the model to --model and grants the run directory with --add-dir", () => {
+    expect(
+      launch.launchArgs({
+        kind: "codex",
+        model: "gpt-5.6-terra",
+        args: ["-c", "model_reasoning_effort=low"],
+        runDir: "/runs/r",
+      }),
+    ).toEqual({
+      ok: true,
+      args: [
+        "--model",
+        "gpt-5.6-terra",
+        "--add-dir",
+        "/runs/r",
+        "-c",
+        "model_reasoning_effort=low",
+      ],
+    });
+    expect(launch.launchArgs({ kind: "codex", model: null, args: [], runDir: null })).toEqual({
+      ok: true,
+      args: [],
+    });
+    expect(
+      launch.launchArgs({ kind: "codex", model: null, provider: "openai", args: [], runDir: null }),
+    ).toMatchObject({ ok: false, reason: "role_invalid" });
+  });
+
+  it("owns --model, -m in every form, --add-dir and a -c model= override, not other -c keys", () => {
+    expect(
+      launch.engineOwnedArgIndexes("codex", [
+        "-m",
+        "x",
+        "-mx",
+        "-m=x",
+        "--config",
+        "model=x",
+        "-c",
+        'model="x"',
+        "-c",
+        "model_reasoning_effort=high",
+        "--add-dir=/r",
+        "--model=x",
+      ]),
+    ).toEqual([0, 2, 3, 4, 6, 10, 11]);
+  });
+
+  it("refuses a read-only sandbox and arguments that move codex off the checkout", () => {
+    expect(
+      launch
+        .refusedArgs("codex", [
+          "-s",
+          "read-only",
+          "--sandbox=workspace-write",
+          "-c",
+          'sandbox_mode="read-only"',
+          "-C",
+          "/elsewhere",
+          "--cd=/x",
+          "--worktree",
+        ])
+        .map((item) => item.index),
+    ).toEqual([0, 3, 5, 7, 8]);
+    expect(launch.refusedArgs("codex", ["--sandbox", "workspace-write"])).toEqual([]);
+  });
+
+  it("reports codex's bypasses, never claude's or pi's", () => {
+    expect(
+      launch.permissionBypassArgs("codex", [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--yolo",
+        "--approve-for-me",
+        "--dangerously-bypass-hook-trust",
+        "-s",
+        "danger-full-access",
+        "--sandbox",
+        "workspace-write",
+        "-a",
+        "--dangerously-skip-permissions",
+      ]),
+    ).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--yolo",
+      "--approve-for-me",
+      "--dangerously-bypass-hook-trust",
+      "--sandbox danger-full-access",
+    ]);
+    expect(launch.submitNoteOf("codex")).toContain("--add-dir");
+  });
+});

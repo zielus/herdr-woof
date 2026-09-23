@@ -238,7 +238,7 @@ describe("configuration composition", () => {
     const configuration = resolved({
       project: scope("project", {
         roles: {
-          planner: { kind: "codex", model: null },
+          planner: { kind: "gemini", model: null },
           builder: { kind: "claude", model: null },
         },
       }),

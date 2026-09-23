@@ -290,6 +290,11 @@ export function configuresPermissionBypass(kind: string, args: readonly string[]
   return permissionBypassArgs(kind, args).length > 0;
 }
 
+/** The kind and the bypass arguments, appended to a bypass warning: ` (pi: --approve)`. */
+export function bypassSuffix(kind: string, args: readonly string[]): string {
+  return ` (${kind}: ${permissionBypassArgs(kind, args).join(", ")})`;
+}
+
 function invalid(path: string, details: ConfigDetail[]): ConfigFailure {
   return {
     ok: false,
