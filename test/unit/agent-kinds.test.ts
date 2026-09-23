@@ -241,6 +241,14 @@ describe("agent kind specs: codex", () => {
         .map((item) => item.index),
     ).toEqual([0, 3, 5, 7, 8]);
     expect(launch.refusedArgs("codex", ["--sandbox", "workspace-write"])).toEqual([]);
+    // clap's `-x=value` short spelling is matched too (review finding, verified).
+    expect(launch.refusedArgs("codex", ["-s=read-only"]).map((item) => item.index)).toEqual([0]);
+    expect(launch.engineOwnedArgIndexes("codex", ['-c=model="x"', "-c=model_provider=y"])).toEqual([
+      0,
+    ]);
+    expect(launch.permissionBypassArgs("codex", ["-s=danger-full-access"])).toEqual([
+      "--sandbox danger-full-access",
+    ]);
   });
 
   it("reports codex's bypasses, never claude's or pi's", () => {
@@ -286,7 +294,7 @@ describe("agent kind specs: grok", () => {
     ]);
   });
 
-  it("refuses read-only and strict sandboxes and arguments that move grok off the checkout", () => {
+  it("refuses read-only, strict and workspace sandboxes and arguments that move grok off the checkout", () => {
     expect(
       launch
         .refusedArgs("grok", [
@@ -302,7 +310,7 @@ describe("agent kind specs: grok", () => {
           "/x",
         ])
         .map((item) => item.index),
-    ).toEqual([0, 2, 6, 7, 8]);
+    ).toEqual([0, 2, 5, 6, 7, 8]);
   });
 
   it("reports grok's bypasses and its folder-trust grant", () => {

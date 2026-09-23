@@ -11,8 +11,8 @@ import {
  * `18-sandbox.md`, `22-permissions-and-safety.md`, `10-hooks.md`) and the local grok skill:
  * - `-m, --model` selects the model; grok has no provider selection.
  * - grok has no directory grant. Its default sandbox is `off`, so it can write the result into
- *   the run directory; the `read-only` and `strict` profiles never can, and Woof refuses them.
- *   `workspace` writes only the working directory, `~/.grok` and temp dirs (see the docs).
+ *   the run directory. The built-in `read-only`, `strict` and `workspace` profiles cannot (the
+ *   last writes only the working directory, `~/.grok` and temp dirs), and Woof refuses them.
  * - `-w/--worktree` and `--cwd` would move grok off the run's checkout: Woof refuses them.
  * - `--always-approve`, `--permission-mode bypassPermissions`, the compat alias
  *   `--dangerously-skip-permissions` and `--trust` are reported as bypasses, never added.
@@ -33,7 +33,7 @@ export const grok: AgentKindSpec = {
   refusedArgs: (args) =>
     [
       ...optionValues(args, ["--sandbox"])
-        .filter(({ value }) => value === "read-only" || value === "strict")
+        .filter(({ value }) => value === "read-only" || value === "strict" || value === "workspace")
         .map(({ index, value }) => ({
           index,
           message: `grok's ${value ?? ""} sandbox cannot write the result into the run directory, and grok has no directory grant`,

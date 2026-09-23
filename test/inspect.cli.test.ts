@@ -1196,6 +1196,32 @@ echo "Not logged in" >&2; exit 1
     expect(withGrok["problems"]).toEqual([]);
   });
 
+  it("agent kinds: a CLI that ignores SIGTERM cannot hold doctor past its probe bound", () => {
+    const root = tempDir("woof-doctor-hang-");
+    const home = join(root, "home");
+    const repo = join(root, "repo");
+    for (const dir of [home, repo]) mkdirSync(dir);
+    gitInit(repo);
+    const { bin, path } = probeBin(root);
+    writeFileSync(join(bin, "fake-herdr"), "#!/bin/sh\necho herdr 0.0.0-fake\n", { mode: 0o755 });
+    writeFileSync(join(bin, "pi"), "#!/bin/sh\ntrap '' TERM\nsleep 60\n", { mode: 0o755 });
+    mkdirSync(join(repo, ".woof", "roles"), { recursive: true });
+    writeFileSync(
+      join(repo, ".woof", "roles", "builder.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "pi", model: null }),
+    );
+    const started = Date.now();
+    const result = woof(["doctor", "--json", "--repo", repo], {
+      env: { ...doctorEnv(home, bin), PATH: path },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // The probe bound is 10 s; the kill must not wait for the 60 s sleep.
+    expect(Date.now() - started).toBeLessThan(30_000);
+    const pi = ((result.json as Json)["kinds"] as Json[]).find((kind) => kind["kind"] === "pi");
+    expect(pi).toMatchObject({ status: "failed", version: null });
+    expect((result.json as Json)["problems"]).toContain("pi_unavailable");
+  }, 40_000);
+
   it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {
     const root = tempDir("woof-doctor-link-");
     const home = join(root, "home");

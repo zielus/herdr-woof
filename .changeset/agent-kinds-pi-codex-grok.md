@@ -12,7 +12,7 @@ role onto that CLI's flags; Herdr starts every kind and reports its lifecycle.
 - `codex` gets an `--add-dir` grant for the run directory. `pi` and `grok` get none,
   because they do not confine writes. Arguments a run could not work with are refused
   at admission: pi's `--add-dir`, codex's read-only sandbox, `-C` and `--worktree`, and
-  grok's read-only/strict sandbox, `--worktree` and `--cwd`.
+  grok's read-only/strict/workspace sandbox, `--worktree` and `--cwd`.
 - Each kind's own permission-bypass flags are reported as `permission_bypass_configured`,
   and the warning now names the kind and the flags. pi gains an advisory
   `pi_trust_untrusted`/`pi_trust_unknown` pre-flight.

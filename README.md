@@ -72,8 +72,9 @@ tests, not less:
 - Permission flags in role `args` (for example
   `--dangerously-skip-permissions`) pass through with a warning; Woof itself
   never adds one.
-- Workers receive `--add-dir <runDir>` on the run directory, so journal
-  integrity relies on workers not editing it.
+- Workers can write the run directory: `claude` and `codex` agents receive
+  `--add-dir <runDir>`, and `pi` and `grok` confine no writes at all, so
+  journal integrity relies on workers not editing it.
 
 These are statements of the current design, not fixes pending. See
 [Known limits](docs/decisions/architecture.md#known-limits) in
@@ -183,8 +184,9 @@ woof herdr status|cancel|doctor|watch
 `codex`, `grok`) can be invoked, the read-only Claude folder-trust status of a
 repository, resolved to that repository's git top level, and whether its
 configuration resolves (as text, or one JSON line with `--json`). For a
-configured `pi` role it runs `pi auth check` for the role's
-provider, and for a `codex` role `codex login status`. Neither Herdr nor any
+configured `pi` role with a `provider` (or a `provider/id` model) it runs
+`pi auth check` for it, and for a `codex` role `codex login status`. Neither
+Herdr nor any
 agent CLI is required for the command to complete. `doctor` exits 0 by
 default; `--strict` exits 2 when the report lists any problem
 (`herdr_unavailable`, `claude_unavailable`, `trust_untrusted`,

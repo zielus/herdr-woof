@@ -220,7 +220,13 @@ function probe(command: string, args: readonly string[]): Promise<Probe> {
     execFile(
       command,
       [...args],
-      { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      // SIGKILL, not the default SIGTERM: a CLI that ignores SIGTERM must not outlive the bound.
+      {
+        encoding: "utf8",
+        timeout: PROBE_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        maxBuffer: 1024 * 1024,
+      },
       (error, stdout, stderr) => {
         if (error === null) return done({ status: "available", code: 0, stdout, stderr });
         if (error.code === "ENOENT")
@@ -266,21 +272,21 @@ async function kindReport(
     entry.roles.push(name);
     selections.set(key, entry);
   }
-  const readiness = await Promise.all(
-    [...selections.values()].flatMap((selection) => {
-      const check = version.status === "available" ? spec.readinessProbe?.(selection) : undefined;
-      if (check === undefined || check === null) return [];
-      return [
-        probe(spec.executable, check.args).then((result) => ({
-          roles: selection.roles,
-          subject: check.subject,
-          ...(result.status === "not_found"
-            ? { ready: false, detail: `${spec.executable} not found` }
-            : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr })),
-        })),
-      ];
-    }),
-  );
+  // One selection at a time: however many roles a project defines, a kind runs one probe at once.
+  const readiness: DoctorKind["readiness"] = [];
+  for (const selection of selections.values()) {
+    const check = version.status === "available" ? spec.readinessProbe?.(selection) : undefined;
+    if (check === undefined || check === null) continue;
+    // oxlint-disable-next-line no-await-in-loop
+    const result = await probe(spec.executable, check.args);
+    readiness.push({
+      roles: selection.roles,
+      subject: check.subject,
+      ...(result.status === "not_found"
+        ? { ready: false, detail: `${spec.executable} not found` }
+        : check.read({ status: result.code, stdout: result.stdout, stderr: result.stderr })),
+    });
+  }
   const warning = used.length > 0 ? (spec.trustWarning?.(dir, {}) ?? null) : null;
   return {
     kind: spec.kind,

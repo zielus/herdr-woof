@@ -238,12 +238,12 @@ adds no kind-specific observation, prompt delivery or result path. The engine
 adds only the model, a provider where the kind selects one, and a run-directory
 grant where the kind confines writes; it never adds a permission flag.
 
-| Kind     | Verified against | Engine adds                                             | Engine owns                               | Refused at admission                                     | Reported as a bypass                                                                                                                        | Trust pre-flight             | Doctor readiness                                         |
-| -------- | ---------------- | ------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------- |
-| `claude` | Claude Code 2.1  | `--model`, `--add-dir <runDir>`                         | `--model`, `--add-dir`                    | —                                                        | `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions`                             | `~/.claude.json` (exact key) | —                                                        |
-| `pi`     | pi 0.86.0        | `--provider`, `--model` (no grant: pi confines nothing) | `--model`, `--provider` (not `--models`)  | `--add-dir` (pi has none)                                | `--approve`, `-a`                                                                                                                           | `~/.pi/agent/trust.json`     | `pi auth check --provider/--model … --json --no-refresh` |
-| `codex`  | codex-cli 0.156  | `--model`, `--add-dir <runDir>`                         | `--model`, `-m`, `--add-dir`, `-c model=` | `read-only` sandbox, `-C`/`--cd`, `--worktree`           | `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`, `--dangerously-bypass-hook-trust`, `danger-full-access` sandbox | none                         | `codex login status`                                     |
-| `grok`   | grok 1.0.41      | `--model` (no grant exists; default sandbox is off)     | `--model`, `-m`                           | `read-only`/`strict` sandbox, `-w`/`--worktree`, `--cwd` | `--always-approve`, `--permission-mode bypassPermissions`, `--dangerously-skip-permissions`, `--trust`                                      | none                         | none (`--version` only)                                  |
+| Kind     | Verified against | Engine adds                                             | Engine owns                               | Refused at admission                                                 | Reported as a bypass                                                                                                                        | Trust pre-flight             | Doctor readiness                                         |
+| -------- | ---------------- | ------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------- |
+| `claude` | Claude Code 2.1  | `--model`, `--add-dir <runDir>`                         | `--model`, `--add-dir`                    | —                                                                    | `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions`                             | `~/.claude.json` (exact key) | —                                                        |
+| `pi`     | pi 0.86.0        | `--provider`, `--model` (no grant: pi confines nothing) | `--model`, `--provider` (not `--models`)  | `--add-dir` (pi has none)                                            | `--approve`, `-a`                                                                                                                           | `~/.pi/agent/trust.json`     | `pi auth check --provider/--model … --json --no-refresh` |
+| `codex`  | codex-cli 0.156  | `--model`, `--add-dir <runDir>`                         | `--model`, `-m`, `--add-dir`, `-c model=` | `read-only` sandbox, `-C`/`--cd`, `--worktree`                       | `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`, `--dangerously-bypass-hook-trust`, `danger-full-access` sandbox | none                         | `codex login status`                                     |
+| `grok`   | grok 1.0.41      | `--model` (no grant exists; default sandbox is off)     | `--model`, `-m`                           | `read-only`/`strict`/`workspace` sandbox, `-w`/`--worktree`, `--cwd` | `--always-approve`, `--permission-mode bypassPermissions`, `--dangerously-skip-permissions`, `--trust`                                      | none                         | none (`--version` only)                                  |
 
 - **Provider.** Only `pi` selects a provider (`--provider`, for example
   `github-copilot`); a role's `provider` is refused, never dropped, for any
@@ -267,10 +267,13 @@ grant where the kind confines writes; it never adds a permission flag.
   reserves room for the longest such note.
 - **Known limits.** `codex` and `grok` have no live acceptance run. A pi model
   id unknown to its provider starts and then fails on its first turn; `pi auth
-check` does not validate the model. grok's `workspace` sandbox (or a custom
-  profile) cannot write a run directory outside the working directory, `~/.grok`
-  and temp dirs; Woof refuses only the `read-only` and `strict` profiles it can
-  see in the arguments, not a sandbox set by `GROK_SANDBOX` or grok's config.
+check` does not validate the model, and it runs only for a role with a
+  `provider` or a `provider/id` model: pi reads an unqualified `--model` there
+  as a provider name and answers `invalid`. grok's built-in `read-only`,
+  `strict` and `workspace` sandboxes cannot write a run directory outside the
+  working directory, `~/.grok` and temp dirs; Woof refuses them in the
+  arguments, but not a custom profile or a sandbox set by `GROK_SANDBOX` or
+  grok's config.
   Model or permission overrides in a CLI's own config or profile (`codex
 --profile`, grok `permission_mode`) are not visible to Woof.
 - **Not admitted.** Other Herdr kinds, including the standalone `copilot` CLI,
