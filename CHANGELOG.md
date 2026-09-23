@@ -6,6 +6,88 @@ All notable changes to this project are documented here. The project uses
 request adds; versions up to 0.1.2 follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.0
+
+### Minor Changes
+
+- [#32](https://github.com/zielus/herdr-woof/pull/32) [`fc264e1`](https://github.com/zielus/herdr-woof/commit/fc264e1dacb9b270db11221e573b9c0445f172d9) Thanks [@zielus](https://github.com/zielus)! - Agent kinds: roles and workflow input agents can now use `pi`, `codex` and `grok`
+  besides `claude`. Each kind is a small spec under `src/runtime/kinds/` that maps the
+  role onto that CLI's flags; Herdr starts every kind and reports its lifecycle.
+
+  - Roles gain an optional `provider`. `pi` maps it to `--provider` (for example
+    `github-copilot`), and any other kind refuses it. It is shown by `config show` and
+    recorded in `config.json` with the role's provenance.
+  - `codex` gets an `--add-dir` grant for the run directory. `pi` and `grok` get none,
+    because they do not confine writes. Arguments a run could not work with are refused
+    at admission: pi's `--add-dir`, codex's read-only sandbox, `-C` and `--worktree`, and
+    grok's read-only/strict/workspace sandbox, `--worktree` and `--cwd`.
+  - Each kind's own permission-bypass flags are reported as `permission_bypass_configured`,
+    and the warning now names the kind and the flags. pi gains an advisory
+    `pi_trust_untrusted`/`pi_trust_unknown` pre-flight.
+  - `woof doctor` probes every kind's CLI in parallel. For a pi role with a `provider`
+    (or a `provider/id` model) it runs `pi auth check --no-refresh`, and for a codex role
+    `codex login status`; at most 4 such checks run per kind, together, so doctor stays
+    bounded. Problems for kinds other than claude count only when a resolved role uses
+    that kind. The JSON report gains `kinds`.
+  - `codex` and `grok` work requests end with a short sandbox note. The admission-time
+    request bound reserves room for it, so the largest accepted `task` context is 171
+    bytes smaller.
+
+- [#30](https://github.com/zielus/herdr-woof/pull/30) [`4361812`](https://github.com/zielus/herdr-woof/commit/4361812980cc1eef03c65b4386bf63ef021e26f0) Thanks [@zielus](https://github.com/zielus)! - **Breaking:** the run host now notifies the agent that started a run, and
+  `woof status --wait` is removed.
+
+  Inside Herdr, `woof run start` returns as soon as the run is open. The run host
+  then pushes `[woof]` messages into the pane of the agent that ran `run start`,
+  using `herdr agent prompt`. It sends one message for each of these events:
+
+  - `action_required`: a worker is blocked.
+  - `resumed`: the worker continues.
+  - `error`: Herdr became unavailable to the run, or a worker agent is gone.
+  - One terminal message: `done`, or `limit_reached` when the run ended exhausted.
+
+  Messages carry engine facts only and never a worker's words. The host sends one
+  only while the caller's pane still hosts the same agent session and that agent
+  is idle. A working or blocked caller keeps the message queued, within bounds.
+  An ambiguous delivery is never resent.
+
+  `config.json` records the target, or why there is none. The journal records the
+  target (`notify.target`) and every outcome (`notify.outcome`). Both are new
+  record types, added at `schemaVersion: 1`.
+
+  `woof status` is now a snapshot only: `--wait`, `--timeout-ms`,
+  `--allow-blocked` and `--poll-ms` are gone. When the owner exited without
+  recording an end, `status` shows the host's `outcome.json` as `hostOutcome`.
+  `--host foreground` is now documented as the mode for tests, CI and scripted
+  runtimes. It notifies nobody and still exits with the outcome's code.
+  `/woof:run` and the woof skill now start the run, report it, end the turn and
+  act on the `[woof]` messages.
+
+- [#30](https://github.com/zielus/herdr-woof/pull/30) [`4361812`](https://github.com/zielus/herdr-woof/commit/4361812980cc1eef03c65b4386bf63ef021e26f0) Thanks [@zielus](https://github.com/zielus)! - **Breaking:** `woof run start` is the one way to run a workflow. The Herdr
+  plugin and `/woof:run` only wrap it. Removed:
+
+  - `woof run build-review`: use `woof run start --workflow build-review --host foreground --project <repo>`.
+    It prints the same human view and result line and uses the same exit codes.
+    `--project` is the input's repository, which `run build-review` inferred.
+  - The Herdr plugin `start` action (`woof herdr start`) and the
+    `.woof/start.json` convention: start runs with `woof run start` or `/woof:run`.
+    The `status`, `cancel`, `watch` and `doctor` actions remain, and
+    `woof herdr <action> --help` now prints the usage.
+  - `woof agent start`: it started an agent outside any workflow run.
+  - `woof attempt open` and `woof run show`: no workflow path used them. The
+    scheduler opens attempts in-process with the SDK's `openAttempt`, and
+    `woof status` or the SDK's `readSnapshot` shows a run. Both SDK functions
+    are unchanged.
+
+  `woof submit`, `run cancel`, `run host`, the inspection commands and every SDK
+  export are unchanged. No public SDK export existed only for a removed command.
+
+- [#30](https://github.com/zielus/herdr-woof/pull/30) [`4361812`](https://github.com/zielus/herdr-woof/commit/4361812980cc1eef03c65b4386bf63ef021e26f0) Thanks [@zielus](https://github.com/zielus)! - **Breaking:** the web UI is removed. `woof ui` no longer exists, and the package
+  no longer ships `dist-ui/`. Woof is a workflow engine and a Herdr agents library;
+  follow runs with `woof status`, `woof watch`, `woof events`, `woof runs` or
+  `woof tui`, and cancel them with `woof run cancel`. The engine's inspection and
+  cancellation functions (`listRuns`, `readRunStatus`, `cancelRun`) are unchanged.
+  Journals whose `run.cancel_requested` names the old `web` source still replay.
+
 ## 0.3.1
 
 ### Patch Changes
