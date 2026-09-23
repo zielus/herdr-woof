@@ -1018,6 +1018,34 @@ describe("agent kinds: pi (per-kind launch specs)", () => {
     });
   });
 
+  it("K8: a grok role gets --model only; a read-only sandbox is role_invalid; --always-approve is reported", () => {
+    const env = setup();
+    writeJson(
+      join(env.repo, ".woof", "roles", "reviewer.json"),
+      role({ kind: "grok", model: "grok-4.7", args: ["--always-approve"] }),
+    );
+    const out = startForeground(env, baseInput(env));
+    expect(out.status, out.stdout + out.stderr).toBe(0);
+    expect(plannedArgs(out)["reviewer"]).toEqual(["--model", "grok-4.7", "--always-approve"]);
+    expect(recordedConfig(out)["warnings"]).toContainEqual({
+      code: "permission_bypass_configured",
+      message: expect.stringContaining("(grok: --always-approve)"),
+      path: join(env.repo, ".woof", "roles", "reviewer.json"),
+    });
+
+    const sandboxed = setup();
+    writeJson(
+      join(sandboxed.repo, ".woof", "roles", "reviewer.json"),
+      role({ kind: "grok", args: ["--sandbox", "read-only"] }),
+    );
+    const refused = show(sandboxed, ["--project", sandboxed.repo]);
+    expect(refused.status).toBe(2);
+    expect(refused.json).toMatchObject({
+      reason: "role_invalid",
+      details: [{ pointer: "/args/0" }],
+    });
+  }, 60_000);
+
   it("K5: a project whose .pi/ settings pi would ask to trust gets the advisory pi_trust_untrusted warning", () => {
     const env = setup();
     writeJson(join(env.repo, ".pi", "settings.json"), {});

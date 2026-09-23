@@ -1175,6 +1175,25 @@ echo "Not logged in"; exit 1
       { roles: ["reviewer"], subject: "login", ready: true, detail: "Logged in using ChatGPT" },
     ]);
     expect(loggedIn["problems"]).toEqual([]);
+
+    // A grok role: grok has no readiness probe, only its --version.
+    writeFileSync(
+      join(repo, ".woof", "roles", "planner.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "grok", model: null }),
+    );
+    expect(doctor()["problems"]).toEqual(["grok_unavailable"]);
+    writeFileSync(join(bin, "grok"), "#!/bin/sh\necho 'grok 0.0.0-fake'\n", { mode: 0o755 });
+    const withGrok = doctor();
+    expect(kind(withGrok, "grok")).toEqual({
+      kind: "grok",
+      executable: "grok",
+      status: "available",
+      version: "grok 0.0.0-fake",
+      roles: ["planner"],
+      readiness: [],
+      trust: null,
+    });
+    expect(withGrok["problems"]).toEqual([]);
   });
 
   it("F-023: never follows a symlinked ~/.claude.json; trust is unknown", () => {

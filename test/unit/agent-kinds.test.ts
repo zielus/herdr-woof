@@ -267,3 +267,62 @@ describe("agent kind specs: codex", () => {
     expect(launch.submitNoteOf("codex")).toContain("--add-dir");
   });
 });
+
+describe("agent kind specs: grok", () => {
+  it("maps the model to --model with no run-directory grant and no provider", () => {
+    expect(
+      launch.launchArgs({
+        kind: "grok",
+        model: "grok-4.7",
+        args: ["--effort", "low"],
+        runDir: "/r",
+      }),
+    ).toEqual({ ok: true, args: ["--model", "grok-4.7", "--effort", "low"] });
+    expect(
+      launch.launchArgs({ kind: "grok", model: null, provider: "xai", args: [], runDir: "/r" }),
+    ).toMatchObject({ ok: false, reason: "role_invalid" });
+    expect(launch.engineOwnedArgIndexes("grok", ["-m", "x", "--model=x", "-s", "id"])).toEqual([
+      0, 2,
+    ]);
+  });
+
+  it("refuses read-only and strict sandboxes and arguments that move grok off the checkout", () => {
+    expect(
+      launch
+        .refusedArgs("grok", [
+          "--sandbox",
+          "read-only",
+          "--sandbox=strict",
+          "--sandbox",
+          "off",
+          "--sandbox=workspace",
+          "-w",
+          "--worktree=feat",
+          "--cwd",
+          "/x",
+        ])
+        .map((item) => item.index),
+    ).toEqual([0, 2, 6, 7, 8]);
+  });
+
+  it("reports grok's bypasses and its folder-trust grant", () => {
+    expect(
+      launch.permissionBypassArgs("grok", [
+        "--always-approve",
+        "--dangerously-skip-permissions",
+        "--trust",
+        "--permission-mode=bypassPermissions",
+        "--permission-mode",
+        "acceptEdits",
+        "--yolo",
+      ]),
+    ).toEqual([
+      "--always-approve",
+      "--dangerously-skip-permissions",
+      "--trust",
+      "--permission-mode bypassPermissions",
+    ]);
+    expect(launch.submitNoteOf("grok")).toContain("never write the artifact");
+    expect(launch.trustWarnings(["grok", "codex"], "/tmp", {})).toEqual([]);
+  });
+});
