@@ -102,8 +102,6 @@ export interface LaunchOptions {
   input: unknown;
   flags: LaunchFlags;
   launcherPaneId: string | null;
-  /** The pane whose workspace the host's tab joins (a Herdr action's focused pane); default the launcher's. */
-  workspacePaneId?: string | null;
   herdrBin: string;
   env: NodeJS.ProcessEnv;
   nodePath: string;
@@ -300,14 +298,10 @@ export async function launchInPane(
     tab = { paneId: worktree.rootPaneId, tabId: worktree.tabId, workspaceId: worktree.workspaceId };
   } else {
     // The run host gets its own unfocused tab and runs in that tab's root pane. The tab goes to
-    // the workspace Herdr reports for the launcher's (or the action's focused) pane;
+    // the workspace Herdr reports for the launcher's pane;
     // HERDR_WORKSPACE_ID, which can be absent or stale, is only the fallback, and with neither
     // Herdr's default decides.
-    const workspaceId = await launchWorkspaceId(
-      exec,
-      options.workspacePaneId ?? options.launcherPaneId,
-      options.env,
-    );
+    const workspaceId = await launchWorkspaceId(exec, options.launcherPaneId, options.env);
     const createArgs = [
       "tab",
       "create",

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -22,13 +22,13 @@ import {
   distUrl,
   makeRunDir,
   openPlannedRun,
+  readSnapshotOf,
   repoRoot,
   runNode,
   runNodeAsync,
   runSdk,
   sdkScript,
   testPlan,
-  woof,
 } from "./helpers/process.js";
 
 // Observer transport runs in real child processes: a writer appends through the
@@ -178,12 +178,10 @@ describe("event subscription across a reconnect", () => {
     const ordered = [...bySeq.values()].toSorted((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
     const folded = foldEvents(null, ordered);
     expect(folded.ok).toBe(true);
-    const shown = woof(["run", "show", runDir]);
-    expect(shown.status, shown.stderr).toBe(0);
-    const fresh = JSON.parse(shown.stdout) as { outcome: string; snapshot: Json };
-    expect(fresh.outcome).toBe("snapshot");
-    expect(folded.projection.snapshot).toEqual(fresh.snapshot);
-    expect(fresh.snapshot["status"]).toBe("cancelled");
+    const fresh = readSnapshotOf(runDir);
+    expect(fresh["ok"]).toBe(true);
+    expect(folded.projection.snapshot).toEqual(fresh["snapshot"]);
+    expect(fresh["snapshot"]["status"]).toBe("cancelled");
   }, 60_000);
 });
 
@@ -239,10 +237,8 @@ appendFileSync(path, line.slice(half));
     expect(seen[1]).toMatchObject({ reason: "journal_corrupt" });
     expect(Date.now() - started).toBeLessThan(5000);
 
-    const shown = woof(["run", "show", runDir]);
-    expect(shown.status, shown.stderr).toBe(0);
-    const snapshot = JSON.parse(shown.stdout) as { snapshot: { journal: Json } };
-    expect(snapshot.snapshot.journal).toEqual({ records: 1, tailPending: true });
+    const snapshot = readSnapshotOf(runDir);
+    expect(snapshot["snapshot"]["journal"]).toEqual({ records: 1, tailPending: true });
   });
 });
 
@@ -549,7 +545,7 @@ out = { ok: read.ok, runId: read.snapshot?.runId, revision: read.snapshot?.revis
     });
   });
 
-  it("reports journal_replaced from readSnapshot, readEvents and woof run show when line 1 changes on every read", () => {
+  it("reports journal_replaced from readSnapshot and readEvents when line 1 changes on every read", () => {
     const runDir = makeRunDir();
     const journalPath = join(runDir, "journal.jsonl");
     writeFileSync(journalPath, openedLine("run-a"));
@@ -599,35 +595,6 @@ console.log(JSON.stringify({ snapshot, events, afterSnapshot, afterEvents, missi
     expect([out["afterSnapshot"], out["afterEvents"]]).toEqual([3, 6]);
     expect(out["missingSnapshot"]).toMatchObject({ ok: false, reason: "run_dir_invalid" });
     expect(out["missingEvents"]).toMatchObject({ ok: false, reason: "run_dir_invalid" });
-
-    const shown = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(preload).href,
-        join(repoRoot, "dist", "cli.js"),
-        "run",
-        "show",
-        runDir,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(shown.status, shown.stderr).toBe(3);
-    expect(JSON.parse(shown.stdout)).toEqual({
-      outcome: "rejected",
-      reason: "journal_replaced",
-      message: replaced.message,
-    });
-    const missing = spawnSync(
-      process.execPath,
-      [join(repoRoot, "dist", "cli.js"), "run", "show", join(runDir, "nope")],
-      { encoding: "utf8" },
-    );
-    expect(missing.status).toBe(3);
-    expect(JSON.parse(missing.stdout)).toMatchObject({
-      outcome: "rejected",
-      reason: "run_dir_invalid",
-    });
   });
 
   it("never yields seq 2 when another inode is renamed in between a failed continuation read and the fallback full read", async () => {

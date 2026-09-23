@@ -16,6 +16,13 @@ acceptance.
   uses those operations through a runtime adapter instead of recreating them.
 - The engine and configuration layers do not import plugin UI code. MCP remains
   optional and is not a workflow admission or result-submission dependency.
+- Woof is a workflow engine plus a Herdr agents library. `woof run start` is
+  the one engine entry point for running a workflow; an integration (the Herdr
+  plugin, `/woof:run`) may only wrap it and never adds its own way of starting
+  runs or its own input format. `--host foreground` chooses where the
+  scheduler runs, not a second way to run a workflow. The CLI keeps only what
+  serves running workflows: `run start`/`run host`/`run cancel`, the `submit`
+  agents call, inspection and setup diagnostics.
 
 ### Execution and artifacts
 
@@ -174,9 +181,6 @@ alter a public contract, trust boundary or execution model.
 - Run-directory creation does not provide a dirfd-based, whole-path trust
   boundary. Configuration hashing follows symlinks by design. Direction: use a
   dirfd-based walk if the remaining race is shown to be exploitable.
-- Four paths start a run: `woof run start`, `woof run build-review`, the Herdr
-  plugin's `start` action and `/woof:run`. Direction: consolidate the verbs once
-  usage patterns are clear.
 - `journal_write_failed` covers both run-directory creation failures and journal
   lock-acquisition I/O errors. Direction: split the reason if a consumer needs
   the distinction.

@@ -83,11 +83,9 @@ blocked run and a terminated runtime, not just successful completion.
 Real shipped behavior for run snapshots, events and runtime observation — not
 design intent. Source: `src/state/snapshot.ts`,
 `src/observe/{cursor,events,subscribe}.ts`,
-`src/runtime/{adapter,tracker,overlay}.ts`, and `woof run show`
-(`src/cli.ts`).
+and `src/runtime/{adapter,tracker,overlay}.ts`.
 
-- **Snapshot shape.** `readSnapshot(runDir)` / `woof run show <run-dir>`
-  return a `RunSnapshot` (`schemaVersion: 1`, `kind: "woof.run.snapshot"`):
+- **Snapshot shape.** `readSnapshot(runDir)` returns a `RunSnapshot` (`schemaVersion: 1`, `kind: "woof.run.snapshot"`):
   `runId`, `revision` (seq of the last complete journal record), `cursor`,
   `journal {records, tailPending}`, `workflow` (`null` for plan-less runs),
   `status`, `openedAt`/`updatedAt`, `outcome` (`null` until termination),
@@ -104,7 +102,7 @@ design intent. Source: `src/state/snapshot.ts`,
   line 1 changes during a read, at most three reads in all; if line 1 still
   changed on the third read, they return the distinct reason
   `journal_replaced` ("the journal's line 1 changed during each of 3
-  consecutive reads") rather than `run_dir_invalid`. `woof run show` exits
+  consecutive reads") rather than `run_dir_invalid`. `woof status` exits
   `3` for any of the three: `{"outcome":"rejected","reason":"run_dir_invalid"
 | "journal_corrupt" | "journal_replaced",…}`.
 
@@ -208,8 +206,7 @@ records}`) is the proof of this by construction: it re-derives the
   (`{agentId, runtimeName, assignedTerminalId, observedTerminalId}`) instead
   of being silently overlaid with another terminal's occupant.
 
-- **`--verify-artifacts`** (`woof run show --verify-artifacts`,
-  `readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
+- **`--verify-artifacts`** (`readSnapshot(runDir, {verifyArtifacts: true})`) re-hashes every accepted
   copy against its journal record and reports `integrity.artifacts =
 {checked, altered: [{receiptId, acceptedPath, problem}]}`. This detects
   tampering or loss after acceptance; it does not prevent it (same-user
@@ -340,7 +337,7 @@ show`/`readEvents` project, so "an external observer agrees with the
   engine's state" holds by construction — there is no separate in-process
   state the scheduler consults instead.
 - **`liveness.owner` stays `"unhosted"` for a foreground scheduler
-  (unchanged).** `woof run build-review`/`--host foreground` run the
+  (unchanged).** `woof run start --host foreground` runs the
   scheduler in this process: a killed one leaves a non-terminal run, and the
   only resolution is `woof run cancel <run-dir>` (which records the
   termination a live scheduler would otherwise have written). p4 adds a real
@@ -502,7 +499,7 @@ events --pretty`**, the same output) keeps the technical projection from
   spaces). `woof status --pretty` prints the technical header instead of the
   JSON line.
 - **`woof config show`**, **`woof status`**, **`woof runs`**, **`woof
-events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-only and never take the journal
+events`**, **`woof watch`** and **`woof tui`** are read-only and never take the journal
   lock or contact Herdr (`woof runs --reindex` writes run-index locators, never a
   run directory: see [central index](#implemented-now-central-index)); see
   [configuration](configuration.md#implemented-now-p4). **`woof doctor
@@ -520,7 +517,7 @@ events`**, **`woof watch`**, **`woof tui`** and **`woof run show`** are read-onl
   than hanging the command.
 - **The run host prints the human view of its own run.** `woof run host`
   (the pane host `run start` types into the root pane of the host's tab) and
-  `--host foreground`/`run build-review` print to their stdout exactly what
+  `--host foreground` print to their stdout exactly what
   `woof watch <run-dir> --follow` prints — the opening block once the run is
   open, one history row per fact as the journal records land, the outcome
   summary — followed by the result JSON line. The host follows its OWN
@@ -807,7 +804,7 @@ workflow, openedAt, registeredAt}` — `runDir` absolute and symlink-resolved,
   run id already indexed at another directory that holds that run — or, without
   `--prune`, at a directory that cannot be reached — is left alone and listed
   under `conflicts`. It never touches a run directory.
-- **Run addressing by id.** `woof status|events|watch|run show|run cancel`
+- **Run addressing by id.** `woof status|events|watch|run cancel`
   resolve their argument: an existing directory always wins; else, for a bare
   run id, the locator (which must still lead to that run) and `<runs-dir>/<id>`
   are both looked at. When both hold a run with that id at different real

@@ -60,6 +60,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { jsonForm } from "./lib/observer.mjs";
+import { showRun } from "./lib/snapshot.mjs";
 
 const woofRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cliPath = join(woofRoot, "dist", "cli.js");
@@ -1023,17 +1024,15 @@ async function partA() {
     `builder ${expected}; ${builds.length} build and ${repairs.length} repair dispatch(es)`,
   );
 
-  const shown = woofSaved(
-    "A/run-show-verify-artifacts.txt",
-    "run",
-    "show",
-    run.runId,
-    "--verify-artifacts",
+  const shown = showRun(sdk.readSnapshot, run.runDir, { verifyArtifacts: true });
+  evidence(
+    "A/snapshot-verify-artifacts.txt",
+    `readSnapshot(${run.runDir}, {verifyArtifacts: true})\n--- result\n${shown.stdout}`,
   );
   const integrity = shown.json?.snapshot?.integrity?.artifacts;
   gate(
     "A10",
-    "woof run show --verify-artifacts reports no altered artifact",
+    "readSnapshot --verify-artifacts reports no altered artifact",
     shown.status === 0 &&
       Array.isArray(integrity?.altered) &&
       integrity.altered.length === 0 &&

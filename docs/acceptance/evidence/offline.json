@@ -108,8 +108,8 @@
       "disposition": "cli",
       "tests": [
         {
-          "file": "test/run-build-review.cli.test.ts",
-          "name": "woof run build-review: usage and admission rejects invalid input before loading the runtime or writing a journal"
+          "file": "test/run-foreground.cli.test.ts",
+          "name": "woof run start --host foreground: usage and admission rejects invalid input before loading the runtime or writing a journal"
         },
         {
           "file": "test/plan-build-review.cli.test.ts",
@@ -121,7 +121,7 @@
         }
       ],
       "gates": [],
-      "command": "bun x vitest run test/run-build-review.cli.test.ts test/plan-build-review.cli.test.ts test/unit/build-review-input.test.ts",
+      "command": "bun x vitest run test/run-foreground.cli.test.ts test/plan-build-review.cli.test.ts test/unit/build-review-input.test.ts",
       "note": "",
       "backed": true,
       "problems": []
@@ -388,12 +388,12 @@
           "name": "scheduler blocking, delivery, cancellation and failures 9. cancellation stops owned panes and a late result cannot resurrect the run"
         },
         {
-          "file": "test/run-build-review.cli.test.ts",
-          "name": "woof run build-review: runs exits 6 on SIGTERM, records the cancellation and refuses a late submission"
+          "file": "test/run-foreground.cli.test.ts",
+          "name": "woof run start --host foreground: runs exits 6 on SIGTERM, records the cancellation and refuses a late submission"
         }
       ],
       "gates": [],
-      "command": "bun x vitest run test/scheduler.process.test.ts test/run-build-review.cli.test.ts",
+      "command": "bun x vitest run test/scheduler.process.test.ts test/run-foreground.cli.test.ts",
       "note": "",
       "backed": true,
       "problems": []

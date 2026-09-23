@@ -4,8 +4,8 @@ argument-hint: "[--workflow <name>] <task description>"
 allowed-tools: Bash(node:*), Bash(woof:*), Read
 ---
 
-You delegate one task to Woof. Woof runs the workflow's agents in Herdr panes
-next to this one and records every step in a run journal. You start the run,
+You delegate one task to Woof. Woof runs each of the workflow's agents in a
+Herdr tab of its own and records every step in a run journal. You start the run,
 wait for it, and report its result. You do not do the task yourself.
 
 Task from the user: $ARGUMENTS
@@ -58,13 +58,17 @@ Write one JSON object:
   Herdr a run defaults to a new Herdr worktree on branch `woof/<runId>`; add
   `"checkout": {"mode": "current"}` to work in the repository itself (its tree
   must be clean for a workflow that edits it), or `{"mode": "worktree",
-"branch": "<name>", "base": "<ref>"}` to choose the branch and its base.
+"branch": "<name>", "base": "<ref>"}` to choose the branch and its base. A
+  worktree checkout also takes `label` (the Herdr workspace label, default
+  `woof:<workflow>`) and `keep` (`false` removes the worktree after a completed
+  run; the branch stays).
 - Never add permission-bypass arguments on the user's behalf.
 
-Both built-in workflows take the shape below. A workflow that is neither takes
-whatever its own definition validates, which this command does not know: build
-the input from what the user gave you, start the run, and report exit 2's
-`details` verbatim rather than guessing at fields.
+The four built-in workflows take the shape below (`plan` and `auto-build` add
+`publish`, as above). Any other workflow takes whatever its own definition
+validates, which this command does not know: build the input from what the user
+gave you, start the run, and report exit 2's `details` verbatim rather than
+guessing at fields.
 
 A complete example (replace the values; drop `verify` when no command was
 named):

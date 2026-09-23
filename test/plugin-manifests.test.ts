@@ -89,7 +89,6 @@ describe("herdr-plugin.toml", () => {
     expect(manifest["actions"].map((action: { id: string }) => action.id)).toEqual([
       "doctor",
       "status",
-      "start",
       "cancel",
       "watch",
     ]);
@@ -122,7 +121,6 @@ describe("herdr-plugin.toml", () => {
     ).toEqual([
       ["doctor", ["bin/woof", "herdr", "doctor"]],
       ["status", ["bin/woof", "herdr", "status"]],
-      ["start", ["bin/woof", "herdr", "start"]],
       ["cancel", ["bin/woof", "herdr", "cancel"]],
       ["watch", ["bin/woof", "herdr", "watch"]],
     ]);
@@ -282,8 +280,8 @@ describe("Claude Code plugin", () => {
     expect(report).toContain("`artifacts.lastAcceptedByStage`");
     // The built-in example still validates; a definition this command does not
     // know is not guessed at.
-    expect(section(text, "## 2. Build the workflow input")).toContain(
-      "report exit 2's\n`details` verbatim rather than guessing at fields",
+    expect(section(text, "## 2. Build the workflow input").replaceAll(/\s+/g, " ")).toContain(
+      "report exit 2's `details` verbatim rather than guessing at fields",
     );
   });
 

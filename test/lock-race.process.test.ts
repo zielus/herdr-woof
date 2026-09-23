@@ -11,7 +11,6 @@ import {
   runNodeAsync,
   runSdk,
   submit,
-  woof,
 } from "./helpers/process.js";
 
 afterEach(() => cleanupRunDirs());
@@ -90,9 +89,6 @@ describe("journal lock compare-and-remove race (C1)", () => {
     }>(runDir, `out = { journal: readJournal(runDir), snapshot: snapshots.readSnapshot(runDir) };`);
     expect(reads.journal).toMatchObject({ ok: false, reason: "journal_corrupt", line: 4 });
     expect(reads.snapshot).toMatchObject({ ok: false, reason: "journal_corrupt" });
-    const shown = woof(["run", "show", runDir]);
-    expect(shown.status).toBe(3);
-    expect(shown.json).toMatchObject({ outcome: "rejected", reason: "journal_corrupt" });
     const retry = submit(runDir, envelope);
     expect(retry.status).toBe(3);
     expect(retry.json).toMatchObject({ outcome: "rejected", reason: "journal_corrupt" });

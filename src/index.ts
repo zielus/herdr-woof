@@ -11,9 +11,8 @@
  * engine: definitions and their loader, admission, the sequential scheduler
  * (`runWorkflow`), the built-in build-review workflow and the run result. The
  * scheduler is the only component that chooses a next stage; it records its
- * decisions through the store. `woof attempt open`, `woof submit`,
- * `woof run show`, `woof run build-review` and `woof run cancel` call the same
- * functions.
+ * decisions through the store. `woof run start`, `woof submit` and
+ * `woof run cancel` call the same functions.
  *
  * p4 adds configuration resolution (`resolveConfiguration`, `discoverRoots`),
  * the read-only Claude Code trust check, run host claims and their probe, the

@@ -46,9 +46,10 @@ herdr plugin log list --plugin herdr-woof --limit 10
 ```
 
 The actions resolve the project from Herdr's invocation context, not from the
-plugin checkout. `start` reads `<project>/.woof/start.json`; `cancel` and `watch`
-act only when the project has one unambiguous active run. Do not start or cancel
-work as an installation probe. See [Woof integration surfaces](plugins.md) for
+plugin checkout. `cancel` and `watch` act only when the project has one
+unambiguous active run. The plugin does not start runs: start one with
+`woof run start` (or `/woof:run` from Claude Code). Do not cancel work as an
+installation probe. See [Woof integration surfaces](plugins.md) for
 the command outcomes and exit behavior.
 
 ## Configure the current metadata

@@ -24,6 +24,7 @@ import {
   makeRunDir,
   openAttemptOk,
   openPlannedRun,
+  readSnapshotOf,
   repoRoot,
   runNode,
   runSdk,
@@ -579,7 +580,7 @@ out = { outcomes: [claimed, cancelled, stranger, exited].map((item) => item.reas
       { kind: "woof.events.end", cursor: recorded[4]?.["cursor"], terminal: true },
     ]);
     // The host's exit never reopens the run, and the snapshot shows it as the last host fact.
-    expect(woof(["run", "show", runDir]).json).toMatchObject({
+    expect(readSnapshotOf(runDir)).toMatchObject({
       snapshot: {
         status: "cancelled",
         lifecycle: { host: { state: "exited", pid: 4242, exitCode: 6 } },

@@ -23,6 +23,3 @@ graphify-out/
 
 # demo video sources stay local; the GIF is the committed artifact
 assets/*.mp4
-
-# Per-user run input for the Herdr plugin "start" action and woof run start
-.woof/start.json

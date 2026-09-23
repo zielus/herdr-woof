@@ -1,4 +1,4 @@
-// Runtime module for `woof run build-review --runtime-module` CLI tests: a
+// Runtime module for `woof run start --runtime-module` CLI tests: a
 // scripted runtime whose workers submit through the real submission path.
 // WOOF_TEST_SCRIPT selects the behaviour ("happy", "always-fail", "hang", "slow");
 // WOOF_TEST_RUNTIME_LOG, when set, records every createRuntime call.

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -8,7 +8,7 @@ import { recordedWorkflowDefinition } from "../config/record.js";
 import type { ResolvedCheckout } from "../contracts/checkout.js";
 import { resolveConfiguration } from "../config/resolve.js";
 import { sha256Hex } from "../contracts/canonical-json.js";
-import { isId, isPlainObject } from "../contracts/envelope.js";
+import { isId } from "../contracts/envelope.js";
 import { claimHost } from "../host/claim.js";
 import { entryExists, writeExclusiveFile } from "../host/files.js";
 import { LAUNCH_FILE, launchInPane, readLaunchRequest, runDirOccupied } from "../host/launch.js";
@@ -66,12 +66,14 @@ current or path checkout with uncommitted changes (checkout_dirty).
 
 --host herdr-pane (default) needs HERDR_ENV=1 and HERDR_PANE_ID (or
 --split-from, which only stands in for HERDR_PANE_ID: nothing is split): it
-runs the scheduler in the root pane of a new, unfocused Herdr tab
-(woof:<workflow>) and returns once that host has opened the run, printing
-{"outcome":"started"} with the run directory and the host's paneId and tabId;
-follow it with woof status <run-dir> --wait. Every agent of the run gets its
-own tab (woof:<role>); the host's tab is the only pane Woof adds for the run
-and stays open after it, so its last lines remain readable. Agent tabs close
+runs the scheduler in a Herdr pane and returns once that host has opened the
+run, printing {"outcome":"started"} with the run directory and the host's
+paneId and tabId; follow it with woof status <run-dir> --wait. With a worktree
+checkout (the default) the host runs in the root pane of the new worktree's
+workspace; otherwise in the root pane of a new, unfocused tab (woof:<workflow>).
+Every agent of the run gets its own tab (woof:<role>); the host's pane is the
+only pane Woof adds for the run and stays open after it, so its last lines
+remain readable. Agent tabs close
 when the run ends unless --keep-panes (or keepPanes) is set.
 --host foreground runs the scheduler in this process and prints
 {"outcome":"run","result"} when the run ends.
@@ -94,23 +96,6 @@ the human view of the run (woof watch <run-dir> --follow) to stdout, its
 technical log to <run-dir>/host.log, and the result as one JSON line at the
 end; --plain prints the technical log to stdout instead of the human view.
 --ascii and --input summary|json are woof watch's.`;
-
-export const RUN_BUILD_REVIEW_USAGE = `Usage: woof run build-review --input <path|-> --run-dir <dir> [--run-id <id>]
-                             [--poll-ms <n>] [--keep-panes] [--runtime-module <path>]
-                             [--plain] [--ascii] [--preview summary|json]
-
-Runs the built-in build-review workflow in the foreground: build, verify (when
-the input names a command), review and repair until a review passes on the
-repaired tree or a limit ends the run. Agents start in Herdr panes next to this
-one (HERDR_ENV=1 and HERDR_PANE_ID are required). --run-dir must not hold a run.
---runtime-module loads a module whose default export createRuntime(context)
-returns a runtime adapter instead of Herdr (unstable, for tests). The human
-view of the run (woof watch --follow) goes to stdout, the technical log to
-<run-dir>/host.log (--plain prints it to stdout instead), and the last stdout
-line is the result JSON. Exits 0 completed, 4 failed, 5 exhausted,
-6 cancelled, 2 rejected before launch, 3 runtime or journal failure, 1 usage.
-Same as woof run start --workflow build-review --host foreground, with the
-input's repository as the project.`;
 
 /** How a host presents the run on its stdout: the technical log, or the human view of woof watch. */
 export interface HostViewFlags {
@@ -289,61 +274,6 @@ export async function runStartCommand(args: string[]): Promise<number> {
   });
 }
 
-export async function runBuildReviewCommand(args: string[]): Promise<number> {
-  const { values } = parse(
-    () =>
-      parseArgs({
-        args,
-        strict: true,
-        allowPositionals: false,
-        options: {
-          input: { type: "string" },
-          "run-dir": { type: "string" },
-          "run-id": { type: "string" },
-          "poll-ms": { type: "string" },
-          "keep-panes": { type: "boolean" },
-          "runtime-module": { type: "string" },
-          plain: { type: "boolean" },
-          ascii: { type: "boolean" },
-          preview: { type: "string" },
-          help: { type: "boolean", short: "h" },
-        },
-      }),
-    RUN_BUILD_REVIEW_USAGE,
-  );
-  if (values.help === true) {
-    console.log(RUN_BUILD_REVIEW_USAGE);
-    return 0;
-  }
-  const inputArg = required(values.input, "--input", RUN_BUILD_REVIEW_USAGE);
-  const view = viewFlagsOf(values, values.preview, "--preview", RUN_BUILD_REVIEW_USAGE);
-  const runDir = resolve(required(values["run-dir"], "--run-dir", RUN_BUILD_REVIEW_USAGE));
-  const runId = values["run-id"] ?? defaultRunId("build-review");
-  if (!isId(runId))
-    throw new UsageError(`--run-id must be a valid id\n\n${RUN_BUILD_REVIEW_USAGE}`);
-  const pollMs =
-    // At least 1 ms: a zero poll would spin the scheduler (SDK callers may still pass 0).
-    values["poll-ms"] === undefined ? undefined : milliseconds(values["poll-ms"], "--poll-ms", 1);
-  const input = await readWorkflowInput(inputArg);
-  if (!input.ok) return rejected("input_invalid", input.message, [], 2);
-  // The project is the input's repository when it names an existing directory.
-  const repo = isPlainObject(input.value) ? input.value["repo"] : undefined;
-  return foreground({
-    runDir,
-    runId,
-    workflow: "build-review",
-    projectDir: typeof repo === "string" && repo.startsWith("/") && isDirectory(repo) ? repo : null,
-    input: input.value,
-    flags: {
-      ...(pollMs !== undefined ? { pollMs } : {}),
-      ...(values["keep-panes"] === true ? { keepPanes: true } : {}),
-    },
-    runtimeModule:
-      values["runtime-module"] !== undefined ? resolve(values["runtime-module"]) : undefined,
-    view,
-  });
-}
-
 export async function runHostCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(
     () =>
@@ -490,7 +420,7 @@ async function foreground(options: {
   runDir: string;
   runId: string;
   workflow?: string;
-  projectDir: string | null;
+  projectDir: string;
   input: unknown;
   flags: HostWorkflowOptions["flags"];
   runtimeModule: string | undefined;
@@ -602,7 +532,7 @@ function runtimeFactory(runtimeModule: string | undefined): RuntimeFactory {
         return {
           ok: false,
           message:
-            "woof run build-review needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID) or --runtime-module",
+            "woof run start needs a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID) or --runtime-module",
         };
       }
       return {
@@ -673,12 +603,4 @@ export function defaultRunId(workflow: string | undefined): string {
 
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }

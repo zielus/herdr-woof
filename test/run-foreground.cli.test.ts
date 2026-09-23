@@ -25,7 +25,10 @@ import {
   type ProcessResult,
 } from "./helpers/process.js";
 
-// `woof run build-review` and `woof run cancel` as real processes (node dist/cli.js).
+// `woof run start --workflow build-review --host foreground` and `woof run cancel` as real
+// processes (node dist/cli.js): the scheduler runs in the calling process, which prints the
+// run's human view and ends with the result line. These scenarios covered `woof run build-review`
+// until that compatibility command was removed; `run start` is the one way to run a workflow.
 const runtimeModule = join(repoRoot, "test", "fixtures", "scripted-runtime-module.mjs");
 const dirs: string[] = [];
 const children: ChildProcess[] = [];
@@ -44,7 +47,7 @@ function workspace(): {
   inputPath: string;
   log: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "woof-br-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "woof-fg-cli-"));
   dirs.push(root);
   const repo = join(root, "repo");
   mkdirSync(repo);
@@ -108,38 +111,46 @@ function writeInput(path: string, value: unknown): string {
   return path;
 }
 
+/**
+ * `woof run start` for build-review in this process. The project is the fixture repository (the
+ * CLI runs from the Woof checkout), as `run build-review` took it from the input's repository.
+ */
+function foregroundArgs(ws: ReturnType<typeof workspace>): string[] {
+  return [
+    "run",
+    "start",
+    "--workflow",
+    "build-review",
+    "--host",
+    "foreground",
+    "--project",
+    ws.repo,
+    "--input",
+    ws.inputPath,
+    "--run-dir",
+    ws.runDir,
+    "--run-id",
+    "cli-run",
+  ];
+}
+
 const scriptedEnv = (log: string, script = "happy") => ({
   WOOF_TEST_SCRIPT: script,
   WOOF_TEST_RUNTIME_LOG: log,
 });
 
-function runBuildReview(
+function runForeground(
   ws: ReturnType<typeof workspace>,
   extra: string[] = [],
   env: Record<string, string | undefined> = {},
 ): ProcessResult {
-  return woof(
-    [
-      "run",
-      "build-review",
-      "--input",
-      ws.inputPath,
-      "--run-dir",
-      ws.runDir,
-      "--run-id",
-      "cli-run",
-      "--poll-ms",
-      "2",
-      ...extra,
-    ],
-    {
-      env,
-      timeoutMs: 60_000,
-    },
-  );
+  return woof([...foregroundArgs(ws), "--poll-ms", "2", ...extra], {
+    env,
+    timeoutMs: 60_000,
+  });
 }
 
-function startBuildReview(
+function startForeground(
   ws: ReturnType<typeof workspace>,
   extra: string[],
   env: Record<string, string>,
@@ -147,25 +158,10 @@ function startBuildReview(
   const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
   Reflect.deleteProperty(childEnv, "HERDR_PANE_ID");
   Reflect.deleteProperty(childEnv, "WOOF_RUN_DIR");
-  const child = spawn(
-    "node",
-    [
-      cliPath,
-      "run",
-      "build-review",
-      "--input",
-      ws.inputPath,
-      "--run-dir",
-      ws.runDir,
-      "--run-id",
-      "cli-run",
-      ...extra,
-    ],
-    {
-      env: childEnv,
-      cwd: repoRoot,
-    },
-  );
+  const child = spawn("node", [cliPath, ...foregroundArgs(ws), ...extra], {
+    env: childEnv,
+    cwd: repoRoot,
+  });
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -210,25 +206,25 @@ async function waitForRecord(runDir: string, type: string, timeoutMs = 20_000): 
   }
 }
 
-describe("woof run build-review: usage and admission", () => {
+describe("woof run start --host foreground: usage and admission", () => {
   it("exits 1 on missing arguments or unknown flags", () => {
-    expect(woof(["run", "build-review"]).status).toBe(1);
+    const fg = ["run", "start", "--host", "foreground"];
+    expect(woof(fg).status).toBe(1);
+    expect(woof([...fg, "--input", "x.json", "--run-dir", "/tmp/x", "--bogus"]).status).toBe(1);
     expect(
-      woof(["run", "build-review", "--input", "x.json", "--run-dir", "/tmp/x", "--bogus"]).status,
+      woof([...fg, "--input", "x.json", "--run-dir", "/tmp/x", "--run-id", "../x"]).status,
     ).toBe(1);
-    expect(
-      woof(["run", "build-review", "--input", "x.json", "--run-dir", "/tmp/x", "--run-id", "../x"])
-        .status,
-    ).toBe(1);
+    expect(woof(["run", "start", "--input", "x.json", "--host", "background"]).status).toBe(1);
     expect(woof(["run", "cancel"]).status).toBe(1);
-    expect(woof(["run", "build-review", "--help"])).toMatchObject({ status: 0 });
-    expect(woof(["run", "build-review", "--help"]).stdout).toContain("--runtime-module");
+    expect(woof(["run", "start", "--help"])).toMatchObject({ status: 0 });
+    expect(woof(["run", "start", "--help"]).stdout).toContain("--runtime-module");
+    expect(woof(["run", "start", "--help"]).stdout).toContain("--host foreground");
   });
 
   it("rejects invalid input before loading the runtime or writing a journal", () => {
     const ws = workspace();
     writeInput(ws.inputPath, { ...input(ws.repo), task: { title: "" } });
-    const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    const result = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(result.status).toBe(2);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "input_invalid" });
     expect(result.json?.details?.map((detail) => detail.field)).toEqual(
@@ -239,10 +235,27 @@ describe("woof run build-review: usage and admission", () => {
 
     writeInput(ws.inputPath, "{ not json");
     expect(
-      runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log)).json,
+      runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log)).json,
     ).toMatchObject({
       reason: "input_invalid",
     });
+  });
+
+  it("refuses a FIFO as the --input file as input_invalid without blocking", () => {
+    // Moved from the removed Herdr "start" action, which read .woof/start.json the same way.
+    const ws = workspace();
+    expect(spawnSync("mkfifo", [ws.inputPath]).status).toBe(0);
+    const began = Date.now();
+    const result = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    expect(Date.now() - began).toBeLessThan(10_000);
+    expect(result.status, result.stdout + result.stderr).toBe(2);
+    expect(result.json).toMatchObject({
+      outcome: "rejected",
+      reason: "input_invalid",
+      message: expect.stringContaining("is not a regular file"),
+    });
+    expect(existsSync(ws.log)).toBe(false);
+    expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
   });
 
   it("rejects a repository that is not a git work tree and an unsupported agent kind", () => {
@@ -250,7 +263,7 @@ describe("woof run build-review: usage and admission", () => {
     const notRepo = join(ws.root, "plain");
     mkdirSync(notRepo);
     writeInput(ws.inputPath, input(notRepo));
-    const repoResult = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    const repoResult = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(repoResult).toMatchObject({
       status: 2,
       json: { outcome: "rejected", reason: "repo_invalid" },
@@ -261,7 +274,7 @@ describe("woof run build-review: usage and admission", () => {
       reviewer: { kind: "claude", model: null, args: [] },
     };
     writeInput(ws.inputPath, input(ws.repo, { agents }));
-    const kindResult = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    const kindResult = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(kindResult).toMatchObject({ status: 2, json: { reason: "agent_kind_unsupported" } });
     expect(existsSync(ws.log)).toBe(false);
     expect(existsSync(join(ws.runDir, "journal.jsonl"))).toBe(false);
@@ -274,7 +287,7 @@ describe("woof run build-review: usage and admission", () => {
     writeInput(ws.inputPath, input(nested));
     // A run directory beside src/ lies inside the real work tree.
     const runDir = join(ws.repo, "run");
-    const result = runBuildReview(
+    const result = runForeground(
       { ...ws, runDir },
       ["--runtime-module", runtimeModule],
       scriptedEnv(ws.log),
@@ -300,7 +313,7 @@ describe("woof run build-review: usage and admission", () => {
       ws.root,
     ];
     for (const runDir of cases) {
-      const result = runBuildReview(
+      const result = runForeground(
         { ...ws, runDir },
         ["--runtime-module", runtimeModule],
         scriptedEnv(ws.log),
@@ -319,7 +332,7 @@ describe("woof run build-review: usage and admission", () => {
   it("rejects a repository path git cannot take (a NUL byte) as repo_invalid, structured", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(`${ws.repo}\u0000x`));
-    const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    const result = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(result.status, result.stderr).toBe(2);
     expect(result.stdout.trim().split("\n")).toHaveLength(1);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "repo_invalid" });
@@ -331,19 +344,10 @@ describe("woof run build-review: usage and admission", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));
     const zero = woof(
-      [
-        "run",
-        "build-review",
-        "--input",
-        ws.inputPath,
-        "--run-dir",
-        ws.runDir,
-        "--poll-ms",
-        "0",
-        "--runtime-module",
-        runtimeModule,
-      ],
-      { env: scriptedEnv(ws.log) },
+      [...foregroundArgs(ws), "--poll-ms", "0", "--runtime-module", runtimeModule],
+      {
+        env: scriptedEnv(ws.log),
+      },
     );
     expect(zero.status).toBe(1);
     expect(zero.stderr).toContain("--poll-ms must be an integer between 1 and 3600000");
@@ -354,7 +358,7 @@ describe("woof run build-review: usage and admission", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));
     const otherModule = join(repoRoot, "test", "fixtures", "other-adapter-runtime-module.mjs");
-    const result = runBuildReview(ws, ["--runtime-module", otherModule], scriptedEnv(ws.log));
+    const result = runForeground(ws, ["--runtime-module", otherModule], scriptedEnv(ws.log));
     expect(result.status, result.stdout).toBe(3);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "runtime_unavailable" });
     expect(result.json?.message).toContain('adapter ("herdr" | "scripted")');
@@ -366,7 +370,7 @@ describe("woof run build-review: usage and admission", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));
     const badModule = join(repoRoot, "test", "fixtures", "bad-runtime-module.mjs");
-    const result = runBuildReview(ws, ["--runtime-module", badModule], scriptedEnv(ws.log));
+    const result = runForeground(ws, ["--runtime-module", badModule], scriptedEnv(ws.log));
     expect(result.status, result.stdout).toBe(3);
     expect(result.json).toMatchObject({ outcome: "rejected", reason: "runtime_unavailable" });
     expect(result.json?.message).toContain("openPane");
@@ -384,7 +388,7 @@ describe("woof run build-review: usage and admission", () => {
     const marker = join(ws.root, "herdr-called");
     writeFileSync(join(bin, "herdr"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 1\n`);
     chmodSync(join(bin, "herdr"), 0o755);
-    const result = runBuildReview(ws, [], {
+    const result = runForeground(ws, [], {
       HERDR_ENV: undefined,
       PATH: `${bin}:${process.env["PATH"] ?? ""}`,
     });
@@ -397,14 +401,14 @@ describe("woof run build-review: usage and admission", () => {
   });
 });
 
-describe("woof run build-review: runs", () => {
-  it("completes with the scripted runtime and prints the result woof run show derives", () => {
+describe("woof run start --host foreground: runs", () => {
+  it("completes with the scripted runtime and prints the result its journal snapshot derives", () => {
     const ws = workspace();
     writeInput(
       ws.inputPath,
       input(ws.repo, { verify: { command: ["node", "-e", "process.exit(0)"], timeoutMs: 20_000 } }),
     );
-    const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+    const result = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
     expect(result.status, result.stderr).toBe(0);
     const printed = resultLine(result.stdout) as { outcome: string; result: Json };
     expect(printed).toMatchObject({
@@ -428,14 +432,14 @@ describe("woof run build-review: runs", () => {
     expect(hostLog).toMatch(/ run ended$/m);
     expect(hostLog).not.toContain("Task dispatched");
 
-    const shown = woof(["run", "show", ws.runDir]);
-    expect(shown.status).toBe(0);
     const derived = runNode(
-      `const { deriveRunResult } = await import(${JSON.stringify(distUrl("state/result.js"))});
-const shown = JSON.parse(process.argv[1]);
-console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.argv[2], repository: process.argv[3] })));`,
+      `const { readSnapshot } = await import(${JSON.stringify(distUrl("state/snapshot.js"))});
+const { deriveRunResult } = await import(${JSON.stringify(distUrl("state/result.js"))});
+const shown = readSnapshot(process.argv[1]);
+if (!shown.ok) throw new Error(JSON.stringify(shown));
+console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.argv[1], repository: process.argv[2] })));`,
       // The scheduler reports the canonical run directory.
-      [shown.stdout.trim(), realpathSync(ws.runDir), ws.repo],
+      [realpathSync(ws.runDir), ws.repo],
     );
     expect(derived.status, derived.stderr).toBe(0);
     expect(JSON.parse(derived.stdout.trim())).toEqual(printed.result);
@@ -470,7 +474,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     expect(log).toHaveLength(1);
 
     // The run directory now holds a run.
-    const again = runBuildReview(
+    const again = runForeground(
       ws,
       ["--runtime-module", runtimeModule],
       scriptedEnv(join(ws.root, "second.log")),
@@ -480,7 +484,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
 
   it("fails with engine_file_error, one result line and a recorded termination when an engine file cannot be written", () => {
     const expectEngineFileFailure = (ws: ReturnType<typeof workspace>, path: string) => {
-      const result = runBuildReview(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
+      const result = runForeground(ws, ["--runtime-module", runtimeModule], scriptedEnv(ws.log));
       expect(result.status, result.stderr).toBe(4);
       expect(result.stderr).not.toContain("    at ");
       const printed = resultLine(result.stdout) as { outcome: string; result: Json };
@@ -539,21 +543,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     // so a regression must fail this test in bounded time instead of hanging the suite.
     const result = spawnSync(
       "node",
-      [
-        cliPath,
-        "run",
-        "build-review",
-        "--input",
-        ws.inputPath,
-        "--run-dir",
-        ws.runDir,
-        "--run-id",
-        "cli-run",
-        "--poll-ms",
-        "2",
-        "--runtime-module",
-        runtimeModule,
-      ],
+      [cliPath, ...foregroundArgs(ws), "--poll-ms", "2", "--runtime-module", runtimeModule],
       { env: childEnv, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
     );
     expect(Date.now() - began).toBeLessThan(15_000);
@@ -570,7 +560,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
   it("exits 5 when the reviewer never passes and the rounds run out", () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo, { limits: { maxRounds: 2, runTimeoutMs: 60_000 } }));
-    const result = runBuildReview(
+    const result = runForeground(
       ws,
       ["--runtime-module", runtimeModule],
       scriptedEnv(ws.log, "always-fail"),
@@ -586,7 +576,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
   it("exits 6 on SIGTERM, records the cancellation and refuses a late submission", async () => {
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));
-    const { child, exited } = startBuildReview(
+    const { child, exited } = startForeground(
       ws,
       ["--runtime-module", runtimeModule, "--poll-ms", "20"],
       scriptedEnv(ws.log, "hang"),
@@ -631,7 +621,7 @@ console.log(JSON.stringify(deriveRunResult(shown.snapshot, { runDir: process.arg
     const ws = workspace();
     writeInput(ws.inputPath, input(ws.repo));
     const pollMs = 300;
-    const { exited } = startBuildReview(
+    const { exited } = startForeground(
       ws,
       ["--runtime-module", runtimeModule, "--poll-ms", String(pollMs)],
       scriptedEnv(ws.log, "hang"),

@@ -52,7 +52,8 @@ Never return a passing review from an earlier revision as approval of newer work
 Real shipped behavior for the built-in `build-review` definition — not design
 intent. Source: `src/workflows/build-review.ts`.
 
-- **Executable via `woof run build-review --input <path|-> --run-dir <dir>`.**
+- **Executable via `woof run start --workflow build-review --input <path|->`**
+  (`--host foreground` to run it in the calling process).
   Input is validated with an exact key set: `schemaVersion: 1`, `repo` (an
   absolute path, required at admission to be the top level of a git work tree
   — `git rev-parse --show-toplevel`; a nested directory is rejected

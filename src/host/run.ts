@@ -35,8 +35,8 @@ import { readHostInfo } from "./probe.js";
  * Hosting one workflow run in this process (p4 §3.5, §3.7): resolve
  * configuration once, load the definition once, admit, record the resolved
  * configuration with the run, claim the run and drive the scheduler to the
- * end. `woof run host` (in a Herdr pane), `woof run start --host foreground`
- * and `woof run build-review` all use it. Nothing here reads `.woof/` after
+ * end. `woof run host` (in a Herdr pane) and `woof run start --host foreground`
+ * both use it. Nothing here reads `.woof/` after
  * the run opens: the scheduler reads only the journal snapshot.
  */
 

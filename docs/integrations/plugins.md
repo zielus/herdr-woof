@@ -2,9 +2,12 @@
 
 Woof 0.3.1 provides the CLI and SDK, hosted runs with heartbeat-tracked
 liveness, read-only inspection commands, a Herdr plugin and a Claude Code
-plugin. The Herdr plugin exposes `doctor`, `status`, `start`, `cancel` and
-`watch`; `/woof:run` starts a run, waits for it and reports the result. Every
-command and action below is an implemented surface.
+plugin. `woof run start` is the one engine entry point for running a
+workflow; an integration may only wrap it, never add its own way of starting
+runs or its own input format. The Herdr plugin exposes `doctor`, `status`,
+`cancel` and `watch`; `/woof:run` starts a run through `woof run start`, waits
+for it and reports the result. Every command and action below is an
+implemented surface.
 
 ## CLI
 
@@ -19,8 +22,8 @@ command and action below is an implemented surface.
   (`herdr_unavailable`/`claude_unavailable`/`trust_untrusted`/
   `trust_unknown`/`config_invalid`). Diagnostic only: exits 0, or 2 with
   `--strict` when `problems` is non-empty.
-- Result handoff (unstable): `attempt open`, `submit`, `run show
-<run-dir> [--verify-artifacts]` — see
+- Result handoff (unstable): `submit`, which an agent runs to report the
+  attempt the scheduler opened for it — see
   [communication.md](../architecture/communication.md#implemented-now-p1-prototype).
 - Configuration: `config show [--project <dir>] [--workflow <name>]` — prints
   the effective configuration and where each value came from (flag, project,
@@ -47,8 +50,7 @@ command and action below is an implemented surface.
   keyboard (see [Terminal UI](../design/tui.md)); `--frames` is a
   non-interactive text mode for tests. See
   [observability](../architecture/observability.md#implemented-now-p4).
-- Runs across directories: `status`, `events`, `watch`, `run show` and
-  `run cancel` take a run id wherever they take `<run-dir>` (an existing
+- Runs across directories: `status`, `events`, `watch` and `run cancel` take a run id wherever they take `<run-dir>` (an existing
   directory wins, then the run index and `<runs-dir>/<id>`; an unknown id is
   `run_dir_invalid` and an id that names two different runs `run_id_ambiguous`,
   both exit 3). `runs` without `--runs-dir` also lists every run
@@ -62,8 +64,9 @@ command and action below is an implemented surface.
   as readable lines behind a short run id. See
   [observability](../architecture/observability.md#implemented-now-central-index).
 - Workflows (unstable): `run start [--workflow <name>] --input <path|-> …` —
-  starts a workflow hosted in Herdr (`--host herdr-pane`, default) or in this
-  process (`--host foreground`). Layout is one tab per participant: the first
+  the one way to run a workflow. It hosts the run in Herdr (`--host
+herdr-pane`, default) or in this process (`--host foreground`, which chooses
+  where the scheduler runs and stays attached until the run ends). Layout is one tab per participant: the first
   tab Woof creates (`herdr tab create --label woof:<workflow> --no-focus`)
   holds the run host in its root pane, and every agent of the run gets its
   own unfocused tab (`woof:<role>`); agents are never pane splits. With a new
@@ -87,14 +90,12 @@ json`). The host's stdout is a TTY in a Herdr pane, so colors are on unless
   remain readable; `--keep-panes`/`--no-keep-panes` (or `keepPanes`) decide
   only whether the agent tabs close when the run ends. Nothing is split any
   more, and the started output has no `watch` field; `run cancel <run-dir>`;
-  `run build-review …` (foreground, kept as an alias for `run start
---workflow build-review --host foreground`, with the same view and log
-  behavior and flags); `run host <run-dir> [--plain] [--ascii] [--input
+  `run host <run-dir> [--plain] [--ascii] [--input
 summary|json]` (internal and unstable — hosts a launch request in this
   process; `run start` types this into the Herdr pane it opens).
 - Herdr plugin actions (unstable; the project comes from
   `HERDR_PLUGIN_CONTEXT_JSON`, never the working directory): `herdr status`,
-  `herdr start`, `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
+  `herdr cancel`, `herdr doctor`, `herdr watch` — see "Herdr
   plugin" below.
 
 See [domain model](../architecture/domain-model.md#implemented-now-p4) for
@@ -111,7 +112,7 @@ projection are [open proposals](../design/proposals.md). The behavior below
 describes the existing implementation.
 
 `herdr-plugin.toml` registers a build step (`bun install --frozen-lockfile`,
-`bun run build`), five parameterless actions, each running `bin/woof
+`bun run build`), four parameterless actions, each running `bin/woof
 herdr <action>` from the plugin's own checkout, and one plugin pane
 (`[[panes]] watch`, command `bin/woof watch --follow`):
 
@@ -125,15 +126,6 @@ herdr <action>` from the plugin's own checkout, and one plugin pane
 (1 problem)` for one, and `Woof: doctor (N problems)` for N ≥ 2; the action
   still exits 0 either way.
 - **`status`** — notifies and prints the target project's non-terminal runs.
-- **`start`** — starts the project's default workflow with the input in
-  `<project>/.woof/start.json` (a missing file, or one that is not a regular
-  file — a FIFO, device or directory is `input_invalid` at once, without
-  blocking — is a notification and exit 2), hosted in the root pane of a new
-  tab, where the host prints the run's human view (see `run start` above; no
-  pane is split). An action process
-  has no `HERDR_PANE_ID` of its own: the tab goes to the workspace Herdr
-  reports for the context's `focused_pane_id` (`herdr pane get`), else to
-  `HERDR_WORKSPACE_ID`, and only with neither to Herdr's default workspace.
 - **`cancel`** — cancels the project's one non-terminal run. With none
   active, exits **0** with `{"outcome":"noop","reason":"no_active_run",
 "message":"no active Woof run in <project>","details":[]}` (notification

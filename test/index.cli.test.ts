@@ -15,7 +15,15 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { distUrl, runNode, testPlan, woof, woofAsync } from "./helpers/process.js";
+import {
+  distUrl,
+  openAttempt,
+  openAttemptAsync,
+  runNode,
+  testPlan,
+  woof,
+  woofAsync,
+} from "./helpers/process.js";
 
 // The run locator index and the cross-run event stream, as real processes. Every test gets its own
 // HOME (so its own ~/.woof/runs) and its own WOOF_INDEX_DIR: nothing here touches the operator's.
@@ -73,27 +81,6 @@ console.log(JSON.stringify(out));`,
   );
   expect(result.status, result.stdout + result.stderr).toBe(0);
   expect(result.json).toMatchObject({ outcome: "recorded" });
-}
-
-function attemptOpenArgs(runDir: string, runId: string, attempt = 1): string[] {
-  return [
-    "attempt",
-    "open",
-    "--run-dir",
-    runDir,
-    "--run",
-    runId,
-    "--agent",
-    "worker",
-    "--stage",
-    "report",
-    "--visit",
-    "1",
-    "--attempt",
-    String(attempt),
-    "--verdicts",
-    "pass,fail",
-  ];
 }
 
 function runIds(json: Json | undefined): string[] {
@@ -213,7 +200,7 @@ describe("run locator index", () => {
     const s = sandbox();
     const opened = await Promise.all(
       ["c-1", "c-2", "c-3", "c-4"].map((runId) =>
-        woofAsync(attemptOpenArgs(join(s.outside, runId), runId), { env: s.env }),
+        openAttemptAsync(join(s.outside, runId), { run: runId }, { env: s.env }),
       ),
     );
     for (const result of opened) expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -236,9 +223,11 @@ describe("run locator index", () => {
     const blocker = join(s.root, "not-a-directory");
     writeFileSync(blocker, "");
     const runDir = join(s.outside, "unindexed");
-    const result = woof(attemptOpenArgs(runDir, "unindexed-1"), {
-      env: { HOME: s.home, WOOF_INDEX_DIR: blocker },
-    });
+    const result = openAttempt(
+      runDir,
+      { run: "unindexed-1" },
+      { env: { HOME: s.home, WOOF_INDEX_DIR: blocker } },
+    );
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.json).toMatchObject({ outcome: "opened" });
     expect(result.stderr).toContain("cannot index run unindexed-1");
@@ -264,8 +253,6 @@ describe("run locator index", () => {
       status: { runId: "plain-1", runDir: plain },
     });
 
-    const show = woof(["run", "show", "by-id-1"], { env: s.env });
-    expect(show.json).toMatchObject({ outcome: "snapshot", snapshot: { runId: "by-id-1" } });
     const events = woof(["events", "by-id-1"], { env: s.env });
     expect(events.status).toBe(0);
     expect(lines(events.stdout).map((line) => line["type"] ?? line["kind"])).toEqual([
@@ -295,7 +282,6 @@ console.log(JSON.stringify(await resolveRunTarget("by-id-1")));`,
 
     for (const args of [
       ["status", "nope-1"],
-      ["run", "show", "nope-1"],
       ["run", "cancel", "nope-1"],
       ["events", "nope-1"],
     ]) {
@@ -327,7 +313,6 @@ console.log(JSON.stringify(await resolveRunTarget("by-id-1")));`,
     for (const args of [
       ["run", "cancel", "dup-1"],
       ["status", "dup-1"],
-      ["run", "show", "dup-1"],
       ["events", "dup-1"],
     ]) {
       const refused = woof(args, { env: s.env });
@@ -368,7 +353,7 @@ console.log(JSON.stringify(await resolveRunTarget("only-1", { runsDir: async () 
 
     // A third run with the same id does not take over B's locator; its open still succeeds.
     const c = join(s.outside, "dup-c");
-    const opened = woof(attemptOpenArgs(c, "dup-1"), { env: s.env });
+    const opened = openAttempt(c, { run: "dup-1" }, { env: s.env });
     expect(opened.status, opened.stdout + opened.stderr).toBe(0);
     expect(opened.json).toMatchObject({ outcome: "opened" });
     expect(opened.stderr).toContain("run id dup-1 is already indexed at");
@@ -506,8 +491,8 @@ describe("woof events --all", () => {
     const b = join(s.runsDir, "b");
     openRun(s, a, "merge-a");
     openRun(s, b, "merge-b");
-    expect(woof(attemptOpenArgs(a, "merge-a"), { env: s.env }).status).toBe(0);
-    expect(woof(attemptOpenArgs(b, "merge-b"), { env: s.env }).status).toBe(0);
+    expect(openAttempt(a, { run: "merge-a" }, { env: s.env }).status).toBe(0);
+    expect(openAttempt(b, { run: "merge-b" }, { env: s.env }).status).toBe(0);
     expect(woof(["run", "cancel", a], { env: s.env }).status).toBe(0);
 
     const result = woof(["events", "--all"], { env: s.env });
@@ -598,7 +583,7 @@ describe("woof events --all", () => {
     await delay(1200);
     const late = join(s.outside, "late");
     openRun(s, late, "follow-2");
-    expect(woof(attemptOpenArgs(first, "follow-1"), { env: s.env }).status).toBe(0);
+    expect(openAttempt(first, { run: "follow-1" }, { env: s.env }).status).toBe(0);
     expect(woof(["run", "cancel", late], { env: s.env }).status).toBe(0);
 
     const result = await following;
@@ -637,7 +622,7 @@ describe("woof events --all", () => {
     );
     await delay(1200);
     // cap-3 (the most recent) is followed; the others wait. Ending it frees its place for cap-2.
-    expect(woof(attemptOpenArgs(dirs3[1] as string, "cap-2"), { env: s.env }).status).toBe(0);
+    expect(openAttempt(dirs3[1] as string, { run: "cap-2" }, { env: s.env }).status).toBe(0);
     expect(woof(["run", "cancel", dirs3[2] as string], { env: s.env }).status).toBe(0);
 
     const result = await following;

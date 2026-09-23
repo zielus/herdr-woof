@@ -505,45 +505,7 @@ console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
   });
 
   it("reports usage errors on stderr with exit 1", () => {
-    const runDir = makeRunDir();
-    const cases = [
-      ["submit"],
-      ["submit", "--envelope", "x.json", "--bogus"],
-      ["attempt"],
-      ["attempt", "open", "--run-dir", runDir, "--run", "run-1"],
-      [
-        "attempt",
-        "open",
-        "--run-dir",
-        runDir,
-        "--run",
-        "run-1",
-        "--agent",
-        "worker",
-        "--stage",
-        "report",
-        "--visit",
-        "0",
-        "--attempt",
-        "1",
-      ],
-      [
-        "attempt",
-        "open",
-        "--run-dir",
-        runDir,
-        "--run",
-        "bad/id",
-        "--agent",
-        "worker",
-        "--stage",
-        "report",
-        "--visit",
-        "1",
-        "--attempt",
-        "1",
-      ],
-    ];
+    const cases = [["submit"], ["submit", "--envelope", "x.json", "--bogus"]];
 
     for (const args of cases) {
       const result = woof(args);
@@ -551,6 +513,14 @@ console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
       expect(result.stdout).toBe("");
       expect(result.stderr).toMatch(/^woof: /);
     }
+    // openAttempt refuses an invalid identity as a TypeError, before any journal access.
+    const runDir = makeRunDir();
+    for (const spec of [{ visit: 0 }, { run: "bad/id" }]) {
+      const result = openAttempt(runDir, spec);
+      expect(result.status, JSON.stringify(spec)).toBe(1);
+      expect(result.stdout).toBe("");
+    }
+    expect(existsSync(join(runDir, "journal.jsonl"))).toBe(false);
   });
 
   it("refuses to open an attempt whose directory or an ancestor is a symlink out of the run", () => {
@@ -636,25 +606,10 @@ console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
     expect(ofType(journal(runDir), "submission.accepted")).toHaveLength(0);
 
     for (const [visit, attempt] of [
-      ["9007199254740993", "1"],
-      ["1", "9007199254740992"],
-    ]) {
-      const open = woof([
-        "attempt",
-        "open",
-        "--run-dir",
-        makeRunDir(),
-        "--run",
-        "run-1",
-        "--agent",
-        "worker",
-        "--stage",
-        "report",
-        "--visit",
-        visit ?? "1",
-        "--attempt",
-        attempt ?? "1",
-      ]);
+      [2 ** 53, 1],
+      [1, 2 ** 53],
+    ] as const) {
+      const open = openAttempt(makeRunDir(), { visit, attempt, verdicts: "" });
       expect(open.status, `${open.stdout}${open.stderr}`).toBe(1);
       expect(open.stderr).toContain("must be a safe integer >= 1");
     }
@@ -680,7 +635,7 @@ console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
     expect(atLimit.json?.receipt?.artifact.bytes).toBe(limit);
   });
 
-  it("rejects . and .. as ids in envelopes and attempt open", () => {
+  it("rejects . and .. as ids in envelopes and openAttempt", () => {
     const { runDir, envelope } = readyAttempt();
 
     const dotted = submit(runDir, { ...envelope, stageId: ".." });
@@ -688,22 +643,7 @@ console.log(JSON.stringify([assign.outcome, dispatch.outcome]));`,
     expect(fields(dotted)).toEqual(["stageId"]);
 
     for (const stage of ["..", "."]) {
-      const open = woof([
-        "attempt",
-        "open",
-        "--run-dir",
-        makeRunDir(),
-        "--run",
-        "run-1",
-        "--agent",
-        "worker",
-        "--stage",
-        stage,
-        "--visit",
-        "1",
-        "--attempt",
-        "1",
-      ]);
+      const open = openAttempt(makeRunDir(), { stage, verdicts: "" });
       expect(open.status, `${open.stdout}${open.stderr}`).toBe(1);
       expect(open.stderr).toContain("stageId must be a valid id");
     }

@@ -18,7 +18,14 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cliPath, distUrl, repoRoot, runNode, testPlan } from "./helpers/process.js";
+import {
+  cliPath,
+  distUrl,
+  readSnapshotOf,
+  repoRoot,
+  runNode,
+  testPlan,
+} from "./helpers/process.js";
 
 // `woof run start` / `woof run host` (plan T5) as real processes. The Herdr CLI
 // is the fake fixture by absolute path (WOOF_HERDR_BIN); its `pane run` entry
@@ -378,10 +385,10 @@ async function waitForOutcome(runDir: string, timeoutMs = 30_000): Promise<Json>
   return JSON.parse(readFileSync(join(runDir, "outcome.json"), "utf8")) as Json;
 }
 
-function show(ws: Workspace, runDir: string): Json {
-  const shown = woofIn(ws, ["run", "show", runDir]);
-  expect(shown.status, shown.stdout + shown.stderr).toBe(0);
-  return shown.json?.["snapshot"] as Json;
+function show(runDir: string): Json {
+  const shown = readSnapshotOf(runDir);
+  expect(shown["ok"], JSON.stringify(shown)).toBe(true);
+  return shown["snapshot"] as Json;
 }
 
 describe("woof run start --host herdr-pane", () => {
@@ -940,7 +947,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
     await waitFor(() => !existsSync(join(runDir, "journal.lock")), "the journal lock to be free");
     const pid = await waitForHostPid(runDir);
     process.kill(pid, "SIGKILL");
-    await waitFor(() => show(ws, runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
+    await waitFor(() => show(runDir)["liveness"]["owner"] === "lost", "owner lost", 15_000);
     const waitedLost = woofIn(ws, [
       "status",
       runDir,
@@ -976,7 +983,7 @@ console.log(JSON.stringify(await store.openRun({ runDir: process.argv[1], runId:
       cancelRequest: { type: "run.cancel_requested" },
       hostLost: { type: "host.lost", pid },
     });
-    expect(show(ws, runDir)).toMatchObject({
+    expect(show(runDir)).toMatchObject({
       status: "cancelled",
       liveness: { owner: "lost", host: { state: "hosting", pid } },
       lifecycle: { host: { state: "lost", pid }, cancelRequested: { source: "cli" } },

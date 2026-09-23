@@ -148,8 +148,15 @@ fi
 echo "worker pane: $PANE"
 
 section "attempt"
-bin/woof attempt open --run-dir "$RUN_DIR" --run "$RUN_ID" --agent "$AGENT" \
-  --stage "$STAGE" --visit 1 --attempt 1 --verdicts "$VERDICTS" --pane "$PANE"
+# The scheduler opens attempts in-process; this script calls the same SDK function.
+node --input-type=module --eval '
+const { openAttempt } = await import(process.argv[1]);
+const [runDir, runId, agentId, stageId, verdicts, paneId] = process.argv.slice(2);
+const opened = await openAttempt({ runDir, runId, agentId, stageId, visit: 1, attempt: 1,
+  verdicts: verdicts === "" ? [] : verdicts.split(","), paneId });
+console.log(JSON.stringify(opened));
+if (opened.outcome !== "opened") process.exit(2);
+' "file://$WT/dist/index.js" "$RUN_DIR" "$RUN_ID" "$AGENT" "$STAGE" "$VERDICTS" "$PANE"
 
 section "worker agent"
 # Startup can stop at an approval or question and still leave the named agent
