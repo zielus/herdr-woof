@@ -53,7 +53,8 @@ export const codex: AgentKindSpec = {
     ].toSorted((a, b) => a - b),
   engineArgs: ({ model, runDir }) => [
     ...(model !== null ? ["--model", model] : []),
-    ...(runDir !== null ? ["--add-dir", runDir] : []),
+    "--add-dir",
+    runDir,
   ],
   refusedArgs: (args) =>
     [

@@ -60,7 +60,7 @@ describe("agent kind specs: shared lookup", () => {
 
   it("refuses a provider, never dropping it, for a kind that takes none", () => {
     expect(
-      launch.launchArgs({ kind: "claude", model: null, provider: "x", args: [], runDir: null }),
+      launch.launchArgs({ kind: "claude", model: null, provider: "x", args: [], runDir: "/r" }),
     ).toMatchObject({ ok: false, reason: "role_invalid", message: expect.stringContaining("x") });
     expect(launch.providerRefusal("claude", null)).toBeUndefined();
     expect(launch.providerRefusal("gemini", "x")).toBeUndefined();
@@ -196,12 +196,12 @@ describe("agent kind specs: codex", () => {
         "model_reasoning_effort=low",
       ],
     });
-    expect(launch.launchArgs({ kind: "codex", model: null, args: [], runDir: null })).toEqual({
+    expect(launch.launchArgs({ kind: "codex", model: null, args: [], runDir: "/r" })).toEqual({
       ok: true,
-      args: [],
+      args: ["--add-dir", "/r"],
     });
     expect(
-      launch.launchArgs({ kind: "codex", model: null, provider: "openai", args: [], runDir: null }),
+      launch.launchArgs({ kind: "codex", model: null, provider: "openai", args: [], runDir: "/r" }),
     ).toMatchObject({ ok: false, reason: "role_invalid" });
   });
 

@@ -103,17 +103,14 @@ export function trustWarnings(
   });
 }
 
-/**
- * `runDir` is the run directory a workflow agent writes its result into; null for an agent started
- * outside any run (`woof agent start`), which gets no run-directory grant.
- */
+/** `runDir` is the run directory the workflow agent writes its result into. */
 export function launchArgs(agent: {
   kind: string;
   model: string | null;
   /** Absent or null: the kind's own default provider. */
   provider?: string | null;
   args: readonly string[];
-  runDir: string | null;
+  runDir: string;
 }): LaunchResult {
   const spec = agentKindSpec(agent.kind);
   if (spec === undefined) {

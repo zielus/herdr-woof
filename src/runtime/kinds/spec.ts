@@ -10,8 +10,8 @@ export interface KindLaunchInput {
   model: string | null;
   /** Null unless the role selects one; only a kind with `providerFlag` accepts a provider. */
   provider: string | null;
-  /** The run directory the agent writes its result into; null outside a run. */
-  runDir: string | null;
+  /** The run directory the agent writes its result into. */
+  runDir: string;
 }
 
 /** An advisory warning about the agent's own startup trust question (never a rejection). */

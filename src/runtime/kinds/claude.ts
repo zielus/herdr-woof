@@ -18,7 +18,8 @@ export const claude: AgentKindSpec = {
   ownedArgIndexes: (args) => flagIndexes(args, OWNED),
   engineArgs: ({ model, runDir }) => [
     ...(model !== null ? ["--model", model] : []),
-    ...(runDir !== null ? ["--add-dir", runDir] : []),
+    "--add-dir",
+    runDir,
   ],
   bypassArgs: (args) => [
     ...exactArgs(args, BYPASS),
