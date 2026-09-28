@@ -49,7 +49,11 @@ version consistency check, the real-process test suite, and the package smoke
 test. Run it before opening a PR and again at the final head of the branch.
 
 Verify rounds run one at a time per machine. The suite contains real-process
-timing tests that flake when several full runs share a host.
+timing tests that flake when several full runs share a host. Run
+`bun run verify:serial` instead of `bun run verify` directly: it takes a
+machine-wide lock so concurrent agents queue instead of racing, and caps
+Vitest's workers via `WOOF_TEST_WORKERS` (default 4). Targeted runs use
+`bun x vitest run --maxWorkers 2 <files>`, one `vitest` process per terminal.
 
 Some assertions and production test seams still use wall-clock time. Revisit
 them when a specific CI race appears. Unit tests also import compiled `dist/`

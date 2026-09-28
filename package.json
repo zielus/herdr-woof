@@ -60,6 +60,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "bun run build && bun x vitest run",
+    "verify:serial": "sh scripts/verify-serial.sh",
     "check:version": "bun run scripts/check-version.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "acceptance:collect": "node scripts/acceptance/collect.mjs",

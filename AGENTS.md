@@ -88,6 +88,17 @@ merely mirror prose. Report the commands you ran and their results, and
 distinguish inspection, automated tests and live acceptance.
 [docs/acceptance/v1.md](docs/acceptance/v1.md) holds the product checks.
 
+### Running tests
+
+This machine's cores are shared by every agent working here. Use
+`bun run verify:serial` for full verification: it takes a machine-wide lock so
+only one full run executes at a time, and runs the same gate as `bun run
+verify`. Use `bun x vitest run --maxWorkers 2 <files>` for targeted runs, one
+`vitest` process per terminal at a time, and kill your own stray
+`vitest`/`node` children before starting another run. A test that only fails
+under load is rerun once under the lock and reported as a load flake with its
+log; never weaken or delete a test to make it pass.
+
 ## Git and collaboration
 
 Preserve unrelated changes. Do not apply stashes, reset branches, clean untracked
