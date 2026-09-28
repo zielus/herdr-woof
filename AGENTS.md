@@ -16,22 +16,14 @@ before editing. The checkout and current reference documentation are the source
 of truth. Historical branches, stashes and the older Woof repository are
 reference material, not instructions to restore or port anything.
 
-## Development order
+## Current stage
 
-1. Establish a working foundation: runtime/tooling choices, TypeScript, package
-   exports, launchers, plugin wiring, tests, CI and packaging.
-2. Implement the SDK incrementally: runtime adapters, agent identity, result and
-   artifact contracts, state, observation, scheduling, gates and limits.
-3. Test the engine with small synthetic workflows during SDK development. Prove
-   one real agent-to-artifact handoff early enough to validate the runtime boundary.
-4. Add production workflows such as build-review and plan-build-review after the
-   SDK supports them. Keep additional interfaces, such as the TUI, on the
-   shared observation and control contracts.
-
-Workflow execution belongs to the SDK; four built-in workflows
-(`build-review`, `plan-build-review`, `plan`, `auto-build`) exist, and further ones are added only
-after the SDK supports them. Avoid designing the entire engine without exercising it. Follow
-the current task's scope; a foundation task does not authorize building the SDK.
+The SDK runs four built-in workflows (`build-review`, `plan-build-review`,
+`plan`, `auto-build`). Workflow execution belongs to the SDK: add a workflow
+only after the SDK supports what it needs, and exercise the engine with small
+synthetic workflows rather than designing all of it up front. Keep additional
+interfaces, such as the TUI, on the shared observation and control contracts.
+Follow the current task's scope.
 
 ## Architectural rules
 
@@ -67,10 +59,10 @@ Add a package split, dependency or abstraction when the current work demonstrate
 its need. Verify provider flags and Herdr capabilities against current primary
 documentation or the target environment before relying on them.
 
-Preserve useful scaffolding and fix inconsistencies at their source. An unfinished
-operation must report that it is unsupported instead of returning fake success.
-Keep production exports, executable paths and plugin manifests aligned with files
-that actually ship. Update relevant docs when implemented behavior changes.
+Fix inconsistencies at their source. An unfinished operation must report that it
+is unsupported instead of returning fake success. Keep production exports,
+executable paths and plugin manifests aligned with files that actually ship.
+Update relevant docs when implemented behavior changes.
 
 For routine choices, state the approach briefly and proceed. Ask when an unresolved
 decision materially changes product behavior or public contracts. Do not reopen
@@ -78,27 +70,12 @@ settled product direction or repeat design approvals for ordinary setup details.
 
 ## Verification
 
-Use the repository's lockfile and declared runtime versions. Bun is the current
-package/script tool; inspect the scripts to distinguish Bun execution from Node
-execution. Existing scripts may still reference missing scaffold files.
-
-Typical commands, once their implementations exist:
-
-```sh
-bun install --frozen-lockfile
-bun run typecheck
-bun run lint
-bun run format:check
-bun run test
-bun run build
-bun run smoke:package
-bun run verify
-```
-
-Run checks appropriate to the change. During foundation repair, reconcile broken
-scripts and CI with the supported surface. Do not hide failures, disable checks
-to obtain green output, or silently accept an empty test suite. Report any
-remaining baseline failures separately from failures introduced by the change.
+Bun runs the scripts in `package.json`; install with `bun install --frozen-lockfile`.
+`bun run verify` is the full gate: typecheck, lint, format, version check, tests
+and package smoke. Run the parts the change touches, and the full gate before a
+PR. Never hide failures, disable checks to get green output, or accept an empty
+test suite. Report baseline failures separately from failures the change
+introduced.
 
 Test public behavior and failure boundaries. Use real processes for package
 imports, launchers, workflow loaders and submission transport: a transformed unit
@@ -106,10 +83,21 @@ test can conceal runtime incompatibility. Scripted runtime tests do not replace
 live Herdr acceptance for agent coordination. Check artifact content and actual
 repository effects, not just file existence or event counts.
 
-For docs-only changes, check formatting and local links. Do not add tests that
-merely mirror prose. Report commands actually run and their results; distinguish
-inspection, automated tests and live acceptance. See
-[docs/acceptance/v1.md](docs/acceptance/v1.md) for the eventual product checks.
+For docs-only changes, check formatting and local links; do not add tests that
+merely mirror prose. Report the commands you ran and their results, and
+distinguish inspection, automated tests and live acceptance.
+[docs/acceptance/v1.md](docs/acceptance/v1.md) holds the product checks.
+
+### Running tests
+
+This machine's cores are shared by every agent working here. Use
+`bun run verify:serial` for full verification: it takes a machine-wide lock so
+only one full run executes at a time, and runs the same gate as `bun run
+verify`. Use `bun x vitest run --maxWorkers 2 <files>` for targeted runs, one
+`vitest` process per terminal at a time, and kill your own stray
+`vitest`/`node` children before starting another run. A test that only fails
+under load is rerun once under the lock and reported as a load flake with its
+log; never weaken or delete a test to make it pass.
 
 ## Git and collaboration
 
@@ -119,6 +107,5 @@ work needs isolation, use separate worktrees. Stage explicit paths and inspect
 the staged diff before committing. Commit, push and merge according to the user's
 requested scope.
 
-Keep updates and final reports concise: what changed, why, what was verified,
-and what remains. Maintain shared repository guidance here; `CLAUDE.md` points
-to this file so the two instruction sets do not drift.
+Keep shared repository guidance here; `CLAUDE.md` points to this file so the two
+instruction sets do not drift.
