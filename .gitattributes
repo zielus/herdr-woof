@@ -1,0 +1,2 @@
+# Terminal captures intentionally contain CR and screen-padding whitespace.
+internal/prompt/testdata/*.ansi -text -whitespace

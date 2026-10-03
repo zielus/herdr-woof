@@ -1,0 +1,14 @@
+id = "woof"
+name = "Woof"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Durable coordination across Herdr sessions. CLI: woof."
+platforms = ["macos", "linux"]
+
+[[build]]
+platforms = ["macos", "linux"]
+command = ["make", "build"]
+
+# Bootstrap registration exits; one global woofd owns the database and connections.
+[[startup]]
+command = ["./bin/woof", "session", "attach"]

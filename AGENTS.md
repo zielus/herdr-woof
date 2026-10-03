@@ -69,3 +69,18 @@ For work on this repository, the user explicitly authorizes using the `herdr` sk
 - Upstream repository: https://github.com/eliasstravik/herdr-projects
 
 Use the local clones when inspecting or comparing source on this machine. The upstream repositories are the portable references when the local paths are unavailable.
+
+## Build and checks
+
+The Go 1.26 toolchain and Unix sockets are required. Run from the repository root:
+
+- `make build` — build `bin/woof` and `bin/woofd`.
+- `make test` — unit and socket integration tests.
+- `make race` — race detection across all packages.
+- `make vet` — Go static checks.
+- `make check` — build, tests, race detection, and vet.
+- `make integration` — isolated CLI/daemon acceptance scenarios.
+- `make install-test` — reversible installer checks under temporary directories.
+
+Use `WOOF_STATE_DIR` and `WOOF_CONFIG` for isolated runtime state/configuration.
+Tests using Unix sockets require an environment that permits local socket binds.

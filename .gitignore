@@ -17,3 +17,5 @@ coverage/
 __pycache__/
 *.py[cod]
 .venv/
+bin/
+.superpowers/

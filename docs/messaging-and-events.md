@@ -107,7 +107,7 @@ Output should be NDJSON when machine-readable.
 Example:
 
 ```json
-{"seq":1843,"type":"worker.done","run_id":"r_17","worker_id":"w_9","created_at":"..."}
+{"seq":1843,"type":"dispatch.settled","run_id":"r_17","worker_id":"w_9","created_at":1790998288443}
 ```
 
 ## Agent-friendly wait
@@ -116,11 +116,14 @@ Provide a blocking primitive:
 
 ```bash
 woof wait \
-  --events message,worker.done,worker.blocked \
+  --events message.available,dispatch.settled,worker.observed \
   --timeout 20m
 ```
 
 This should block on the daemon socket and return when the first matching event occurs.
+
+Event filters use exact event names. `worker.observed` includes the current lifecycle
+state; `dispatch.settled` means the report and corresponding turn-end evidence both exist.
 
 No polling loop is required.
 
