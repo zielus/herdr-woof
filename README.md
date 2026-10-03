@@ -6,7 +6,7 @@ This repository implements Phase 1: logical workers, thin launch profiles, durab
 
 ## Build and verify
 
-Use macOS or Linux, Go 1.26 or newer, `make`, and Herdr 0.9.3 or newer. The integration and installer tests also use `jq`.
+Use macOS or Linux, Go 1.26 or newer, `make`, and Herdr 0.9.3 or newer. Use a patched Go toolchain (Go 1.26.3 or newer); `go.mod` retains the Go 1.26.0 language minimum. The integration and installer tests also use `jq`.
 
 ```sh
 make build          # bin/woof and bin/woofd
@@ -23,7 +23,9 @@ using an [official binary release](https://golangci-lint.run/docs/welcome/instal
 including tests; it refuses a different tool version. `make vuln` runs
 `govulncheck v1.1.4` without adding tool dependencies to the application module.
 GitHub Actions runs these checks and the integration/installer scenarios on Linux
-and macOS for pull requests and pushes to `master`. The checks use isolated state
+and macOS for pull requests and pushes to `master`. CI selects the latest available
+Go 1.26 patch with `go-version: '1.26.x'` and `check-latest: true`.
+The checks use isolated state
 and do not control live Herdr sessions.
 
 The integration script checks concurrent bootstrap, second-writer refusal, messaging, gates, replay/wait and daemon restart with an active event follower. Set `WOOF_IT_HERDR_SOCKETS` to a newline-separated list of explicitly selected sockets to also attach those live sessions. It does not create or stop Herdr sessions, or mutate panes.

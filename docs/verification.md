@@ -216,3 +216,27 @@ symbols were not called; this is not a claim that dependencies have no advisorie
 The checked-in GitHub Actions workflow runs lint, formatting, build, test, race,
 vet, integration, installer and vulnerability checks on Linux and macOS. Local
 verification above does not establish a successful hosted CI run.
+
+The first hosted [Quality run 37113047741](https://github.com/zielus/herdr-woof-v2/actions/runs/37113047741)
+failed. Its macOS job passed the build/test steps but the vulnerability scan
+reported one called standard-library vulnerability,
+[GO-2026-4971](https://pkg.go.dev/vuln/GO-2026-4971), found in `net@go1.26`
+and fixed in Go 1.26.3. The setup log showed `Setup go version spec 1.26.0`,
+`Resolved as '1.26.0'`, and `go version go1.26.0 darwin/arm64`.
+
+The original `go-version-file: go.mod` read the exact `go 1.26.0` directive;
+`check-latest: true` did not widen that version constraint. The corrected
+workflow uses `go-version: '1.26.x'` with `check-latest: true` to select the
+latest available patch within Go 1.26, as documented by
+[setup-go](https://github.com/actions/setup-go/blob/924ae3a1cded613372ab5595356fb5720e22ba16/docs/advanced-usage.md#using-the-go-version-file-input).
+The module minimum remains Go 1.26.0. Vulnerability checks remain enabled without
+advisory suppression. Local Go 1.26.3 results above support the patched-toolchain
+choice; hosted verification was pending when this correction was prepared.
+
+The same run's Linux job found a test compilation failure: the standard library's
+`syscall.Getsid` is unavailable on Linux. The detached-bootstrap fixture now uses
+the existing `golang.org/x/sys/unix.Getsid`, preserving the session-leader assertion.
+The original Linux test cross-compilation failed before the correction and passed
+afterward. Parent verification also passed fresh client race tests, zero-issue
+lint, and `GOOS=linux GOARCH=amd64 go vet ./...`; these are compilation/static checks
+for Linux, with hosted runtime tests still pending at preparation time.

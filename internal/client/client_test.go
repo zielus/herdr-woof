@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 	"github.com/zielus/herdr-woof-v2/internal/paths"
+	"golang.org/x/sys/unix"
 	"io"
 	"net"
 	"os"
@@ -239,7 +240,7 @@ func TestDetachedBootstrapDiscoverySerializesClients(t *testing.T) {
 	if !strings.Contains(strings.Join(r.Env, "\n"), "WOOF_STATE_DIR="+c.Paths.Dir) {
 		t.Fatal("daemon state override missing")
 	}
-	sid, e := syscall.Getsid(r.PID)
+	sid, e := unix.Getsid(r.PID)
 	if e != nil || sid != r.PID {
 		t.Fatalf("daemon not detached: %d %v", sid, e)
 	}

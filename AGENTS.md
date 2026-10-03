@@ -72,7 +72,10 @@ Use the local clones when inspecting or comparing source on this machine. The up
 
 ## Build and checks
 
-The Go 1.26 toolchain and Unix sockets are required. Run from the repository root:
+The Go 1.26 toolchain and Unix sockets are required. Use a patched toolchain
+(Go 1.26.3 or newer); `go.mod` keeps the Go 1.26.0 language minimum. CI selects
+the latest available Go 1.26 patch with `go-version: '1.26.x'` and
+`check-latest: true`. Run from the repository root:
 
 - `make build` — build `bin/woof` and `bin/woofd`.
 - `make test` — unit and socket integration tests.
