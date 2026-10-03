@@ -21,13 +21,13 @@ func retirementPeer(t *testing.T, e *Engine, w model.Worker, mode string) *atomi
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(dir)) })
 	socket := filepath.Join(dir, "h.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { checkCleanup(t, ln.Close()) })
 	closes := &atomic.Int32{}
 	go func() {
 		for {
@@ -36,12 +36,18 @@ func retirementPeer(t *testing.T, e *Engine, w model.Worker, mode string) *atomi
 				return
 			}
 			go func() {
-				defer conn.Close()
-				data, _ := bufio.NewReader(conn).ReadBytes('\n')
+				defer func() { _ = conn.Close() }() // The peer may already have disconnected; cleanup is best effort.
+				data, err := bufio.NewReader(conn).ReadBytes('\n')
+				if err != nil {
+					return // Recovery may disconnect a client before sending a request.
+				}
 				var request struct {
 					Method string `json:"method"`
 				}
-				json.Unmarshal(data, &request)
+				if err := json.Unmarshal(data, &request); err != nil {
+					t.Error(err)
+					return
+				}
 				response := map[string]any{}
 				switch request.Method {
 				case "agent.get":
@@ -62,11 +68,12 @@ func retirementPeer(t *testing.T, e *Engine, w model.Worker, mode string) *atomi
 					if mode == "pane_read_failure" {
 						return
 					}
-					if mode == "positive_same_terminal" {
+					switch mode {
+					case "positive_same_terminal":
 						response["result"] = map[string]any{"pane": herdr.Pane{PaneID: w.PaneID, WorkspaceID: "w1", TerminalID: w.TerminalID}}
-					} else if mode == "replacement" || mode == "positive_replacement" {
+					case "replacement", "positive_replacement":
 						response["result"] = map[string]any{"pane": herdr.Pane{PaneID: w.PaneID, WorkspaceID: "w1", TerminalID: "replacement-terminal"}}
-					} else {
+					default:
 						response["error"] = map[string]string{"code": "pane_not_found", "message": "absent"}
 					}
 				case "pane.close":
@@ -75,7 +82,10 @@ func retirementPeer(t *testing.T, e *Engine, w model.Worker, mode string) *atomi
 				default:
 					response["result"] = map[string]any{}
 				}
-				json.NewEncoder(conn).Encode(response)
+				// A disconnected client needs no retry of its fixture response.
+				if err := json.NewEncoder(conn).Encode(response); err != nil {
+					return
+				}
 			}()
 		}
 	}()

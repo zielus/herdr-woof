@@ -78,9 +78,15 @@ The Go 1.26 toolchain and Unix sockets are required. Run from the repository roo
 - `make test` — unit and socket integration tests.
 - `make race` — race detection across all packages.
 - `make vet` — Go static checks.
-- `make check` — build, tests, race detection, and vet.
+- `make lint` — pinned golangci-lint checks, including gofmt and test sources.
+- `make fmt` — apply gofmt using the pinned tool (edits source).
+- `make vuln` — pinned govulncheck against the current vulnerability database.
+- `make check` — build, tests, race detection, vet, lint, and formatting.
 - `make integration` — isolated CLI/daemon acceptance scenarios.
 - `make install-test` — reversible installer checks under temporary directories.
 
 Use `WOOF_STATE_DIR` and `WOOF_CONFIG` for isolated runtime state/configuration.
 Tests using Unix sockets require an environment that permits local socket binds.
+Install the exact golangci-lint version in `.golangci-version` using an official
+binary release. `make vuln` needs network access; tool dependencies remain outside
+the application module. CI runs checks on Linux and macOS without live Herdr access.

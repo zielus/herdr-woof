@@ -124,9 +124,10 @@ func writeError(w io.Writer, err error, machine bool) {
 	if machine {
 		_ = printValue(w, map[string]any{"error": me}, true)
 	} else {
-		fmt.Fprintf(w, "woof: %s\n", me.Error())
+		// Error output is best effort: the command already exits unsuccessfully.
+		_, _ = fmt.Fprintf(w, "woof: %s\n", me.Error())
 		if me.OperationID != "" {
-			fmt.Fprintf(w, "Operation: %s. Inspect `woof operation show --id %s`; do not resend.\n", me.OperationID, me.OperationID)
+			_, _ = fmt.Fprintf(w, "Operation: %s. Inspect `woof operation show --id %s`; do not resend.\n", me.OperationID, me.OperationID)
 		}
 	}
 }

@@ -29,10 +29,17 @@ func cliPeer(t *testing.T, handle func(net.Conn, model.Request)) *client.Client 
 	sock := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir) // Best effort after fixture startup already failed.
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close(); os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -40,7 +47,8 @@ func cliPeer(t *testing.T, handle func(net.Conn, model.Request)) *client.Client 
 				return
 			}
 			go func() {
-				defer c.Close()
+				// The peer deliberately disconnects; closing has no pending writes.
+				defer func() { _ = c.Close() }()
 				line, err := bufio.NewReader(c).ReadBytes('\n')
 				if err != nil {
 					return

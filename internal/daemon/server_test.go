@@ -21,7 +21,7 @@ func serverPaths(t *testing.T) paths.Paths {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(dir)) })
 	return paths.Paths{Dir: dir, DB: filepath.Join(dir, "woof.db"), Sock: filepath.Join(dir, "woof.sock"), Lock: filepath.Join(dir, "woof.lock")}
 }
 func TestOwnershipLockPrecedesDatabaseOpen(t *testing.T) {
@@ -30,11 +30,11 @@ func TestOwnershipLockPrecedesDatabaseOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { checkCleanup(t, f.Close()) }()
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer func() { checkCleanup(t, syscall.Flock(int(f.Fd()), syscall.LOCK_UN)) }()
 	if err = Run(context.Background(), Options{Paths: p}); err == nil {
 		t.Fatal("second owner acquired DB")
 	}
@@ -75,7 +75,7 @@ func TestGlobalDaemonRestartPreservesReceiptAndSocket(t *testing.T) {
 	if conn, err := net.Dial("unix", p.Sock); err != nil {
 		t.Fatal("losing owner removed healthy socket")
 	} else {
-		conn.Close()
+		checkCleanup(t, conn.Close())
 	}
 	cancel()
 	if err := <-done; err != nil {

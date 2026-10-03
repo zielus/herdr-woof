@@ -104,12 +104,12 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) Write(ctx context.Context, fn func(*Tx) error) ([]model.Event, error) {
+func (s *Store) Write(ctx context.Context, fn func(*Tx) error) (events []model.Event, err error) {
 	sqltx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, databaseError(err)
 	}
-	defer sqltx.Rollback()
+	defer rollback(sqltx, &err)
 	tx := &Tx{ctx: ctx, sql: sqltx, events: []model.Event{}}
 	if err := fn(tx); err != nil {
 		return nil, databaseError(err)
@@ -118,6 +118,21 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) ([]model.Event, e
 		return nil, databaseError(err)
 	}
 	return tx.events, nil
+}
+
+// Rollback is also deferred after a successful commit and after database/sql
+// rolls back a canceled context. ErrTxDone is expected in those cases. Other
+// cleanup failures must retain the original error (including model.Error codes).
+func rollback(tx *sql.Tx, resultErr *error) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("rollback transaction: %w", err))
+	}
+}
+
+func closeRows(rows *sql.Rows, resultErr *error) {
+	if err := rows.Close(); err != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close query rows: %w", err))
+	}
 }
 
 func (s *Store) Get(ctx context.Context, kind, id string, dst any) error {
@@ -202,7 +217,7 @@ func (s *Store) List(ctx context.Context, kind string, scope model.Scope, dst an
 func (t *Tx) List(kind string, scope model.Scope, dst any) error {
 	return list(t.ctx, t.sql, kind, scope, dst)
 }
-func list(ctx context.Context, q queryer, kind string, scope model.Scope, dst any) error {
+func list(ctx context.Context, q queryer, kind string, scope model.Scope, dst any) (err error) {
 	if _, ok := columns[kind]; !ok {
 		return refusal("invalid_kind", "unknown record kind %q", kind)
 	}
@@ -218,7 +233,7 @@ func list(ctx context.Context, q queryer, kind string, scope model.Scope, dst an
 	if err != nil {
 		return databaseError(err)
 	}
-	defer rows.Close()
+	defer closeRows(rows, &err)
 	result := reflect.MakeSlice(v.Elem().Type(), 0, 0)
 	for rows.Next() {
 		var data []byte
@@ -274,7 +289,7 @@ func (s *Store) Head(ctx context.Context) (int64, error) {
 	return seq, databaseError(err)
 }
 
-func (s *Store) Events(ctx context.Context, since int64, scope model.Scope, types []string, limit int) ([]model.Event, error) {
+func (s *Store) Events(ctx context.Context, since int64, scope model.Scope, types []string, limit int) (events []model.Event, err error) {
 	where, args, err := scopeWhere("events", scope)
 	if err != nil {
 		return nil, err
@@ -296,7 +311,7 @@ func (s *Store) Events(ctx context.Context, since int64, scope model.Scope, type
 	if err != nil {
 		return nil, databaseError(err)
 	}
-	defer rows.Close()
+	defer closeRows(rows, &err)
 	result := []model.Event{}
 	for rows.Next() {
 		var e model.Event

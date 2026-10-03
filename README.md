@@ -10,10 +10,21 @@ Use macOS or Linux, Go 1.26 or newer, `make`, and Herdr 0.9.3 or newer. The inte
 
 ```sh
 make build          # bin/woof and bin/woofd
-make check          # build, unit tests, race tests and vet
+make check          # build, unit tests, race tests, vet, lint and formatting
+make fmt            # apply gofmt (explicitly edits source)
+make vuln           # pinned govulncheck; requires network access
 make integration    # isolated real-binary RPC scenarios; no live Herdr mutations
 sh scripts/install-test.sh  # installer tests in temporary directories
 ```
+
+Install the exact golangci-lint version in [.golangci-version](.golangci-version)
+using an [official binary release](https://golangci-lint.run/docs/welcome/install/local/).
+`make lint` checks formatting, errors, unused code, assignments, vet and Staticcheck,
+including tests; it refuses a different tool version. `make vuln` runs
+`govulncheck v1.1.4` without adding tool dependencies to the application module.
+GitHub Actions runs these checks and the integration/installer scenarios on Linux
+and macOS for pull requests and pushes to `master`. The checks use isolated state
+and do not control live Herdr sessions.
 
 The integration script checks concurrent bootstrap, second-writer refusal, messaging, gates, replay/wait and daemon restart with an active event follower. Set `WOOF_IT_HERDR_SOCKETS` to a newline-separated list of explicitly selected sockets to also attach those live sessions. It does not create or stop Herdr sessions, or mutate panes.
 

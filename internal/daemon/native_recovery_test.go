@@ -106,21 +106,26 @@ func TestNativeRecoveryReadFailureHoldsOldEvidenceAndCanRecoverLater(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(dir)) })
 	socket := filepath.Join(dir, "h.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { checkCleanup(t, ln.Close()) })
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
-		bufio.NewReader(conn).ReadBytes('\n')
-		json.NewEncoder(conn).Encode(map[string]any{"error": map[string]string{"code": "temporarily_unavailable", "message": "process inspection unavailable"}})
+		defer func() { _ = conn.Close() }() // The peer may already have disconnected; cleanup is best effort.
+		if _, err := bufio.NewReader(conn).ReadBytes('\n'); err != nil {
+			return // The client may disconnect during recovery.
+		}
+		// A disconnected client needs no retry of its fixture response.
+		if err := json.NewEncoder(conn).Encode(map[string]any{"error": map[string]string{"code": "temporarily_unavailable", "message": "process inspection unavailable"}}); err != nil {
+			return
+		}
 	}()
 	e.runtimeMu.Lock()
 	e.sessions[w.SessionID].client = herdr.New(socket)

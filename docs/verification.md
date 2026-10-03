@@ -180,3 +180,39 @@ The separate plugin-host test was also stopped and its isolated registry entry
 removed. Durable JSON, review reports, logs and the test database remain under the
 temporary evidence directories; no user panes or default plugin registration
 were changed.
+
+## Quality hardening — 2026-10-03
+
+The initial five-linter audit found 167 findings (162 unchecked errors and five
+Staticcheck findings). All were resolved without blanket lint suppressions.
+Production cleanup failures now retain their causes and remain visible over RPC.
+New regressions cover subscription deadline setup/reset failures, a caller deadline
+publication race, RPC handler drain after listener failure, joined error serialization,
+and SQL rollback/row-close failures including an actual SQLite constraint error.
+
+Parent verification on macOS with Go 1.26.3 passed:
+
+```sh
+make check integration install-test vuln
+golangci-lint config verify
+sh -n scripts/lint.sh
+git diff --check
+```
+
+The full lint/formatting run using pinned golangci-lint 2.12.2 reported zero issues.
+The full tests, race detection, vet, isolated CLI/daemon scenarios and temporary
+installer checks passed. A separate wrong-version probe confirmed that the lint
+wrapper rejects a mismatched binary. No live Herdr sessions were controlled in
+this quality follow-up.
+
+Three implementation agents handled transport, daemon and storage findings.
+Independent task reviews caught and resolved two cleanup-error visibility gaps;
+a final GPT-6-astra source review found no actionable regressions in the complete
+change. Review reports do not substitute for the parent-run checks above.
+
+Pinned govulncheck 1.1.4 reported zero called vulnerabilities. It also reported
+three advisories in imported packages and ten in required modules whose vulnerable
+symbols were not called; this is not a claim that dependencies have no advisories.
+The checked-in GitHub Actions workflow runs lint, formatting, build, test, race,
+vet, integration, installer and vulnerability checks on Linux and macOS. Local
+verification above does not establish a successful hosted CI run.

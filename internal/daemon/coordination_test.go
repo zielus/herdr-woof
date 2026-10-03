@@ -34,12 +34,12 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(dir)) })
 	st, err := store.Open(filepath.Join(dir, "woof.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { checkCleanup(t, st.Close()) })
 	e := NewEngine(st, Options{})
 	t.Cleanup(e.Close)
 	kind, name, cwd, ready := "claude", "woof-worker", "/tmp", true
@@ -51,7 +51,7 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { checkCleanup(t, ln.Close()) })
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -59,15 +59,21 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 				return
 			}
 			go func() {
-				defer c.Close()
-				line, _ := bufio.NewReader(c).ReadBytes('\n')
+				defer func() { _ = c.Close() }() // The peer may already have disconnected; cleanup is best effort.
+				line, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					return // Recovery may disconnect a client before sending a request.
+				}
 				var req struct {
 					Method string `json:"method"`
 					Params struct {
 						Text string `json:"text"`
 					} `json:"params"`
 				}
-				json.Unmarshal(line, &req)
+				if err := json.Unmarshal(line, &req); err != nil {
+					t.Error(err)
+					return
+				}
 				f.mu.Lock()
 				defer f.mu.Unlock()
 				var result any
@@ -93,7 +99,10 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 				default:
 					result = map[string]any{}
 				}
-				json.NewEncoder(c).Encode(map[string]any{"result": result})
+				// A disconnected client needs no retry of its fixture response.
+				if err := json.NewEncoder(c).Encode(map[string]any{"result": result}); err != nil {
+					return
+				}
 			}()
 		}
 	}()
@@ -241,7 +250,9 @@ func TestInboxPersistenceArtifactsAndBusyEventDelivery(t *testing.T) {
 	}
 	f.mu.Unlock()
 	path := filepath.Join(t.TempDir(), "handoff.txt")
-	os.WriteFile(path, []byte("large private context"), 0600)
+	if err := os.WriteFile(path, []byte("large private context"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	v, err := call(t, e, "send", Args{To: w.ID, Body: "please inspect", Artifacts: []string{path}})
 	if err != nil {
 		t.Fatal(err)

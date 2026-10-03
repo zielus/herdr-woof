@@ -46,12 +46,12 @@ CREATE TRIGGER events_monotonic AFTER INSERT ON events
  BEGIN SELECT RAISE(ABORT,'event sequence must increase'); END;
 `
 
-func (s *Store) migrate() error {
+func (s *Store) migrate() (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return databaseError(err)
 	}
-	defer tx.Rollback()
+	defer rollback(tx, &err)
 	var version int
 	if err := tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err

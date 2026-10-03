@@ -37,7 +37,7 @@ func newSessionFixture(t *testing.T, name string) *sessionFixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(d)) })
 	kind, agent, cwd, ready := "codex", name, "/tmp", true
 	f := &sessionFixture{socket: filepath.Join(d, "h.sock"), clients: map[net.Conn]bool{}, protocol: 22, pane: herdr.Pane{PaneID: "w1:p1", WorkspaceID: "w1", TerminalID: "terminal-" + name, Agent: &kind, Name: &agent, Cwd: &cwd, InteractiveReady: &ready, AgentStatus: "idle", StateChangeSeq: 2, AgentSession: &model.NativeSession{Source: "hook", Agent: "codex", Kind: "session", Value: name}}}
 	f.start(t)
@@ -63,8 +63,11 @@ func (f *sessionFixture) start(t *testing.T) {
 	}()
 }
 func (f *sessionFixture) handle(c net.Conn) {
-	defer c.Close()
-	b, _ := bufio.NewReader(c).ReadBytes('\n')
+	defer func() { _ = c.Close() }() // The peer may already have disconnected; cleanup is best effort.
+	b, err := bufio.NewReader(c).ReadBytes('\n')
+	if err != nil {
+		return // Recovery may disconnect a client before sending a request.
+	}
 	var req struct {
 		Method string         `json:"method"`
 		Params map[string]any `json:"params"`
@@ -119,26 +122,32 @@ func (f *sessionFixture) handle(c net.Conn) {
 		}
 		f.mu.Lock()
 		f.clients[c] = true
-		json.NewEncoder(c).Encode(map[string]any{"result": map[string]any{"type": "subscription_started"}})
+		err := json.NewEncoder(c).Encode(map[string]any{"result": map[string]any{"type": "subscription_started"}})
 		f.mu.Unlock()
 		defer func() { f.mu.Lock(); delete(f.clients, c); f.mu.Unlock() }()
+		if err != nil {
+			return // Subscription clients may disconnect during restart tests.
+		}
 		var b [1]byte
-		c.Read(b[:])
+		_, _ = c.Read(b[:]) // Only the disconnect matters, regardless of its I/O error.
 		return
 	default:
 		result = map[string]any{}
 	}
-	json.NewEncoder(c).Encode(map[string]any{"result": result})
+	// A disconnected client needs no retry of its fixture response.
+	if err := json.NewEncoder(c).Encode(map[string]any{"result": result}); err != nil {
+		return
+	}
 }
 func (f *sessionFixture) stop() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listener != nil {
-		f.listener.Close()
+		_ = f.listener.Close() // Restart/stop may race with an already closed listener.
 		f.listener = nil
 	}
 	for c := range f.clients {
-		c.Close()
+		_ = c.Close() // The engine may already have disconnected this subscription.
 	}
 }
 func (f *sessionFixture) event(t *testing.T, status string, seq uint64) {
@@ -159,7 +168,7 @@ func sessionEngine(t *testing.T) *Engine {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { checkCleanup(t, st.Close()) })
 	engine := NewEngine(st, Options{})
 	t.Cleanup(engine.Close)
 	return engine
@@ -173,7 +182,9 @@ func attachFixture(t *testing.T, e *Engine, f *sessionFixture, name string) mode
 	}
 	b, _ := json.Marshal(out)
 	var s model.Session
-	json.Unmarshal(b, &s)
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
 func seedSessionWorker(t *testing.T, e *Engine, s model.Session, f *sessionFixture) model.Worker {
@@ -420,7 +431,7 @@ func TestSessionRecoveryFindsUniqueNativeSessionAfterPaneAndTerminalChange(t *te
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { process.Process.Kill(); process.Wait() })
+	t.Cleanup(func() { stopTestProcess(t, process) })
 	identity, err := birthIdentity(process.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
@@ -494,7 +505,9 @@ func TestSessionSocketAliasesDeduplicateOnlineAndOffline(t *testing.T) {
 		}
 		b, _ := json.Marshal(out)
 		var again model.Session
-		json.Unmarshal(b, &again)
+		if err := json.Unmarshal(b, &again); err != nil {
+			t.Fatal(err)
+		}
 		if again.ID != s.ID {
 			t.Fatalf("socket alias duplicated session online=%t: %s vs %s", online, s.ID, again.ID)
 		}
@@ -564,7 +577,9 @@ func TestSessionAttachInheritedScopeDoesNotRetargetExplicitSocket(t *testing.T) 
 	}
 	data, _ := json.Marshal(out)
 	var attached model.Session
-	json.Unmarshal(data, &attached)
+	if err := json.Unmarshal(data, &attached); err != nil {
+		t.Fatal(err)
+	}
 	previous, _ := get[model.Session](context.Background(), e.store, "sessions", original.ID)
 	if attached.ID == original.ID || previous.SocketPath != original.SocketPath {
 		t.Fatalf("inherited scope retargeted caller session: original=%+v current=%+v attached=%+v", original, previous, attached)

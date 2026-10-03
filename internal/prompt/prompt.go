@@ -315,9 +315,10 @@ func Notice(messages []model.Message, actor ...model.Worker) string {
 	if len(actor) == 1 {
 		flags = actorFlags(actor[0].ID, actor[0].AttachmentID)
 	}
-	b.WriteString(fmt.Sprintf("You have Woof messages. Run `woof inbox%s`; use `woof message show --id <message-id>%s` for full text and artifact paths. Acknowledge only after reading.\n", flags, flags))
+	// strings.Builder writes cannot fail.
+	_, _ = fmt.Fprintf(&b, "You have Woof messages. Run `woof inbox%s`; use `woof message show --id <message-id>%s` for full text and artifact paths. Acknowledge only after reading.\n", flags, flags)
 	if flags != "" {
-		b.WriteString(fmt.Sprintf("After reading: `woof ack --id <message-id>%s`. Answer questions: `woof reply --id <message-id> --body '<answer>'%s`. After handling: `woof consume --id <message-id>%s`.\n", flags, flags, flags))
+		_, _ = fmt.Fprintf(&b, "After reading: `woof ack --id <message-id>%s`. Answer questions: `woof reply --id <message-id> --body '<answer>'%s`. After handling: `woof consume --id <message-id>%s`.\n", flags, flags, flags)
 	}
 	for _, m := range messages {
 		entry := fmt.Sprintf("Message %s: %s", short(m.ID, 80), short(strings.TrimSpace(m.Subject+" "+m.Body), 200))

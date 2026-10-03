@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -21,24 +22,32 @@ func server(t *testing.T, reply string, hold bool) string {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	s := filepath.Join(d, "s")
 	l, e := net.Listen("unix", s)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { closeTestResource(t, l) })
 	go func() {
 		c, e := l.Accept()
 		if e != nil {
 			return
 		}
-		defer c.Close()
-		bufio.NewReader(c).ReadBytes('\n')
-		io.WriteString(c, reply)
+		defer closeTestResource(t, c)
+		if _, err := bufio.NewReader(c).ReadBytes('\n'); err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := io.WriteString(c, reply); err != nil {
+			t.Error(err)
+			return
+		}
 		if hold {
 			b := make([]byte, 1)
-			c.Read(b)
+			if _, err := c.Read(b); err == nil {
+				t.Error("expected client cancellation to close the connection")
+			}
 		}
 	}()
 	return s
@@ -146,27 +155,37 @@ func TestSnapshotUsesSessionMethodAndDerivesCwd(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	s := filepath.Join(d, "s")
 	l, e := net.Listen("unix", s)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer l.Close()
+	defer closeTestResource(t, l)
 	method := make(chan string, 1)
 	go func() {
 		c, e := l.Accept()
 		if e != nil {
 			return
 		}
-		defer c.Close()
-		b, _ := bufio.NewReader(c).ReadBytes('\n')
+		defer closeTestResource(t, c)
+		b, err := bufio.NewReader(c).ReadBytes('\n')
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		var r struct {
 			Method string `json:"method"`
 		}
-		json.Unmarshal(b, &r)
+		if err := json.Unmarshal(b, &r); err != nil {
+			t.Error(err)
+			return
+		}
 		method <- r.Method
-		io.WriteString(c, "{\"result\":{\"snapshot\":{\"workspaces\":[{\"workspace_id\":\"w1\",\"label\":\"one\"},{\"workspace_id\":\"w2\",\"worktree\":{\"checkout_path\":\"/worktree\"}}],\"panes\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"cwd\":\"/workspace\"}]}}}\n")
+		if _, err := io.WriteString(c, "{\"result\":{\"snapshot\":{\"workspaces\":[{\"workspace_id\":\"w1\",\"label\":\"one\"},{\"workspace_id\":\"w2\",\"worktree\":{\"checkout_path\":\"/worktree\"}}],\"panes\":[{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"cwd\":\"/workspace\"}]}}}\n"); err != nil {
+			t.Error(err)
+			return
+		}
 	}()
 	snap, e := New(s).Snapshot(context.Background())
 	if e != nil {
@@ -234,25 +253,35 @@ func TestAgentReadExplicitlyPreservesAnsiStyling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer os.RemoveAll(d)
+			defer func() { checkTestError(t, os.RemoveAll(d)) }()
 			path := filepath.Join(d, "s")
 			listener, err := net.Listen("unix", path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer closeTestResource(t, listener)
 			request := make(chan map[string]any, 1)
 			go func() {
 				c, err := listener.Accept()
 				if err != nil {
 					return
 				}
-				defer c.Close()
-				b, _ := bufio.NewReader(c).ReadBytes('\n')
+				defer closeTestResource(t, c)
+				b, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					t.Error(err)
+					return
+				}
 				var r map[string]any
-				json.Unmarshal(b, &r)
+				if err := json.Unmarshal(b, &r); err != nil {
+					t.Error(err)
+					return
+				}
 				request <- r
-				io.WriteString(c, "{\"result\":{\"read\":{\"text\":\"❯ \"}}}\n")
+				if _, err := io.WriteString(c, "{\"result\":{\"read\":{\"text\":\"❯ \"}}}\n"); err != nil {
+					t.Error(err)
+					return
+				}
 			}()
 			if _, err := New(path).AgentRead(context.Background(), "w1:p3", format, 80); err != nil {
 				t.Fatal(err)
@@ -268,6 +297,104 @@ func TestAgentReadExplicitlyPreservesAnsiStyling(t *testing.T) {
 			}
 			if format == "text" && present {
 				t.Fatalf("text request overrides stripping default: %+v", params)
+			}
+		})
+	}
+}
+
+func checkTestError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func closeTestResource(t *testing.T, c io.Closer) {
+	t.Helper()
+	// Explicit listener shutdown may precede its registered cleanup.
+	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Error(err)
+	}
+}
+
+// Inject deadline failures without relying on a racing socket close to reproduce them.
+type deadlineFailConn struct {
+	net.Conn
+	reader        *strings.Reader
+	failAt        int
+	deadlineCalls int
+	deadlineErr   error
+	cancel        context.CancelFunc
+	closes        atomic.Int32
+}
+
+func (c *deadlineFailConn) Read(b []byte) (int, error)  { return c.reader.Read(b) }
+func (c *deadlineFailConn) Write(b []byte) (int, error) { return len(b), nil }
+func (c *deadlineFailConn) Close() error                { c.closes.Add(1); return nil }
+func (c *deadlineFailConn) SetReadDeadline(time.Time) error {
+	c.deadlineCalls++
+	if c.deadlineCalls == c.failAt {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return c.deadlineErr
+	}
+	return nil
+}
+func TestSubscriptionDeadlineFailureClosesConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failAt int
+		cancel bool
+	}{
+		{"set acknowledgment deadline", 1, false},
+		{"clear acknowledgment deadline", 2, false},
+		{"cancel while clearing deadline", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			failure := errors.New("injected deadline failure")
+			conn := &deadlineFailConn{reader: strings.NewReader("{\"result\":{\"type\":\"subscription_started\"}}\n"), failAt: tc.failAt, deadlineErr: failure}
+			if tc.cancel {
+				conn.cancel = cancel
+			}
+			ch, err := subscribe(ctx, conn, nil)
+			if ch != nil || !errors.Is(err, failure) || !errors.Is(err, rpc.ErrLost) || errors.Is(err, rpc.ErrUnavailable) {
+				t.Fatalf("subscription outcome: channel %v, error %v", ch, err)
+			}
+			if tc.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+			if conn.closes.Load() == 0 {
+				t.Fatal("failed subscription connection left open")
+			}
+		})
+	}
+}
+
+// Expose an elapsed context deadline before Err() has been published by its timer.
+type unpublishedDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c unpublishedDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+func TestSubscriptionTimeoutPreservesCallerDeadline(t *testing.T) {
+	timeout := &net.DNSError{IsTimeout: true, Err: "injected socket timeout"}
+	for _, tc := range []struct {
+		name         string
+		ctx          context.Context
+		wantDeadline bool
+	}{
+		{"elapsed caller deadline", unpublishedDeadlineContext{context.Background(), time.Now().Add(-time.Second)}, true},
+		{"future caller deadline", unpublishedDeadlineContext{context.Background(), time.Now().Add(time.Minute)}, false},
+		{"independent acknowledgment deadline", context.Background(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := subscriptionAckError(tc.ctx, timeout)
+			if !errors.Is(err, rpc.ErrLost) || !errors.Is(err, timeout) || errors.Is(err, context.DeadlineExceeded) != tc.wantDeadline {
+				t.Fatalf("timeout classification: %v", err)
 			}
 		})
 	}

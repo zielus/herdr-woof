@@ -13,7 +13,9 @@ import (
 func TestVersionNamedClaudeProcessUsesLaunchArgv(t *testing.T) {
 	var info herdr.ProcessInfo
 	b, _ := json.Marshal(map[string]any{"shell_pid": 0, "foreground_processes": []any{map[string]any{"pid": os.Getpid(), "name": "2.1.288", "argv0": "claude", "argv": []string{"claude", "--model", "sonnet"}}}})
-	json.Unmarshal(b, &info)
+	if err := json.Unmarshal(b, &info); err != nil {
+		t.Fatal(err)
+	}
 	_, agent, err := processEvidence(info, "claude")
 	if err != nil || agent == nil {
 		t.Fatalf("version-named live Claude not identified %+v %v", agent, err)

@@ -21,7 +21,11 @@ func openTest(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	return s
 }
 
@@ -86,7 +90,11 @@ func TestMigrationReopenPreservesRecordsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	var w model.Worker
 	if err := s.Get(ctx, "workers", "w_a", &w); err != nil || w.Name != "builder" {
 		t.Fatalf("record: %+v %v", w, err)
@@ -376,12 +384,18 @@ func TestFailedMigrationLeavesExistingDatabaseUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 	if _, err := db.Exec(`CREATE TABLE runs(original TEXT); INSERT INTO runs VALUES('preserve')`); err != nil {
 		t.Fatal(err)
 	}
 	if s, err := Open(path); err == nil {
-		s.Close()
+		if err := s.Close(); err != nil {
+			t.Errorf("close unexpected store: %v", err)
+		}
 		t.Fatal("expected conflicting schema refusal")
 	}
 	var count int
@@ -396,7 +410,9 @@ func TestFailedMigrationLeavesExistingDatabaseUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s, err := Open(path); err == nil {
-		s.Close()
+		if err := s.Close(); err != nil {
+			t.Errorf("close unexpected store: %v", err)
+		}
 		t.Fatal("accepted unsupported future schema")
 	}
 }
@@ -406,7 +422,11 @@ func TestNormalizedScopesUpdateWithRecordAndPathEscaping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	seed(t, s)
 	var w model.Worker
 	if err := s.Get(ctx, "workers", "w_a", &w); err != nil {

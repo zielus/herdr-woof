@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 	"github.com/zielus/herdr-woof-v2/internal/paths"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,13 +25,13 @@ func fakeDaemon(t *testing.T) (string, func(string) int, func(string) string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	s := filepath.Join(d, "s")
 	l, e := net.Listen("unix", s)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { closeTestResource(t, l) })
 	var mu sync.Mutex
 	counts := map[string]int{}
 	ids := map[string]string{}
@@ -41,16 +42,26 @@ func fakeDaemon(t *testing.T) (string, func(string) int, func(string) string) {
 				return
 			}
 			go func() {
-				defer c.Close()
-				b, _ := bufio.NewReader(c).ReadBytes('\n')
+				defer closeTestResource(t, c)
+				b, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					t.Error(err)
+					return
+				}
 				var r model.Request
-				json.Unmarshal(b, &r)
+				if err := json.Unmarshal(b, &r); err != nil {
+					t.Error(err)
+					return
+				}
 				mu.Lock()
 				counts[r.Op]++
 				ids[r.Op] = r.ID
 				mu.Unlock()
 				if r.Op == "ping" {
-					c.Write([]byte("{\"version\":1,\"ok\":true}\n"))
+					if _, err := c.Write([]byte("{\"version\":1,\"ok\":true}\n")); err != nil {
+						t.Error(err)
+						return
+					}
 				}
 			}()
 		}
@@ -71,7 +82,9 @@ func TestLostRequestNotResent(t *testing.T) {
 		}
 	}
 	for _, op := range []string{"status", "operation.list"} {
-		c.Call(context.Background(), op, nil, nil)
+		if err := c.Call(context.Background(), op, nil, nil); err == nil {
+			t.Fatalf("%s: expected lost read response", op)
+		}
 		if count(op) != 2 {
 			t.Fatalf("%s read should retry once", op)
 		}
@@ -107,48 +120,75 @@ func TestNewContextAndDaemonEnvironment(t *testing.T) {
 // The test binary acts as a standalone woofd fixture when launched with no argv.
 func TestMain(m *testing.M) {
 	if os.Getenv("WOOF_TEST_DAEMON") == "1" {
-		if path := os.Getenv("WOOF_TEST_LOCK"); path != "" {
-			lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-			if err != nil {
-				os.Exit(3)
-			}
-			defer lock.Close()
-			if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-				if failed, err := os.OpenFile(os.Getenv("WOOF_TEST_REFUSED"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {
-					failed.WriteString("ownership refused\n")
-					failed.Close()
-				}
-				os.Exit(4)
-			}
-		}
-		l, e := net.Listen("unix", os.Getenv("WOOF_TEST_SOCKET"))
-		if e != nil {
-			os.Exit(2)
-		}
-		f, e := os.OpenFile(os.Getenv("WOOF_TEST_STARTS"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if e != nil {
-			os.Exit(2)
-		}
-		json.NewEncoder(f).Encode(map[string]any{"pid": os.Getpid(), "sid": os.Getpid(), "argv": os.Args[1:], "env": daemonFixtureEnv()})
-		f.Close()
-		for {
-			c, e := l.Accept()
-			if e != nil {
-				os.Exit(0)
-			}
-			bufio.NewReader(c).ReadBytes('\n')
-			c.Write([]byte("{\"version\":1,\"ok\":true}\n"))
-			c.Close()
-		}
+		os.Exit(runDaemonFixture())
 	}
 	os.Exit(m.Run())
+}
+
+func runDaemonFixture() (code int) {
+	if path := os.Getenv("WOOF_TEST_LOCK"); path != "" {
+		lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return 3
+		}
+		defer func() {
+			if lock.Close() != nil {
+				code = 3
+			}
+		}()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			failed, err := os.OpenFile(os.Getenv("WOOF_TEST_REFUSED"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				return 3
+			}
+			_, writeErr := failed.WriteString("ownership refused\n")
+			closeErr := failed.Close()
+			if writeErr != nil || closeErr != nil {
+				return 3
+			}
+			return 4
+		}
+	}
+	l, err := net.Listen("unix", os.Getenv("WOOF_TEST_SOCKET"))
+	if err != nil {
+		return 2
+	}
+	defer func() {
+		if l.Close() != nil {
+			code = 2
+		}
+	}()
+	f, err := os.OpenFile(os.Getenv("WOOF_TEST_STARTS"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return 2
+	}
+	encodeErr := json.NewEncoder(f).Encode(map[string]any{"pid": os.Getpid(), "sid": os.Getpid(), "argv": os.Args[1:], "env": daemonFixtureEnv()})
+	closeErr := f.Close()
+	if encodeErr != nil || closeErr != nil {
+		return 2
+	}
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return 2
+		}
+		_, readErr := bufio.NewReader(c).ReadBytes('\n')
+		var writeErr error
+		if readErr == nil {
+			_, writeErr = c.Write([]byte("{\"version\":1,\"ok\":true}\n"))
+		}
+		closeErr := c.Close()
+		if readErr != nil || writeErr != nil || closeErr != nil {
+			return 2
+		}
+	}
 }
 func TestDetachedBootstrapDiscoverySerializesClients(t *testing.T) {
 	d, e := os.MkdirTemp("/tmp", "woof-bootstrap-")
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	t.Setenv("WOOF_STATE_DIR", d)
 	t.Setenv("WOOF_CONFIG", filepath.Join(d, "config.yml"))
 	c, e := New()
@@ -164,17 +204,7 @@ func TestDetachedBootstrapDiscoverySerializesClients(t *testing.T) {
 	t.Setenv("WOOF_TEST_DAEMON", "1")
 	t.Setenv("WOOF_TEST_SOCKET", c.Paths.Sock)
 	t.Setenv("WOOF_TEST_STARTS", starts)
-	t.Cleanup(func() {
-		b, _ := os.ReadFile(starts)
-		var r struct {
-			PID int `json:"pid"`
-		}
-		json.Unmarshal(b, &r)
-		if r.PID > 0 {
-			p, _ := os.FindProcess(r.PID)
-			p.Kill()
-		}
-	})
+	t.Cleanup(func() { cleanupDaemonProcesses(t, starts) })
 	var wg sync.WaitGroup
 	errs := make(chan error, 6)
 	for i := 0; i < 6; i++ {
@@ -234,13 +264,13 @@ func waitDaemon(t *testing.T, handle func(model.Request, net.Conn)) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	path := filepath.Join(d, "s")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { closeTestResource(t, ln) })
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -248,10 +278,17 @@ func waitDaemon(t *testing.T, handle func(model.Request, net.Conn)) string {
 				return
 			}
 			go func() {
-				defer c.Close()
-				b, _ := bufio.NewReader(c).ReadBytes('\n')
+				defer closeTestResource(t, c)
+				b, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					t.Error(err)
+					return
+				}
 				var r model.Request
-				json.Unmarshal(b, &r)
+				if err := json.Unmarshal(b, &r); err != nil {
+					t.Error(err)
+					return
+				}
 				handle(r, c)
 			}()
 		}
@@ -268,29 +305,47 @@ func TestWaitImplicitCursorSurvivesLostFirstReply(t *testing.T) {
 		defer mu.Unlock()
 		switch r.Op {
 		case "ping":
-			json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true})
+			if err := json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true}); err != nil {
+				t.Error(err)
+				return
+			}
 		case "status":
 			statuses++
 			b, _ := json.Marshal(map[string]int64{"event_cursor": head})
-			json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true, Result: b})
+			if err := json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true, Result: b}); err != nil {
+				t.Error(err)
+				return
+			}
 		case "wait":
 			requests <- r
 			waits++
 			if waits == 1 {
 				// Event 11 matched this wait, but its reply is lost after commit.
 				head = 11
-				conn.Write([]byte(`{"version":1,"ok":true,"result":`))
+				if _, err := conn.Write([]byte(`{"version":1,"ok":true,"result":`)); err != nil {
+					t.Error(err)
+					return
+				}
 				return
 			}
 			var a struct {
 				Since *int64 `json:"since"`
 			}
-			json.Unmarshal(r.Args, &a)
-			if a.Since == nil || *a.Since >= 11 {
-				json.NewEncoder(conn).Encode(model.Response{Version: 1, Error: &model.Error{Code: "timeout", Message: "missed committed event"}})
+			if err := json.Unmarshal(r.Args, &a); err != nil {
+				t.Error(err)
 				return
 			}
-			json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true, Result: json.RawMessage(`{"seq":11,"type":"gate.created"}`)})
+			if a.Since == nil || *a.Since >= 11 {
+				if err := json.NewEncoder(conn).Encode(model.Response{Version: 1, Error: &model.Error{Code: "timeout", Message: "missed committed event"}}); err != nil {
+					t.Error(err)
+					return
+				}
+				return
+			}
+			if err := json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true, Result: json.RawMessage(`{"seq":11,"type":"gate.created"}`)}); err != nil {
+				t.Error(err)
+				return
+			}
 		}
 	})
 	c := &Client{Paths: paths.Paths{Sock: path}}
@@ -310,7 +365,10 @@ func TestWaitImplicitCursorSurvivesLostFirstReply(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		r := <-requests
 		var a map[string]any
-		json.Unmarshal(r.Args, &a)
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			t.Error(err)
+			return
+		}
 		if a["since"] != float64(10) || a["custom_field"] != "preserved" {
 			t.Fatalf("retry changed arguments: %s", r.Args)
 		}
@@ -325,7 +383,10 @@ func TestWaitTimeoutUsesOneDeadlineAcrossReconnect(t *testing.T) {
 			requests := make(chan model.Request, 2)
 			path := waitDaemon(t, func(r model.Request, conn net.Conn) {
 				if r.Op == "ping" {
-					json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true})
+					if err := json.NewEncoder(conn).Encode(model.Response{Version: 1, OK: true}); err != nil {
+						t.Error(err)
+						return
+					}
 					return
 				}
 				requests <- r
@@ -338,7 +399,9 @@ func TestWaitTimeoutUsesOneDeadlineAcrossReconnect(t *testing.T) {
 					return
 				}
 				var b [1]byte
-				conn.Read(b[:]) // cancellation closes the pending wait connection
+				if _, err := conn.Read(b[:]); err == nil {
+					t.Error("expected client cancellation to close the connection")
+				}
 			})
 			ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 			defer cancel()
@@ -354,7 +417,10 @@ func TestWaitTimeoutUsesOneDeadlineAcrossReconnect(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				r := <-requests
 				var a map[string]any
-				json.Unmarshal(r.Args, &a)
+				if err := json.Unmarshal(r.Args, &a); err != nil {
+					t.Error(err)
+					return
+				}
 				if a["timeout_ms"] != float64(0) || a["since"] != float64(10) {
 					t.Fatalf("server received resettable timeout: %s", r.Args)
 				}
@@ -369,7 +435,7 @@ func ownershipFixture(t *testing.T) (*Client, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	t.Setenv("WOOF_STATE_DIR", d)
 	t.Setenv("WOOF_CONFIG", filepath.Join(d, "config.yml"))
 	c, err := New()
@@ -381,10 +447,13 @@ func ownershipFixture(t *testing.T) (*Client, *os.File) {
 		t.Fatal(err)
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
+		closeTestResource(t, lock)
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); lock.Close() })
+	t.Cleanup(func() {
+		checkTestError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_UN))
+		closeTestResource(t, lock)
+	})
 	return c, lock
 }
 func ownerReadServer(t *testing.T, path string, response func() string) (net.Listener, <-chan struct{}) {
@@ -393,7 +462,7 @@ func ownerReadServer(t *testing.T, path string, response func() string) (net.Lis
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { closeTestResource(t, ln) })
 	first := make(chan struct{})
 	var once sync.Once
 	go func() {
@@ -403,10 +472,16 @@ func ownerReadServer(t *testing.T, path string, response func() string) (net.Lis
 				return
 			}
 			go func() {
-				defer conn.Close()
-				bufio.NewReader(conn).ReadBytes('\n')
+				defer closeTestResource(t, conn)
+				if _, err := bufio.NewReader(conn).ReadBytes('\n'); err != nil {
+					t.Error(err)
+					return
+				}
 				once.Do(func() { close(first) })
-				conn.Write([]byte(response()))
+				if _, err := conn.Write([]byte(response())); err != nil {
+					t.Error(err)
+					return
+				}
 			}()
 		}
 	}()
@@ -456,19 +531,7 @@ func TestEnsureDaemonWaitsForReleasedOwnerAndSpawnsOnlyOnce(t *testing.T) {
 	t.Setenv("WOOF_TEST_STARTS", starts)
 	t.Setenv("WOOF_TEST_LOCK", c.Paths.Lock)
 	t.Setenv("WOOF_TEST_REFUSED", refused)
-	t.Cleanup(func() {
-		b, _ := os.ReadFile(starts)
-		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-			var process struct {
-				PID int `json:"pid"`
-			}
-			json.Unmarshal([]byte(line), &process)
-			if process.PID > 0 {
-				p, _ := os.FindProcess(process.PID)
-				p.Kill()
-			}
-		}
-	})
+	t.Cleanup(func() { cleanupDaemonProcesses(t, starts) })
 	ln, first := ownerReadServer(t, c.Paths.Sock, func() string { return "" })
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -486,7 +549,7 @@ func TestEnsureDaemonWaitsForReleasedOwnerAndSpawnsOnlyOnce(t *testing.T) {
 		t.Fatalf("spawned while old owner held lock: %s", b)
 	}
 	// The socket disappears before the writer/ownership lock has fully drained.
-	ln.Close()
+	closeTestResource(t, ln)
 	time.Sleep(80 * time.Millisecond)
 	if b, _ := os.ReadFile(refused); len(b) > 0 {
 		t.Fatalf("spawn attempted against old owner: %s", b)
@@ -536,5 +599,55 @@ func TestEnsureDaemonBusyOwnershipWaitUsesCallerDeadline(t *testing.T) {
 	}
 	if _, err := os.Stat(c.Paths.Log); !os.IsNotExist(err) {
 		t.Fatalf("spawn attempted while owner remained busy: %v", err)
+	}
+}
+
+func checkTestError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func closeTestResource(t *testing.T, c io.Closer) {
+	t.Helper()
+	// Explicit listener shutdown may precede its registered cleanup.
+	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Error(err)
+	}
+}
+
+func cleanupDaemonProcesses(t *testing.T, starts string) {
+	t.Helper()
+	b, err := os.ReadFile(starts)
+	// A failed launch has no process record to clean up.
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var process struct {
+			PID int `json:"pid"`
+		}
+		if err := json.Unmarshal([]byte(line), &process); err != nil {
+			t.Error(err)
+			continue
+		}
+		if process.PID <= 0 {
+			t.Errorf("invalid daemon fixture PID: %d", process.PID)
+			continue
+		}
+		p, err := os.FindProcess(process.PID)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Error(err)
+		}
+		checkTestError(t, p.Release())
 	}
 }

@@ -608,7 +608,7 @@ func (e *Engine) followSession(ctx context.Context, id string, generation int64,
 					e.sessions[id].ready = map[string]bool{}
 					e.sessions[id].readyAttachments = map[string]string{}
 					e.runtimeMu.Unlock()
-					_ = e.offlineSession(id, 0, errors.New("Herdr event subscription disconnected"))
+					_ = e.offlineSession(id, 0, errors.New("herdr event subscription disconnected"))
 					e.background(func() { e.reconnectSession(ctx, id, generation) })
 				}
 				lane.Unlock()

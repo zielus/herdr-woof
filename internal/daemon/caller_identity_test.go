@@ -21,7 +21,7 @@ func callerChild(t *testing.T) int {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	t.Cleanup(func() { stopTestProcess(t, cmd) })
 	return cmd.Process.Pid
 }
 func aliasCallerFixture(t *testing.T, process *model.ProcessIdentity, callerPID int) (*Engine, model.Worker, model.Caller) {
@@ -102,17 +102,23 @@ func callerLineage(t *testing.T) (*model.ProcessIdentity, int) {
 	}
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
+		stopTestProcess(t, cmd)
 		t.Fatal(err)
 	}
 	child, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
+		stopTestProcess(t, cmd)
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { p, _ := os.FindProcess(child); p.Kill(); cmd.Process.Kill(); cmd.Wait() })
+	t.Cleanup(func() {
+		p, err := os.FindProcess(child)
+		if err != nil {
+			t.Error(err)
+		} else {
+			killTestProcess(t, p)
+		}
+		stopTestProcess(t, cmd)
+	})
 	recorded, err := birthIdentity(cmd.Process.Pid)
 	if err != nil {
 		t.Fatal(err)

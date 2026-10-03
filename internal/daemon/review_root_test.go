@@ -84,8 +84,12 @@ func TestReceiptRemainsQueryableWithObsoleteCallerContext(t *testing.T) {
 	a, _ := json.Marshal(v)
 	b, _ = json.Marshal(again)
 	var aa, bb map[string]any
-	json.Unmarshal(a, &aa)
-	json.Unmarshal(b, &bb)
+	if err := json.Unmarshal(a, &aa); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &bb); err != nil {
+		t.Fatal(err)
+	}
 	if aa["id"] != bb["id"] {
 		t.Fatal("receipt changed after attachment")
 	}
@@ -152,7 +156,9 @@ func TestStaleAttachmentObservationCannotLoseReAdoptedWorker(t *testing.T) {
 }
 func TestRegularSocketPathNeverDeleted(t *testing.T) {
 	p := serverPaths(t)
-	os.WriteFile(p.Sock, []byte("keep me"), 0600)
+	if err := os.WriteFile(p.Sock, []byte("keep me"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	err := Run(context.Background(), Options{Paths: p})
 	if err == nil {
 		t.Fatal("regular socket path replaced")

@@ -65,8 +65,11 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 	if err != nil {
 		return errors.Join(rpc.ErrUnavailable, err)
 	}
-	defer conn.Close()
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	// Closure only releases this transport; it cannot change the observed
+	// request outcome, and cancellation may already have closed it.
+	closeConn := func() { _ = conn.Close() }
+	defer closeConn()
+	stop := context.AfterFunc(ctx, closeConn)
 	defer stop()
 	n, err := conn.Write(append(req, '\n'))
 	if err != nil || n != len(req)+1 {
@@ -327,8 +330,15 @@ func (c *Client) Subscribe(ctx context.Context, subs []Subscription) (<-chan Eve
 	if err != nil {
 		return nil, errors.Join(rpc.ErrUnavailable, err)
 	}
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
-	cleanup := func() { stop(); conn.Close() }
+	return subscribe(ctx, conn, subs)
+}
+
+func subscribe(ctx context.Context, conn net.Conn, subs []Subscription) (<-chan Event, error) {
+	// Closure only releases a failed or finished subscription. Cancellation may
+	// already have closed the connection, so cleanup is deliberately best effort.
+	closeConn := func() { _ = conn.Close() }
+	stop := context.AfterFunc(ctx, closeConn)
+	cleanup := func() { stop(); closeConn() }
 	req, err := json.Marshal(map[string]any{"id": "sub", "method": "events.subscribe", "params": map[string]any{"subscriptions": subs}})
 	if err != nil {
 		cleanup()
@@ -349,12 +359,15 @@ func (c *Client) Subscribe(ctx context.Context, subs []Subscription) (<-chan Eve
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	conn.SetReadDeadline(deadline)
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		cleanup()
+		return nil, errors.Join(rpc.ErrLost, fmt.Errorf("subscription acknowledgment deadline: %w", err), ctx.Err())
+	}
 	r := bufio.NewReaderSize(conn, 1<<20)
 	first, err := r.ReadBytes('\n')
 	if err != nil {
 		cleanup()
-		return nil, errors.Join(rpc.ErrLost, err, ctx.Err())
+		return nil, subscriptionAckError(ctx, err)
 	}
 	var ack struct {
 		Result struct {
@@ -374,7 +387,10 @@ func (c *Client) Subscribe(ctx context.Context, subs []Subscription) (<-chan Eve
 		cleanup()
 		return nil, errors.Join(rpc.ErrLost, errors.New("subscription not confirmed"))
 	}
-	conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		cleanup()
+		return nil, errors.Join(rpc.ErrLost, fmt.Errorf("clear subscription acknowledgment deadline: %w", err), ctx.Err())
+	}
 	ch := make(chan Event, 256)
 	go func() {
 		defer close(ch)
@@ -399,6 +415,20 @@ func (c *Client) Subscribe(ctx context.Context, subs []Subscription) (<-chan Eve
 		}
 	}()
 	return ch, nil
+}
+
+// A socket deadline can fire before the context timer publishes its error.
+// Preserve the caller's expired deadline without treating the independent
+// acknowledgment timeout as caller cancellation.
+func subscriptionAckError(ctx context.Context, err error) error {
+	contextErr := ctx.Err()
+	var timeout net.Error
+	if contextErr == nil && errors.As(err, &timeout) && timeout.Timeout() {
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+			contextErr = context.DeadlineExceeded
+		}
+	}
+	return errors.Join(rpc.ErrLost, err, contextErr)
 }
 
 // NormalizeEvent maps "pane_agent_detected" → "pane.agent_detected" and leaves dotted names alone.

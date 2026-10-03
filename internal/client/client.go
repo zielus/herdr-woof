@@ -166,7 +166,7 @@ func pause(ctx context.Context) error {
 		return nil
 	}
 }
-func (c *Client) EnsureDaemon(ctx context.Context) error {
+func (c *Client) EnsureDaemon(ctx context.Context) (retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if e := c.ping(ctx); e == nil {
@@ -179,7 +179,7 @@ func (c *Client) EnsureDaemon(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	for {
 		e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if e == nil {
@@ -192,7 +192,7 @@ func (c *Client) EnsureDaemon(ctx context.Context) error {
 			return e
 		}
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer func() { retErr = errors.Join(retErr, syscall.Flock(int(f.Fd()), syscall.LOCK_UN)) }()
 	healthy, e := c.waitOwnership(ctx)
 	if e != nil {
 		return e
@@ -232,7 +232,7 @@ func retryableProbe(err error) bool {
 
 // The socket can disappear before the daemon has drained its writer. Probe
 // ownership without opening SQLite; release the canonical lock before spawning.
-func (c *Client) waitOwnership(ctx context.Context) (bool, error) {
+func (c *Client) waitOwnership(ctx context.Context) (healthy bool, retErr error) {
 	if c.Paths.Lock == "" {
 		return false, fmt.Errorf("daemon ownership lock path required")
 	}
@@ -240,7 +240,7 @@ func (c *Client) waitOwnership(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer lock.Close()
+	defer func() { retErr = errors.Join(retErr, lock.Close()) }()
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -303,7 +303,10 @@ func (c *Client) Spawn() error {
 	if e != nil {
 		return e
 	}
-	defer f.Close()
+	// The child owns its inherited log descriptor after Start. Closing this
+	// parent descriptor cannot establish whether the launched daemon is healthy;
+	// EnsureDaemon resolves that with ping and ownership probes.
+	defer func() { _ = f.Close() }()
 	cmd := exec.Command(b)
 	cmd.Dir = c.Paths.Dir
 	cmd.Env = daemonEnv(c.Paths)

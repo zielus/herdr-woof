@@ -30,7 +30,7 @@ func inboxReadFault(t *testing.T, e *Engine, w model.Worker, method string, bloc
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { checkCleanup(t, ln.Close()) })
 	calls := &atomic.Int32{}
 	var once sync.Once
 	go func() {
@@ -40,7 +40,7 @@ func inboxReadFault(t *testing.T, e *Engine, w model.Worker, method string, bloc
 				return
 			}
 			go func() {
-				defer c.Close()
+				defer func() { _ = c.Close() }() // The peer may already have disconnected; cleanup is best effort.
 				line, err := bufio.NewReader(c).ReadBytes('\n')
 				if err != nil {
 					return
@@ -69,7 +69,7 @@ func inboxReadFault(t *testing.T, e *Engine, w model.Worker, method string, bloc
 				if err != nil {
 					return
 				}
-				defer remote.Close()
+				defer func() { _ = remote.Close() }() // The peer may already have disconnected; cleanup is best effort.
 				if _, err := remote.Write(line); err != nil {
 					return
 				}

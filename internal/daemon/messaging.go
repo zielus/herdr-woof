@@ -78,7 +78,8 @@ func (e *Engine) send(ctx context.Context, r model.Request, a Args) (any, error)
 	var recipients []model.Worker
 	deliveries := []model.Delivery{}
 	err = e.write(ctx, func(tx *store.Tx) error {
-		if toKind == "run" {
+		switch toKind {
+		case "run":
 			run, err := txGet[model.Run](tx, "runs", toID)
 			if err != nil {
 				return err
@@ -94,7 +95,7 @@ func (e *Engine) send(ctx context.Context, r model.Request, a Args) (any, error)
 					recipients = append(recipients, w)
 				}
 			}
-		} else if toKind == "worker" {
+		case "worker":
 			w, err := txGet[model.Worker](tx, "workers", recipientID)
 			if err != nil {
 				return err

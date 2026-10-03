@@ -44,7 +44,7 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { checkCleanup(t, st.Close()) })
 	checkout := filepath.Join(dir, "checkout")
 	if err := os.Mkdir(checkout, 0700); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 		if err := f.process.Start(); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { f.process.Process.Kill(); f.process.Wait() })
+		t.Cleanup(func() { stopTestProcess(t, f.process) })
 		ident, err := birthIdentity(f.process.Process.Pid)
 		if err != nil {
 			t.Fatal(err)
@@ -78,13 +78,13 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	t.Cleanup(func() { checkCleanup(t, os.RemoveAll(socketDir)) })
 	sock := filepath.Join(socketDir, "h.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { checkCleanup(t, ln.Close()) })
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -92,20 +92,29 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 				return
 			}
 			go func() {
-				defer c.Close()
-				line, _ := bufio.NewReader(c).ReadBytes('\n')
+				defer func() { _ = c.Close() }() // The peer may already have disconnected; cleanup is best effort.
+				line, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					return // Recovery may disconnect a client before sending a request.
+				}
 				var r struct {
 					Method string         `json:"method"`
 					Params map[string]any `json:"params"`
 				}
-				json.Unmarshal(line, &r)
+				if err := json.Unmarshal(line, &r); err != nil {
+					t.Error(err)
+					return
+				}
 				f.mu.Lock()
 				defer f.mu.Unlock()
 				var result any
 				switch r.Method {
 				case "pane.get", "agent.get":
 					if f.gone {
-						json.NewEncoder(c).Encode(map[string]any{"error": map[string]string{"code": "pane_not_found", "message": "gone"}})
+						// A disconnected client needs no retry of its fixture response.
+						if err := json.NewEncoder(c).Encode(map[string]any{"error": map[string]string{"code": "pane_not_found", "message": "gone"}}); err != nil {
+							return
+						}
 						return
 					}
 					p := f.pane
@@ -145,7 +154,7 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 					}
 					f.gone = true
 					if f.process != nil {
-						f.process.Process.Kill()
+						killTestProcess(t, f.process.Process)
 					}
 					result = map[string]bool{"closed": true}
 				case "notification.show":
@@ -153,7 +162,10 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 				default:
 					result = map[string]any{}
 				}
-				json.NewEncoder(c).Encode(map[string]any{"result": result})
+				// A disconnected client needs no retry of its fixture response.
+				if err := json.NewEncoder(c).Encode(map[string]any{"result": result}); err != nil {
+					return
+				}
 			}()
 		}
 	}()
@@ -351,7 +363,9 @@ func TestReleaseProtectsGitAndLeavesSharedWorktree(t *testing.T) {
 	gitTest(t, dir, "init", "-q")
 	gitTest(t, dir, "config", "user.email", "test@test")
 	gitTest(t, dir, "config", "user.name", "test")
-	os.WriteFile(filepath.Join(dir, "work.txt"), []byte("private work"), 0600)
+	if err := os.WriteFile(filepath.Join(dir, "work.txt"), []byte("private work"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	_, err := workerCall(t, e, "worker.release", model.Scope{Global: true}, Args{ID: w.ID})
 	workerCode(t, err, "unsaved_work")
 	gitTest(t, dir, "add", ".")

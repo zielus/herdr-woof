@@ -18,7 +18,8 @@ func main() {
 	idle := flags.Duration("idle-timeout", 3*time.Minute, "idle dispatch without report escalation delay")
 	quiet := flags.Duration("quiet-timeout", 90*time.Second, "unobserved dispatch or uncertain delivery escalation delay")
 	blocked := flags.Duration("blocked-timeout", 20*time.Second, "persistent blocked prompt escalation delay")
-	flags.Parse(os.Args[1:])
+	// ExitOnError terminates on parse errors; there is no recoverable error here.
+	_ = flags.Parse(os.Args[1:])
 	if flags.NArg() != 0 || *interval < 0 || *idle <= 0 || *quiet <= 0 || *blocked <= 0 {
 		fmt.Fprintln(os.Stderr, "woofd: invalid arguments or timeout; use --help")
 		os.Exit(2)

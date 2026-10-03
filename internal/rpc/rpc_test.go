@@ -21,26 +21,34 @@ func fixture(t *testing.T, reply string, hold bool) string {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(d)) })
 	s := filepath.Join(d, "s")
 	l, e := net.Listen("unix", s)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { closeTestResource(t, l) })
 	go func() {
 		c, e := l.Accept()
 		if e != nil {
 			return
 		}
-		defer c.Close()
-		bufio.NewReader(c).ReadBytes('\n')
-		if hold {
-			b := make([]byte, 1)
-			c.Read(b)
+		defer closeTestResource(t, c)
+		if _, err := bufio.NewReader(c).ReadBytes('\n'); err != nil {
+			t.Error(err)
 			return
 		}
-		io.WriteString(c, reply)
+		if hold {
+			b := make([]byte, 1)
+			if _, err := c.Read(b); err == nil {
+				t.Error("expected client cancellation to close the connection")
+			}
+			return
+		}
+		if _, err := io.WriteString(c, reply); err != nil {
+			t.Error(err)
+			return
+		}
 	}()
 	return s
 }
@@ -106,5 +114,20 @@ func TestCallsDoNotLeakCancellationWaiters(t *testing.T) {
 	}
 	if n := runtime.NumGoroutine(); n > before+2 {
 		t.Fatalf("calls leaked cancellation waiters: before %d after %d", before, n)
+	}
+}
+
+func checkTestError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func closeTestResource(t *testing.T, c io.Closer) {
+	t.Helper()
+	// Explicit listener shutdown may precede its registered cleanup.
+	if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Error(err)
 	}
 }

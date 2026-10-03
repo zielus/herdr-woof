@@ -18,7 +18,7 @@ func eventsEngine(t *testing.T) *Engine {
 		t.Fatal(err)
 	}
 	e := NewEngine(st, Options{})
-	t.Cleanup(func() { e.Close(); st.Close() })
+	t.Cleanup(func() { e.Close(); checkCleanup(t, st.Close()) })
 	return e
 }
 func eventsSubscriberCount(e *Engine) int {

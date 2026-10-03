@@ -16,7 +16,7 @@ func TestOperationReceiptRejectsChangedPayloadAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { checkCleanup(t, st.Close()) }()
 	e := NewEngine(st, Options{})
 	req := model.Request{Version: model.Protocol, ID: "op_test", Op: "gate.create", Scope: model.Scope{Global: true}, Args: json.RawMessage(`{"question":"Ship?","options":["yes","no"]}`)}
 	first, err := e.Handle(ctx, req)
@@ -30,8 +30,12 @@ func TestOperationReceiptRejectsChangedPayloadAndSurvivesRestart(t *testing.T) {
 	a, _ := json.Marshal(first)
 	b, _ := json.Marshal(second)
 	var aa, bb any
-	json.Unmarshal(a, &aa)
-	json.Unmarshal(b, &bb)
+	if err := json.Unmarshal(a, &aa); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &bb); err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(aa, bb) {
 		t.Fatalf("receipt result changed %s %s", a, b)
 	}
@@ -55,7 +59,7 @@ func TestExplicitScopeOverridesCallerButInvalidRelationshipsFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { checkCleanup(t, st.Close()) }()
 	e := NewEngine(st, Options{})
 	_, err = st.Write(ctx, func(tx *store.Tx) error {
 		for _, s := range []model.Session{{ID: "s_a", HerdrName: "a", SocketPath: "/tmp/a", Status: "offline"}, {ID: "s_b", HerdrName: "b", SocketPath: "/tmp/b", Status: "offline"}} {

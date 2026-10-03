@@ -44,8 +44,11 @@ func connect(ctx context.Context, sock string, req model.Request) (net.Conn, fun
 	if err != nil {
 		return nil, nil, errors.Join(ErrUnavailable, err)
 	}
-	stop := context.AfterFunc(ctx, func() { c.Close() })
-	cleanup := func() { stop(); c.Close() }
+	// Closing only releases the transport; the response or send failure already
+	// determines the outcome. Cancellation may race with normal cleanup.
+	closeConn := func() { _ = c.Close() }
+	stop := context.AfterFunc(ctx, closeConn)
+	cleanup := func() { stop(); closeConn() }
 	if err = writeRequest(c, append(b, '\n')); err != nil {
 		cleanup()
 		return nil, nil, err

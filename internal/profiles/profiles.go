@@ -71,7 +71,8 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load profiles from %s: %w", path, err)
 	}
-	defer file.Close()
+	// This read-only file has no buffered writes; decoding reports read errors.
+	defer func() { _ = file.Close() }()
 	dec := yaml.NewDecoder(file)
 	dec.KnownFields(true)
 	var c Config
