@@ -5,4 +5,9 @@
 - Local clone: `/Users/zielu/Projects/herdr-orch`
 - Upstream repository: https://github.com/ellingtonsp/herdr-orch
 
-Use the local clone when inspecting or comparing source on this machine. The upstream repository is the portable reference when the local path is unavailable.
+## Reference project: herdr-projects
+
+- Local clone: `/Users/zielu/Projects/herdr-projects`
+- Upstream repository: https://github.com/eliasstravik/herdr-projects
+
+Use the local clones when inspecting or comparing source on this machine. The upstream repositories are the portable references when the local paths are unavailable.
