@@ -496,12 +496,14 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		if err := e.captureBinding(ctx, &w, p, c, ws.HerdrWorkspaceID); err != nil {
 			return nil, err
 		}
-		if actual := paneCwd(p); actual != "" {
-			if (a.Cwd != "" && !sameCwd(a.Cwd, actual)) || (treePath != "" && !sameCwd(treePath, actual)) {
-				return nil, problem("bad_cwd", "explicit worker directory conflicts with live agent cwd %s", actual)
-			}
-			w.Cwd = actual
+		actual := paneCwd(p)
+		if actual == "" {
+			return nil, problem("bad_cwd", "live agent cwd is unavailable")
 		}
+		if (a.Cwd != "" && !sameCwd(a.Cwd, actual)) || (treePath != "" && !sameCwd(treePath, actual)) {
+			return nil, problem("bad_cwd", "explicit worker directory conflicts with live agent cwd %s", actual)
+		}
+		w.Cwd = actual
 		err = e.write(ctx, func(tx *store.Tx) error {
 			workers, err := txList[model.Worker](tx, "workers", model.Scope{SessionID: ws.SessionID})
 			if err != nil {

@@ -357,6 +357,29 @@ func TestAdoptionUsesLiveCwdDespiteStaleWorkspaceCwd(t *testing.T) {
 	}
 }
 
+func TestAdoptionRejectsMissingLiveCwdWithoutWorkerRecord(t *testing.T) {
+	e, f, prior := workerFixture(t, false)
+	prior.State = "stopped"
+	if err := e.write(context.Background(), func(tx *store.Tx) error { return tx.Put("workers", prior.ID, prior) }); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.pane.Cwd = nil
+	f.pane.ForegroundCwd = nil
+	f.mu.Unlock()
+	_, err := workerCall(t, e, "worker.adopt", model.Scope{WorkspaceID: prior.WorkspaceID}, Args{Pane: prior.PaneID, Name: "missing-live-cwd"})
+	workerCode(t, err, "bad_cwd")
+	workers, err := list[model.Worker](context.Background(), e.store, "workers", model.Scope{WorkspaceID: prior.WorkspaceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range workers {
+		if w.Name == "missing-live-cwd" {
+			t.Fatalf("adoption persisted worker without live cwd: %+v", w)
+		}
+	}
+}
+
 func TestSpawnCwdPrecedenceAndValidation(t *testing.T) {
 	root := t.TempDir()
 	makeDir := func(name string) string {
