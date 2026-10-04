@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 func TestStyledTerminalRetainsSelectionStatusAndSafeBounds(t *testing.T) {

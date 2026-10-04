@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/herdr"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/herdr"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 // The real transport loses exactly one precondition read. The normal fixture

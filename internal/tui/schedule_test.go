@@ -20,9 +20,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/zielus/herdr-woof-v2/internal/client"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/paths"
+	"github.com/zielus/herdr-woof/internal/client"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/paths"
 )
 
 func testSchedule(id, name string, enabled bool) model.Schedule {

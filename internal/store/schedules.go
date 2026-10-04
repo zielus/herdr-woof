@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 // Schedule history queries adapted from herdr-orch internal/store/schedules.go

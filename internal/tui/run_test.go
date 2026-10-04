@@ -10,7 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 func TestRunQuitRestoresAlternateScreen(t *testing.T) {

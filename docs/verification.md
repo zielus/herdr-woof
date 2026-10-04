@@ -6,7 +6,7 @@ Phase 1.5 UI and Phase 2 workflow execution remain deferred.
 
 ## Environment and commands
 
-Validation runs from `/Users/zielu/Projects/herdr-woof-v2` with Go 1.26.3 on
+Validation runs from a local checkout with Go 1.26.3 on
 macOS arm64, Herdr 0.9.3 / protocol 22, and authenticated Claude Code 2.1.288. All runtime
 state used for tests is isolated with `WOOF_STATE_DIR` and `WOOF_CONFIG`; no tests
 open or modify the user's default Woof database.
@@ -219,7 +219,7 @@ The checked-in GitHub Actions workflow runs lint, formatting, build, test, race,
 vet, integration, installer and vulnerability checks on Linux and macOS. Local
 verification above does not establish a successful hosted CI run.
 
-The first hosted [Quality run 37113047741](https://github.com/zielus/herdr-woof-v2/actions/runs/37113047741)
+The first hosted [Quality run 37113047741](https://github.com/zielus/herdr-woof/actions/runs/37113047741)
 failed. Its macOS job passed the build/test steps but the vulnerability scan
 reported one called standard-library vulnerability,
 [GO-2026-4971](https://pkg.go.dev/vuln/GO-2026-4971), found in `net@go1.26`

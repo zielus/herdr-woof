@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/model"
 	"unicode"
 
 	"charm.land/bubbles/v2/textarea"

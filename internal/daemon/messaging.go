@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/herdr"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/prompt"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/herdr"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/prompt"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 func (e *Engine) send(ctx context.Context, r model.Request, a Args) (any, error) {

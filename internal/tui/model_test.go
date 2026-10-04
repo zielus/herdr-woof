@@ -11,9 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/profiles"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/profiles"
 )
 
 func key(s string) tea.KeyPressMsg {

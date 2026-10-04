@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 var scopeA = model.Scope{SessionID: "s_a", WorkspaceID: "ws_a"}

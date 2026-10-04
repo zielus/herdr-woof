@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 // Run obtains exclusive ownership before opening SQLite. Every client accesses

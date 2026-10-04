@@ -4,6 +4,122 @@ Woof is a Herdr plugin for durable coordination between coding agents. One globa
 
 This repository implements Phase 1: logical workers, thin launch profiles, durable messages and questions, replayable events, dispatch settlement, minimal decision gates, recovery and protected release. Phase 1.5 adds `woof tui`, a human monitor with inbox and decision handling. A native time scheduler sends durable messages and dispatches to logical workers. Web views and a workflow engine are deferred. See [docs/spec.md](docs/spec.md), [docs/phases.md](docs/phases.md), the [acceptance checklist](docs/acceptance.md) and [verification evidence](docs/verification.md).
 
+## Install
+
+Woof runs on macOS and Linux (amd64 and arm64) with Herdr 0.9.3 or newer.
+
+### As a Herdr plugin (recommended)
+
+```sh
+herdr plugin install zielus/herdr-woof
+herdr plugin action invoke install-cli --plugin woof   # or "Woof: install CLI and skill" in Herdr
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The build step downloads the release archive for the manifest version and your
+platform, verifies its SHA-256 against the release `checksums.txt`, and installs
+`bin/woof` and `bin/woofd` in the plugin directory. If no matching release can be
+downloaded or verified, it builds from source instead (Go 1.26+ and `make`
+required). The plugin's short-lived startup hook runs `./bin/woof session attach`,
+registering each Herdr session with the one global daemon; it never becomes a
+per-session daemon.
+
+The `install-cli` action runs [scripts/install.sh](scripts/install.sh) `--skills`,
+putting `woof` and `woofd` on `~/.local/bin` and the [using-woof skill](skill/SKILL.md)
+in `~/.agents/skills`. It refuses to overwrite files it did not install. Run it again
+after every plugin upgrade so the CLI on `PATH` and the plugin binaries stay the same
+version; to upgrade, stop the daemon first:
+
+```sh
+woof daemon stop
+herdr plugin uninstall woof && herdr plugin install zielus/herdr-woof
+herdr plugin action invoke install-cli --plugin woof
+```
+
+### From a release archive
+
+Download `woof_<version>_<os>_<arch>.tar.gz` and `checksums.txt` from
+[GitHub releases](https://github.com/zielus/herdr-woof/releases), verify, extract and install:
+
+```sh
+shasum -a 256 -c --ignore-missing checksums.txt
+tar -xzf woof_1.0.0_darwin_arm64.tar.gz
+cd woof_1.0.0_darwin_arm64 && ./scripts/install.sh --skills
+```
+
+Each archive contains both binaries, the skill, the installer, the license, third-party
+notices and the license files of every linked dependency under `third_party/licenses`.
+
+### From source
+
+```sh
+./scripts/install.sh --build          # make build, then install into ~/.local/bin
+herdr plugin link "$PWD" --enabled    # link this checkout as the plugin
+```
+
+`herdr plugin link` does not run build steps; keep the checkout available and run
+`make build` after changes.
+
+### Installer options
+
+Install both binaries together so the CLI can discover `woofd` beside itself. The
+installer defaults to `~/.local/bin`; set `WOOF_BIN_DIR` or pass `--bin-dir /absolute/path`
+to choose another location. It installs existing binaries unless `--build` is supplied.
+It preserves conflicting or locally modified files and replaces owned executables by
+rename. It does not start a daemon, change config, register a plugin or edit shell
+startup files.
+
+Skills are copied only with `--skills`, even when `WOOF_SKILLS_DIR` is set; the default
+skill root is `~/.agents/skills` and the copied directory is `using-woof`:
+
+```sh
+./scripts/install.sh --skills --skills-dir /absolute/path/to/skills
+```
+
+For managed workers that should handle Woof notices, make the installed
+`using-woof` skill an explicit part of their user-owned startup instructions.
+Skill discovery alone does not ensure a worker reads it when a notice arrives.
+The skill tells the worker to treat a pasted notice as a hint, verify its message
+or dispatch through its own injected Woof identity and persisted state, then
+apply its existing authorization and role limits. Keep this bootstrap conditional on managed
+context; it does not change direct agent sessions or Herdr's prompt transport.
+
+Outside a managed pane, attach a discovered socket explicitly:
+
+```sh
+woof session attach --socket /absolute/path/to/herdr.sock --herdr-name selected-session
+woof session list --global --json
+```
+
+### Uninstall
+
+Stop Woof first and use the same destination options as installation:
+
+```sh
+woof daemon stop
+./scripts/install.sh --uninstall --skills --skills-dir /absolute/path/to/skills
+herdr plugin uninstall woof
+```
+
+Uninstall removes only files matching the saved installation checksums. It preserves
+unrelated skill files, global config and durable state in `~/.woof`.
+
+### Upgrading from herdr-woof 0.x
+
+Woof 1.0 is a rewrite and replaces the TypeScript workflow engine published as
+`herdr-woof` 0.x (now [zielus/herdr-woof-legacy](https://github.com/zielus/herdr-woof-legacy)).
+The plugin id changed from `herdr-woof` to `woof`, so Herdr treats it as a new plugin.
+Remove the old one and its npm CLI, which also provides a `woof` command:
+
+```sh
+herdr plugin uninstall herdr-woof
+npm uninstall -g herdr-woof   # or: bun remove -g herdr-woof
+```
+
+There is no data migration. Woof 1.x keeps its own files (`woof.db`, `woof.sock`, `archive/`,
+`woof.lock`, `daemon.log`, `config.yml`) in `~/.woof`; 0.x files there, such as
+`state.sqlite`, `runs/` and `engine/`, are ignored and can be archived.
+
 ## Terminal interface
 
 Run `woof tui` after installing, or `bin/woof tui` after `make build`. It shows all
@@ -12,7 +128,7 @@ ack/consume and gate decisions are available, with confirmation before submissio
 Worker launch, dispatch and lifecycle remain in CLI. See [TUI usage](docs/tui.md)
 for views, keyboard shortcuts and uncertainty handling, and [Phase 1.5 acceptance](docs/tui-verification.md) for test and live evidence.
 
-## Build and verify
+## Build from source and verify
 
 Use macOS or Linux, Go 1.26 or newer, `make`, and Herdr 0.9.3 or newer. Use a patched Go toolchain (Go 1.26.3 or newer); `go.mod` retains the Go 1.26.0 language minimum. The integration and installer tests also use `jq`.
 
@@ -37,55 +153,6 @@ The checks use isolated state
 and do not control live Herdr sessions.
 
 The integration script checks concurrent bootstrap, second-writer refusal, messaging, gates, replay/wait, daemon restart with an active event follower, and scheduler reads and refusals. Set `WOOF_IT_HERDR_SOCKETS` to a newline-separated list of explicitly selected sockets to also attach those live sessions. It does not create or stop Herdr sessions, or mutate panes.
-
-## Install and link
-
-Install both binaries together so the CLI can discover `woofd` beside itself:
-
-```sh
-./scripts/install.sh --build
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-The installer defaults to `~/.local/bin`. Set `WOOF_BIN_DIR` or pass `--bin-dir /absolute/path` to choose another location. It installs existing binaries unless `--build` is supplied. It preserves conflicting or locally modified files and replaces owned executables by rename. It does not start a daemon, change config, register a plugin or edit shell startup files.
-
-The usage skill is bundled at [skill/SKILL.md](skill/SKILL.md). Copy it only when desired:
-
-```sh
-./scripts/install.sh --skills --skills-dir /absolute/path/to/skills
-```
-
-`--skills` is required even when `WOOF_SKILLS_DIR` is set; the default skill root is `~/.agents/skills`. The copied directory is `using-woof`.
-
-For managed workers that should handle Woof notices, make the installed
-`using-woof` skill an explicit part of their user-owned startup instructions.
-Skill discovery alone does not ensure a worker reads it when a notice arrives.
-The skill tells the worker to treat a pasted notice as a hint, verify its message
-or dispatch through its own injected Woof identity and persisted state, then
-apply its existing authorization and role limits. Keep this bootstrap conditional on managed
-context; it does not change direct agent sessions or Herdr's prompt transport.
-
-From the checkout, link the plugin using Herdr's installed CLI:
-
-```sh
-herdr plugin link "$PWD" --enabled
-```
-
-The manifest's build step runs `make build`. Its short-lived startup runs `./bin/woof session attach`, registering the invoking Herdr socket with the global daemon. Startup does not become a per-session daemon. Keep the linked checkout available. Outside a managed pane, attach a discovered socket explicitly:
-
-```sh
-woof session attach --socket /absolute/path/to/herdr.sock --herdr-name selected-session
-woof session list --global --json
-```
-
-For removal, stop Woof first and use the same destination options as installation:
-
-```sh
-woof daemon stop
-./scripts/install.sh --uninstall --skills --skills-dir /absolute/path/to/skills
-```
-
-Uninstall removes only files matching the saved installation checksums. It preserves unrelated skill files, global config and durable state. Herdr plugin registration is separate from binary installation.
 
 ## Global config and profiles
 
@@ -233,3 +300,29 @@ woof daemon restart
 Stop drains Woof RPC/subscriptions and preserves durable state; restart waits for drain before bootstrapping. It does not stop Herdr agents. `worker retain`, `worker release` and `worker stop` control worker lifetime. Release/stop refuse busy workers and dirty, untracked, unpublished or unverifiable Git work unless explicitly forced. Attachment identity and cleanup proof remain mandatory with `--force`; surviving or unverified processes stay visible as failures. Shared worktrees remain independent of worker lifetime.
 
 Run `woof --help` for all supported commands. Source provenance and the MIT notices for both donors and robfig/cron are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Releasing
+
+The version lives in `herdr-plugin.toml`, `internal/cli/execute.go` and a matching
+`## <version>` entry in [CHANGELOG.md](CHANGELOG.md); `make release-check` verifies
+they agree and that `third_party/licenses` matches the linked dependencies (refresh it
+with `make licenses` after changing `go.mod`). To release:
+
+```sh
+# bump the three version sites, then
+make licenses check integration install-test
+git commit -am 'Release vX.Y.Z' && git tag vX.Y.Z && git push origin master vX.Y.Z
+```
+
+The [release workflow](.github/workflows/release.yml) reruns the checks, builds
+`CGO_ENABLED=0` archives for darwin/linux on amd64/arm64 with `make dist`, smoke-tests
+them on macOS and Linux, and publishes them with `checksums.txt` and the changelog entry
+as a GitHub release. The plugin build step downloads archives by manifest version, so
+tag every manifest version that reaches `master`; until the release exists, installs
+fall back to building from source.
+
+## License
+
+Woof is released under the [MIT License](LICENSE). Adapted code from herdr-orch,
+herdr-projects and robfig/cron is described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md);
+license files of linked Go modules are in [third_party/licenses](third_party/licenses).

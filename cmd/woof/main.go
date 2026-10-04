@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"github.com/zielus/herdr-woof-v2/internal/cli"
+	"github.com/zielus/herdr-woof/internal/cli"
 	"os"
 	"os/signal"
 	"syscall"

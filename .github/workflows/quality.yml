@@ -35,7 +35,7 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v${{ steps.tools.outputs.golangci }}
-      - name: Build, test, race, vet, CLI and installation checks
-        run: make build test race vet integration install-test
+      - name: Build, test, race, vet, release metadata, CLI and installation checks
+        run: make build test race vet release-check integration install-test
       - name: Vulnerability scan
         run: make vuln

@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 type row struct{ ID, Label, State string }
