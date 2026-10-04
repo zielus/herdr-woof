@@ -85,20 +85,56 @@ A smarter optional resolver can be added later on top of raw args.
 
 ## Environment
 
-Profiles may support explicit environment variables:
+Profiles have no `env` field. The loader rejects unknown profile fields, so a
+profile containing `env:` fails to load. A profile carries only `agent`, `args`,
+`cwd`, `description` and `tags`.
+
+A worker launched in a new tab receives Woof's own context (`WOOF_WORKER_ID`,
+`WOOF_ATTACHMENT_ID`, the scope IDs, `WOOF_STATE_DIR`, `WOOF_CONFIG`) and a
+`PATH` that includes the running Woof binaries. Any other environment comes
+from the Herdr pane's shell. Keep secrets in the environment or OS secret
+storage, not in config.
+
+## Default worker permissions
+
+A worker has to run `woof` commands to coordinate. Without help, Claude Code in
+manual permission mode asks before every one of them, and Codex's sandbox
+blocks the connection to the `woofd` socket so every command fails. Woof
+therefore adds launch arguments, before the profile's own, when it starts a
+worker of these agent kinds:
+
+- `claude`: `--settings` with Bash allow rules for the worker's own
+  coordination commands (inbox, message show/ack/consume, reply, dispatch
+  show/check, done, worker show, status, operation show, wait, question wait,
+  events list/follow, send, ask). It merges with the user's settings. The rules
+  match command text; they are a convenience, not a security boundary, and do
+  not restrict recipients. Worker start/stop/release/adopt, dispatching,
+  schedules, sessions and daemon control still prompt.
+- `codex`: `--no-daemon`, `--enable network_proxy` and a `permissions.woof`
+  profile extending `:workspace` that allows the `woofd` Unix socket through the
+  limited network proxy, selected with `default_permissions`. This grant is per
+  socket: a Codex worker holding it can run every `woof` command. Codex cannot
+  narrow it by subcommand for a single launch. `network_proxy` is an
+  experimental Codex feature.
+
+Other agent kinds are untouched. The effective arguments are recorded on the
+worker and shown by `woof worker show`. The list lives in
+`internal/daemon/worker_permissions.go` and is not configurable per rule.
+
+A launch that already chooses its permissions is left alone: Claude arguments
+containing `--settings`, `--allowedTools`/`--allowed-tools`,
+`--dangerously-skip-permissions` or `--permission-mode bypassPermissions`; Codex
+arguments containing `--sandbox`/`-s`,
+`--dangerously-bypass-approvals-and-sandbox`/`--yolo`, `--disable
+network_proxy`, or a `-c`/`--config` key naming `permissions`, `sandbox_` or
+`network_proxy`.
+
+Turn the whole feature off with:
 
 ```yaml
-profiles:
-  custom:
-    agent: claude
-    env:
-      SOME_MODE: strict
-    args: [...]
+defaults:
+  worker_permissions: false
 ```
-
-Secrets should not be encouraged in config.
-
-Use environment/OS secret storage for secrets.
 
 ## `~` expansion
 
