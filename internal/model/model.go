@@ -261,6 +261,8 @@ type Schedule struct {
 	CreatedAt         int64  `json:"created_at"`
 	UpdatedAt         int64  `json:"updated_at"`
 	RemovedAt         int64  `json:"removed_at,omitempty"`
+	// LastRun is joined by schedule.list reads and never persisted.
+	LastRun *ScheduleRun `json:"last_run,omitempty"`
 }
 
 // ScheduleRun is one durable occurrence. (schedule_id, occurrence_key) is unique,

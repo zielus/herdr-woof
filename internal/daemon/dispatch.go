@@ -179,6 +179,12 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 			if x = tx.Event("dispatch."+current.Status, dispatchScope(current), "daemon", "", current); x != nil {
 				return x
 			}
+			if current.Status == "failed" {
+				// A refused prompt ends its implicit run like any other failure.
+				if x = e.settleRunTx(tx, current); x != nil {
+					return x
+				}
+			}
 		}
 		d = current
 		state := "completed"
@@ -268,6 +274,9 @@ func (e *Engine) done(ctx context.Context, r model.Request, a Args) (any, error)
 			if err = e.dispatchEventTx(tx, "dispatch.settled", d); err != nil {
 				return err
 			}
+			if err = e.syncScheduleRunTx(tx, d, "worker", d.WorkerID); err != nil {
+				return err
+			}
 		}
 		return e.finishTx(tx, r.ID, d, nil, "completed")
 	})
@@ -278,9 +287,6 @@ func (e *Engine) done(ctx context.Context, r model.Request, a Args) (any, error)
 	return d, err
 }
 func (e *Engine) settleRunTx(tx *store.Tx, d model.Dispatch) error {
-	if err := e.syncScheduleRunTx(tx, d); err != nil {
-		return err
-	}
 	run, err := txGet[model.Run](tx, "runs", d.RunID)
 	if err != nil {
 		return err
@@ -465,6 +471,9 @@ func (e *Engine) observeWorker(ctx context.Context, w model.Worker, p herdr.Pane
 				if err = e.dispatchEventTx(tx, "dispatch.settled", d); err != nil {
 					return err
 				}
+				if err = e.syncScheduleRunTx(tx, d, "daemon", ""); err != nil {
+					return err
+				}
 			}
 			if err = tx.Put("dispatches", d.ID, d); err != nil {
 				return err
@@ -545,6 +554,9 @@ func (e *Engine) dispatchControl(ctx context.Context, r model.Request, a Args) (
 				return err
 			}
 			if err = tx.Event("dispatch.failed", dispatchScope(d), "worker", r.Caller.WorkerID, d); err != nil {
+				return err
+			}
+			if err = e.syncScheduleRunTx(tx, d, actorOf(r), r.Caller.WorkerID); err != nil {
 				return err
 			}
 			return e.finishTx(tx, r.ID, d, nil, "completed")

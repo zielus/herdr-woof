@@ -39,7 +39,7 @@ workspace is refused (`invalid_scope`).
 
 `list` is scoped like other Woof reads: a worker caller without explicit scope
 sees schedules that target it (its inferred run/worktree do not narrow the
-list); pass `--workspace`/`--session` or `--global` to
+list, while explicit `--run`/`--worktree` flags do); pass `--workspace`/`--session` or `--global` to
 see more. `show`/`history`/mutations of a schedule outside the selected
 session/workspace return `not_found`.
 
@@ -100,8 +100,8 @@ key, not an exactly-once delivery claim.
 | `uncertain` | The dispatch prompt outcome is unknown. Never resent; inspect `dispatch show` and `operation show`, then resolve explicitly with `operation resolve`. |
 | `failed` | Certain failure: the prompt was refused, the dispatch was failed or resolved as failed, or the target was invalid. |
 | `blocked` | Nothing was sent; the reason is recorded and the attempt is retried. |
-| `missed` | Coalesced occurrences that came due while the daemon was not running. |
-| `cancelled` | A `claimed` or `blocked` occurrence when the schedule was disabled or removed. |
+| `missed` | Coalesced past occurrences: the daemon was not running, or `--missed skip` dropped ones more than a minute late. |
+| `cancelled` | A `claimed` or `blocked` occurrence when the schedule was disabled or removed, or auto-disabled (no future occurrence, or an expression that no longer parses). |
 
 A dispatch occurrence follows its dispatch: the transaction that settles or
 fails the dispatch also moves the occurrence to `settled`/`failed` and emits
@@ -169,7 +169,12 @@ evidence:
   `blocked`, retried promptly;
 - linked dispatch still `sending`/`uncertain` → `uncertain`, never resent (the
   watchdog also escalates the dispatch);
-- linked dispatch active or settled → `dispatched`.
+- linked dispatch active → `dispatched`; settled → `settled`; failed → `failed`.
+
+An attempt receipt records delivery evidence, not the dispatch result: it
+completes once the prompt is proven to have landed (accepted transport, an
+observed working turn, a report or settlement). A dispatch failed or fenced
+without such evidence leaves the receipt `uncertain`.
 
 A `schedule run` request replayed with the same request ID returns its
 receipt, which records the claimed occurrence; read the live outcome with

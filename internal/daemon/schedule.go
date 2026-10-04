@@ -224,10 +224,13 @@ func (e *Engine) resolveSchedule(ctx context.Context, ref string, s model.Scope)
 	return model.Schedule{}, problem("ambiguous_schedule", "%q matches %d schedules; use an ID or workspace scope", ref, len(matches))
 }
 
-func (e *Engine) scheduleList(ctx context.Context, s model.Scope, all bool) ([]model.Schedule, error) {
+func (e *Engine) scheduleList(ctx context.Context, r model.Request, all bool) ([]model.Schedule, error) {
+	s := r.Scope
 	// A worker caller's inferred run/worktree describe its current work, not the
-	// schedules that target it; filter by session, workspace and worker only.
-	s.RunID, s.WorktreeID = "", ""
+	// schedules that target it. Explicit scope flags still narrow the list.
+	if r.Caller.WorkerID != "" && !r.ScopeExplicit {
+		s.RunID, s.WorktreeID = "", ""
+	}
 	scheds, err := list[model.Schedule](ctx, e.store, "schedules", s)
 	if err != nil {
 		return nil, err
@@ -236,6 +239,13 @@ func (e *Engine) scheduleList(ctx context.Context, s model.Scope, all bool) ([]m
 	for _, sc := range scheds {
 		if all || sc.State != "removed" {
 			out = append(out, sc)
+		}
+	}
+	for i := range out {
+		if out[i].LastRunID != "" {
+			if run, err := get[model.ScheduleRun](ctx, e.store, "schedule_runs", out[i].LastRunID); err == nil {
+				out[i].LastRun = &run
+			}
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -318,7 +328,7 @@ func (e *Engine) scheduleShow(ctx context.Context, sc model.Schedule) (any, erro
 
 func (e *Engine) scheduleRead(ctx context.Context, r model.Request, a Args) (any, error) {
 	if r.Op == "schedule.list" {
-		return e.scheduleList(ctx, r.Scope, a.All)
+		return e.scheduleList(ctx, r, a.All)
 	}
 	sc, err := e.resolveSchedule(ctx, a.ID, r.Scope)
 	if err != nil {
@@ -527,6 +537,11 @@ func (e *Engine) scheduleManualRun(ctx context.Context, r model.Request, ref mod
 		if err != nil {
 			return err
 		}
+		sc.LastRunAt, sc.LastRunID, sc.UpdatedAt = run.ScheduledFor, run.ID, e.now()
+		sc.Revision++
+		if err := tx.Put("schedules", sc.ID, sc); err != nil {
+			return err
+		}
 		if err := e.operationResource(tx, r.ID, "schedule_runs", run.ID); err != nil {
 			return err
 		}
@@ -597,6 +612,11 @@ func (e *Engine) claimDue(ctx context.Context, id string) (model.ScheduleRun, er
 			}
 			missedLast = before.Latest
 		}
+		// Advance first: if the series ends here, auto-disable cancels only older
+		// outstanding occurrences, never the one claimed below.
+		if err := e.advance(tx, &sc, expr, now, "daemon", ""); err != nil {
+			return err
+		}
 		missedKey := fmt.Sprintf("missed:%d", due.First.UnixMilli())
 		if _, exists, err := tx.ScheduleRunByKey(sc.ID, missedKey); err != nil {
 			return err
@@ -635,7 +655,7 @@ func (e *Engine) claimDue(ctx context.Context, id string) (model.ScheduleRun, er
 				if err := tx.Put("schedule_runs", held.ID, held); err != nil {
 					return err
 				}
-				if err := tx.Event("schedule.run.skipped", scheduleEventScope(sc, held), "daemon", "", map[string]any{"run": held, "skipped_for": due.Latest.UnixMilli(), "reason": "overlap: occurrence " + held.ID + " is still " + held.State}); err != nil {
+				if err := tx.Event("schedule.run.skipped", scheduleEventScope(sc, held), "daemon", "", held); err != nil {
 					return err
 				}
 			} else if claimed, err = e.createRunTx(tx, sc, model.ScheduleRun{OccurrenceKey: key, Trigger: "scheduled", ScheduledFor: due.Latest.UnixMilli()}, "daemon", ""); err != nil {
@@ -644,9 +664,6 @@ func (e *Engine) claimDue(ctx context.Context, id string) (model.ScheduleRun, er
 				sc.LastRunID = claimed.ID
 			}
 			sc.LastRunAt = due.Latest.UnixMilli()
-		}
-		if err := e.advance(tx, &sc, expr, now, "daemon", ""); err != nil {
-			return err
 		}
 		sc.Revision++
 		sc.UpdatedAt = now.UnixMilli()
@@ -777,10 +794,32 @@ func (e *Engine) retryMessageRun(ctx context.Context, sc model.Schedule, run mod
 	e.afterClaim(persisted)
 }
 
+// promptLanded reports lifecycle evidence that the dispatch prompt reached the
+// worker. A failed or fenced dispatch alone proves nothing about delivery.
+func promptLanded(d model.Dispatch) bool {
+	return d.Status == "active" || d.Status == "settled" || d.DoneMessageID != "" || d.ObservedWorkingAt != 0 || d.TurnEnded
+}
+
+// finishAttemptTx gives an open attempt receipt the outcome the evidence
+// supports: completed once the prompt is proven to have landed, otherwise
+// uncertain. A final receipt is never relabelled.
+func (e *Engine) finishAttemptTx(tx *store.Tx, op model.Operation, d model.Dispatch) error {
+	if op.State != "accepted" && op.State != "uncertain" {
+		return nil
+	}
+	if promptLanded(d) {
+		return e.finishTx(tx, op.ID, d, nil, "completed")
+	}
+	if op.State == "accepted" {
+		return e.finishTx(tx, op.ID, nil, problem("uncertain", "dispatch %s is %s without evidence that its prompt reached the worker", d.ID, d.Status), "uncertain")
+	}
+	return nil
+}
+
 // syncScheduleRunTx follows a scheduled dispatch to its final state in the
 // transaction that settles or fails it, so occurrence history and events never
 // lag the dispatch. Settlement itself is decided only by the dispatch rules.
-func (e *Engine) syncScheduleRunTx(tx *store.Tx, d model.Dispatch) error {
+func (e *Engine) syncScheduleRunTx(tx *store.Tx, d model.Dispatch, actorKind, actorID string) error {
 	if d.ScheduleRunID == "" || (d.Status != "settled" && d.Status != "failed") {
 		return nil
 	}
@@ -797,10 +836,20 @@ func (e *Engine) syncScheduleRunTx(tx *store.Tx, d model.Dispatch) error {
 	}
 	run.State, run.Reason, run.Error = d.Status, d.Outcome, ""
 	run.UpdatedAt, run.FinishedAt = e.now(), e.now()
+	if run.AttemptID != "" {
+		op, err := txGet[model.Operation](tx, "operations", run.AttemptID)
+		if err != nil {
+			return err
+		}
+		if err := e.finishAttemptTx(tx, op, d); err != nil {
+			return err
+		}
+	}
 	if err := tx.Put("schedule_runs", run.ID, run); err != nil {
 		return err
 	}
-	return tx.Event("schedule.run."+run.State, scheduleEventScope(sc, run), "daemon", "", run)
+	// Emitted after the dispatch's own event in the same transaction.
+	return tx.Event("schedule.run."+run.State, scheduleEventScope(sc, run), actorKind, actorID, run)
 }
 
 var permanentDispatchRefusals = map[string]bool{"not_found": true, "invalid_args": true, "invalid_scope": true}
@@ -846,10 +895,6 @@ func (e *Engine) classifyAttemptTx(tx *store.Tx, run *model.ScheduleRun, dispatc
 		case "sending", "uncertain":
 			run.State = "uncertain"
 			run.Error = "dispatch prompt outcome is uncertain; inspect `woof dispatch show --id " + d.ID + "` and `woof operation show --id " + op.ID + "`, then resolve explicitly. It is never resent automatically."
-			if op.State == "accepted" {
-				return e.finishTx(tx, op.ID, nil, problem("uncertain", "%s", run.Error), "uncertain")
-			}
-			return nil
 		case "failed":
 			run.State, run.Reason = "failed", d.Outcome
 		case "settled":
@@ -857,11 +902,7 @@ func (e *Engine) classifyAttemptTx(tx *store.Tx, run *model.ScheduleRun, dispatc
 		default:
 			run.State, run.Reason, run.Error = "dispatched", "", ""
 		}
-		// Later lifecycle evidence (report, failure) proves the prompt landed.
-		if op.State == "accepted" || op.State == "uncertain" {
-			return e.finishTx(tx, op.ID, d, nil, "completed")
-		}
-		return nil
+		return e.finishAttemptTx(tx, op, d)
 	}
 	if dispatchErr == nil {
 		dispatchErr = problem("internal_error", "dispatch returned no intent")

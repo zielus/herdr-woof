@@ -905,3 +905,78 @@ func TestSchedulerLoopWakesOnKick(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestScheduleListHonorsExplicitRunScopeAndJoinsLastRun(t *testing.T) {
+	e, _, w := fixture(t)
+	disp := addSchedule(t, e, Args{Name: "with-run", To: "alice", Cron: "@daily", Spec: "task"})
+	addSchedule(t, e, Args{Name: "plain", To: "alice", Cron: "@daily", Body: "b"})
+	v, err := schedReq(t, e, "schedule.run", scopeA, Args{ID: disp.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := v.(model.ScheduleRun)
+	l, err := schedReq(t, e, "schedule.list", model.Scope{RunID: run.RunID}, Args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.([]model.Schedule); len(got) != 1 || got[0].ID != disp.ID {
+		t.Fatalf("explicit run scope widened: %+v", got)
+	}
+	l, _ = schedReq(t, e, "schedule.list", scopeA, Args{})
+	for _, sc := range l.([]model.Schedule) {
+		if sc.ID == disp.ID && (sc.LastRun == nil || sc.LastRun.ID != run.ID) {
+			t.Fatalf("last run not joined: %+v", sc)
+		}
+	}
+	if stored := reload(t, e, disp.ID); stored.LastRun != nil || stored.WorkerID != w.ID {
+		t.Fatalf("joined last run persisted: %+v", stored)
+	}
+}
+
+func TestScheduleAttemptReceiptFollowsDeliveryEvidenceOnly(t *testing.T) {
+	e, f, w := fixture(t)
+	sc := addSchedule(t, e, Args{Name: "ev", To: "alice", Cron: "@every 1h", Spec: "task"})
+	uncertainRun := func() model.ScheduleRun {
+		t.Helper()
+		f.mu.Lock()
+		f.uncertain = true
+		f.mu.Unlock()
+		v, err := schedReq(t, e, "schedule.run", scopeA, Args{ID: sc.ID})
+		f.mu.Lock()
+		f.uncertain = false
+		f.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.(model.ScheduleRun)
+	}
+	receipt := func(id string) string {
+		op, _ := get[model.Operation](context.Background(), e.store, "operations", id)
+		return op.State
+	}
+	// Failing a dispatch proves nothing about delivery: the receipt stays uncertain.
+	first := uncertainRun()
+	if _, err := call(t, e, "fail", Args{Dispatch: first.DispatchID, Reason: "operator gave up"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", first.ID); got.State != "failed" || receipt(first.AttemptID) != "uncertain" {
+		t.Fatalf("failed without evidence: run %+v receipt %s", got, receipt(first.AttemptID))
+	}
+	// A report plus turn end proves the prompt landed: the receipt completes and
+	// the occurrence event follows the dispatch event.
+	second := uncertainRun()
+	head, _ := e.store.Head(context.Background())
+	if _, err := call(t, e, "done", Args{Dispatch: second.DispatchID, Attachment: w.AttachmentID, Body: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	setObservation(t, e, f, w, "working", 3, w.CompletionSeq)
+	seq := uint64(4)
+	setObservation(t, e, f, w, "idle", 4, &seq)
+	if got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", second.ID); got.State != "settled" || receipt(second.AttemptID) != "completed" {
+		t.Fatalf("settled with evidence: run %+v receipt %s", got, receipt(second.AttemptID))
+	}
+	evs, _ := e.store.Events(context.Background(), head, model.Scope{Global: true}, []string{"dispatch.settled", "schedule.run.settled"}, 0)
+	if len(evs) < 2 || evs[0].Type != "dispatch.settled" || evs[len(evs)-1].Type != "schedule.run.settled" {
+		t.Fatalf("event order %+v", evs)
+	}
+}

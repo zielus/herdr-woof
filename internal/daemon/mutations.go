@@ -201,6 +201,9 @@ func (e *Engine) mutate(ctx context.Context, r model.Request, a Args) (any, erro
 					if x = tx.Event("dispatch.resolved", dispatchScope(dispatch), "human", r.Caller.WorkerID, dispatch); x != nil {
 						return x
 					}
+					if x = e.syncScheduleRunTx(tx, dispatch, actorOf(r), r.Caller.WorkerID); x != nil {
+						return x
+					}
 				}
 			}
 			if finalReceipt {
