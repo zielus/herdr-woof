@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/herdr"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/herdr"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 // Donor cases: Orch report-before-idle, idle-before-report and durable mailbox.

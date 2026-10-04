@@ -4,10 +4,10 @@ package tui
 import (
 	"context"
 	"encoding/json"
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/client"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/profiles"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/client"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/profiles"
 )
 
 type InboxEntry struct {

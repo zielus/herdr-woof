@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/herdr"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/profiles"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/herdr"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/profiles"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 var workerAlias = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)

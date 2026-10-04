@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zielus/herdr-woof-v2/internal/artifacts"
-	"github.com/zielus/herdr-woof-v2/internal/client"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/artifacts"
+	"github.com/zielus/herdr-woof/internal/client"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 // Act delegates each mutation once through the existing uncertainty-aware

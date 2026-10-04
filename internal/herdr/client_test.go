@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/zielus/herdr-woof-v2/internal/rpc"
+	"github.com/zielus/herdr-woof/internal/rpc"
 	"io"
 	"net"
 	"os"

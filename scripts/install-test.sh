@@ -14,7 +14,7 @@ test -x "$BIN/woof" && test -x "$BIN/woofd" || fail 'both binaries must be execu
 cmp "$ROOT/bin/woof" "$BIN/woof"
 cmp "$ROOT/bin/woofd" "$BIN/woofd"
 test ! -e "$SKILLS" || fail 'skills were installed without --skills'
-"$BIN/woof" version --json | jq -e '.version == "0.1.0"' >/dev/null
+"$BIN/woof" version --json | jq -e --arg v "$(sh "$ROOT/scripts/version.sh")" '.version == $v' >/dev/null
 install_woof # repeated installs are idempotent
 install_woof --skills
 cmp "$ROOT/skill/SKILL.md" "$SKILLS/using-woof/SKILL.md"

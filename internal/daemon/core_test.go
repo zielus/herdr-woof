@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 	"path/filepath"
 	"reflect"
 	"testing"

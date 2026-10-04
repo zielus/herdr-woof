@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/client"
-	"github.com/zielus/herdr-woof-v2/internal/daemon"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/paths"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/client"
+	"github.com/zielus/herdr-woof/internal/daemon"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/paths"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 func actionDaemon(t *testing.T) (*RPCBackend, *client.Client, model.Worker, *store.Store) {

@@ -1,14 +1,25 @@
 id = "woof"
 name = "Woof"
-version = "0.1.0"
+version = "1.0.0"
 min_herdr_version = "0.9.3"
-description = "Durable coordination across Herdr sessions. CLI: woof."
+description = "Durable coordination for coding agents across Herdr sessions: workers, messages, dispatches, schedules. CLI: woof."
 platforms = ["macos", "linux"]
 
+# GitHub install: download and SHA-256-verify the release archive matching this
+# version, falling back to `make build` (Go 1.26+). `herdr plugin link` does not
+# run build steps; run `make build` in the working tree instead.
 [[build]]
-platforms = ["macos", "linux"]
-command = ["make", "build"]
+command = ["sh", "scripts/plugin-build.sh"]
 
 # Bootstrap registration exits; one global woofd owns the database and connections.
 [[startup]]
 command = ["./bin/woof", "session", "attach"]
+
+# Put woof/woofd on PATH (~/.local/bin) and the using-woof skill in ~/.agents/skills.
+# Refuses to overwrite files it did not install.
+[[actions]]
+id = "install-cli"
+title = "Woof: install CLI and skill"
+description = "Install woof and woofd into ~/.local/bin and the using-woof skill into ~/.agents/skills."
+contexts = ["global"]
+command = ["sh", "scripts/install.sh", "--skills"]
