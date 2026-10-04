@@ -55,7 +55,7 @@ type Command struct {
 }
 
 var commands = map[string]string{
-	"status": "status", "version": "version", "session attach": "session.attach", "session list": "session.list", "workspace list": "workspace.list", "worktree list": "worktree.list",
+	"tui": "tui", "status": "status", "version": "version", "session attach": "session.attach", "session list": "session.list", "workspace list": "workspace.list", "worktree list": "worktree.list",
 	"worker spawn": "worker.spawn", "worker start": "worker.spawn", "worker adopt": "worker.adopt", "worker register": "worker.adopt", "worker show": "worker.show", "worker list": "worker.list", "workers": "worker.list", "worker retain": "worker.retain", "worker release": "worker.release", "worker stop": "worker.stop", "worker read": "worker.read",
 	"run create": "run.create", "run show": "run.show", "run list": "run.list", "send": "send", "ask": "ask", "reply": "reply", "inbox": "inbox", "ack": "ack", "consume": "consume", "message show": "message.show", "message ack": "ack", "message consume": "consume", "question wait": "question.wait",
 	"dispatch": "dispatch", "dispatch show": "dispatch.show", "dispatch check": "check", "dispatch nudge": "nudge", "dispatch fail": "fail", "done": "done", "check": "check", "nudge": "nudge", "fail": "fail",
@@ -157,6 +157,9 @@ func Parse(argv []string) (Command, error) {
 	}
 	c.JSON = isTrue("json")
 	c.AsWorker, c.AsAttachment = get("as-worker"), get("as-attachment")
+	if op == "tui" && (c.JSON || len(flags["as-worker"]) > 0 || len(flags["as-attachment"]) > 0) {
+		return c, fmt.Errorf("tui is an interactive human interface; --json and actor overrides are not supported")
+	}
 	if len(flags["as-worker"]) > 0 || len(flags["as-attachment"]) > 0 {
 		if strings.TrimSpace(c.AsWorker) == "" || strings.TrimSpace(c.AsAttachment) == "" {
 			return c, fmt.Errorf("--as-worker and --as-attachment must be supplied together with nonempty IDs")

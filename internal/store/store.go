@@ -324,3 +324,50 @@ func (s *Store) Events(ctx context.Context, since int64, scope model.Scope, type
 	}
 	return result, databaseError(rows.Err())
 }
+
+// EventTail returns at most the latest 500 matching events in ascending order.
+// Capture the global head first: append-only events committed during the query
+// belong to follow replay, including when this scope has no matching history.
+func (s *Store) EventTail(ctx context.Context, scope model.Scope, types []string, limit int) (tail model.EventTail, err error) {
+	head, err := s.Head(ctx)
+	if err != nil {
+		return tail, err
+	}
+	tail.EventCursor = head
+	tail.Events = []model.Event{}
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	where, args, err := scopeWhere("events", scope)
+	if err != nil {
+		return tail, err
+	}
+	where += " AND t.seq<=?"
+	args = append(args, head)
+	if len(types) > 0 {
+		where += " AND t.type IN (" + placeholders(len(types)) + ")"
+		for _, typ := range types {
+			args = append(args, typ)
+		}
+	}
+	args = append(args, limit)
+	query := `SELECT seq,event_id,type,COALESCE(session_id,''),COALESCE(workspace_id,''),COALESCE(worktree_id,''),COALESCE(run_id,''),COALESCE(worker_id,''),actor_kind,COALESCE(actor_id,''),payload_json,created_at FROM events t WHERE ` + where + ` ORDER BY seq DESC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return tail, databaseError(err)
+	}
+	defer closeRows(rows, &err)
+	for rows.Next() {
+		var ev model.Event
+		var payload string
+		if err := rows.Scan(&ev.Seq, &ev.ID, &ev.Type, &ev.SessionID, &ev.WorkspaceID, &ev.WorktreeID, &ev.RunID, &ev.WorkerID, &ev.ActorKind, &ev.ActorID, &payload, &ev.CreatedAt); err != nil {
+			return tail, err
+		}
+		ev.Payload = json.RawMessage(payload)
+		tail.Events = append(tail.Events, ev)
+	}
+	for i, j := 0, len(tail.Events)-1; i < j; i, j = i+1, j-1 {
+		tail.Events[i], tail.Events[j] = tail.Events[j], tail.Events[i]
+	}
+	return tail, databaseError(rows.Err())
+}

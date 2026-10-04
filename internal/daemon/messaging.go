@@ -291,7 +291,11 @@ func (e *Engine) ack(ctx context.Context, r model.Request, a Args) (any, error) 
 		if len(out) == 0 {
 			return problem("wrong_recipient", "no delivery belongs to caller; humans may explicitly select a worker")
 		}
-		if err := tx.Event("message."+r.Op, r.Scope, "worker", r.Caller.WorkerID, map[string]any{"message_id": m.ID, "deliveries": out}); err != nil {
+		actorKind := "human"
+		if r.Caller.WorkerID != "" {
+			actorKind = "worker"
+		}
+		if err := tx.Event("message."+r.Op, r.Scope, actorKind, r.Caller.WorkerID, map[string]any{"message_id": m.ID, "deliveries": out}); err != nil {
 			return err
 		}
 		return e.finishTx(tx, r.ID, out, nil, "completed")

@@ -652,3 +652,16 @@ func cleanupDaemonProcesses(t *testing.T, starts string) {
 		checkTestError(t, p.Release())
 	}
 }
+
+func TestEventReadsNeverCarryMutationIdentity(t *testing.T) {
+	c := &Client{}
+	for _, op := range []string{"events.tail", "events.follow"} {
+		req, err := c.request(op, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.ID != "" {
+			t.Fatalf("%s read generated mutation ID %s", op, req.ID)
+		}
+	}
+}

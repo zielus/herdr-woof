@@ -7,7 +7,7 @@ Woof is a Herdr plugin providing durable coordination for coding agents. Herdr r
 - Read all files in `docs/` before initial implementation. Revisit the relevant documents for later changes.
 - Use `docs/codex-implementation-prompt.md` for the implementation workflow and `docs/acceptance.md` as the completion checklist.
 - Implement Phase 1 core only. Preserve Phase 2 compatibility without implementing workflow tables, a workflow engine, or a full workflow DSL.
-- Defer board/TUI/Web work until core acceptance passes, following Phase 1.5 in `docs/phases.md`. This resolves the optional Phase 1 board allowance in `docs/spec.md`.
+- Core acceptance has passed. Phase 1.5 TUI is specified in `docs/tui-plan.md` and documented in `docs/tui.md`; Web work and the Phase 2 workflow engine remain deferred. Preserve core invariants in UI work.
 - Document any other architectural conflict before implementing the affected behavior; do not silently invent a different architecture.
 
 ## Reference inspection and reuse
@@ -93,3 +93,13 @@ Tests using Unix sockets require an environment that permits local socket binds.
 Install the exact golangci-lint version in `.golangci-version` using an official
 binary release. `make vuln` needs network access; tool dependencies remain outside
 the application module. CI runs checks on Linux and macOS without live Herdr access.
+
+## TUI development
+
+`bin/woof tui` opens the Phase 1.5 human interface; explicit scope flags override
+the default global view. `go test ./internal/tui` tests the adapter, terminal model
+and human actions; these tests are included in `make test`/`make race`. The TUI
+uses the existing daemon RPC and must never import the store or write SQLite.
+Keep selection keyed by Woof IDs, fence old scope callbacks, preserve mutation
+receipts on shutdown, and never retry uncertain actions. Live tests belong in
+uniquely named Herdr sessions with isolated `WOOF_STATE_DIR`/`WOOF_CONFIG`.
