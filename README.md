@@ -57,6 +57,14 @@ The usage skill is bundled at [skill/SKILL.md](skill/SKILL.md). Copy it only whe
 
 `--skills` is required even when `WOOF_SKILLS_DIR` is set; the default skill root is `~/.agents/skills`. The copied directory is `using-woof`.
 
+For managed workers that should handle automatic inbox wakeups, make the installed
+`using-woof` skill an explicit part of their user-owned startup instructions.
+Skill discovery alone does not ensure a worker reads it when a notice arrives.
+The skill tells the worker to treat a pasted notice as a hint, verify the message
+through its own injected Woof identity and local inbox, then apply its existing
+authorization and role limits. Keep this bootstrap conditional on managed
+context; it does not change direct agent sessions or Herdr's prompt transport.
+
 From the checkout, link the plugin using Herdr's installed CLI:
 
 ```sh
