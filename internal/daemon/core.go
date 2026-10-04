@@ -574,7 +574,7 @@ func (e *Engine) finishTx(tx *store.Tx, id string, out any, err error, state str
 }
 func isRead(op string) bool {
 	switch op {
-	case "ping", "status", "session.list", "workspace.list", "worktree.list", "run.list", "run.show", "worker.list", "worker.show", "worker.read", "profile.roster", "profile.show", "inbox", "message.show", "dispatch.show", "check", "gate.list", "gate.show", "operation.list", "operation.show", "events.list", "question.wait", "wait":
+	case "ping", "status", "session.list", "workspace.list", "worktree.list", "run.list", "run.show", "worker.list", "worker.show", "worker.read", "profile.roster", "profile.show", "inbox", "message.show", "dispatch.show", "check", "gate.list", "gate.show", "operation.list", "operation.show", "events.list", "events.tail", "events.follow", "question.wait", "wait":
 		return true
 	}
 	return false
@@ -647,6 +647,8 @@ func (e *Engine) read(ctx context.Context, r model.Request, a Args) (any, error)
 		return list[model.Gate](ctx, e.store, "gates", s)
 	case "gate.show":
 		return get[model.Gate](ctx, e.store, "gates", a.ID)
+	case "events.tail":
+		return e.store.EventTail(ctx, s, a.Events, a.Limit)
 	case "events.list":
 		since := int64(0)
 		if a.Since != nil {

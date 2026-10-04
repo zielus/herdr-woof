@@ -2,7 +2,15 @@
 
 Woof is a Herdr plugin for durable coordination between coding agents. One global `woofd` owns a SQLite database and connects to multiple Herdr sessions. The `woof` CLI uses Unix socket RPC; Herdr owns the terminals, agent processes, workspaces and worktrees.
 
-This repository implements Phase 1: logical workers, thin launch profiles, durable messages and questions, replayable events, dispatch settlement, minimal decision gates, recovery and protected release. Boards, TUI/Web views and a workflow engine are deferred. See [docs/spec.md](docs/spec.md), [docs/phases.md](docs/phases.md), the completed [acceptance checklist](docs/acceptance.md) and [verification evidence](docs/verification.md).
+This repository implements Phase 1: logical workers, thin launch profiles, durable messages and questions, replayable events, dispatch settlement, minimal decision gates, recovery and protected release. Phase 1.5 adds `woof tui`, a human monitor with inbox and decision handling. Web views and a workflow engine are deferred. See [docs/spec.md](docs/spec.md), [docs/phases.md](docs/phases.md), the completed [acceptance checklist](docs/acceptance.md) and [verification evidence](docs/verification.md).
+
+## Terminal interface
+
+Run `woof tui` after installing, or `bin/woof tui` after `make build`. It shows all
+sessions by default; use `s` to select scope. Messages, questions, explicit
+ack/consume and gate decisions are available, with confirmation before submission.
+Worker launch, dispatch and lifecycle remain in CLI. See [TUI usage](docs/tui.md)
+for views, keyboard shortcuts and uncertainty handling, and [Phase 1.5 acceptance](docs/tui-verification.md) for test and live evidence.
 
 ## Build and verify
 

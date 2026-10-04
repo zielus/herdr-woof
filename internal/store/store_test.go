@@ -482,3 +482,43 @@ func TestWorkersRunScopeIncludesAdhocDispatchMembership(t *testing.T) {
 		t.Fatalf("adhoc run members: %+v %v", workers, err)
 	}
 }
+
+func TestWorktreeHumanReceiptsUseMessageScope(t *testing.T) {
+	s := openTest(t)
+	seed(t, s)
+	writeTest(t, s, func(tx *Tx) error {
+		for _, m := range []model.Message{
+			{ID: "m_here", SessionID: "s_a", WorkspaceID: "ws_a", WorktreeID: "wt_a", ToKind: "human"},
+			{ID: "m_else", SessionID: "s_b", WorkspaceID: "ws_b", ToKind: "human"},
+			{ID: "m_worker", SessionID: "s_b", WorkspaceID: "ws_b", ToKind: "worker", ToID: "w_a"},
+		} {
+			if err := tx.Put("messages", m.ID, m); err != nil {
+				return err
+			}
+		}
+		for _, d := range []model.Delivery{
+			{ID: "dl_here", MessageID: "m_here", SessionID: "s_a", WorkspaceID: "ws_a", Human: true},
+			{ID: "dl_else", MessageID: "m_else", SessionID: "s_b", WorkspaceID: "ws_b", Human: true},
+			{ID: "dl_worker", MessageID: "m_worker", SessionID: "s_a", WorkspaceID: "ws_a", WorkerID: "w_a"},
+		} {
+			if err := tx.Put("deliveries", d.ID, d); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	var ds []model.Delivery
+	if err := s.List(ctx, "deliveries", model.Scope{WorktreeID: "wt_a"}, &ds); err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 2 {
+		t.Fatalf("want same-worktree human receipt and existing worker membership, got %+v", ds)
+	}
+	ids := map[string]bool{}
+	for _, d := range ds {
+		ids[d.ID] = true
+	}
+	if !ids["dl_here"] || !ids["dl_worker"] || ids["dl_else"] {
+		t.Fatalf("scope leaked: %+v", ds)
+	}
+}

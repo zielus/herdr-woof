@@ -11,10 +11,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/zielus/herdr-woof-v2/internal/artifacts"
 	"github.com/zielus/herdr-woof-v2/internal/client"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 	"github.com/zielus/herdr-woof-v2/internal/rpc"
+	"github.com/zielus/herdr-woof-v2/internal/tui"
 )
 
 const Version = "0.1.0"
@@ -51,6 +53,8 @@ Usage: woof COMMAND [OPTIONS]
 
   events list [--since SEQ] | events follow [--since SEQ]
   wait [--events message.persisted,dispatch.settled --since SEQ --timeout 20m]
+  tui [--session ID --workspace ID --worktree ID --run ID]
+                                                    Human monitor, inbox and decisions
   status | daemon stop | daemon restart | version
 
 Scope: --session ID --workspace ID --worktree ID --run ID --worker-scope ID
@@ -90,6 +94,22 @@ func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	}
 	if command.Op == "version" {
 		if err = printValue(stdout, map[string]any{"version": Version, "protocol": model.Protocol}, command.JSON); err != nil {
+			return 1
+		}
+		return 0
+	}
+	if command.Op == "tui" {
+		output, ok := stdout.(*os.File)
+		if !ok || !term.IsTerminal(output.Fd()) || !term.IsTerminal(os.Stdin.Fd()) {
+			writeError(stderr, fmt.Errorf("tui requires an interactive terminal on stdin and stdout; use status, inbox or events for scripts"), false)
+			return 1
+		}
+		scope := model.Scope{Global: true}
+		if command.HasScope {
+			scope = command.Explicit
+		}
+		if err := tui.Run(ctx, scope, stdout); err != nil {
+			writeError(stderr, err, false)
 			return 1
 		}
 		return 0

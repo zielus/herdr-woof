@@ -37,7 +37,7 @@ var selectors = map[string][5]string{
 	},
 	"deliveries": {
 		"t.session_id=?", "t.workspace_id=?",
-		"EXISTS(SELECT 1 FROM workers x WHERE x.id=t.worker_id AND x.worktree_id=?)",
+		"CASE WHEN t.human=1 THEN (SELECT x.worktree_id FROM messages x WHERE x.id=t.message_id) ELSE (SELECT x.worktree_id FROM workers x WHERE x.id=t.worker_id) END=?",
 		"t.run_id=?", "t.worker_id=?",
 	},
 	"dispatches": {"t.session_id=?", "t.workspace_id=?", "t.worktree_id=?", "t.run_id=?", "t.worker_id=?"},

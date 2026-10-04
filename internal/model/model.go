@@ -272,3 +272,10 @@ type Response struct {
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *Error          `json:"error,omitempty"`
 }
+
+// EventTail captures the global replay boundary before selecting the latest
+// scoped events. EventCursor can exceed the last matching event sequence.
+type EventTail struct {
+	Events      []Event `json:"events"`
+	EventCursor int64   `json:"event_cursor"`
+}
