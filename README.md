@@ -119,6 +119,11 @@ Prompt safety requires faithful ANSI styling when a CLI uses placeholder text. L
 | `WOOF_STATE_DIR` | `~/.woof` | Canonical DB, daemon lock, log and archives |
 | `WOOF_CONFIG` | `~/.woof/config.yml` | Global profile config; independent of state-dir override |
 | `WOOF_DAEMON_BIN` | `woofd` beside `woof` | Explicit daemon executable override |
+| `defaults.worker_permissions` (config) | `true` | Launch arguments that let `claude` and `codex` workers run their own `woof` commands; `false` adds none |
+| `woofd --blocked-timeout` | `20s` | How long a worker stays blocked before the requester (or the human) is alerted |
+| `woofd --blocked-escalation-timeout` | `5m` | How long a block reported to a worker may continue before one human escalation |
+
+Woof never answers a worker's approval prompt. The Codex permission grant covers every `woof` command, and Claude allow rules do not restrict auto mode; see [docs/permissions-and-blocked-alerts.md](docs/permissions-and-blocked-alerts.md) for what is granted, the limits, and how blocked workers are reported.
 
 The daemon owns the database. Use the CLI for reads and mutations instead of opening SQLite. File artifacts reference caller-owned paths; they are not canonical coordination state.
 
