@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 (2026-10-05)
+
+- Workers launched by `woofd` get default permission arguments for their own
+  coordination flow: a Claude `--settings` allow list, and for Codex
+  `--no-daemon` with a permission profile allowing only the woofd socket.
+  Skipped when the launch already carries permission or sandbox flags; disable
+  with `defaults.worker_permissions: false`.
+- Blocked-worker alerts: a worker blocked for `--blocked-timeout` (20s) alerts
+  the run's invoker worker, or the human, once per continuous block; an
+  unresolved block escalates once to the human after
+  `--blocked-escalation-timeout` (5m). Alerts never settle, fail, nudge or
+  redispatch.
+- When Herdr does not show a toast, woofd falls back to an OS notification
+  (`osascript` on macOS, `notify-send` on Linux).
+- A blocked dispatch is no longer also reported as `no_activity`.
+- The CLI only changes the state directory mode when it is wrong.
+- `using-woof` command shapes match the default permission rules.
+
 ## 1.0.0 (2026-10-05)
 
 Complete rewrite of Woof in Go. It replaces the TypeScript workflow engine

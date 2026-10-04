@@ -19,7 +19,7 @@ import (
 	"github.com/zielus/herdr-woof/internal/tui"
 )
 
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 const Help = `Woof — durable coordination across Herdr sessions
 
