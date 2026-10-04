@@ -620,7 +620,7 @@ func (e *Engine) read(ctx context.Context, r model.Request, a Args) (any, error)
 		if err != nil {
 			return nil, err
 		}
-		return cfg.Resolve(a.ID)
+		return cfg.Inspect(a.ID)
 	case "inbox":
 		return e.inbox(ctx, r, a)
 	case "message.show":

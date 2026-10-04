@@ -322,6 +322,41 @@ func TestAdoptionUsesLiveCwdAndRejectsConflictingExplicitCwd(t *testing.T) {
 	workerCode(t, err, "bad_cwd")
 }
 
+func TestProfileShowReturnsConfiguredCwd(t *testing.T) {
+	e, _, _ := workerFixture(t, false)
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("profiles:\n  sleep:\n    agent: sleep\n    cwd: './relative $VAR/*'\ndefaults:\n  worker_profile: sleep\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.opts.Paths.Config = configPath
+	v, err := workerCall(t, e, "profile.show", model.Scope{Global: true}, Args{ID: "sleep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.(profiles.Profile).Cwd; got != "./relative $VAR/*" {
+		t.Fatalf("profile.show cwd = %q", got)
+	}
+}
+
+func TestAdoptionUsesLiveCwdDespiteStaleWorkspaceCwd(t *testing.T) {
+	e, _, w := workerFixture(t, false)
+	ws, err := get[model.Workspace](context.Background(), e.store, "workspaces", w.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Cwd = filepath.Join(t.TempDir(), "gone")
+	if err := e.write(context.Background(), func(tx *store.Tx) error { return tx.Put("workspaces", ws.ID, ws) }); err != nil {
+		t.Fatal(err)
+	}
+	v, err := workerCall(t, e, "worker.adopt", model.Scope{WorkspaceID: w.WorkspaceID}, Args{ID: w.ID, Pane: w.PaneID, Name: w.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.(model.Worker).Cwd; got != w.Cwd {
+		t.Fatalf("adopted cwd = %q, live cwd = %q", got, w.Cwd)
+	}
+}
+
 func TestSpawnCwdPrecedenceAndValidation(t *testing.T) {
 	root := t.TempDir()
 	makeDir := func(name string) string {

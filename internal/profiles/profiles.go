@@ -118,9 +118,8 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 
-// Resolve returns an independent launch snapshot. Explicit selection overrides
-// the configured default; no builtin provider or model is guessed.
-func (c Config) Resolve(name string) (Profile, error) {
+// Inspect returns the configured text without resolving launch paths or arguments.
+func (c Config) Inspect(name string) (Profile, error) {
 	if name == "" {
 		name = c.Defaults.WorkerProfile
 		if name == "" {
@@ -136,6 +135,16 @@ func (c Config) Resolve(name string) (Profile, error) {
 	}
 	p.Args = append([]string{}, p.Args...)
 	p.Tags = append([]string{}, p.Tags...)
+	return p, nil
+}
+
+// Resolve returns an independent launch snapshot. Explicit selection overrides
+// the configured default; no builtin provider or model is guessed.
+func (c Config) Resolve(name string) (Profile, error) {
+	p, err := c.Inspect(name)
+	if err != nil {
+		return Profile{}, err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Profile{}, fmt.Errorf("resolve home directory: %w", err)

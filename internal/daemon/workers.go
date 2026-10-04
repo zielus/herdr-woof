@@ -451,9 +451,12 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		}
 		treePath = tree.Path
 	}
-	cwd, err := resolveSpawnCwd(a.Cwd, treePath, profile.Cwd, ws.Cwd)
-	if err != nil {
-		return nil, err
+	cwd := ""
+	if r.Op == "worker.spawn" {
+		cwd, err = resolveSpawnCwd(a.Cwd, treePath, profile.Cwd, ws.Cwd)
+		if err != nil {
+			return nil, err
+		}
 	}
 	id := newID("worker")
 	attachment := newID("attachment")
@@ -494,7 +497,7 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 			return nil, err
 		}
 		if actual := paneCwd(p); actual != "" {
-			if (a.Cwd != "" || r.Scope.WorktreeID != "") && !sameCwd(w.Cwd, actual) {
+			if (a.Cwd != "" && !sameCwd(a.Cwd, actual)) || (treePath != "" && !sameCwd(treePath, actual)) {
 				return nil, problem("bad_cwd", "explicit worker directory conflicts with live agent cwd %s", actual)
 			}
 			w.Cwd = actual
