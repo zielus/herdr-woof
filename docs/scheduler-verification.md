@@ -10,7 +10,7 @@ Run from the worktree root against the final branch head.
 
 | Command | Result |
 | --- | --- |
-| `make check` (build, test, race, vet, lint) | Passed at `c23889a`: `go test` and `go test -race` ok for all 12 tested packages (including `internal/schedule`, `internal/tui`), vet clean, golangci-lint `0 issues` |
+| `make check` (build, test, race, vet, lint) | Passed at `71457f2` (and earlier at `c23889a`): `go test` and `go test -race` ok for all 12 tested packages (including `internal/schedule`, `internal/tui`), vet clean, golangci-lint `0 issues` |
 | `make integration` | Passed: 5 scenarios, including "scheduler reads, scope refusal, usage errors and final receipts" |
 | `make install-test` | Passed: install/idempotence/opt-in skill/uninstall/conflict preservation |
 
@@ -84,7 +84,16 @@ callers with an inferred run unable to list their schedules, and occurrences
 not following dispatch settlement/resolution — were fixed in `4245ff5` with
 regression tests, together with low findings (accepted receipts, overlap rows,
 backoff growth, auto-disable cancellation, actor attribution, history order,
-`/etc/timezone`). REVIEW2
+`/etc/timezone`).
+
+A second read-only review of `4245ff5` and the TUI tab found no critical or
+high issues. Fixed in `cc68bd3` and `71457f2` with regression tests: explicit
+`--run`/`--worktree` list scope was dropped; a failed or fenced dispatch
+promoted an uncertain attempt receipt to completed without delivery evidence;
+settlement did not finish the receipt; occurrence events preceded the dispatch
+event; auto-disable could cancel the occurrence claimed in the same pass; the
+TUI fanned out one history read per schedule (now the daemon joins the last
+occurrence) and showed only the claim receipt after a lost run-now response.
 
 ## Limitations
 
