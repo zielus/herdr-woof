@@ -102,3 +102,20 @@ terminal cases), and `TestWorkerListPutsStatusBeforeLongIdentity`. A focused
 independent review approved terminal safety, clipping, fallbacks and action safety.
 Local design feedback, review and check output remain under
 `/private/tmp/woof-tui-style`.
+
+## Native scheduler tab
+
+Automated evidence only. No live Herdr session was started for this tab. Commands:
+`gofmt -l internal/tui` (no output), `go vet ./internal/tui`,
+`go test -race ./internal/tui` and `sh scripts/lint.sh run` (0 issues).
+
+| Contract | Regression evidence |
+| --- | --- |
+| Tab `6` appended, keys `1`–`5` unchanged, rows keyed by schedule ID | `TestScheduleTabKeySixAppendsWithoutMovingExistingTabs`, `TestScheduleRowsShowStateActionTargetNextAndLast`, `TestScheduleSelectionByIDSurvivesReorderFilterAndRemoval` |
+| Load uses one read-only `schedule.list` with joined `last_run`; schedule failures stay in their section and an older daemon stays usable | `TestRPCBackendLoadSchedulesUsesJoinedLastRunWithoutFanOut`, `TestRPCBackendScheduleListFailureLeavesMonitorUsable`, `TestRPCBackendScheduleDetailIsScopedHumanRead` |
+| Lost run-now response: inspect and exit printout show occurrence and attempt receipt; failed reload shows stale detail | `TestInspectAfterUncertainRunNowShowsOccurrenceAndAttempt`, `TestQuitPrintsRunNowOccurrenceAndAttemptAfterRestore`, `TestDetailShowsStaleInsteadOfRefreshingWhenReloadFails` |
+| Detail fenced by generation, ID and request; event-driven, no polling | `TestScheduleDetailFencesStaleScopeIDAndRequest`, `TestScheduleDetailReadsOncePerReloadWithoutPolling` |
+| Persisted, dispatched, settled, skipped count and uncertain kept distinct; generic `schedule.run.*` refresh | `TestScheduleDetailExplainsRunsUpcomingAndCLIOnlyAddRemove`, `TestScheduleRunNoticesKeepPersistenceDispatchAndSettlementDistinct`, `TestScheduleOccurrenceBadgeColorsSettledAndUncertain`, `TestScheduleRunEventsMarkDetailStaleGenerically` |
+| Reviewed enable/disable/run now, single submit, never resent | `TestScheduleActionsReviewEachKindAndSubmitOnce`, `TestScheduleEscCancelsReviewWithoutMutation`, `TestScheduleUncertainOutcomeIsInspectableAndNeverRetried`, `TestScheduleActionUncertaintyPreservesOperationAndNeverResends`, `TestInvalidScheduleActionsFailBeforeSocketMutation` |
+| Real daemon enable/disable/run now, list/show round trip under workspace, worktree and global scope (run scope lists none), scope drift and removed schedule | `TestActionDaemonScheduleEnableDisableRunNow` |
+| Narrow/wide bounds, compact tabs, NO_COLOR/ASCII/dumb labels and styled view | `TestScheduleViewNarrowWideAndPlainLabels` |

@@ -47,6 +47,17 @@ var selectors = map[string][5]string{
 		"t.run_id=?",
 		"EXISTS(SELECT 1 FROM workers x WHERE x.id=? AND (x.run_id=t.run_id OR EXISTS(SELECT 1 FROM runs r WHERE r.id=t.run_id AND r.invoker_worker_id=x.id) OR EXISTS(SELECT 1 FROM dispatches d WHERE d.run_id=t.run_id AND d.worker_id=x.id)))",
 	},
+	"schedules": {
+		"t.session_id=?", "t.workspace_id=?",
+		"EXISTS(SELECT 1 FROM workers x WHERE x.id=t.worker_id AND x.worktree_id=?)",
+		"EXISTS(SELECT 1 FROM schedule_runs x WHERE x.schedule_id=t.id AND x.run_id=?)",
+		"t.worker_id=?",
+	},
+	"schedule_runs": {
+		"t.session_id=?", "t.workspace_id=?",
+		"EXISTS(SELECT 1 FROM workers x WHERE x.id=t.worker_id AND x.worktree_id=?)",
+		"t.run_id=?", "t.worker_id=?",
+	},
 	"events": {"t.session_id=?", "t.workspace_id=?", "t.worktree_id=?", "t.run_id=?", "t.worker_id=?"},
 }
 

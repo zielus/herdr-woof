@@ -32,6 +32,8 @@ func (e *Engine) mutate(ctx context.Context, r model.Request, a Args) (any, erro
 		return e.done(ctx, r, a)
 	case "nudge", "fail":
 		return e.dispatchControl(ctx, r, a)
+	case "schedule.add", "schedule.enable", "schedule.disable", "schedule.remove", "schedule.run":
+		return e.scheduleMutate(ctx, r, a)
 	case "run.create":
 		if r.Scope.SessionID == "" {
 			return nil, problem("scope_required", "select a session for the run")
@@ -197,6 +199,9 @@ func (e *Engine) mutate(ctx context.Context, r model.Request, a Args) (any, erro
 						return x
 					}
 					if x = tx.Event("dispatch.resolved", dispatchScope(dispatch), "human", r.Caller.WorkerID, dispatch); x != nil {
+						return x
+					}
+					if x = e.syncScheduleRunTx(tx, dispatch, actorOf(r), r.Caller.WorkerID); x != nil {
 						return x
 					}
 				}

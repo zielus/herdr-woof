@@ -89,6 +89,8 @@ Suggested behavior:
 
 This keeps the DB as canonical content.
 
+Scheduled messages and dispatches from the native time scheduler use these same paths and emit `schedule.*` events; see [scheduler.md](scheduler.md).
+
 ## Events
 
 The daemon exposes a durable event stream.

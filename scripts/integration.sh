@@ -107,6 +107,29 @@ wait "$FOLLOW"
 FOLLOW=
 echo "PASS: daemon drain/restart preserves records, replies, replay cursor and active follower"
 
+# Scheduler surface without live Herdr: workers cannot exist here, so firing is
+# covered by daemon tests. This checks scoped reads, refusals and JSON shapes.
+woof schedule list --global --json | jq -e 'type == "array" and length == 0' >/dev/null || fail "schedule list is not an empty array"
+if woof schedule add --global --name nightly --to alice --cron '0 2 * * *' --body hi --json >"$WORK/sched-noscope.json" 2>&1; then
+  fail "schedule without session/workspace scope was accepted"
+fi
+jq -e '.error.code == "scope_required"' "$WORK/sched-noscope.json" >/dev/null || fail "schedule scope refusal missing: $(cat "$WORK/sched-noscope.json")"
+set +e
+woof schedule add --global --name nightly --to alice --cron '0 2 * * *' --every 1h --body hi --json >"$WORK/sched-both.json" 2>&1
+STATUS=$?
+set -e
+test "$STATUS" = 2 || fail "conflicting --cron/--every was not a usage error ($STATUS)"
+if woof schedule show sched_missing --global --json >"$WORK/sched-missing.json" 2>&1; then
+  fail "missing schedule was shown"
+fi
+jq -e '.error.code == "not_found"' "$WORK/sched-missing.json" >/dev/null || fail "missing schedule code: $(cat "$WORK/sched-missing.json")"
+if woof schedule run sched_missing --global --json >"$WORK/sched-run-missing.json" 2>&1; then
+  fail "missing schedule ran"
+fi
+jq -e '.error.code == "not_found"' "$WORK/sched-run-missing.json" >/dev/null || fail "missing schedule run code"
+woof operation list --global --json | jq -e 'any(.[]; .op == "schedule.run" and .state == "failed" and .error_code == "not_found")' >/dev/null || fail "refused schedule mutation lacks a final receipt"
+echo "PASS: scheduler reads, scope refusal, usage errors and final receipts"
+
 # Optional read/attach verification against sockets the operator explicitly selects.
 # It never creates/stops Herdr sessions or touches panes/workspaces.
 if test -n "${WOOF_IT_HERDR_SOCKETS:-}"; then

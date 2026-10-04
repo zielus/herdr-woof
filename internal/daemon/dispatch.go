@@ -81,7 +81,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 		}
 		handoff = refs[0].Path
 	}
-	d := model.Dispatch{ID: newID("dispatch"), SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, WorkerID: w.ID, AttachmentID: w.AttachmentID, Spec: a.Spec, Handoff: handoff, Status: "sending", Attempt: 1, BaselineSeq: p.StateChangeSeq, BaselineCompletionSeq: p.CompletionSeq, CreatedAt: e.now(), SentAt: e.now(), LastActivityAt: e.now(), Alerts: map[string]bool{}, OperationID: r.ID}
+	d := model.Dispatch{ID: newID("dispatch"), SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, WorkerID: w.ID, AttachmentID: w.AttachmentID, Spec: a.Spec, Handoff: handoff, Status: "sending", Attempt: 1, BaselineSeq: p.StateChangeSeq, BaselineCompletionSeq: p.CompletionSeq, CreatedAt: e.now(), SentAt: e.now(), LastActivityAt: e.now(), Alerts: map[string]bool{}, OperationID: r.ID, ScheduleRunID: a.scheduleRun}
 	runID := r.Scope.RunID
 	if runID == "" {
 		runID = w.RunID
@@ -99,6 +99,10 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 			return nil, problem("invalid_scope", "run and worker must share session/workspace")
 		}
 		d.RunID = runID
+	}
+	actor := "worker"
+	if a.scheduleRun != "" {
+		actor = "schedule"
 	}
 	err = e.write(ctx, func(tx *store.Tx) error {
 		current, err := txGet[model.Worker](tx, "workers", w.ID)
@@ -121,7 +125,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 			if err = tx.Put("runs", run.ID, run); err != nil {
 				return err
 			}
-			if err = tx.Event("run.created", dispatchScope(d), "worker", r.Caller.WorkerID, run); err != nil {
+			if err = tx.Event("run.created", dispatchScope(d), actor, r.Caller.WorkerID, run); err != nil {
 				return err
 			}
 		}
@@ -137,7 +141,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 		if err = tx.Put("operations", op.ID, op); err != nil {
 			return err
 		}
-		return tx.Event("dispatch.created", dispatchScope(d), "worker", r.Caller.WorkerID, d)
+		return tx.Event("dispatch.created", dispatchScope(d), actor, r.Caller.WorkerID, d)
 	})
 	if err != nil {
 		return nil, err
@@ -174,6 +178,12 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 			}
 			if x = tx.Event("dispatch."+current.Status, dispatchScope(current), "daemon", "", current); x != nil {
 				return x
+			}
+			if current.Status == "failed" {
+				// A refused prompt ends its implicit run like any other failure.
+				if x = e.settleRunTx(tx, current); x != nil {
+					return x
+				}
 			}
 		}
 		d = current
@@ -264,11 +274,15 @@ func (e *Engine) done(ctx context.Context, r model.Request, a Args) (any, error)
 			if err = e.dispatchEventTx(tx, "dispatch.settled", d); err != nil {
 				return err
 			}
+			if err = e.syncScheduleRunTx(tx, d, "worker", d.WorkerID); err != nil {
+				return err
+			}
 		}
 		return e.finishTx(tx, r.ID, d, nil, "completed")
 	})
 	if err == nil {
 		e.background(func() { e.processInbox(d.WorkerID) })
+		e.kickScheduler(d.WorkerID)
 	}
 	return d, err
 }
@@ -457,6 +471,9 @@ func (e *Engine) observeWorker(ctx context.Context, w model.Worker, p herdr.Pane
 				if err = e.dispatchEventTx(tx, "dispatch.settled", d); err != nil {
 					return err
 				}
+				if err = e.syncScheduleRunTx(tx, d, "daemon", ""); err != nil {
+					return err
+				}
 			}
 			if err = tx.Put("dispatches", d.ID, d); err != nil {
 				return err
@@ -496,6 +513,9 @@ func (e *Engine) observeWorker(ctx context.Context, w model.Worker, p herdr.Pane
 			}
 		}
 		e.background(func() { e.processInbox(w.ID) })
+		if idle(current.RawStatus) {
+			e.kickScheduler(w.ID)
+		}
 	}
 	return err
 }
@@ -534,6 +554,9 @@ func (e *Engine) dispatchControl(ctx context.Context, r model.Request, a Args) (
 				return err
 			}
 			if err = tx.Event("dispatch.failed", dispatchScope(d), "worker", r.Caller.WorkerID, d); err != nil {
+				return err
+			}
+			if err = e.syncScheduleRunTx(tx, d, actorOf(r), r.Caller.WorkerID); err != nil {
 				return err
 			}
 			return e.finishTx(tx, r.ID, d, nil, "completed")

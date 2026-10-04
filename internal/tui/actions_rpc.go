@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/zielus/herdr-woof-v2/internal/artifacts"
+	"github.com/zielus/herdr-woof-v2/internal/client"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 )
 
@@ -31,6 +33,9 @@ func (b *RPCBackend) Act(ctx context.Context, action Action) (ActionResult, erro
 	if err = b.validateActionTarget(ctx, a); err != nil {
 		return ActionResult{}, err
 	}
+	if isScheduleKind(a.Kind) {
+		return actSchedule(ctx, &c, a)
+	}
 	payload := struct {
 		ID        string   `json:"id,omitempty"`
 		To        string   `json:"to,omitempty"`
@@ -48,6 +53,28 @@ func (b *RPCBackend) Act(ctx context.Context, action Action) (ActionResult, erro
 	if errors.As(err, &problem) {
 		result.OperationID = problem.OperationID
 		result.Uncertain = problem.Code == "outcome_unknown" || problem.Code == "uncertain"
+	}
+	return result, err
+}
+
+// actSchedule sends exactly one schedule mutation carrying only the reviewed ID.
+// A run-now whose dispatch prompt outcome is unknown is surfaced through its
+// attempt receipt and, like a lost response, is never resent.
+func actSchedule(ctx context.Context, c *client.Client, a Action) (ActionResult, error) {
+	var result ActionResult
+	err := c.Call(ctx, a.Kind, map[string]string{"id": a.ID}, &result.Value)
+	var problem *model.Error
+	if errors.As(err, &problem) {
+		result.OperationID = problem.OperationID
+		result.Uncertain = problem.Code == "outcome_unknown" || problem.Code == "uncertain"
+		return result, err
+	}
+	if err == nil && a.Kind == "schedule.run" {
+		var run model.ScheduleRun
+		if json.Unmarshal(result.Value, &run) == nil && run.State == "uncertain" && run.AttemptID != "" {
+			result.OperationID = run.AttemptID
+			result.Uncertain = true
+		}
 	}
 	return result, err
 }
@@ -102,6 +129,21 @@ func (b *RPCBackend) validateActionTarget(ctx context.Context, a Action) error {
 			if a.To != replyRecipient(detail.Message) {
 				return fmt.Errorf("question sender changed; reload and review the reply recipient again")
 			}
+		}
+	case "schedule.enable", "schedule.disable", "schedule.run":
+		var detail ScheduleDetail
+		if err := c.Call(ctx, "schedule.show", map[string]string{"id": a.ID}, &detail); err != nil {
+			return err
+		}
+		sc := detail.Schedule
+		if sc.ID != a.ID || sc.SessionID != a.Scope.SessionID || sc.WorkspaceID != a.Scope.WorkspaceID {
+			return fmt.Errorf("schedule scope changed; reload and start a new action")
+		}
+		if sc.State == "removed" {
+			return fmt.Errorf("schedule %s was removed", sc.ID)
+		}
+		if a.Schedule != nil && a.Schedule.WorkerID != sc.WorkerID {
+			return fmt.Errorf("schedule target changed; reload and review again")
 		}
 	case "gate.resolve":
 		var gate model.Gate

@@ -2,7 +2,7 @@
 
 Woof is a Herdr plugin for durable coordination between coding agents. One global `woofd` owns a SQLite database and connects to multiple Herdr sessions. The `woof` CLI uses Unix socket RPC; Herdr owns the terminals, agent processes, workspaces and worktrees.
 
-This repository implements Phase 1: logical workers, thin launch profiles, durable messages and questions, replayable events, dispatch settlement, minimal decision gates, recovery and protected release. Phase 1.5 adds `woof tui`, a human monitor with inbox and decision handling. Web views and a workflow engine are deferred. See [docs/spec.md](docs/spec.md), [docs/phases.md](docs/phases.md), the completed [acceptance checklist](docs/acceptance.md) and [verification evidence](docs/verification.md).
+This repository implements Phase 1: logical workers, thin launch profiles, durable messages and questions, replayable events, dispatch settlement, minimal decision gates, recovery and protected release. Phase 1.5 adds `woof tui`, a human monitor with inbox and decision handling. A native time scheduler sends durable messages and dispatches to logical workers. Web views and a workflow engine are deferred. See [docs/spec.md](docs/spec.md), [docs/phases.md](docs/phases.md), the [acceptance checklist](docs/acceptance.md) and [verification evidence](docs/verification.md).
 
 ## Terminal interface
 
@@ -36,7 +36,7 @@ Go 1.26 patch with `go-version: '1.26.x'` and `check-latest: true`.
 The checks use isolated state
 and do not control live Herdr sessions.
 
-The integration script checks concurrent bootstrap, second-writer refusal, messaging, gates, replay/wait and daemon restart with an active event follower. Set `WOOF_IT_HERDR_SOCKETS` to a newline-separated list of explicitly selected sockets to also attach those live sessions. It does not create or stop Herdr sessions, or mutate panes.
+The integration script checks concurrent bootstrap, second-writer refusal, messaging, gates, replay/wait, daemon restart with an active event follower, and scheduler reads and refusals. Set `WOOF_IT_HERDR_SOCKETS` to a newline-separated list of explicitly selected sockets to also attach those live sessions. It does not create or stop Herdr sessions, or mutate panes.
 
 ## Install and link
 
@@ -189,6 +189,20 @@ woof done --dispatch dispatch_ID --attachment attachment_ID \
 
 Settlement requires both that report and evidence that the corresponding worker turn ended. Idle alone, a report alone, unknown lifecycle status or a later unrelated turn is insufficient. Use `done --failed` to report failure; inspect with `check`, `dispatch show`, or `worker read`. Minimal `gate create/list/show/resolve` commands persist human decisions without introducing a task DAG or workflow engine.
 
+## Schedules
+
+```sh
+woof schedule add --workspace workspace_ID --name brief --to alice \
+  --cron '0 9 * * MON-FRI' --tz Europe/Warsaw --body 'Prepare the morning brief.'
+woof schedule add --workspace workspace_ID --name review --to reviewer \
+  --every 6h --spec 'Review open PRs.' --missed skip
+woof schedule history sched_ID --workspace workspace_ID --json
+```
+
+Schedules run inside the one global `woofd` and persist in the same database. `--to` is resolved once, at creation, to a worker ID in the validated session and workspace; a schedule never targets a pane and is never silently retargeted when an alias is reused. Cron fields are wall-clock times in the schedule's IANA zone: a time skipped by DST fires once at the jump, a repeated time fires once at its first occurrence, and `@every` ignores wall clocks. Missed runs follow `--missed latest` (fire the latest once, record the rest as `missed`) or `--missed skip` (fire only if at most one minute late). A scheduled message is persisted and queued like any Woof message, even for a busy or offline worker. A scheduled dispatch uses the normal dispatch path and settlement; if its preconditions fail, the occurrence is `blocked`, nothing is sent, and it is retried. A busy agent is never interrupted. Each occurrence is claimed at most once, including across concurrent loops, manual runs and restarts; this is not an exactly-once delivery guarantee. An `uncertain` dispatch is never resent; inspect and resolve it as below. `woofd --scheduler=false` keeps schedules durable without firing them. See [docs/scheduler.md](docs/scheduler.md).
+
+The scheduler adds schema version 2. Older Woof binaries refuse a migrated database, so back up `woof.db` in `WOOF_STATE_DIR` (with the daemon stopped) before upgrading if a rollback may be needed.
+
 ## Events, uncertainty and daemon control
 
 ```sh
@@ -218,4 +232,4 @@ woof daemon restart
 
 Stop drains Woof RPC/subscriptions and preserves durable state; restart waits for drain before bootstrapping. It does not stop Herdr agents. `worker retain`, `worker release` and `worker stop` control worker lifetime. Release/stop refuse busy workers and dirty, untracked, unpublished or unverifiable Git work unless explicitly forced. Attachment identity and cleanup proof remain mandatory with `--force`; surviving or unverified processes stay visible as failures. Shared worktrees remain independent of worker lifetime.
 
-Run `woof --help` for all supported commands. Source provenance and both donor MIT notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Run `woof --help` for all supported commands. Source provenance and the MIT notices for both donors and robfig/cron are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

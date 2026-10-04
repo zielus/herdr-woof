@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -38,10 +39,29 @@ type catalogueMsg struct {
 type actionMsg struct {
 	result ActionResult
 	err    error
+	kind   string
 }
+
+// scheduleDetailMsg is a schedule.show result, accepted only for the current
+// scope generation, the selected schedule ID and the latest detail request.
+type scheduleDetailMsg struct {
+	generation uint64
+	request    uint64
+	id         string
+	detail     ScheduleDetail
+	err        error
+}
+
+// scheduleTab is appended after Profiles; tabs 1-5 keep their keys.
+const scheduleTab = 5
+
 type operationMsg struct {
 	operation model.Operation
 	err       error
+	// run is the current occurrence behind a schedule.run request receipt; the
+	// receipt itself completes at claim time, before any dispatch attempt.
+	run    *ScheduleRunView
+	runErr error
 }
 type quitRequest struct{}
 type connectionState struct {
@@ -68,7 +88,7 @@ type uiModel struct {
 	catalogue             Snapshot
 	catalogueRequest      uint64
 	tab                   int
-	selected              [5]string
+	selected              [6]string
 	filter                string
 	filtering             bool
 	width, height, scroll int
@@ -87,11 +107,20 @@ type uiModel struct {
 	pending               *pendingAction
 	result                ActionResult
 	uncertain             []string
+	uncertainKinds        map[string]string
 	err                   error
 	notice                string
 	shutdownMutationError error
 	colors                bool
 	noColor               bool
+	// Schedule detail is read on demand (schedule.show) for the selected
+	// schedule. state: "" needs a read, "loading", "stale" (a schedule event
+	// arrived; a reload follows) or "done" (success or failure).
+	scheduleDetail        *ScheduleDetail
+	scheduleDetailID      string
+	scheduleDetailRequest uint64
+	scheduleDetailState   string
+	scheduleDetailErr     error
 }
 
 func newModel(ctx context.Context, b Backend, scope model.Scope) *uiModel {
@@ -250,7 +279,8 @@ func (m *uiModel) setScope(scope model.Scope) tea.Cmd {
 	m.detail = false
 	m.scroll = 0
 	m.snapshot = Snapshot{Scope: scope}
-	m.selected = [5]string{}
+	m.selected = [6]string{}
+	m.resetScheduleDetail()
 	return m.load()
 }
 func (m *uiModel) pickCatalogue(kind string) tea.Cmd {
@@ -280,7 +310,7 @@ func (m *uiModel) beginAction(a Action, err error) tea.Cmd {
 	m.review = nil
 	m.scroll = 0
 	m.catalogueRequest++
-	if a.Kind == "ack" || a.Kind == "consume" {
+	if a.Kind == "ack" || a.Kind == "consume" || isScheduleKind(a.Kind) {
 		m.review = &a
 	} else {
 		f := NewForm(a)
@@ -302,7 +332,7 @@ func (m *uiModel) submit() tea.Cmd {
 	go func() {
 		defer cancel()
 		v, err := b.Act(ctx, a)
-		receipt.receipt = actionMsg{v, err}
+		receipt.receipt = actionMsg{result: v, err: err, kind: a.Kind}
 		close(receipt.done)
 	}()
 	return func() tea.Msg { return receipt.wait() }
@@ -317,7 +347,14 @@ func (m *uiModel) quit() tea.Cmd {
 	}
 	return tea.Quit
 }
+
+// Update handles one message, then reads the selected schedule's detail when it
+// is visible and not yet loaded for the current reload.
 func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	return next, tea.Batch(cmd, m.syncScheduleDetail())
+}
+func (m *uiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.ColorProfileMsg:
 		m.colors = !m.noColor && v.Profile >= colorprofile.ANSI
@@ -343,6 +380,7 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		m.acceptSnapshot(v.snapshot)
+		m.invalidateScheduleDetail()
 		m.err = nil
 		m.connection.mu.Lock()
 		fresh := v.epoch == m.connection.epoch
@@ -379,6 +417,9 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.update.Event != nil {
 			m.addEvent(*v.update.Event)
 			m.dirty = true
+			if strings.HasPrefix(v.update.Event.Type, "schedule.") && m.scheduleDetailState == "done" {
+				m.scheduleDetailState = "stale"
+			}
 		}
 		var listener tea.Cmd
 		if v.ended {
@@ -421,16 +462,32 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 		m.scroll = 0
 		return m, nil
+	case scheduleDetailMsg:
+		if v.generation != m.generation || v.request != m.scheduleDetailRequest || v.id != m.scheduleDetailID || m.quitting {
+			return m, nil
+		}
+		m.scheduleDetailState = "done"
+		m.scheduleDetailErr = v.err
+		if v.err == nil {
+			detail := v.detail
+			m.scheduleDetail = &detail
+		}
+		return m, nil
 	case actionMsg:
 		m.busy = false
 		m.pending = nil
 		m.result = v.result
 		m.err = v.err
 		if v.result.Uncertain {
-			m.recordUncertain(v.result)
+			m.recordUncertain(v.result, v.kind)
 			m.notice = "Uncertain operation " + v.result.OperationID + "; i inspect; resolve with woof operation show --id " + v.result.OperationID
+			if v.kind == "schedule.run" && v.err == nil {
+				m.notice = scheduleActionNotice(v.kind, v.result.Value)
+			}
 		} else if v.err != nil {
 			m.notice = v.err.Error()
+		} else if isScheduleKind(v.kind) {
+			m.notice = scheduleActionNotice(v.kind, v.result.Value)
 		} else {
 			m.notice = "Action accepted"
 		}
@@ -440,11 +497,7 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.load()
 	case operationMsg:
-		if v.err != nil {
-			m.notice = v.err.Error()
-		} else {
-			m.notice = fmt.Sprintf("Operation %s: %s; %s. Inspect with woof operation show --id %s", v.operation.ID, v.operation.State, v.operation.Error, v.operation.ID)
-		}
+		m.notice = operationText(v)
 		return m, nil
 	case tea.KeyPressMsg:
 		k := v.String()
@@ -560,13 +613,13 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = false
 			m.filter = ""
 			m.scroll = 0
-		case "tab", "shift+tab", "1", "2", "3", "4", "5":
+		case "tab", "shift+tab", "1", "2", "3", "4", "5", "6":
 			m.catalogueRequest++
 			switch k {
 			case "tab":
-				m.tab = (m.tab + 1) % 5
+				m.tab = (m.tab + 1) % len(tabNames)
 			case "shift+tab":
-				m.tab = (m.tab + 4) % 5
+				m.tab = (m.tab + len(tabNames) - 1) % len(tabNames)
 			default:
 				m.tab = int(k[0] - '1')
 			}
@@ -589,8 +642,7 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(m.root), 5*time.Second)
 					defer cancel()
-					op, err := b.Operation(ctx, id)
-					return operationMsg{op, err}
+					return inspectOperation(ctx, b, id)
 				}
 			}
 		case "down", "j":
@@ -635,6 +687,16 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case 1:
 				return m, m.pickCatalogue(kind)
+			}
+		case "e", "d", "u":
+			if m.tab == scheduleTab {
+				kind := map[string]string{"e": "schedule.enable", "d": "schedule.disable", "u": "schedule.run"}[k]
+				for _, sc := range m.snapshot.Schedules {
+					if sc.ID == m.selected[scheduleTab] {
+						a, err := NewScheduleAction(kind, sc)
+						return m, m.beginAction(a, err)
+					}
+				}
 			}
 		case "p", "a", "x":
 			if m.tab == 1 {
@@ -692,9 +754,15 @@ func (m *uiModel) rows() []row {
 	return out
 }
 
-func (m *uiModel) recordUncertain(result ActionResult) {
+func (m *uiModel) recordUncertain(result ActionResult, kind string) {
 	if !result.Uncertain {
 		return
+	}
+	if m.uncertainKinds == nil {
+		m.uncertainKinds = map[string]string{}
+	}
+	if kind != "" {
+		m.uncertainKinds[result.OperationID] = kind
 	}
 	for _, id := range m.uncertain {
 		if id == result.OperationID {
@@ -702,4 +770,137 @@ func (m *uiModel) recordUncertain(result ActionResult) {
 		}
 	}
 	m.uncertain = append(m.uncertain, result.OperationID)
+}
+
+func (m *uiModel) resetScheduleDetail() {
+	m.scheduleDetailRequest++
+	m.scheduleDetail = nil
+	m.scheduleDetailID = ""
+	m.scheduleDetailState = ""
+	m.scheduleDetailErr = nil
+}
+
+// invalidateScheduleDetail discards any in-flight read and asks for a new one.
+// Linked delivery and settlement progress arrives through non-schedule events,
+// so every successful reload invalidates. The last detail stays visible.
+func (m *uiModel) invalidateScheduleDetail() {
+	m.scheduleDetailRequest++
+	m.scheduleDetailState = ""
+}
+
+// syncScheduleDetail reads schedule.show at most once per selected ID and
+// reload; a failed read waits for the next reload rather than polling.
+func (m *uiModel) syncScheduleDetail() tea.Cmd {
+	if m.backend == nil || m.quitting || m.tab != scheduleTab || (!m.detail && m.width < 100) {
+		return nil
+	}
+	id := m.selected[scheduleTab]
+	if id == "" || (id == m.scheduleDetailID && m.scheduleDetailState != "") {
+		return nil
+	}
+	if id != m.scheduleDetailID {
+		m.scheduleDetail = nil
+		m.scheduleDetailErr = nil
+	}
+	m.scheduleDetailRequest++
+	m.scheduleDetailID = id
+	m.scheduleDetailState = "loading"
+	b, ctx, scope, g, request := m.backend, m.ctx, m.scope, m.generation, m.scheduleDetailRequest
+	return func() tea.Msg {
+		bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		detail, err := b.ScheduleDetail(bounded, scope, id)
+		return scheduleDetailMsg{generation: g, request: request, id: id, detail: detail, err: err}
+	}
+}
+
+// scheduleActionNotice states what an accepted schedule mutation means. A
+// persisted run is a queued message, not completed work; a dispatched run's
+// settlement is tracked separately; an uncertain run is never resent.
+func scheduleActionNotice(kind string, raw []byte) string {
+	if kind != "schedule.run" {
+		var sc model.Schedule
+		if json.Unmarshal(raw, &sc) != nil || sc.ID == "" {
+			return scheduleKinds[kind] + " accepted"
+		}
+		if !sc.Enabled {
+			return fmt.Sprintf("Schedule %s (%s) disabled; claimed/blocked occurrences are cancelled", sc.Name, sc.ID)
+		}
+		return fmt.Sprintf("Schedule %s (%s) enabled; next run %s", sc.Name, sc.ID, orDash(sc.NextRunLocal))
+	}
+	var run model.ScheduleRun
+	if json.Unmarshal(raw, &run) != nil || run.ID == "" {
+		return "Run now accepted"
+	}
+	switch run.State {
+	case "persisted":
+		return fmt.Sprintf("Run now %s persisted: message %s queued for the worker (not completed work)", run.ID, orDash(run.MessageID))
+	case "dispatched":
+		return fmt.Sprintf("Run now %s dispatched: prompt accepted for dispatch %s; settlement shown separately", run.ID, orDash(run.DispatchID))
+	case "uncertain":
+		return fmt.Sprintf("Run now %s uncertain: dispatch prompt outcome unknown; never resent. i inspect; woof operation show --id %s", run.ID, orDash(run.AttemptID))
+	case "settled":
+		return fmt.Sprintf("Run now %s settled (%s): done report and turn-end evidence recorded", run.ID, orDash(run.Reason))
+	case "blocked":
+		return fmt.Sprintf("Run now %s blocked (%s): nothing sent; the daemon retries", run.ID, orDash(run.Reason))
+	case "failed":
+		return fmt.Sprintf("Run now %s failed: %s", run.ID, orDash(strings.TrimSpace(run.Error+" "+run.Reason)))
+	}
+	return fmt.Sprintf("Run now %s %s", run.ID, run.State)
+}
+
+// inspectOperation reads a receipt once. A schedule.run receipt completes when
+// the occurrence is claimed, so its current occurrence state and dispatch
+// attempt receipt are read as well. Nothing is retried or resolved here.
+func inspectOperation(ctx context.Context, b Backend, id string) operationMsg {
+	op, err := b.Operation(ctx, id)
+	msg := operationMsg{operation: op, err: err}
+	if err != nil || op.Op != "schedule.run" {
+		return msg
+	}
+	var claimed model.ScheduleRun
+	if json.Unmarshal(op.Result, &claimed) != nil || claimed.ScheduleID == "" {
+		msg.runErr = fmt.Errorf("receipt has no recorded occurrence yet")
+		return msg
+	}
+	runID := claimed.ID
+	if op.ResourceKind == "schedule_runs" && op.ResourceID != "" {
+		runID = op.ResourceID
+	}
+	v, rerr := b.ScheduleRun(ctx, claimed.ScheduleID, runID)
+	if rerr != nil {
+		msg.runErr = rerr
+		return msg
+	}
+	msg.run = &v
+	return msg
+}
+
+// operationText states a receipt and, for run-now, the occurrence and attempt.
+func operationText(v operationMsg) string {
+	if v.err != nil {
+		return v.err.Error()
+	}
+	op := v.operation
+	text := fmt.Sprintf("Operation %s (%s): %s; %s. Inspect with woof operation show --id %s", op.ID, orDash(op.Op), op.State, op.Error, op.ID)
+	if op.Op != "schedule.run" {
+		return text
+	}
+	text = fmt.Sprintf("Run-now request %s: %s (claim recorded; not the dispatch outcome)", op.ID, op.State)
+	if v.run == nil {
+		if v.runErr != nil {
+			text += "; occurrence unavailable: " + v.runErr.Error()
+		}
+		return text + ". Inspect with woof operation show --id " + op.ID
+	}
+	r := v.run.Run
+	text += fmt.Sprintf(". Occurrence %s [%s]", r.ID, r.State)
+	if r.AttemptID == "" {
+		return text + "; no dispatch attempt receipt"
+	}
+	attemptState := "unknown"
+	if v.run.Operation != nil {
+		attemptState = v.run.Operation.State
+	}
+	return text + fmt.Sprintf("; attempt receipt %s [%s]. Never resent; inspect with woof operation show --id %s", r.AttemptID, attemptState, r.AttemptID)
 }

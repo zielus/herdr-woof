@@ -104,6 +104,9 @@ func Run(ctx context.Context, o Options) (runErr error) {
 	if o.WatchdogInterval > 0 {
 		e.background(e.watchdog)
 	}
+	if !o.SchedulerDisabled {
+		e.background(e.scheduler)
+	}
 	return Serve(ctx, ln, e)
 }
 func Serve(ctx context.Context, ln net.Listener, e *Engine) error {

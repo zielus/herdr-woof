@@ -384,6 +384,9 @@ func (e *Engine) fenceWorkerTx(tx *store.Tx, workerID, reason string) error {
 			if err := tx.Event("dispatch.fenced", dispatchScope(d), "daemon", "", d); err != nil {
 				return err
 			}
+			if err := e.syncScheduleRunTx(tx, d, "daemon", ""); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
