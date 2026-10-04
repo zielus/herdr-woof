@@ -50,6 +50,12 @@ Usage: woof COMMAND [OPTIONS]
   gate create --question TEXT [--options yes,no] | gate list | gate show ID
   gate resolve ID --decision OPTION
   operation list | show ID | resolve ID --resolution completed|failed --reason TEXT
+  schedule add --name NAME --to WORKER (--cron EXPR | --every 30m) [--tz ZONE]
+               (--body TEXT [--subject S] | --spec TEXT [--handoff PATH])
+               [--missed latest|skip --disabled]    Durable native time trigger
+  schedule list [--all] | show ID | history ID [--limit N]
+  schedule enable ID | disable ID | remove ID | run ID
+                                                    Manual run never resends uncertain work
 
   events list [--since SEQ] | events follow [--since SEQ]
   wait [--events message.persisted,dispatch.settled --since SEQ --timeout 20m]

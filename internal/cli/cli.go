@@ -66,6 +66,7 @@ var commands = map[string]string{
 	"dispatch": "dispatch", "dispatch show": "dispatch.show", "dispatch check": "check", "dispatch nudge": "nudge", "dispatch fail": "fail", "done": "done", "check": "check", "nudge": "nudge", "fail": "fail",
 	"gate create": "gate.create", "gate list": "gate.list", "gate show": "gate.show", "gate resolve": "gate.resolve", "gates create": "gate.create", "gates list": "gate.list", "gates show": "gate.show", "gates resolve": "gate.resolve",
 	"operation list": "operation.list", "operation show": "operation.show", "operation resolve": "operation.resolve", "events": "events.list", "events list": "events.list", "events follow": "events.follow", "events wait": "wait", "wait": "wait", "profile roster": "profile.roster", "profile list": "profile.roster", "profile show": "profile.show", "daemon stop": "daemon.stop", "daemon restart": "daemon.restart",
+	"schedule add": "schedule.add", "schedule list": "schedule.list", "schedules": "schedule.list", "schedule show": "schedule.show", "schedule history": "schedule.history", "schedule enable": "schedule.enable", "schedule disable": "schedule.disable", "schedule remove": "schedule.remove", "schedule rm": "schedule.remove", "schedule run": "schedule.run",
 }
 var allowed = map[string]string{
 	"session.attach": "socket herdr-name name", "worker.spawn": "name profile pane cwd herdr-workspace retained arg", "worker.adopt": "id worker name pane cwd", "worker.show": "id worker", "worker.read": "id worker lines", "worker.list": "all", "worker.retain": "id worker retained off", "worker.release": "id worker force", "worker.stop": "id worker force",
@@ -73,10 +74,14 @@ var allowed = map[string]string{
 	"dispatch": "to worker spec handoff", "dispatch.show": "id", "done": "dispatch attachment body artifact failed outcome", "nudge": "id dispatch reason", "fail": "id dispatch reason", "gate.create": "question options option", "gate.show": "id", "gate.resolve": "id decision", "operation.show": "id", "operation.resolve": "id resolution reason",
 	"events.list": "events since limit", "events.follow": "events since", "wait": "events since timeout",
 	"profile.show": "id name",
+	"schedule.add": "name to cron every tz subject body spec handoff missed disabled", "schedule.list": "all", "schedule.show": "id name", "schedule.history": "id name limit", "schedule.enable": "id name", "schedule.disable": "id name", "schedule.remove": "id name", "schedule.run": "id name",
 }
-var boolean = map[string]bool{"json": true, "help": true, "global": true, "force": true, "retained": true, "all": true, "failed": true, "off": true, "no-wait": true, "version": true}
+var boolean = map[string]bool{"json": true, "help": true, "global": true, "force": true, "retained": true, "all": true, "failed": true, "off": true, "no-wait": true, "version": true, "disabled": true}
 var scopeKeys = map[string]bool{"session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true, "global": true}
-var valued = map[string]bool{"arg": true, "as-worker": true, "as-attachment": true, "id": true, "name": true, "profile": true, "pane": true, "socket": true, "herdr-name": true, "cwd": true, "herdr-workspace": true, "worker": true, "to": true, "subject": true, "body": true, "question": true, "kind": true, "title": true, "spec": true, "handoff": true, "dispatch": true, "attachment": true, "outcome": true, "reason": true, "decision": true, "resolution": true, "artifact": true, "options": true, "option": true, "events": true, "since": true, "limit": true, "lines": true, "timeout": true, "session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true}
+var valued = map[string]bool{"arg": true, "as-worker": true, "as-attachment": true, "id": true, "name": true, "profile": true, "pane": true, "socket": true, "herdr-name": true, "cwd": true, "herdr-workspace": true, "worker": true, "to": true, "subject": true, "body": true, "question": true, "kind": true, "title": true, "spec": true, "handoff": true, "dispatch": true, "attachment": true, "outcome": true, "reason": true, "decision": true, "resolution": true, "artifact": true, "options": true, "option": true, "events": true, "since": true, "limit": true, "lines": true, "timeout": true, "session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true, "cron": true, "every": true, "tz": true, "missed": true}
+
+// scheduleIDOps accept one positional schedule ID or --name as an alias.
+const scheduleIDOps = " schedule.show schedule.history schedule.enable schedule.disable schedule.remove schedule.run "
 
 func Parse(argv []string) (Command, error) {
 	var c Command
@@ -258,11 +263,19 @@ func Parse(argv []string) (Command, error) {
 	}
 	rest := words[used:]
 	if len(rest) > 0 {
-		idCommand := strings.Contains(" worker.show worker.read worker.retain worker.release worker.stop run.show reply ack consume message.show question.wait dispatch.show nudge fail gate.show gate.resolve operation.show operation.resolve profile.show ", " "+op+" ")
+		idCommand := strings.Contains(" worker.show worker.read worker.retain worker.release worker.stop run.show reply ack consume message.show question.wait dispatch.show nudge fail gate.show gate.resolve operation.show operation.resolve profile.show"+scheduleIDOps, " "+op+" ")
 		if len(rest) != 1 || !idCommand || a.ID != "" {
 			return c, fmt.Errorf("unexpected arguments for %s: %s", key, strings.Join(rest, " "))
 		}
 		a.ID = rest[0]
+	}
+	if strings.Contains(scheduleIDOps, " "+op+" ") && a.ID == "" {
+		a.ID, a.Name = a.Name, ""
+	}
+	if op == "schedule.add" {
+		if err := scheduleAdd(flags, &a, get, isTrue); err != nil {
+			return c, err
+		}
 	}
 	needs := func(label, value string) error {
 		if strings.TrimSpace(value) == "" {
@@ -303,7 +316,8 @@ func Parse(argv []string) (Command, error) {
 		requirements = [][2]string{{"name", a.Name}}
 	case "fail":
 		requirements = [][2]string{{"id", a.ID}, {"reason", a.Reason}}
-	case "worker.show", "worker.read", "worker.retain", "worker.release", "worker.stop", "run.show", "ack", "consume", "message.show", "question.wait", "dispatch.show", "nudge", "gate.show", "operation.show", "profile.show":
+	case "worker.show", "worker.read", "worker.retain", "worker.release", "worker.stop", "run.show", "ack", "consume", "message.show", "question.wait", "dispatch.show", "nudge", "gate.show", "operation.show", "profile.show",
+		"schedule.show", "schedule.history", "schedule.enable", "schedule.disable", "schedule.remove", "schedule.run":
 		requirements = [][2]string{{"id", a.ID}}
 	}
 	for _, req := range requirements {
@@ -313,6 +327,62 @@ func Parse(argv []string) (Command, error) {
 	}
 	c.Args = a
 	return c, nil
+}
+
+// scheduleAdd validates the trigger and exactly one action before any RPC.
+// Presence is decided from the flag map so an empty value still counts.
+func scheduleAdd(flags map[string][]string, a *Args, get func(string) string, isTrue func(string) bool) error {
+	for _, k := range []string{"name", "to"} {
+		if strings.TrimSpace(get(k)) == "" {
+			return fmt.Errorf("schedule add requires --%s", k)
+		}
+	}
+	_, hasCron := flags["cron"]
+	_, hasEvery := flags["every"]
+	switch {
+	case hasCron && hasEvery:
+		return fmt.Errorf("schedule add accepts only one of --cron or --every")
+	case hasCron:
+		a.Cron = get("cron")
+		if strings.TrimSpace(a.Cron) == "" {
+			return fmt.Errorf("--cron needs a nonempty expression")
+		}
+	case hasEvery:
+		every := strings.TrimSpace(get("every"))
+		d, err := time.ParseDuration(every)
+		if err != nil || d < time.Second {
+			return fmt.Errorf("--every needs a duration of at least 1s such as 30m or 2h")
+		}
+		a.Cron = "@every " + every
+	default:
+		return fmt.Errorf("schedule add requires --cron EXPR or --every DURATION")
+	}
+	a.Timezone = get("tz")
+	_, hasBody := flags["body"]
+	_, hasSubject := flags["subject"]
+	_, hasSpec := flags["spec"]
+	_, hasHandoff := flags["handoff"]
+	dispatch := hasSpec || hasHandoff
+	switch {
+	case hasBody && dispatch:
+		return fmt.Errorf("schedule add takes either --body (message) or --spec/--handoff (dispatch), not both")
+	case hasSubject && dispatch:
+		return fmt.Errorf("--subject applies only to message schedules; remove it or use --body")
+	case !hasBody && !dispatch:
+		return fmt.Errorf("schedule add requires --body (message) or --spec/--handoff (dispatch)")
+	case hasBody && strings.TrimSpace(a.Body) == "":
+		return fmt.Errorf("--body needs nonempty text")
+	case dispatch && strings.TrimSpace(a.Spec) == "" && strings.TrimSpace(a.Handoff) == "":
+		return fmt.Errorf("schedule add dispatch requires nonempty --spec or --handoff")
+	}
+	if _, ok := flags["missed"]; ok {
+		a.Missed = get("missed")
+		if a.Missed != "latest" && a.Missed != "skip" {
+			return fmt.Errorf("--missed must be latest or skip")
+		}
+	}
+	a.Disabled = isTrue("disabled")
+	return nil
 }
 
 func (c Command) ApplyScope(inherited model.Scope) model.Scope {
