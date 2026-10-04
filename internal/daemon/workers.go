@@ -498,6 +498,10 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 			w.Generation = prior.Generation + 1
 			w.CreatedAt = prior.CreatedAt
 			w.Retained = prior.Retained
+			// Re-adopting a worker observed blocked continues its block episode.
+			if prior.State == "blocked" {
+				w.BlockedAt, w.BlockedAlertedAt, w.BlockedAlertDeliveryID, w.BlockedEscalatedAt = prior.BlockedAt, prior.BlockedAlertedAt, prior.BlockedAlertDeliveryID, prior.BlockedEscalatedAt
+			}
 			if a.Name == "" {
 				w.Name = prior.Name
 			}
@@ -792,10 +796,17 @@ func (e *Engine) captureBinding(ctx context.Context, w *model.Worker, p herdr.Pa
 	w.Ready = p.InteractiveReady != nil && *p.InteractiveReady
 	w.LastSeenAt = e.now()
 	w.UpdatedAt = e.now()
-	if w.State == "blocked" {
+	if w.State != "blocked" {
+		clearBlocked(w)
+	} else if w.BlockedAt == 0 {
 		w.BlockedAt = e.now()
 	}
 	return nil
+}
+
+// clearBlocked ends the block episode so a later block alerts again.
+func clearBlocked(w *model.Worker) {
+	w.BlockedAt, w.BlockedAlertedAt, w.BlockedAlertDeliveryID, w.BlockedEscalatedAt = 0, 0, "", 0
 }
 
 // birthIdentity captures OS process start evidence. Linux additionally uses the

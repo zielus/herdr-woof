@@ -71,9 +71,12 @@ type Options struct {
 	Config                                    profiles.Config
 	WatchdogInterval                          time.Duration
 	IdleTimeout, QuietTimeout, BlockedTimeout time.Duration
-	Now                                       func() time.Time
-	HerdrFactory                              func(string) *herdr.Client
-	SchedulerDisabled                         bool
+	// BlockedEscalationTimeout is how long a block may outlast its alert to a
+	// worker before the human is told once.
+	BlockedEscalationTimeout time.Duration
+	Now                      func() time.Time
+	HerdrFactory             func(string) *herdr.Client
+	SchedulerDisabled        bool
 }
 
 type sessionRuntime struct {
@@ -121,6 +124,9 @@ func NewEngine(st *store.Store, o Options) *Engine {
 	}
 	if o.BlockedTimeout == 0 {
 		o.BlockedTimeout = 20 * time.Second
+	}
+	if o.BlockedEscalationTimeout == 0 {
+		o.BlockedEscalationTimeout = 5 * time.Minute
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{store: st, opts: o, hub: newHub(), sessions: map[string]*sessionRuntime{}, ctx: ctx, cancel: cancel, stopped: make(chan struct{}), scheduleKick: make(chan struct{}, 1), kicked: map[string]bool{}}

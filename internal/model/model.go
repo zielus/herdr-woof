@@ -124,8 +124,13 @@ type Worker struct {
 	UpdatedAt      int64            `json:"updated_at"`
 	LastSeenAt     int64            `json:"last_seen_at"`
 	BlockedAt      int64            `json:"blocked_at,omitempty"`
-	Alerts         map[string]bool  `json:"alerts,omitempty"`
-	Error          string           `json:"error,omitempty"`
+	// Alert state of the current continuous block episode; cleared with BlockedAt.
+	// BlockedAlertDeliveryID is set only when the first alert went to a worker.
+	BlockedAlertedAt       int64           `json:"blocked_alerted_at,omitempty"`
+	BlockedAlertDeliveryID string          `json:"blocked_alert_delivery_id,omitempty"`
+	BlockedEscalatedAt     int64           `json:"blocked_escalated_at,omitempty"`
+	Alerts                 map[string]bool `json:"alerts,omitempty"`
+	Error                  string          `json:"error,omitempty"`
 }
 
 type Artifact struct {
