@@ -18,6 +18,8 @@ m_    message
 d_    dispatch
 e_    event
 g_    gate
+sched_ schedule
+srun_  schedule run (occurrence)
 ```
 
 Do not use Herdr pane IDs as durable entity IDs.
@@ -246,6 +248,65 @@ Never update/delete event rows during ordinary operation.
 Profiles should remain configuration, not DB-owned runtime state.
 
 Workers record `profile_name` and resolved launch metadata for audit/debugging if needed.
+
+## schedules
+
+Native time scheduler (schema version 2). A time trigger, not a workflow table.
+
+```text
+id                 sched_...
+session_id
+workspace_id
+worktree_id nullable
+worker_id          resolved once at creation; never a pane
+target_name        alias at creation, display only
+name               unique among non-removed schedules in a workspace
+cron               5-field, descriptor or @every
+timezone           IANA zone, persisted at creation
+missed             latest | skip
+action             message | dispatch
+subject, body      message action
+spec, handoff      dispatch action
+enabled
+state              active | removed
+anchor_at
+next_run_at nullable
+last_run_at nullable
+created_at
+updated_at
+removed_at nullable
+```
+
+## schedule_runs
+
+One durable occurrence per row.
+
+```text
+id                 srun_...
+schedule_id
+session_id, workspace_id, worktree_id nullable, worker_id
+run_id nullable
+occurrence_key     t:<ms> | manual:<request-id> | missed:<ms>
+trigger
+action
+state              persisted | claimed | dispatching | dispatched | uncertain
+                   | failed | blocked | skipped | missed | cancelled
+reason nullable
+scheduled_for
+missed_count, missed_last nullable
+attempts
+attempt_id nullable          operation receipt of the current dispatch attempt
+next_attempt_at nullable
+message_id nullable
+dispatch_id nullable
+claimed_at
+updated_at
+finished_at nullable
+```
+
+`(schedule_id, occurrence_key)` is unique, so an occurrence is claimed at most once. Messages and dispatches carry `schedule_run_id` for provenance.
+
+Timestamps are UTC Unix milliseconds. `*_local` fields in API output are display-only RFC 3339 text in the schedule zone.
 
 ## Future workflow tables
 

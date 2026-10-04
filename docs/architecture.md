@@ -186,6 +186,29 @@ The watchdog periodically checks only liveness/recovery concerns:
 
 Normal progression is event-driven.
 
+## Scheduler
+
+The native time scheduler is a loop inside `woofd`, not a separate process or shell cron.
+
+```text
+schedule mutation / worker lifecycle event / timer
+          │
+          ▼
+   scheduler loop (woofd)
+          │
+          ├── claim occurrence + advance schedule (one transaction)
+          │
+          └── message → mailbox    dispatch → existing dispatch path
+```
+
+- The loop sleeps until the earliest due time or retry (capped at 30 s to bound wall-clock jumps) and wakes early on schedule changes and worker lifecycle observations, rather than polling on a fixed interval.
+- External calls run off the loop in tracked background tasks.
+- Actions use the existing message and dispatch paths, so delivery, wakeup and settlement rules are unchanged.
+- The watchdog is unchanged; it does not drive schedules.
+- `woofd --scheduler=false` keeps schedules durable but does not fire them.
+
+See [scheduler.md](scheduler.md).
+
 ## Worktree model
 
 Phase 1 must not force "one worktree per worker".

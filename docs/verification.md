@@ -161,6 +161,8 @@ review evidence, not a claim that every possible defect has been excluded.
 - No board, TUI, Web UI, file projection, workflow engine, task DAG or scheduler
   was implemented. Shared run/worktree data and scoped events remain available
   for later workflow execution.
+  (Historical Phase 1 record. The TUI was added in Phase 1.5 and a focused time
+  scheduler on 2026-10-04; see [scheduler.md](scheduler.md).)
 - Binary/skill installation tests use temporary directories. No global binary,
   usage skill or Herdr plugin registration was installed during verification;
   the actual plugin-host test used and removed a separate temporary registry.

@@ -1,6 +1,6 @@
 ---
 name: using-woof
-description: Use when coordinating coding workers through Woof in Herdr, sending durable messages or handoff files, waiting for replies, reporting dispatch completion, or resolving an uncertain mutation outcome.
+description: Use when coordinating coding workers through Woof in Herdr, sending durable messages or handoff files, waiting for replies, reporting dispatch completion, managing time schedules, or resolving an uncertain mutation outcome.
 ---
 
 # Using Woof
@@ -55,6 +55,23 @@ woof done --dispatch d_123 --attachment a_456 --body "Completed and verified." -
 Use `--failed` for a failed outcome. Woof settles only after this report and evidence that the corresponding worker turn ended. Idle alone and a report alone are insufficient. A blocked prompt needs inspection and a decision, not a fabricated completion.
 
 Generated dispatch and inbox commands include paired actor flags for the original verified attachment. After verifying the current binding through Woof, preserve those flags when reporting, acknowledging or replying; do not replace them with a later attachment just to bypass a stale-identity refusal.
+
+## Schedules
+
+A schedule sends a durable message or a tracked dispatch to one worker on a cron or `@every` timer inside `woofd`. Create and inspect schedules through the CLI:
+
+```sh
+woof schedule add --name review --to reviewer --every 6h --spec "Review open PRs." --json
+woof schedule list --json
+woof schedule show sched_123 --json
+woof schedule history sched_123 --json
+```
+
+`add` needs a validated session and workspace, from explicit flags or inferred context. `--to` is resolved once, within that scope, to a worker ID; ambiguous names fail and the schedule never follows a reused alias or a pane. A worker caller without explicit scope lists only schedules that target it; pass `--workspace` or `--session` to see schedules created for other workers. See `woof schedule --help` for `--cron`, `--tz`, `--missed`, `enable`, `disable`, `remove` and `run`.
+
+A scheduled message arrives like any other Woof message, and a scheduled dispatch is a normal dispatch. Verify either through the managed-notice rules above; a schedule grants no extra authority. A delivered message is not completed work. A scheduled dispatch settles only after your `woof done` report and evidence that the turn ended.
+
+A `blocked` occurrence sent nothing; check its recorded reason. Transient refusals such as `worker_busy` retry by themselves, while `target_terminal` persists until the schedule is disabled or removed, so report it to the schedule's owner. An `uncertain` occurrence must be inspected with `schedule history`, `dispatch show` and `operation show`, then resolved with `operation resolve` only on evidence. Do not handle either by running `woof schedule run` or recreating the schedule: a manual run is a new occurrence, not a retry, and does not resolve the existing one.
 
 ## Uncertainty and cleanup
 

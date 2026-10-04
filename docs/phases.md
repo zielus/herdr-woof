@@ -54,6 +54,10 @@ After the core works:
 
 Do not let UI work block runtime correctness.
 
+## Native time scheduler
+
+Added after Phase 1.5 by explicit authorization on 2026-10-04: recurring cron and `@every` triggers inside `woofd` that send durable messages or tracked dispatches to logical workers. It is a time trigger, not the Phase 2 workflow engine, and adds no workflow, node or edge tables. See [scheduler.md](scheduler.md).
+
 ## Phase 2 — Dedicated workflow engine
 
 Add only after Phase 1 is reliable.

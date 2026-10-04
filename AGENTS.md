@@ -7,7 +7,7 @@ Woof is a Herdr plugin providing durable coordination for coding agents. Herdr r
 - Read all files in `docs/` before initial implementation. Revisit the relevant documents for later changes.
 - Use `docs/codex-implementation-prompt.md` for the implementation workflow and `docs/acceptance.md` as the completion checklist.
 - Implement Phase 1 core only. Preserve Phase 2 compatibility without implementing workflow tables, a workflow engine, or a full workflow DSL.
-- Core acceptance has passed. Phase 1.5 TUI is specified in `docs/tui-plan.md` and documented in `docs/tui.md`; Web work and the Phase 2 workflow engine remain deferred. Preserve core invariants in UI work.
+- Core acceptance has passed. Phase 1.5 TUI is specified in `docs/tui-plan.md` and documented in `docs/tui.md`. A focused native time scheduler was explicitly authorized on 2026-10-04; it is specified in `docs/scheduler-plan.md` and documented in `docs/scheduler.md`, and is not a workflow engine. Web work and the Phase 2 workflow engine remain deferred. Preserve core invariants in UI and scheduler work.
 - Document any other architectural conflict before implementing the affected behavior; do not silently invent a different architecture.
 
 ## Reference inspection and reuse

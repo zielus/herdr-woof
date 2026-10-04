@@ -94,7 +94,7 @@ Evidence: verification uncertainty/crash-boundary tests and inspected, explicitl
 
 Phase 1 is considered workflow-ready when:
 
-Evidence: shared-run/worktree and adhoc membership tests, scoped event replay and the inspected schema. No workflow/node/edge/schedule tables or task-DAG constraints were added.
+Evidence: shared-run/worktree and adhoc membership tests, scoped event replay and the inspected schema. A focused time scheduler (`schedules`, `schedule_runs`; schema version 2) was explicitly authorized on 2026-10-04; no workflow/node/edge tables or task-DAG constraints were added.
 
 - [x] run records can own/refer to workspace/worktree,
 - [x] workers can persist for the lifetime of a run,
@@ -102,3 +102,20 @@ Evidence: shared-run/worktree and adhoc membership tests, scoped event replay an
 - [x] one run can coordinate multiple workers in one worktree,
 - [x] event subscriptions can observe one run,
 - [x] no Phase 1 schema forces workflow transitions to be an acyclic task DAG.
+
+## Native time scheduler (authorized 2026-10-04)
+
+Behavior is specified in [scheduler.md](scheduler.md). This is a time trigger, not the Phase 2 workflow engine.
+
+Evidence: pending final verification.
+
+- [ ] Recurring cron and `@every` schedules support add, list, show, enable, disable, remove, manual run and history.
+- [ ] Timezone, DST (nonexistent and repeated times) and missed-run behavior are defined and tested.
+- [ ] Schedules live in the single daemon and database; v1 to v2 migration is transactional and safe.
+- [ ] Targets are stable worker IDs resolved in validated scope; no pane targets and no silent retargeting.
+- [ ] Messages and dispatches use Woof's durable paths; dispatch settlement is unchanged (report plus turn end).
+- [ ] Occurrences are claimed atomically with a durable occurrence identity; concurrent, manual and restart paths never claim one twice.
+- [ ] Uncertain outcomes are inspectable and never resent.
+- [ ] Busy, offline and blocked target behavior is explicit and never interrupts a busy agent.
+- [ ] CLI/RPC reads are scoped, support JSON and history, and schedule events are append-only.
+- [ ] The TUI shows a schedules view.
