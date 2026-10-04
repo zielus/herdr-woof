@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zielus/herdr-woof-v2/internal/cli"
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/paths"
-	"github.com/zielus/herdr-woof-v2/internal/profiles"
+	"github.com/zielus/herdr-woof/internal/cli"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/paths"
+	"github.com/zielus/herdr-woof/internal/profiles"
 )
 
 const claudeSettings = `{"permissions":{"allow":["Bash(woof inbox *)","Bash(woof message show *)","Bash(woof message ack *)","Bash(woof message consume *)","Bash(woof ack *)","Bash(woof consume *)","Bash(woof reply *)","Bash(woof dispatch show *)","Bash(woof dispatch check *)","Bash(woof done *)","Bash(woof worker show *)","Bash(woof status *)","Bash(woof operation show *)","Bash(woof wait *)","Bash(woof question wait *)","Bash(woof events list *)","Bash(woof events follow *)","Bash(woof send *)","Bash(woof ask *)","Bash(printenv WOOF_WORKER_ID)","Bash(printenv WOOF_ATTACHMENT_ID)"]}}`

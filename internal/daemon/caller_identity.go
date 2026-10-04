@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/model"
 )
 
 // Historical pane IDs are routing hints, not caller identities. Only a live

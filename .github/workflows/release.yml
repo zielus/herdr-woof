@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Check and build archives
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - name: Tag, manifest, CLI and changelog versions agree
+        run: sh scripts/version.sh --check "$GITHUB_REF_NAME"
+      - name: Read lint version
+        id: tools
+        run: echo "golangci=$(cat .golangci-version)" >> "$GITHUB_OUTPUT"
+      - name: Lint and formatting
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v${{ steps.tools.outputs.golangci }}
+      - name: Build, test, race, vet, licenses, CLI and installation checks
+        run: make build test race vet release-check integration install-test
+      - name: Build release archives
+        run: make dist
+      - name: Smoke-test the darwin archive
+        run: |
+          set -eu
+          arch=$(uname -m); test "$arch" = arm64 || arch=amd64
+          tar -xzf "dist/woof_${GITHUB_REF_NAME#v}_darwin_${arch}.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/woof_${GITHUB_REF_NAME#v}_darwin_${arch}/bin/woof" version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+
+  verify-linux:
+    name: Smoke-test linux archive
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Verify checksums and run woof
+        run: |
+          set -eu
+          cd dist
+          sha256sum -c checksums.txt
+          tar -xzf "woof_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz"
+          "woof_${GITHUB_REF_NAME#v}_linux_amd64/bin/woof" version
+          test -f "woof_${GITHUB_REF_NAME#v}_linux_amd64/LICENSE"
+          test -f "woof_${GITHUB_REF_NAME#v}_linux_amd64/third_party/licenses/README.md"
+
+  publish:
+    name: Publish GitHub release
+    needs: [build, verify-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -eu
+          v=${GITHUB_REF_NAME#v}
+          awk -v v="$v" '$0 ~ "^## " v "( |$)" { on=1; next } on && /^## / { exit } on { print }' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt \
+            --title "Woof $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

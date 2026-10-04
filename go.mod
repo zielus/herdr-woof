@@ -1,4 +1,4 @@
-module github.com/zielus/herdr-woof-v2
+module github.com/zielus/herdr-woof
 
 go 1.26.0
 

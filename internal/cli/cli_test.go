@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof/internal/model"
 	"reflect"
 	"strings"
 	"testing"

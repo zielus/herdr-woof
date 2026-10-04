@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/rpc"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/rpc"
 )
 
 func TestDaemonDrainLostReadThenUnavailableAllowsNewReady(t *testing.T) {

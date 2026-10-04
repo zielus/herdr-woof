@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zielus/herdr-woof-v2/internal/model"
-	"github.com/zielus/herdr-woof-v2/internal/store"
+	"github.com/zielus/herdr-woof/internal/model"
+	"github.com/zielus/herdr-woof/internal/store"
 )
 
 func eventsEngine(t *testing.T) *Engine {

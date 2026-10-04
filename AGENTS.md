@@ -84,9 +84,12 @@ the latest available Go 1.26 patch with `go-version: '1.26.x'` and
 - `make lint` — pinned golangci-lint checks, including gofmt and test sources.
 - `make fmt` — apply gofmt using the pinned tool (edits source).
 - `make vuln` — pinned govulncheck against the current vulnerability database.
-- `make check` — build, tests, race detection, vet, lint, and formatting.
+- `make check` — build, tests, race detection, vet, lint, formatting, and release metadata.
 - `make integration` — isolated CLI/daemon acceptance scenarios.
-- `make install-test` — reversible installer checks under temporary directories.
+- `make install-test` — reversible installer and plugin build-step checks under temporary directories.
+- `make release-check` — version agreement (manifest, CLI, CHANGELOG) and current `third_party/licenses`.
+- `make licenses` — regenerate `third_party/licenses` after dependency changes.
+- `make dist` — release archives and `checksums.txt` in `dist/`; tags `v*` publish via `.github/workflows/release.yml`.
 
 Use `WOOF_STATE_DIR` and `WOOF_CONFIG` for isolated runtime state/configuration.
 Tests using Unix sockets require an environment that permits local socket binds.
