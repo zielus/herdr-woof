@@ -15,7 +15,7 @@ import (
 	"github.com/zielus/herdr-woof-v2/internal/profiles"
 )
 
-const claudeSettings = `{"permissions":{"allow":["Bash(woof inbox *)","Bash(woof message show *)","Bash(woof message ack *)","Bash(woof message consume *)","Bash(woof ack *)","Bash(woof consume *)","Bash(woof reply *)","Bash(woof dispatch show *)","Bash(woof dispatch check *)","Bash(woof done *)","Bash(woof worker show *)","Bash(woof status *)","Bash(woof operation show *)","Bash(woof wait *)","Bash(woof question wait *)","Bash(woof events list *)","Bash(woof events follow *)","Bash(woof send *)","Bash(woof ask *)"]}}`
+const claudeSettings = `{"permissions":{"allow":["Bash(woof inbox *)","Bash(woof message show *)","Bash(woof message ack *)","Bash(woof message consume *)","Bash(woof ack *)","Bash(woof consume *)","Bash(woof reply *)","Bash(woof dispatch show *)","Bash(woof dispatch check *)","Bash(woof done *)","Bash(woof worker show *)","Bash(woof status *)","Bash(woof operation show *)","Bash(woof wait *)","Bash(woof question wait *)","Bash(woof events list *)","Bash(woof events follow *)","Bash(woof send *)","Bash(woof ask *)","Bash(printenv WOOF_WORKER_ID)","Bash(printenv WOOF_ATTACHMENT_ID)"]}}`
 
 func codexGrant(sock string) []string {
 	return []string{"--no-daemon", "--enable", "network_proxy",
@@ -118,7 +118,36 @@ func claudeAllows(command string) bool {
 			return true
 		}
 	}
+	for _, exact := range claudeExact {
+		if command == exact {
+			return true
+		}
+	}
 	return false
+}
+
+// A worker reads its identity one variable per command: BSD printenv prints
+// only the first name, and a live Haiku worker was asked for every other shape.
+func TestClaudeAllowsOnlyTheTwoExactIdentityReads(t *testing.T) {
+	for _, command := range []string{"printenv WOOF_WORKER_ID", "printenv WOOF_ATTACHMENT_ID"} {
+		if !claudeAllows(command) {
+			t.Errorf("allow list misses %q", command)
+		}
+	}
+	for _, command := range []string{"printenv", "printenv WOOF_WORKER_ID WOOF_ATTACHMENT_ID", "printenv WOOF_WORKER_ID ANTHROPIC_API_KEY", "printenv ANTHROPIC_API_KEY", "printenv WOOF_STATE_DIR"} {
+		if claudeAllows(command) {
+			t.Errorf("allow list covers %q", command)
+		}
+	}
+	settings := workerPermissionArgs("claude", nil, "")[1]
+	for _, rule := range []string{`"Bash(printenv WOOF_WORKER_ID)"`, `"Bash(printenv WOOF_ATTACHMENT_ID)"`} {
+		if !strings.Contains(settings, rule) {
+			t.Errorf("settings lack exact rule %s", rule)
+		}
+	}
+	if strings.Contains(settings, "printenv WOOF_WORKER_ID *") {
+		t.Error("identity read must be an exact rule, not a prefix rule")
+	}
 }
 
 func TestClaudeAllowListIsTheWorkerCoordinationFlowOnly(t *testing.T) {

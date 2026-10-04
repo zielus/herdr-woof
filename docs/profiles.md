@@ -106,7 +106,9 @@ worker of these agent kinds:
 - `claude`: `--settings` with Bash allow rules for the worker's own
   coordination commands (inbox, message show/ack/consume, reply, dispatch
   show/check, done, worker show, status, operation show, wait, question wait,
-  events list/follow, send, ask). It merges with the user's settings. The rules
+  events list/follow, send, ask), plus two exact rules, `printenv
+  WOOF_WORKER_ID` and `printenv WOOF_ATTACHMENT_ID`, so a worker can read its
+  injected identity. It merges with the user's settings. The rules
   match command text; they are a convenience, not a security boundary, and do
   not restrict recipients. Worker start/stop/release/adopt, dispatching,
   schedules, sessions and daemon control still prompt.

@@ -37,6 +37,11 @@ var claudeAllowed = []string{
 	"woof send", "woof ask",
 }
 
+// claudeExact are whole-command rules. A worker reads its injected identity
+// with them, one variable per command: BSD printenv prints only the first name
+// it is given, and a "$VAR" expansion always asks in Claude's manual mode.
+var claudeExact = []string{"printenv WOOF_WORKER_ID", "printenv WOOF_ATTACHMENT_ID"}
+
 // workerPermissionArgs returns the launch arguments to put before the profile
 // and --arg arguments, or nil when nothing should be added. sock is the socket
 // woofd listens on, which may be the short /tmp fallback.
@@ -46,9 +51,12 @@ func workerPermissionArgs(kind string, args []string, sock string) []string {
 		if claudeChoosesPermissions(args) {
 			return nil
 		}
-		rules := make([]string, len(claudeAllowed))
-		for i, command := range claudeAllowed {
-			rules[i] = "Bash(" + command + " *)"
+		rules := make([]string, 0, len(claudeAllowed)+len(claudeExact))
+		for _, command := range claudeAllowed {
+			rules = append(rules, "Bash("+command+" *)")
+		}
+		for _, command := range claudeExact {
+			rules = append(rules, "Bash("+command+")")
 		}
 		settings, err := json.Marshal(map[string]any{"permissions": map[string]any{"allow": rules}})
 		if err != nil {
