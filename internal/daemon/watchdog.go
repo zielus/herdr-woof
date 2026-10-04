@@ -59,7 +59,10 @@ func (e *Engine) watchdogOnce(ctx context.Context) error {
 		if idle(w.RawStatus) && d.DoneAt == 0 && d.IdleAt != 0 && e.now()-d.IdleAt >= e.opts.IdleTimeout.Milliseconds() {
 			reasons = append(reasons, "idle_without_report")
 		}
-		if !idle(w.RawStatus) && d.LastActivityAt != 0 && e.now()-d.LastActivityAt >= e.opts.QuietTimeout.Milliseconds() {
+		// A blocked worker is silent because it waits for input. Its block
+		// episode has its own alert and escalation, so it is not also reported
+		// as inactivity.
+		if !idle(w.RawStatus) && w.State != "blocked" && d.LastActivityAt != 0 && e.now()-d.LastActivityAt >= e.opts.QuietTimeout.Milliseconds() {
 			reasons = append(reasons, "no_activity")
 		}
 		if w.State == "lost" || w.State == "offline" {

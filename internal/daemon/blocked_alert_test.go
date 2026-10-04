@@ -261,6 +261,34 @@ func TestBlockedDispatchAlertsInvokerThenHumanOncePerEpisode(t *testing.T) {
 	}
 }
 
+// Seen live: with the default 90s quiet timeout a blocked dispatch was reported
+// a second time as no_activity, on top of its block alert.
+func TestBlockedDispatchIsNotAlsoReportedAsInactive(t *testing.T) {
+	c := newBlockedCase(t)
+	c.e.opts.QuietTimeout = 90 * time.Second
+	d := mustDispatch(t, c.e, c.w)
+	c.observe("working", 0)
+	c.observe("blocked", time.Second)
+	for at := 2 * time.Second; at < 30*time.Minute; at += 13 * time.Second {
+		c.tick(at)
+	}
+	if m := c.expect(1, 1)[0]; m.ToKind != "human" || !strings.Contains(m.Body, "blocked for") {
+		t.Fatalf("block alert: %+v", m)
+	}
+	after, _ := get[model.Dispatch](context.Background(), c.e.store, "dispatches", d.ID)
+	if after.Alerts["no_activity"] || !after.Alerts["continuously_blocked"] {
+		t.Fatalf("alerts: %+v", after.Alerts)
+	}
+	// Once it works again without progress, inactivity is reported as before.
+	c.observe("working", 31*time.Minute)
+	c.tick(31*time.Minute + 89*time.Second)
+	c.expect(1, 1)
+	c.tick(31*time.Minute + 90*time.Second)
+	if m := c.expect(2, 2)[1]; !strings.Contains(m.Body, "needs attention: no_activity") {
+		t.Fatalf("inactivity after the block: %+v", m)
+	}
+}
+
 func TestBlockedUnblockedBeforeEscalationTimeoutNeverReachesHuman(t *testing.T) {
 	c := newBlockedCase(t)
 	d := mustDispatch(t, c.e, c.w)
