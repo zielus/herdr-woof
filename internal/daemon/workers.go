@@ -390,6 +390,16 @@ func (e *Engine) fenceWorkerTx(tx *store.Tx, workerID, reason string) error {
 }
 
 func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, error) {
+	if len(a.ExtraArgs) > 0 {
+		if r.Op != "worker.spawn" {
+			return nil, problem("invalid_args", "extra_args require worker.spawn")
+		}
+		for _, arg := range a.ExtraArgs {
+			if strings.ContainsRune(arg, 0) {
+				return nil, problem("invalid_args", "extra_args cannot contain NUL")
+			}
+		}
+	}
 	if a.Workspace != "" {
 		if r.Scope.SessionID == "" {
 			return nil, problem("scope_required", "native workspace selection requires a selected or inferred session")
@@ -539,7 +549,7 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		w.ProfileName = cfg.Defaults.WorkerProfile
 	}
 	w.AgentKind = profile.Agent
-	w.Args = profile.Args
+	w.Args = append(append([]string(nil), profile.Args...), a.ExtraArgs...)
 	w.AgentName = "woof-" + w.ID[len(w.ID)-20:]
 	if a.Pane != "" {
 		p, err = c.PaneGet(ctx, a.Pane)

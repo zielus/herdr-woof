@@ -121,12 +121,15 @@ Discover Woof IDs before choosing a target. `--workspace` selects a Woof workspa
 ```sh
 woof workspace list --global --json
 woof worker start --workspace workspace_ID --name builder --profile reviewer --cwd /absolute/repo
+woof worker start --workspace workspace_ID --name builder --profile reviewer --arg=--local --arg='a b'
 woof worker adopt --workspace workspace_ID --pane w1:p7 --name reviewer
 woof worker show worker_ID --global
 woof worker read worker_ID --global --lines 100
 ```
 
 For a new worker, the launch directory is chosen from explicit `--cwd`, selected `--worktree`, profile `cwd`, then workspace cwd. A selected worktree conflicts with a different explicit `--cwd`; Woof rejects it. The effective directory must exist before a worker is reserved or a tab is created. An existing empty pane must report the same cwd. Adoption uses the live agent's cwd and identity; changing a profile affects future launches only. The resolved cwd is saved on the worker.
+
+`worker start` and `worker spawn` accept repeatable `--arg=VALUE`. Values are appended in order to the profile's raw arguments and saved on the worker; an empty value is allowed, while NUL is rejected. Each value is one literal argument, so quote shell metacharacters when invoking Woof from a shell. Launches with extra arguments require daemon protocol 2 and fail before spawning against an older protocol 1 daemon. Launches without `--arg` continue to use protocol 1.
 
 Adoption requires an explicit live pane and verifies agent/session identity. To rebind an existing logical worker after inspection, supply its ID and the new live pane:
 

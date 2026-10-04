@@ -51,6 +51,17 @@ func (c *Client) request(op string, args any) (model.Request, error) {
 			return r, e
 		}
 		r.Args = b
+		if op == "worker.spawn" {
+			var launch struct {
+				ExtraArgs []string `json:"extra_args"`
+			}
+			if err := json.Unmarshal(b, &launch); err != nil {
+				return r, err
+			}
+			if len(launch.ExtraArgs) > 0 {
+				r.Version = model.ExtraArgsProtocol
+			}
+		}
 	}
 	if !readOnly[op] {
 		var b [16]byte

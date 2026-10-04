@@ -47,6 +47,7 @@ type Args struct {
 	Decision   string   `json:"decision,omitempty"`
 	Resolution string   `json:"resolution,omitempty"`
 	Artifacts  []string `json:"artifacts,omitempty"`
+	ExtraArgs  []string `json:"extra_args,omitempty"`
 	Options    []string `json:"options,omitempty"`
 	Events     []string `json:"events,omitempty"`
 	Retained   bool     `json:"retained,omitempty"`
@@ -454,7 +455,7 @@ func receiptResult(o model.Operation, fp string) (any, error) {
 	return nil, &model.Error{Code: "uncertain", Message: "operation already submitted; inspect and explicitly resolve before further action", OperationID: o.ID}
 }
 func (e *Engine) Handle(ctx context.Context, r model.Request) (any, error) {
-	if r.Version != model.Protocol {
+	if r.Version != model.Protocol && r.Version != model.ExtraArgsProtocol {
 		return nil, problem("protocol_mismatch", "Woof protocol %d required", model.Protocol)
 	}
 	var a Args
@@ -462,6 +463,12 @@ func (e *Engine) Handle(ctx context.Context, r model.Request) (any, error) {
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, problem("invalid_args", "%v", err)
 		}
+	}
+	if len(a.ExtraArgs) > 0 && (r.Op != "worker.spawn" || r.Version != model.ExtraArgsProtocol) {
+		return nil, problem("protocol_mismatch", "extra_args require worker.spawn protocol %d", model.ExtraArgsProtocol)
+	}
+	if r.Version == model.ExtraArgsProtocol && (r.Op != "worker.spawn" || len(a.ExtraArgs) == 0) {
+		return nil, problem("protocol_mismatch", "protocol %d is reserved for worker.spawn extra_args", model.ExtraArgsProtocol)
 	}
 	if r.Op == "operation.show" {
 		return get[model.Operation](ctx, e.store, "operations", a.ID)

@@ -31,7 +31,7 @@ func writeRequest(w io.Writer, b []byte) error {
 	return nil
 }
 func connect(ctx context.Context, sock string, req model.Request) (net.Conn, func(), error) {
-	if req.Version != model.Protocol {
+	if req.Version != model.Protocol && req.Version != model.ExtraArgsProtocol {
 		return nil, nil, fmt.Errorf("request protocol %d unsupported", req.Version)
 	}
 	b, err := json.Marshal(req)

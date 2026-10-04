@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"syscall"
 	"testing"
@@ -23,6 +24,56 @@ import (
 	"github.com/zielus/herdr-woof-v2/internal/profiles"
 	"github.com/zielus/herdr-woof-v2/internal/store"
 )
+
+func TestSpawnExtraArgsSnapshotAndProtocolGate(t *testing.T) {
+	e, f, _ := workerFixture(t, false)
+	profileArgs := []string{"--profile", "base"}
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Args: profileArgs, Cwd: t.TempDir()}
+	extra := []string{"--", "", "żółć", "--leading", "$(unsafe)", "a b"}
+	data, _ := json.Marshal(Args{Name: "extra", Profile: "sleep", ExtraArgs: extra})
+	legacy := model.Request{Version: model.Protocol, ID: newID("op"), Op: "worker.spawn", Scope: model.Scope{WorkspaceID: "ws_a"}, Args: data}
+	if _, err := e.Handle(context.Background(), legacy); err == nil {
+		t.Fatal("legacy wire version accepted extra argv")
+	}
+	workers, err := list[model.Worker](context.Background(), e.store, "workers", model.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 1 {
+		t.Fatalf("legacy request created worker: %+v", workers)
+	}
+	f.namedFile = filepath.Join(t.TempDir(), "name")
+	f.shellOnTab = true
+	f.info.ShellPID = 101
+	setForegroundPID(f, 101)
+	bin := filepath.Join(t.TempDir(), "fake-herdr")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s' \"$3\" > \"$WOOF_TEST_NAME_FILE\"\nprintf '%s' '{\"result\":{\"agent\":{\"pane_id\":\"w1:p1\"}}}'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("WOOF_TEST_NAME_FILE", f.namedFile)
+	legacy.Version = model.ExtraArgsProtocol
+	v, err := e.Handle(context.Background(), legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := v.(model.Worker)
+	want := append(append([]string{}, profileArgs...), extra...)
+	if !reflect.DeepEqual(w.Args, want) {
+		t.Fatalf("args = %#v, want %#v", w.Args, want)
+	}
+	if !reflect.DeepEqual(profileArgs, []string{"--profile", "base"}) || !reflect.DeepEqual(e.opts.Config.Profiles["sleep"].Args, profileArgs) {
+		t.Fatal("profile snapshot mutated")
+	}
+	stored, err := get[model.Worker](context.Background(), e.store, "workers", w.ID)
+	if err != nil || !reflect.DeepEqual(stored.Args, want) {
+		t.Fatalf("persisted args = %#v: %v", stored.Args, err)
+	}
+	bad, _ := json.Marshal(Args{Name: "nul", Profile: "sleep", ExtraArgs: []string{"a\x00b"}})
+	if _, err := e.Handle(context.Background(), model.Request{Version: model.ExtraArgsProtocol, ID: newID("op"), Op: "worker.spawn", Scope: model.Scope{WorkspaceID: "ws_a"}, Args: bad}); err == nil {
+		t.Fatal("accepted NUL")
+	}
+}
 
 type lifecycleAgent struct {
 	mu                   sync.Mutex
