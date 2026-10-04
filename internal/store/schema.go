@@ -4,7 +4,7 @@ import "fmt"
 
 // Migrations and append-only guards adapted from herdr-orch's transactional
 // schema migration pattern and plan_events protection (MIT).
-const schemaVersion = 1
+const schemaVersion = 2
 const schema = `
 CREATE TABLE sessions(id TEXT PRIMARY KEY, herdr_name TEXT NOT NULL, socket_path TEXT NOT NULL, status TEXT NOT NULL, record_json TEXT NOT NULL);
 CREATE TABLE workspaces(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), record_json TEXT NOT NULL);
@@ -46,6 +46,20 @@ CREATE TRIGGER events_monotonic AFTER INSERT ON events
  BEGIN SELECT RAISE(ABORT,'event sequence must increase'); END;
 `
 
+// Migration 2 adds the native time scheduler. Version 1 DDL above stays
+// byte-identical so existing databases migrate by adding tables only.
+const schemaV2 = `
+CREATE TABLE schedules(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), worker_id TEXT NOT NULL REFERENCES workers(id), name TEXT NOT NULL, state TEXT NOT NULL, record_json TEXT NOT NULL);
+CREATE UNIQUE INDEX schedules_active_name ON schedules(workspace_id,name) WHERE state != 'removed';
+CREATE INDEX schedules_session ON schedules(session_id);
+CREATE INDEX schedules_worker ON schedules(worker_id);
+CREATE TABLE schedule_runs(id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL REFERENCES schedules(id), session_id TEXT NOT NULL REFERENCES sessions(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), worker_id TEXT NOT NULL REFERENCES workers(id), run_id TEXT REFERENCES runs(id) DEFERRABLE INITIALLY DEFERRED, occurrence_key TEXT NOT NULL, state TEXT NOT NULL, dispatch_id TEXT REFERENCES dispatches(id) DEFERRABLE INITIALLY DEFERRED, message_id TEXT REFERENCES messages(id) DEFERRABLE INITIALLY DEFERRED, record_json TEXT NOT NULL);
+CREATE UNIQUE INDEX schedule_runs_occurrence ON schedule_runs(schedule_id,occurrence_key);
+CREATE INDEX schedule_runs_schedule_state ON schedule_runs(schedule_id,state);
+CREATE INDEX schedule_runs_worker ON schedule_runs(worker_id);
+CREATE INDEX schedule_runs_run ON schedule_runs(run_id);
+`
+
 func (s *Store) migrate() (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -63,9 +77,15 @@ func (s *Store) migrate() (err error) {
 		if _, err := tx.Exec(schema); err != nil {
 			return fmt.Errorf("migration 1: %w", err)
 		}
-		if _, err := tx.Exec(`PRAGMA user_version=1`); err != nil {
-			return err
+		version = 1
+	}
+	if version == 1 {
+		if _, err := tx.Exec(schemaV2); err != nil {
+			return fmt.Errorf("migration 2: %w", err)
 		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, schemaVersion)); err != nil {
+		return err
 	}
 	return databaseError(tx.Commit())
 }

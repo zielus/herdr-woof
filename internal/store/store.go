@@ -41,16 +41,18 @@ type queryer interface {
 // Each column is both an indexed relationship/identity and a field in record_json.
 // Names are internal constants, never caller-controlled SQL identifiers.
 var columns = map[string][]string{
-	"sessions":   {"herdr_name", "socket_path", "status"},
-	"workspaces": {"session_id"},
-	"worktrees":  {"session_id", "workspace_id", "owner_run_id"},
-	"runs":       {"session_id", "workspace_id", "worktree_id", "invoker_worker_id"},
-	"workers":    {"session_id", "workspace_id", "worktree_id", "run_id", "name", "state", "pane_id", "attachment_id"},
-	"messages":   {"session_id", "workspace_id", "worktree_id", "run_id", "from_worker_id", "to_kind", "to_id", "reply_to_message_id", "dispatch_id"},
-	"deliveries": {"message_id", "worker_id", "session_id", "workspace_id", "run_id", "human"},
-	"dispatches": {"session_id", "workspace_id", "worktree_id", "run_id", "worker_id", "attachment_id", "done_message_id", "status"},
-	"gates":      {"session_id", "workspace_id", "run_id", "status"},
-	"operations": {"fingerprint", "state"},
+	"sessions":      {"herdr_name", "socket_path", "status"},
+	"workspaces":    {"session_id"},
+	"worktrees":     {"session_id", "workspace_id", "owner_run_id"},
+	"runs":          {"session_id", "workspace_id", "worktree_id", "invoker_worker_id"},
+	"workers":       {"session_id", "workspace_id", "worktree_id", "run_id", "name", "state", "pane_id", "attachment_id"},
+	"messages":      {"session_id", "workspace_id", "worktree_id", "run_id", "from_worker_id", "to_kind", "to_id", "reply_to_message_id", "dispatch_id"},
+	"deliveries":    {"message_id", "worker_id", "session_id", "workspace_id", "run_id", "human"},
+	"dispatches":    {"session_id", "workspace_id", "worktree_id", "run_id", "worker_id", "attachment_id", "done_message_id", "status"},
+	"gates":         {"session_id", "workspace_id", "run_id", "status"},
+	"operations":    {"fingerprint", "state"},
+	"schedules":     {"session_id", "workspace_id", "worker_id", "name", "state"},
+	"schedule_runs": {"schedule_id", "session_id", "workspace_id", "worker_id", "run_id", "occurrence_key", "state", "dispatch_id", "message_id"},
 }
 
 func refusal(code, format string, args ...any) error {
@@ -70,6 +72,10 @@ func databaseError(err error) error {
 			switch {
 			case strings.Contains(err.Error(), "workers.workspace_id, workers.name"):
 				return refusal("name_conflict", "worker alias is already reserved in this workspace")
+			case strings.Contains(err.Error(), "schedules.workspace_id, schedules.name"):
+				return refusal("name_conflict", "schedule name is already used in this workspace")
+			case strings.Contains(err.Error(), "schedule_runs.schedule_id, schedule_runs.occurrence_key"):
+				return refusal("occurrence_claimed", "schedule occurrence is already claimed")
 			case strings.Contains(err.Error(), "dispatches.worker_id"):
 				return refusal("busy_worker", "worker already has an active dispatch (including an uncertain dispatch)")
 			default:
