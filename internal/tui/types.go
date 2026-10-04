@@ -38,6 +38,32 @@ type Snapshot struct {
 	ProfileDetails map[string]profiles.Profile
 	Reports        map[string]MessageDetail
 	WorkerInboxes  map[string][]InboxEntry
+	// Schedules are non-removed native schedules in the browse scope. The
+	// latest occurrence per schedule (history limit 1) feeds the list column.
+	Schedules    []model.Schedule
+	ScheduleLast map[string]ScheduleRunView
+}
+
+// ScheduleRunView mirrors the daemon's schedule.show/schedule.history run view:
+// linked delivery, dispatch and attempt receipt stay canonical in their rows.
+type ScheduleRunView struct {
+	Run        model.ScheduleRun `json:"run"`
+	Message    *model.Message    `json:"message,omitempty"`
+	Deliveries []model.Delivery  `json:"deliveries,omitempty"`
+	Dispatch   *model.Dispatch   `json:"dispatch,omitempty"`
+	Operation  *model.Operation  `json:"operation,omitempty"`
+}
+type ScheduleOccurrence struct {
+	At    int64  `json:"at"`
+	Local string `json:"local"`
+}
+
+// ScheduleDetail is the schedule.show read: identity, the next five
+// occurrences and recent runs, newest first.
+type ScheduleDetail struct {
+	Schedule model.Schedule       `json:"schedule"`
+	Upcoming []ScheduleOccurrence `json:"upcoming"`
+	Runs     []ScheduleRunView    `json:"runs"`
 }
 type Action struct {
 	Kind      string
@@ -50,6 +76,8 @@ type Action struct {
 	Decision  string
 	Options   []string
 	Label     string
+	// Schedule freezes the reviewed schedule for enable/disable/run-now.
+	Schedule *model.Schedule
 }
 type ActionResult struct {
 	Value       json.RawMessage
@@ -65,6 +93,7 @@ type Backend interface {
 	Follow(context.Context, model.Scope, int64, func(StreamUpdate) error) error
 	Act(context.Context, Action) (ActionResult, error)
 	Operation(context.Context, string) (model.Operation, error)
+	ScheduleDetail(context.Context, model.Scope, string) (ScheduleDetail, error)
 }
 type RPCBackend struct{ Base *client.Client }
 type ConnectionError struct{ Err error }

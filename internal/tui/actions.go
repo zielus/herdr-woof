@@ -72,12 +72,38 @@ func NewGateAction(gate model.Gate) (Action, error) {
 	return Action{Kind: "gate.resolve", Scope: model.Scope{SessionID: gate.SessionID, WorkspaceID: gate.WorkspaceID, RunID: gate.RunID}, ID: gate.ID, Options: append([]string(nil), gate.Options...), Label: gate.Question}, nil
 }
 
+// Schedule actions are the only scheduler mutations in the TUI. Add and remove
+// stay CLI-only; the reviewed identity and scope are frozen here.
+var scheduleKinds = map[string]string{"schedule.enable": "Enable", "schedule.disable": "Disable", "schedule.run": "Run now"}
+
+func isScheduleKind(kind string) bool { _, ok := scheduleKinds[kind]; return ok }
+
+// NewScheduleAction freezes the schedule's durable ID, session and workspace.
+// The target worker ID is fixed at creation and never retargeted.
+func NewScheduleAction(kind string, sc model.Schedule) (Action, error) {
+	if !isScheduleKind(kind) {
+		return Action{}, fmt.Errorf("unsupported schedule action %q", kind)
+	}
+	if !actionID(sc.ID) || !actionID(sc.SessionID) || !actionID(sc.WorkspaceID) {
+		return Action{}, fmt.Errorf("schedule identity and scope are required")
+	}
+	if sc.State == "removed" {
+		return Action{}, fmt.Errorf("schedule %s was removed", sc.ID)
+	}
+	frozen := sc
+	return Action{Kind: kind, Scope: model.Scope{SessionID: sc.SessionID, WorkspaceID: sc.WorkspaceID}, ID: sc.ID, To: "worker:" + sc.WorkerID, Label: sc.Name, Schedule: &frozen}, nil
+}
+
 func actionID(id string) bool {
 	return id != "" && !strings.ContainsFunc(id, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || r == ':' })
 }
 func cloneAction(a Action) Action {
 	a.Artifacts = append([]string(nil), a.Artifacts...)
 	a.Options = append([]string(nil), a.Options...)
+	if a.Schedule != nil {
+		sc := *a.Schedule
+		a.Schedule = &sc
+	}
 	return a
 }
 func validateAction(a Action) error {
@@ -129,6 +155,16 @@ func validateAction(a Action) error {
 			if !valid {
 				return fmt.Errorf("decision must be one of the gate options")
 			}
+		}
+	case "schedule.enable", "schedule.disable", "schedule.run":
+		if !actionID(a.ID) {
+			return fmt.Errorf("schedule ID is required")
+		}
+		if a.Scope.Global || !actionID(a.Scope.SessionID) || !actionID(a.Scope.WorkspaceID) {
+			return fmt.Errorf("schedule actions require the schedule's session and workspace")
+		}
+		if len(a.Artifacts) > 0 || a.Body != "" || a.Decision != "" {
+			return fmt.Errorf("schedule actions carry only the schedule ID")
 		}
 	default:
 		return fmt.Errorf("unsupported action %q", a.Kind)

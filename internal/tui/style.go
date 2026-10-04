@@ -65,11 +65,21 @@ func (m *uiModel) decorate(lines []string, kind string) []string {
 			lines[i] = m.paint(line, role)
 			continue
 		}
-		if kind == "detail" && (strings.HasPrefix(line, "Dispatch ") || strings.HasPrefix(line, "Receipt ") || strings.HasPrefix(line, "Artifact ") || strings.HasPrefix(line, "Worker mailbox") || strings.HasPrefix(line, "Profile ") || strings.HasPrefix(line, "Event ") || strings.HasPrefix(line, "Gate ")) {
+		// Occurrence headings keep their state badge colored (settled green,
+		// uncertain/blocked yellow, failed red); the text itself is unchanged.
+		if kind == "detail" && strings.HasPrefix(line, "Occurrence ") {
+			if open, end := strings.Index(line, "["), strings.Index(line, "]"); open > 0 && end > open {
+				if role := statusRole(line[open+1 : end]); role != "" {
+					lines[i] = m.paint(line[:open], "heading") + m.paint(line[open:end+1], role) + m.paint(line[end+1:], "heading")
+					continue
+				}
+			}
+		}
+		if kind == "detail" && (strings.HasPrefix(line, "Dispatch ") || strings.HasPrefix(line, "Receipt ") || strings.HasPrefix(line, "Artifact ") || strings.HasPrefix(line, "Worker mailbox") || strings.HasPrefix(line, "Profile ") || strings.HasPrefix(line, "Event ") || strings.HasPrefix(line, "Gate ") || strings.HasPrefix(line, "Schedule ") || strings.HasPrefix(line, "Occurrence ")) {
 			lines[i] = m.paint(line, "heading")
 			continue
 		}
-		for _, label := range []string{"State:", "Ready:", "Session:", "Workspace:", "Worktree:", "Run:", "Pane reference:", "Profile:", "Cwd:", "From:", "To:", "Target:", "Frozen scope:", "Subject:", "Context / question:", "Decision:", "Options:", "Tags:", "Agent:", "Literal argv (one argument per line):", "Explicit report:", "Corresponding turn ended:", "Settled at:", "Spec:", "Report body:", "Delivery:", "Persisted:", "Delivered:", "Type:", "Actor:", "Scope:", "Created:", "Artifacts (references only):", "Filter:"} {
+		for _, label := range []string{"State:", "Ready:", "Session:", "Workspace:", "Worktree:", "Run:", "Pane reference:", "Profile:", "Cwd:", "From:", "To:", "Target:", "Frozen scope:", "Subject:", "Context / question:", "Decision:", "Options:", "Tags:", "Agent:", "Literal argv (one argument per line):", "Explicit report:", "Corresponding turn ended:", "Settled at:", "Spec:", "Report body:", "Delivery:", "Persisted:", "Delivered:", "Type:", "Actor:", "Scope:", "Created:", "Artifacts (references only):", "Filter:", "ID:", "Target worker:", "Cron:", "Timezone:", "Missed policy:", "Action:", "Body:", "Handoff:", "Next run:", "Upcoming (schedule zone):", "Recent runs (newest first):", "Currently:", "Keys:", "Schedule:"} {
 			if strings.HasPrefix(line, label) {
 				role := "label"
 				if label == "Target:" || label == "To:" {
@@ -79,7 +89,7 @@ func (m *uiModel) decorate(lines []string, kind string) []string {
 				break
 			}
 		}
-		if strings.HasPrefix(line, "Error:") && strings.TrimSpace(strings.TrimPrefix(line, "Error:")) != "" {
+		if strings.HasPrefix(line, "Detail unavailable:") || (strings.HasPrefix(line, "Error:") && strings.TrimSpace(strings.TrimPrefix(line, "Error:")) != "") {
 			lines[i] = m.paint(line, "error")
 		}
 		if kind == "form" && (line == "Subject" || line == "Body" || line == "Artifacts (one path per line)") {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,7 +16,7 @@ import (
 
 type row struct{ ID, Label, State string }
 
-var tabNames = []string{"Workers", "Inbox", "Decisions", "Events", "Profiles"}
+var tabNames = []string{"Workers", "Inbox", "Decisions", "Events", "Profiles", "Schedules"}
 
 // Data text is never terminal markup. Strip sequences before wrapping and remove
 // residual controls and bidirectional overrides (including incomplete escapes).
@@ -58,8 +59,153 @@ func (m *uiModel) rowsFor(tab int) []row {
 		for _, p := range m.snapshot.Profiles {
 			rows = append(rows, row{p.Name, p.Name + " [" + p.Agent + "] " + p.Description, ""})
 		}
+	case scheduleTab:
+		for _, sc := range m.snapshot.Schedules {
+			enabled, next := "enabled", orDash(sc.NextRunLocal)
+			if !sc.Enabled {
+				enabled, next = "disabled", "disabled"
+			}
+			last := "none"
+			if v, ok := m.snapshot.ScheduleLast[sc.ID]; ok && v.Run.State != "" {
+				last = v.Run.State
+			}
+			rows = append(rows, row{sc.ID, fmt.Sprintf("%s [%s] %s→%s last:%s next:%s · %s", sc.Name, enabled, sc.Action, sc.TargetName, last, next, sc.ID), enabled})
+		}
 	}
 	return rows
+}
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// runStateMeaning keeps persistence, acceptance and settlement distinct.
+func runStateMeaning(state string) string {
+	switch state {
+	case "persisted":
+		return "message queued in the worker mailbox; delivery is tracked separately; not completed work"
+	case "claimed":
+		return "dispatch recorded; no attempt yet"
+	case "dispatching":
+		return "attempt receipt exists; a prompt may be in progress"
+	case "dispatched":
+		return "prompt accepted; settlement (done report AND turn-end evidence) shown separately as settled"
+	case "settled":
+		return "dispatch settled: done report AND matching turn-end evidence; reason is the reported outcome"
+	case "uncertain":
+		return "prompt outcome unknown; never resent; inspect the attempt operation"
+	case "failed":
+		return "certain failure"
+	case "blocked":
+		return "nothing sent; the daemon retries"
+	case "skipped":
+		return "earlier occurrence still outstanding (overlap; older daemons only)"
+	case "missed":
+		return "came due while the daemon was not running"
+	case "cancelled":
+		return "cancelled by disable/remove before any effect"
+	}
+	return ""
+}
+
+// localTime formats a UTC millisecond timestamp in the schedule zone.
+func localTime(ms int64, zone string) string {
+	if ms == 0 {
+		return "-"
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		loc = time.UTC
+	}
+	return time.UnixMilli(ms).In(loc).Format(time.RFC3339)
+}
+func (m *uiModel) scheduleDetailText(id string) string {
+	var sc *model.Schedule
+	for i := range m.snapshot.Schedules {
+		if m.snapshot.Schedules[i].ID == id {
+			sc = &m.snapshot.Schedules[i]
+		}
+	}
+	if sc == nil {
+		return ""
+	}
+	var b strings.Builder
+	enabled := "enabled"
+	if !sc.Enabled {
+		enabled = "disabled"
+	}
+	fmt.Fprintf(&b, "Schedule %s [%s]\nID: %s\nState: %s  revision:%d\nSession: %s\nWorkspace: %s\nWorktree: %s\nTarget worker: %s (%s; fixed at creation, never retargeted)\nCron: %s\nTimezone: %s\nMissed policy: %s\nAction: %s\n", sc.Name, enabled, sc.ID, sc.State, sc.Revision, sc.SessionID, sc.WorkspaceID, orDash(sc.WorktreeID), sc.WorkerID, sc.TargetName, sc.Cron, sc.Timezone, sc.Missed, sc.Action)
+	if sc.Action == "dispatch" {
+		fmt.Fprintf(&b, "Spec:\n%s\nHandoff: %s\n", sc.Spec, orDash(sc.Handoff))
+	} else {
+		fmt.Fprintf(&b, "Subject: %s\nBody:\n%s\n", orDash(sc.Subject), sc.Body)
+	}
+	next := orDash(sc.NextRunLocal)
+	if !sc.Enabled {
+		next = "disabled"
+	}
+	fmt.Fprintf(&b, "Next run: %s\n", next)
+	detail := m.scheduleDetail
+	if detail != nil && (m.scheduleDetailID != id || detail.Schedule.ID != id) {
+		detail = nil
+	}
+	switch {
+	case m.scheduleDetailID == id && m.scheduleDetailErr != nil:
+		fmt.Fprintf(&b, "Detail unavailable: %s\n", m.scheduleDetailErr)
+	case m.scheduleDetailID == id && m.scheduleDetailState == "stale":
+		b.WriteString("Detail: refreshing after a schedule event…\n")
+	case detail == nil || m.scheduleDetailState == "loading" || m.scheduleDetailState == "":
+		b.WriteString("Detail: loading…\n")
+	}
+	if detail != nil {
+		b.WriteString("\nUpcoming (schedule zone):\n")
+		if len(detail.Upcoming) == 0 {
+			b.WriteString("  none (disabled or no future occurrence)\n")
+		}
+		for i, o := range detail.Upcoming {
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, o.Local)
+		}
+		b.WriteString("\nRecent runs (newest first):\n")
+		if len(detail.Runs) == 0 {
+			b.WriteString("  none\n")
+		}
+		for _, v := range detail.Runs {
+			r := v.Run
+			fmt.Fprintf(&b, "Occurrence %s [%s] trigger:%s\n  Meaning: %s\n  Scheduled for: %s  key:%s  attempts:%d\n", r.ID, r.State, r.Trigger, orDash(runStateMeaning(r.State)), orDash(r.ScheduledForLocal), r.OccurrenceKey, r.Attempts)
+			if r.MissedCount > 0 {
+				fmt.Fprintf(&b, "  Missed occurrences: %d\n", r.MissedCount)
+			}
+			if r.SkippedCount > 0 {
+				fmt.Fprintf(&b, "  Skipped while outstanding: %d (last due %s); nothing queued for them\n", r.SkippedCount, localTime(r.SkippedLast, sc.Timezone))
+			}
+			if r.Reason != "" || r.Error != "" {
+				fmt.Fprintf(&b, "  Reason: %s  error: %s\n", orDash(r.Reason), orDash(r.Error))
+			}
+			if r.MessageID != "" {
+				fmt.Fprintf(&b, "  Message %s (queued; not completed work)\n", r.MessageID)
+			}
+			for _, d := range v.Deliveries {
+				fmt.Fprintf(&b, "  Delivery %s: %s  wake:%s  acknowledged:%d  consumed:%d\n", d.ID, d.Status, d.WakeStatus, d.AcknowledgedAt, d.ConsumedAt)
+			}
+			if d := v.Dispatch; d != nil {
+				fmt.Fprintf(&b, "  Dispatch %s [%s]  report:%s outcome:%s  turn ended:%t  settled at:%d outcome:%s\n", d.ID, d.Status, orNone(d.DoneMessageID), orDash(d.ReportOutcome), d.TurnEnded, d.SettledAt, orDash(d.Outcome))
+			} else if r.DispatchID != "" {
+				fmt.Fprintf(&b, "  Dispatch %s\n", r.DispatchID)
+			}
+			if op := v.Operation; op != nil {
+				fmt.Fprintf(&b, "  Attempt operation %s [%s] %s\n", op.ID, op.State, op.Error)
+			} else if r.AttemptID != "" {
+				fmt.Fprintf(&b, "  Attempt operation %s\n", r.AttemptID)
+			}
+			if r.State == "uncertain" {
+				fmt.Fprintf(&b, "  Never resent. Inspect: woof operation show --id %s\n", orDash(r.AttemptID))
+			}
+		}
+	}
+	b.WriteString("\nKeys: e enable · d disable · u run now (each reviewed, submitted once). Add/remove: CLI only (woof schedule add/remove).\n")
+	return b.String()
 }
 func artifactText(statuses []artifacts.FileStatus) string {
 	var b strings.Builder
@@ -131,6 +277,8 @@ func (m *uiModel) detailText() string {
 				fmt.Fprintf(&b, "Event %d %s\nType: %s\nActor: %s %s\nScope: %+v\nCreated: %d\n\n%s", e.Seq, e.ID, e.Type, e.ActorKind, e.ActorID, e.Scope, e.CreatedAt, string(e.Payload))
 			}
 		}
+	case scheduleTab:
+		b.WriteString(m.scheduleDetailText(id))
 	case 4:
 		for _, p := range m.snapshot.Profiles {
 			if p.Name != id {
@@ -235,7 +383,31 @@ func (m *uiModel) pickerText(height int) string {
 	return b.String()
 }
 func reviewText(a Action) string {
+	if isScheduleKind(a.Kind) {
+		return scheduleReviewText(a)
+	}
 	return fmt.Sprintf("Review %s — Enter confirms; Esc cancels\nFrozen scope: %+v\nTarget: %s  ID: %s\nSubject: %s\nContext / question:\n%s\nDecision: %s\n\n%s\n\nArtifacts (references only):\n%s", a.Kind, a.Scope, a.To, a.ID, a.Subject, a.Label, a.Decision, a.Body, ArtifactReviewText(a))
+}
+
+// scheduleReviewText states the frozen schedule identity, target and effect.
+func scheduleReviewText(a Action) string {
+	sc := model.Schedule{ID: a.ID, Name: a.Label}
+	if a.Schedule != nil {
+		sc = *a.Schedule
+	}
+	effect := ""
+	switch a.Kind {
+	case "schedule.enable":
+		effect = "Starts a fresh series from now; disabled-period occurrences are not caught up."
+	case "schedule.disable":
+		effect = "Stops future occurrences and cancels claimed/blocked ones; a dispatching attempt keeps running to its recorded outcome."
+	case "schedule.run":
+		effect = "Creates one manual occurrence now and persists a durable message to the target mailbox. Persisted means queued, not completed work."
+		if sc.Action == "dispatch" {
+			effect = "Creates one manual occurrence now and makes one tracked dispatch attempt; it is blocked with nothing sent if the worker is busy or unverified. Dispatched means the prompt was accepted; settlement still needs a done report and turn-end evidence."
+		}
+	}
+	return fmt.Sprintf("Review %s schedule — Enter confirms; Esc cancels\nSchedule: %s\nID: %s\nAction: %s\nTarget: %s (%s)\nCron: %s  timezone: %s\nCurrently: enabled:%t  next run: %s\nFrozen scope: %+v\n\n%s\n\nSubmitted once. An unknown outcome shows the operation ID and is never resent.", scheduleKinds[a.Kind], sc.Name, sc.ID, sc.Action, a.To, sc.TargetName, sc.Cron, sc.Timezone, sc.Enabled, orDash(sc.NextRunLocal), a.Scope, effect)
 }
 func (m *uiModel) View() tea.View {
 	width, height := max(1, m.width), max(1, m.height)
@@ -244,8 +416,14 @@ func (m *uiModel) View() tea.View {
 		content = strings.Join(screenLines("Woof needs at least 60 columns × 16 rows. Resize terminal; q quits.", width, height, 0), "\n")
 	} else {
 		tabs := make([]string, len(tabNames))
+		// Narrow terminals keep the active tab readable by shortening the others
+		// to their number keys.
+		compact := len(strings.Join(tabNames, ""))+len(tabNames)*4 > width
 		for i, n := range tabNames {
 			tabs[i] = fmt.Sprintf("%d %s", i+1, n)
+			if compact && i != m.tab {
+				tabs[i] = strconv.Itoa(i + 1)
+			}
 			if i == m.tab {
 				tabs[i] = m.paint("["+tabs[i]+"]", "active")
 			}
@@ -271,7 +449,7 @@ func (m *uiModel) View() tea.View {
 		if m.err != nil {
 			errText = m.err.Error()
 		}
-		section := map[int]string{0: "worker_inboxes", 4: "profiles"}[m.tab]
+		section := map[int]string{0: "worker_inboxes", 4: "profiles", scheduleTab: "schedules"}[m.tab]
 		if section != "" && m.snapshot.Errors[section] != "" {
 			errText += " " + section + ": " + m.snapshot.Errors[section]
 		}
@@ -283,7 +461,7 @@ func (m *uiModel) View() tea.View {
 		var body []string
 		switch {
 		case m.help:
-			body = screenLines("1–5 / Tab tabs; arrows / j,k select; / filter; s choose global/session/workspace/worktree/run; r refresh; Enter detail or gate decision; Esc back; q quit.\n\nWorkers: n message, o ask. Inbox: n recipient picker, o ask, p reply, a acknowledge, x consume. Worker mailbox is read-only.\n\nForm: Tab/Shift+Tab fields; Ctrl+s review. Review: Enter submits once; Esc cancels. PgUp/PgDown scroll.\n\nAfter an uncertain mutation: i inspect operation; never automatically resend.\n\nSettlement requires an explicit report AND matching turn-end evidence. Delivery, wake, acknowledgment and consumption are separate.", width, bodyHeight, m.scroll)
+			body = screenLines("1–6 / Tab tabs; arrows / j,k select; / filter; s choose global/session/workspace/worktree/run; r refresh; Enter detail or gate decision; Esc back; q quit.\n\nWorkers: n message, o ask. Inbox: n recipient picker, o ask, p reply, a acknowledge, x consume. Worker mailbox is read-only.\n\nForm: Tab/Shift+Tab fields; Ctrl+s review. Review: Enter submits once; Esc cancels. PgUp/PgDown scroll.\n\nSchedules (6): read-only except e enable, d disable, u run now; each opens a review. Add/remove stay CLI-only (woof schedule add/remove). Run states: persisted = message queued, not completed work; dispatched = prompt accepted, settlement shown separately; uncertain = never resent, inspect the operation.\n\nAfter an uncertain mutation: i inspect operation; never automatically resend.\n\nSettlement requires an explicit report AND matching turn-end evidence. Delivery, wake, acknowledgment and consumption are separate.", width, bodyHeight, m.scroll)
 		case m.picker != nil:
 			body = m.decorate(screenLines(m.pickerText(bodyHeight), width, bodyHeight, 0), "picker")
 		case m.review != nil:
@@ -311,7 +489,7 @@ func (m *uiModel) View() tea.View {
 		} else if m.notice == "Action accepted" {
 			noticeRole = "success"
 		}
-		lines = append(lines, m.paint(inline(m.notice), noticeRole), m.paint("1–5/Tab tabs · / filter · s scope · r refresh · ? help · q quit", "muted"))
+		lines = append(lines, m.paint(inline(m.notice), noticeRole), m.paint("1–6/Tab tabs · / filter · s scope · r refresh · ? help · q quit", "muted"))
 		for i := range lines {
 			lines[i] = ansi.Truncate(lines[i], width, "…")
 		}

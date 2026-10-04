@@ -102,3 +102,19 @@ terminal cases), and `TestWorkerListPutsStatusBeforeLongIdentity`. A focused
 independent review approved terminal safety, clipping, fallbacks and action safety.
 Local design feedback, review and check output remain under
 `/private/tmp/woof-tui-style`.
+
+## Native scheduler tab
+
+Automated evidence only. No live Herdr session was started for this tab. Commands:
+`gofmt -l internal/tui` (no output), `go vet ./internal/tui`,
+`go test -race ./internal/tui` and `sh scripts/lint.sh run` (0 issues).
+
+| Contract | Regression evidence |
+| --- | --- |
+| Tab `6` appended, keys `1`–`5` unchanged, rows keyed by schedule ID | `TestScheduleTabKeySixAppendsWithoutMovingExistingTabs`, `TestScheduleRowsShowStateActionTargetNextAndLast`, `TestScheduleSelectionByIDSurvivesReorderFilterAndRemoval` |
+| Load and detail use read-only RPC; an older daemon stays usable | `TestRPCBackendLoadSchedulesAndLatestOccurrence`, `TestRPCBackendScheduleListFailureLeavesMonitorUsable`, `TestRPCBackendScheduleDetailIsScopedHumanRead` |
+| Detail fenced by generation, ID and request; event-driven, no polling | `TestScheduleDetailFencesStaleScopeIDAndRequest`, `TestScheduleDetailReadsOncePerReloadWithoutPolling` |
+| Persisted, dispatched, settled, skipped count and uncertain kept distinct; generic `schedule.run.*` refresh | `TestScheduleDetailExplainsRunsUpcomingAndCLIOnlyAddRemove`, `TestScheduleRunNoticesKeepPersistenceDispatchAndSettlementDistinct`, `TestScheduleOccurrenceBadgeColorsSettledAndUncertain`, `TestScheduleRunEventsMarkDetailStaleGenerically` |
+| Reviewed enable/disable/run now, single submit, never resent | `TestScheduleActionsReviewEachKindAndSubmitOnce`, `TestScheduleEscCancelsReviewWithoutMutation`, `TestScheduleUncertainOutcomeIsInspectableAndNeverRetried`, `TestScheduleActionUncertaintyPreservesOperationAndNeverResends`, `TestInvalidScheduleActionsFailBeforeSocketMutation` |
+| Real daemon enable/disable/run now, list/history/show round trip under workspace, worktree, run and global scope, scope drift and removed schedule | `TestActionDaemonScheduleEnableDisableRunNow` |
+| Narrow/wide bounds, compact tabs, NO_COLOR/ASCII/dumb labels and styled view | `TestScheduleViewNarrowWideAndPlainLabels` |

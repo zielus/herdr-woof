@@ -53,7 +53,7 @@ func connectionError(err error) error {
 // state than the boundary; follow replay invalidates it without losing commits.
 func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, error) {
 	c := b.scoped(scope)
-	snap := Snapshot{Scope: c.Scope, ProfileDetails: map[string]profiles.Profile{}, Reports: map[string]MessageDetail{}, WorkerInboxes: map[string][]InboxEntry{}, Errors: map[string]string{}}
+	snap := Snapshot{Scope: c.Scope, ProfileDetails: map[string]profiles.Profile{}, Reports: map[string]MessageDetail{}, WorkerInboxes: map[string][]InboxEntry{}, ScheduleLast: map[string]ScheduleRunView{}, Errors: map[string]string{}}
 	var tail model.EventTail
 	if err := c.Call(ctx, "events.tail", map[string]any{"limit": 500}, &tail); err != nil {
 		return snap, connectionError(err)
@@ -143,6 +143,26 @@ func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, err
 			mu.Lock()
 			snap.ProfileDetails[summary.Name] = detail
 			mu.Unlock()
+		})
+	}
+	// Schedules are optional: an older daemon without schedule.list leaves the
+	// canonical monitor usable and reports the section error instead.
+	if err := c.Call(ctx, "schedule.list", map[string]any{"all": false}, &snap.Schedules); err != nil {
+		snap.Schedules = nil
+		recordError("schedules", err)
+	}
+	for _, sc := range snap.Schedules {
+		jobs = append(jobs, func() {
+			var runs []ScheduleRunView
+			if err := c.Call(ctx, "schedule.history", map[string]any{"id": sc.ID, "limit": 1}, &runs); err != nil {
+				recordError("schedules", fmt.Errorf("%s: %w", sc.ID, err))
+				return
+			}
+			if len(runs) > 0 {
+				mu.Lock()
+				snap.ScheduleLast[sc.ID] = runs[0]
+				mu.Unlock()
+			}
 		})
 	}
 	// Four reads at once keep large catalogues from opening one socket per worker.
@@ -248,6 +268,14 @@ func (b *RPCBackend) Follow(ctx context.Context, scope model.Scope, cursor int64
 		}
 		delay = min(delay*2, 2*time.Second)
 	}
+}
+
+// ScheduleDetail reads schedule.show in the browse scope. It is side-effect free;
+// the UI fences late results by scope generation, schedule ID and request.
+func (b *RPCBackend) ScheduleDetail(ctx context.Context, scope model.Scope, id string) (ScheduleDetail, error) {
+	var detail ScheduleDetail
+	err := b.scoped(scope).Call(ctx, "schedule.show", map[string]any{"id": id}, &detail)
+	return detail, connectionError(err)
 }
 
 func (b *RPCBackend) Operation(ctx context.Context, id string) (model.Operation, error) {
