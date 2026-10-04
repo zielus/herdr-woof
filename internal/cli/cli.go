@@ -45,6 +45,10 @@ type Args struct {
 	Limit      int      `json:"limit,omitempty"`
 	Lines      int      `json:"lines,omitempty"`
 	Timeout    int64    `json:"timeout_ms,omitempty"`
+	Cron       string   `json:"cron,omitempty"`
+	Timezone   string   `json:"timezone,omitempty"`
+	Missed     string   `json:"missed,omitempty"`
+	Disabled   bool     `json:"disabled,omitempty"`
 }
 type Command struct {
 	Op                         string

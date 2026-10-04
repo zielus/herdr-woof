@@ -149,6 +149,7 @@ type Message struct {
 	Status           string     `json:"status"`
 	ReplyToMessageID string     `json:"reply_to_message_id,omitempty"`
 	DispatchID       string     `json:"dispatch_id,omitempty"`
+	ScheduleRunID    string     `json:"schedule_run_id,omitempty"`
 	Artifacts        []Artifact `json:"artifacts,omitempty"`
 	CreatedAt        int64      `json:"created_at"`
 	DeliveredAt      int64      `json:"delivered_at,omitempty"`
@@ -211,6 +212,7 @@ type Dispatch struct {
 	Alerts                map[string]bool `json:"alerts,omitempty"`
 	Nudges                int             `json:"nudges"`
 	OperationID           string          `json:"operation_id,omitempty"`
+	ScheduleRunID         string          `json:"schedule_run_id,omitempty"`
 }
 
 type Gate struct {
@@ -224,6 +226,73 @@ type Gate struct {
 	Decision    string   `json:"decision,omitempty"`
 	CreatedAt   int64    `json:"created_at"`
 	ResolvedAt  int64    `json:"resolved_at,omitempty"`
+}
+
+// Schedule is a durable time trigger owned by the daemon. It targets one stable
+// logical worker resolved at creation; later alias reuse never retargets it.
+// Timestamps are UTC Unix milliseconds; *_local fields add the RFC 3339 wall
+// time with offset in the schedule zone for display only.
+type Schedule struct {
+	ID                string `json:"id"`
+	SessionID         string `json:"session_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	WorktreeID        string `json:"worktree_id,omitempty"`
+	WorkerID          string `json:"worker_id"`
+	TargetName        string `json:"target_name"`
+	Name              string `json:"name"`
+	Cron              string `json:"cron"`
+	Timezone          string `json:"timezone"`
+	Missed            string `json:"missed"`
+	Action            string `json:"action"`
+	Subject           string `json:"subject,omitempty"`
+	Body              string `json:"body,omitempty"`
+	Spec              string `json:"spec,omitempty"`
+	Handoff           string `json:"handoff,omitempty"`
+	Enabled           bool   `json:"enabled"`
+	State             string `json:"state"`
+	AnchorAt          int64  `json:"anchor_at"`
+	NextRunAt         int64  `json:"next_run_at,omitempty"`
+	NextRunLocal      string `json:"next_run_local,omitempty"`
+	LastRunAt         int64  `json:"last_run_at,omitempty"`
+	LastRunID         string `json:"last_run_id,omitempty"`
+	Revision          int64  `json:"revision"`
+	CreatedByKind     string `json:"created_by_kind"`
+	CreatedByWorkerID string `json:"created_by_worker_id,omitempty"`
+	CreatedAt         int64  `json:"created_at"`
+	UpdatedAt         int64  `json:"updated_at"`
+	RemovedAt         int64  `json:"removed_at,omitempty"`
+}
+
+// ScheduleRun is one durable occurrence. (schedule_id, occurrence_key) is unique,
+// so an occurrence is claimed at most once; execution outcomes stay inspectable.
+type ScheduleRun struct {
+	ID                string   `json:"id"`
+	ScheduleID        string   `json:"schedule_id"`
+	SessionID         string   `json:"session_id"`
+	WorkspaceID       string   `json:"workspace_id"`
+	WorktreeID        string   `json:"worktree_id,omitempty"`
+	WorkerID          string   `json:"worker_id"`
+	RunID             string   `json:"run_id,omitempty"`
+	OccurrenceKey     string   `json:"occurrence_key"`
+	Trigger           string   `json:"trigger"`
+	Action            string   `json:"action"`
+	State             string   `json:"state"`
+	Reason            string   `json:"reason,omitempty"`
+	ScheduledFor      int64    `json:"scheduled_for"`
+	ScheduledForLocal string   `json:"scheduled_for_local"`
+	MissedCount       int64    `json:"missed_count,omitempty"`
+	MissedLast        int64    `json:"missed_last,omitempty"`
+	Attempts          int      `json:"attempts"`
+	AttemptID         string   `json:"attempt_id,omitempty"`
+	NextAttemptAt     int64    `json:"next_attempt_at,omitempty"`
+	MessageID         string   `json:"message_id,omitempty"`
+	DeliveryIDs       []string `json:"delivery_ids,omitempty"`
+	DispatchID        string   `json:"dispatch_id,omitempty"`
+	RequestID         string   `json:"request_id,omitempty"`
+	Error             string   `json:"error,omitempty"`
+	ClaimedAt         int64    `json:"claimed_at"`
+	UpdatedAt         int64    `json:"updated_at"`
+	FinishedAt        int64    `json:"finished_at,omitempty"`
 }
 
 type Operation struct {
