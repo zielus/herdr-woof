@@ -20,6 +20,67 @@ import (
 	"time"
 )
 
+func TestExtraArgsUseGatedWireVersion(t *testing.T) {
+	c := &Client{}
+	for _, tc := range []struct {
+		args any
+		want int
+	}{
+		{map[string]any{"name": "plain"}, model.Protocol},
+		{map[string]any{"name": "special", "extra_args": []string{""}}, model.ExtraArgsProtocol},
+	} {
+		r, err := c.request("worker.spawn", tc.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Version != tc.want {
+			t.Fatalf("version %d, want %d for %s", r.Version, tc.want, r.Args)
+		}
+	}
+}
+
+func TestLegacyDaemonRejectsExtraArgsBeforeSpawn(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "woof-legacy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { checkTestError(t, os.RemoveAll(dir)) })
+	sock := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestResource(t, ln)
+	request := make(chan model.Request, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer closeTestResource(t, conn)
+		var r model.Request
+		if err := json.NewDecoder(conn).Decode(&r); err != nil {
+			t.Error(err)
+			return
+		}
+		request <- r
+		// Version 1 daemon's Handle rejects unknown versions before mutation.
+		if r.Version != model.Protocol {
+			_ = json.NewEncoder(conn).Encode(model.Response{Version: model.Protocol, Error: &model.Error{Code: "protocol_mismatch", Message: "Woof protocol 1 required"}})
+		}
+	}()
+	c := &Client{Paths: paths.Paths{Sock: sock}}
+	err = c.Call(context.Background(), "worker.spawn", map[string]any{"name": "special", "extra_args": []string{"--local"}}, nil)
+	var problem *model.Error
+	if !errors.As(err, &problem) || problem.Code != "protocol_mismatch" {
+		t.Fatalf("legacy response: %v", err)
+	}
+	r := <-request
+	if r.Version != model.ExtraArgsProtocol || r.Op != "worker.spawn" {
+		t.Fatalf("request: %+v", r)
+	}
+}
+
 func fakeDaemon(t *testing.T) (string, func(string) int, func(string) string) {
 	t.Helper()
 	d, e := os.MkdirTemp("/tmp", "woof-client-")

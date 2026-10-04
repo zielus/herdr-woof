@@ -19,6 +19,7 @@ import (
 
 	"github.com/zielus/herdr-woof-v2/internal/herdr"
 	"github.com/zielus/herdr-woof-v2/internal/model"
+	"github.com/zielus/herdr-woof-v2/internal/profiles"
 	"github.com/zielus/herdr-woof-v2/internal/store"
 )
 
@@ -389,6 +390,16 @@ func (e *Engine) fenceWorkerTx(tx *store.Tx, workerID, reason string) error {
 }
 
 func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, error) {
+	if len(a.ExtraArgs) > 0 {
+		if r.Op != "worker.spawn" {
+			return nil, problem("invalid_args", "extra_args require worker.spawn")
+		}
+		for _, arg := range a.ExtraArgs {
+			if strings.ContainsRune(arg, 0) {
+				return nil, problem("invalid_args", "extra_args cannot contain NUL")
+			}
+		}
+	}
 	if a.Workspace != "" {
 		if r.Scope.SessionID == "" {
 			return nil, problem("scope_required", "native workspace selection requires a selected or inferred session")
@@ -430,27 +441,31 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 	if err != nil {
 		return nil, err
 	}
-	cwd := a.Cwd
+	var profile profiles.Profile
+	var cfg profiles.Config
+	if r.Op == "worker.spawn" {
+		cfg, err = e.config()
+		if err != nil {
+			return nil, err
+		}
+		profile, err = cfg.Resolve(a.Profile)
+		if err != nil {
+			return nil, problem("bad_profile", "%v", err)
+		}
+	}
+	treePath := ""
 	if r.Scope.WorktreeID != "" {
 		tree, err := get[model.Worktree](ctx, e.store, "worktrees", r.Scope.WorktreeID)
 		if err != nil {
 			return nil, err
 		}
-		if cwd == "" {
-			cwd = tree.Path
-		}
+		treePath = tree.Path
 	}
-	if cwd == "" {
-		cwd = ws.Cwd
-	}
-	if cwd != "" {
-		cwd, err = filepath.Abs(cwd)
+	cwd := ""
+	if r.Op == "worker.spawn" {
+		cwd, err = resolveSpawnCwd(a.Cwd, treePath, profile.Cwd, ws.Cwd)
 		if err != nil {
 			return nil, err
-		}
-		st, err := os.Stat(cwd)
-		if err != nil || !st.IsDir() {
-			return nil, problem("bad_cwd", "%s is not an accessible directory", cwd)
 		}
 	}
 	id := newID("worker")
@@ -491,12 +506,14 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		if err := e.captureBinding(ctx, &w, p, c, ws.HerdrWorkspaceID); err != nil {
 			return nil, err
 		}
-		if actual := paneCwd(p); actual != "" {
-			if (a.Cwd != "" || r.Scope.WorktreeID != "") && !sameCwd(w.Cwd, actual) {
-				return nil, problem("bad_cwd", "explicit worker directory conflicts with live agent cwd %s", actual)
-			}
-			w.Cwd = actual
+		actual := paneCwd(p)
+		if actual == "" {
+			return nil, problem("bad_cwd", "live agent cwd is unavailable")
 		}
+		if (a.Cwd != "" && !sameCwd(a.Cwd, actual)) || (treePath != "" && !sameCwd(treePath, actual)) {
+			return nil, problem("bad_cwd", "explicit worker directory conflicts with live agent cwd %s", actual)
+		}
+		w.Cwd = actual
 		err = e.write(ctx, func(tx *store.Tx) error {
 			workers, err := txList[model.Worker](tx, "workers", model.Scope{SessionID: ws.SessionID})
 			if err != nil {
@@ -527,20 +544,12 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		e.background(func() { _ = e.refreshSession(e.ctx, w.SessionID) })
 		return w, nil
 	}
-	cfg, err := e.config()
-	if err != nil {
-		return nil, err
-	}
-	profile, err := cfg.Resolve(a.Profile)
-	if err != nil {
-		return nil, problem("bad_profile", "%v", err)
-	}
 	w.ProfileName = a.Profile
 	if w.ProfileName == "" {
 		w.ProfileName = cfg.Defaults.WorkerProfile
 	}
 	w.AgentKind = profile.Agent
-	w.Args = profile.Args
+	w.Args = append(append([]string(nil), profile.Args...), a.ExtraArgs...)
 	w.AgentName = "woof-" + w.ID[len(w.ID)-20:]
 	if a.Pane != "" {
 		p, err = c.PaneGet(ctx, a.Pane)
@@ -555,12 +564,14 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 		}
 		w.PaneID = p.PaneID
 		w.TerminalID = p.TerminalID
-		if actual := paneCwd(p); actual != "" {
-			if (a.Cwd != "" || r.Scope.WorktreeID != "") && !sameCwd(w.Cwd, actual) {
-				return nil, problem("bad_cwd", "existing pane cwd differs from explicit worker directory")
-			}
-			w.Cwd = actual
+		actual := paneCwd(p)
+		if actual == "" {
+			return nil, problem("bad_cwd", "existing pane cwd is unavailable")
 		}
+		if !sameCwd(w.Cwd, actual) {
+			return nil, problem("bad_cwd", "existing pane cwd differs from resolved worker directory")
+		}
+		w.Cwd = actual
 	}
 	err = e.write(ctx, func(tx *store.Tx) error {
 		if err := tx.Put("workers", w.ID, w); err != nil {
@@ -635,6 +646,42 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 	}
 	e.background(func() { _ = e.refreshSession(e.ctx, w.SessionID) })
 	return w, nil
+}
+
+func resolveSpawnCwd(cli, tree, profile, workspace string) (string, error) {
+	if cli != "" && tree != "" && !sameCwd(cli, tree) {
+		return "", problem("bad_cwd", "explicit worker directory conflicts with selected worktree path")
+	}
+	cwd := cli
+	if cwd == "" {
+		cwd = tree
+	}
+	if cwd == "" {
+		cwd = profile
+	}
+	if cwd == "" {
+		cwd = workspace
+	}
+	if cwd == "" {
+		return "", nil
+	}
+	var err error
+	cwd, err = filepath.Abs(cwd)
+	if err != nil {
+		return "", problem("bad_cwd", "resolve worker directory: %v", err)
+	}
+	st, err := os.Stat(cwd)
+	if err != nil || !st.IsDir() {
+		return "", problem("bad_cwd", "%s is not an accessible directory", cwd)
+	}
+	dir, err := os.Open(cwd)
+	if err != nil {
+		return "", problem("bad_cwd", "%s is not an accessible directory: %v", cwd, err)
+	}
+	if err := dir.Close(); err != nil {
+		return "", problem("bad_cwd", "inspect worker directory %s: %v", cwd, err)
+	}
+	return cwd, nil
 }
 
 // waitShellReady only inspects the reserved terminal. Fresh shells may execute

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"syscall"
 	"testing"
@@ -23,6 +24,56 @@ import (
 	"github.com/zielus/herdr-woof-v2/internal/profiles"
 	"github.com/zielus/herdr-woof-v2/internal/store"
 )
+
+func TestSpawnExtraArgsSnapshotAndProtocolGate(t *testing.T) {
+	e, f, _ := workerFixture(t, false)
+	profileArgs := []string{"--profile", "base"}
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Args: profileArgs, Cwd: t.TempDir()}
+	extra := []string{"--", "", "żółć", "--leading", "$(unsafe)", "a b"}
+	data, _ := json.Marshal(Args{Name: "extra", Profile: "sleep", ExtraArgs: extra})
+	legacy := model.Request{Version: model.Protocol, ID: newID("op"), Op: "worker.spawn", Scope: model.Scope{WorkspaceID: "ws_a"}, Args: data}
+	if _, err := e.Handle(context.Background(), legacy); err == nil {
+		t.Fatal("legacy wire version accepted extra argv")
+	}
+	workers, err := list[model.Worker](context.Background(), e.store, "workers", model.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 1 {
+		t.Fatalf("legacy request created worker: %+v", workers)
+	}
+	f.namedFile = filepath.Join(t.TempDir(), "name")
+	f.shellOnTab = true
+	f.info.ShellPID = 101
+	setForegroundPID(f, 101)
+	bin := filepath.Join(t.TempDir(), "fake-herdr")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s' \"$3\" > \"$WOOF_TEST_NAME_FILE\"\nprintf '%s' '{\"result\":{\"agent\":{\"pane_id\":\"w1:p1\"}}}'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("WOOF_TEST_NAME_FILE", f.namedFile)
+	legacy.Version = model.ExtraArgsProtocol
+	v, err := e.Handle(context.Background(), legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := v.(model.Worker)
+	want := append(append([]string{}, profileArgs...), extra...)
+	if !reflect.DeepEqual(w.Args, want) {
+		t.Fatalf("args = %#v, want %#v", w.Args, want)
+	}
+	if !reflect.DeepEqual(profileArgs, []string{"--profile", "base"}) || !reflect.DeepEqual(e.opts.Config.Profiles["sleep"].Args, profileArgs) {
+		t.Fatal("profile snapshot mutated")
+	}
+	stored, err := get[model.Worker](context.Background(), e.store, "workers", w.ID)
+	if err != nil || !reflect.DeepEqual(stored.Args, want) {
+		t.Fatalf("persisted args = %#v: %v", stored.Args, err)
+	}
+	bad, _ := json.Marshal(Args{Name: "nul", Profile: "sleep", ExtraArgs: []string{"a\x00b"}})
+	if _, err := e.Handle(context.Background(), model.Request{Version: model.ExtraArgsProtocol, ID: newID("op"), Op: "worker.spawn", Scope: model.Scope{WorkspaceID: "ws_a"}, Args: bad}); err == nil {
+		t.Fatal("accepted NUL")
+	}
+}
 
 type lifecycleAgent struct {
 	mu                   sync.Mutex
@@ -322,6 +373,157 @@ func TestAdoptionUsesLiveCwdAndRejectsConflictingExplicitCwd(t *testing.T) {
 	workerCode(t, err, "bad_cwd")
 }
 
+func TestProfileShowReturnsConfiguredCwd(t *testing.T) {
+	e, _, _ := workerFixture(t, false)
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("profiles:\n  sleep:\n    agent: sleep\n    cwd: './relative $VAR/*'\ndefaults:\n  worker_profile: sleep\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.opts.Paths.Config = configPath
+	v, err := workerCall(t, e, "profile.show", model.Scope{Global: true}, Args{ID: "sleep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.(profiles.Profile).Cwd; got != "./relative $VAR/*" {
+		t.Fatalf("profile.show cwd = %q", got)
+	}
+}
+
+func TestAdoptionUsesLiveCwdDespiteStaleWorkspaceCwd(t *testing.T) {
+	e, _, w := workerFixture(t, false)
+	ws, err := get[model.Workspace](context.Background(), e.store, "workspaces", w.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Cwd = filepath.Join(t.TempDir(), "gone")
+	if err := e.write(context.Background(), func(tx *store.Tx) error { return tx.Put("workspaces", ws.ID, ws) }); err != nil {
+		t.Fatal(err)
+	}
+	v, err := workerCall(t, e, "worker.adopt", model.Scope{WorkspaceID: w.WorkspaceID}, Args{ID: w.ID, Pane: w.PaneID, Name: w.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.(model.Worker).Cwd; got != w.Cwd {
+		t.Fatalf("adopted cwd = %q, live cwd = %q", got, w.Cwd)
+	}
+}
+
+func TestAdoptionRejectsMissingLiveCwdWithoutWorkerRecord(t *testing.T) {
+	e, f, prior := workerFixture(t, false)
+	prior.State = "stopped"
+	if err := e.write(context.Background(), func(tx *store.Tx) error { return tx.Put("workers", prior.ID, prior) }); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.pane.Cwd = nil
+	f.pane.ForegroundCwd = nil
+	f.mu.Unlock()
+	_, err := workerCall(t, e, "worker.adopt", model.Scope{WorkspaceID: prior.WorkspaceID}, Args{Pane: prior.PaneID, Name: "missing-live-cwd"})
+	workerCode(t, err, "bad_cwd")
+	workers, err := list[model.Worker](context.Background(), e.store, "workers", model.Scope{WorkspaceID: prior.WorkspaceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range workers {
+		if w.Name == "missing-live-cwd" {
+			t.Fatalf("adoption persisted worker without live cwd: %+v", w)
+		}
+	}
+}
+
+func TestSpawnCwdPrecedenceAndValidation(t *testing.T) {
+	root := t.TempDir()
+	makeDir := func(name string) string {
+		p := filepath.Join(root, name)
+		if err := os.Mkdir(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	workspace, profile, tree, cli := makeDir("workspace"), makeDir("profile 日本語"), makeDir("tree"), makeDir("cli")
+	for _, tc := range []struct{ name, cli, tree, profile, workspace, want string }{
+		{"workspace fallback", "", "", "", workspace, workspace},
+		{"profile", "", "", profile, workspace, profile},
+		{"worktree", "", tree, profile, workspace, tree},
+		{"cli", cli, "", profile, workspace, cli},
+		{"matching cli and worktree", tree, tree, profile, workspace, tree},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveSpawnCwd(tc.cli, tc.tree, tc.profile, tc.workspace)
+			if err != nil || got != tc.want {
+				t.Fatalf("cwd=%q err=%v want=%q", got, err, tc.want)
+			}
+		})
+	}
+	if _, err := resolveSpawnCwd(cli, tree, profile, workspace); err == nil {
+		t.Fatal("accepted selected worktree/path conflict")
+	}
+	if _, err := resolveSpawnCwd("", "", filepath.Join(root, "missing"), workspace); err == nil {
+		t.Fatal("accepted missing profile directory")
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveSpawnCwd("", "", file, workspace); err == nil {
+		t.Fatal("accepted file as directory")
+	}
+	blocked := makeDir("blocked")
+	if err := os.Chmod(blocked, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
+	if _, err := resolveSpawnCwd("", "", blocked, workspace); err == nil {
+		t.Fatal("accepted inaccessible directory")
+	}
+}
+
+func TestInvalidProfileCwdFailsBeforeWorkerReservationOrTab(t *testing.T) {
+	e, f, w := workerFixture(t, false)
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Cwd: filepath.Join(t.TempDir(), "missing")}
+	f.beforeTab = func(map[string]any) { t.Error("invalid cwd created a tab") }
+	_, err := workerCall(t, e, "worker.spawn", model.Scope{WorkspaceID: w.WorkspaceID}, Args{Name: "bad-dir", Profile: "sleep"})
+	workerCode(t, err, "bad_cwd")
+	workers, err := list[model.Worker](context.Background(), e.store, "workers", model.Scope{WorkspaceID: w.WorkspaceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range workers {
+		if got.Name == "bad-dir" {
+			t.Fatal("invalid cwd reserved worker")
+		}
+	}
+}
+
+func TestExistingPaneChecksProfileCwdAndAdoptionIgnoresProfile(t *testing.T) {
+	e, f, w := workerFixture(t, false)
+	other := t.TempDir()
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Cwd: other}
+	f.pane.Agent = nil
+	f.pane.Name = nil
+	_, err := workerCall(t, e, "worker.spawn", model.Scope{WorkspaceID: w.WorkspaceID}, Args{Name: "wrong-pane", Pane: w.PaneID, Profile: "sleep"})
+	workerCode(t, err, "bad_cwd")
+	f.pane.Agent = &w.AgentKind
+	f.pane.Name = &w.AgentName
+	v, err := workerCall(t, e, "worker.adopt", model.Scope{WorkspaceID: w.WorkspaceID}, Args{ID: w.ID, Pane: w.PaneID, Name: w.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.(model.Worker); got.Cwd != w.Cwd {
+		t.Fatalf("adoption changed live cwd: %q", got.Cwd)
+	}
+}
+
+func TestExistingPaneRequiresObservableCwd(t *testing.T) {
+	e, f, w := workerFixture(t, false)
+	f.pane.Agent = nil
+	f.pane.Name = nil
+	f.pane.Cwd = nil
+	f.pane.ForegroundCwd = nil
+	_, err := workerCall(t, e, "worker.spawn", model.Scope{WorkspaceID: w.WorkspaceID}, Args{Name: "unknown-pane-dir", Pane: w.PaneID, Profile: "sleep"})
+	workerCode(t, err, "bad_cwd")
+}
+
 func TestUncertainCloseIsPersistedAndNotReplayed(t *testing.T) {
 	e, f, w := workerFixture(t, true)
 	f.uncertainClose = true
@@ -431,6 +633,8 @@ func gitTest(t *testing.T, dir string, args ...string) {
 
 func TestSpawnPersistsIntentBeforeTabAndKeepsRawProfileArgs(t *testing.T) {
 	e, f, _ := workerFixture(t, false)
+	profileDir := t.TempDir()
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Args: []string{"--literal", "$(unsafe)"}, Cwd: profileDir}
 	f.namedFile = filepath.Join(t.TempDir(), "name")
 	f.shellOnTab = true
 	f.info.ShellPID = 101
@@ -463,6 +667,9 @@ func TestSpawnPersistsIntentBeforeTabAndKeepsRawProfileArgs(t *testing.T) {
 		if params["focus"] != false {
 			t.Error("spawn stole focus")
 		}
+		if params["cwd"] != profileDir || starting.Cwd != profileDir {
+			t.Errorf("profile cwd not used for reservation and tab: %+v worker=%+v", params, starting)
+		}
 	}
 	v, err := workerCall(t, e, "worker.spawn", model.Scope{WorkspaceID: "ws_a"}, Args{Name: "spawned", Profile: "sleep"})
 	if err != nil {
@@ -471,6 +678,14 @@ func TestSpawnPersistsIntentBeforeTabAndKeepsRawProfileArgs(t *testing.T) {
 	w := v.(model.Worker)
 	if w.ID == w.PaneID || w.State != "idle" || w.ProfileName != "sleep" || len(w.Args) != 2 || w.Args[1] != "$(unsafe)" {
 		t.Fatalf("spawn: %+v", w)
+	}
+	if w.Cwd != profileDir {
+		t.Fatalf("persisted cwd = %q, want %q", w.Cwd, profileDir)
+	}
+	e.opts.Config.Profiles["sleep"] = profiles.Profile{Agent: "sleep", Cwd: t.TempDir()}
+	stored, err := get[model.Worker](context.Background(), e.store, "workers", w.ID)
+	if err != nil || stored.Cwd != profileDir {
+		t.Fatalf("profile update changed existing worker: %+v %v", stored, err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 type Profile struct {
 	Agent       string   `yaml:"agent" json:"agent"`
 	Args        []string `yaml:"args" json:"args"`
+	Cwd         string   `yaml:"cwd,omitempty" json:"cwd,omitempty"`
 	Description string   `yaml:"description" json:"description"`
 	Tags        []string `yaml:"tags" json:"tags"`
 }
@@ -29,7 +31,7 @@ func (p *Profile) UnmarshalYAML(node *yaml.Node) error {
 	for i := 0; i < len(node.Content); i += 2 {
 		key, value := node.Content[i], node.Content[i+1]
 		switch key.Value {
-		case "agent", "description":
+		case "agent", "description", "cwd":
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
 				return fmt.Errorf("profile %s must be a string (line %d)", key.Value, value.Line)
 			}
@@ -54,8 +56,9 @@ type Defaults struct {
 	WorkerProfile string `yaml:"worker_profile" json:"worker_profile"`
 }
 type Config struct {
-	Profiles map[string]Profile `yaml:"profiles" json:"profiles"`
-	Defaults Defaults           `yaml:"defaults" json:"defaults"`
+	Profiles  map[string]Profile `yaml:"profiles" json:"profiles"`
+	Defaults  Defaults           `yaml:"defaults" json:"defaults"`
+	configDir string
 }
 type Summary struct {
 	Name        string   `json:"name"`
@@ -67,6 +70,10 @@ type Summary struct {
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 func Load(path string) (Config, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve config path %s: %w", path, err)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("load profiles from %s: %w", path, err)
@@ -107,12 +114,12 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("%s: default worker profile %q is not defined", path, name)
 		}
 	}
+	c.configDir = filepath.Dir(absPath)
 	return c, nil
 }
 
-// Resolve returns an independent launch snapshot. Explicit selection overrides
-// the configured default; no builtin provider or model is guessed.
-func (c Config) Resolve(name string) (Profile, error) {
+// Inspect returns the configured text without resolving launch paths or arguments.
+func (c Config) Inspect(name string) (Profile, error) {
 	if name == "" {
 		name = c.Defaults.WorkerProfile
 		if name == "" {
@@ -128,6 +135,16 @@ func (c Config) Resolve(name string) (Profile, error) {
 	}
 	p.Args = append([]string{}, p.Args...)
 	p.Tags = append([]string{}, p.Tags...)
+	return p, nil
+}
+
+// Resolve returns an independent launch snapshot. Explicit selection overrides
+// the configured default; no builtin provider or model is guessed.
+func (c Config) Resolve(name string) (Profile, error) {
+	p, err := c.Inspect(name)
+	if err != nil {
+		return Profile{}, err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Profile{}, fmt.Errorf("resolve home directory: %w", err)
@@ -138,6 +155,18 @@ func (c Config) Resolve(name string) (Profile, error) {
 		} else if before, after, ok := strings.Cut(arg, "=~/"); ok {
 			p.Args[i] = before + "=" + home + "/" + after
 		}
+	}
+	if p.Cwd != "" {
+		cwd := p.Cwd
+		if strings.HasPrefix(cwd, "~/") {
+			cwd = filepath.Join(home, cwd[2:])
+		} else if !filepath.IsAbs(cwd) {
+			if c.configDir == "" {
+				return Profile{}, fmt.Errorf("relative cwd in profile %q requires a loaded config file", name)
+			}
+			cwd = filepath.Join(c.configDir, cwd)
+		}
+		p.Cwd = filepath.Clean(cwd)
 	}
 	return p, nil
 }

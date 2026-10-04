@@ -5,9 +5,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/zielus/herdr-woof-v2/internal/model"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestWorkerStartLiteralExtraArgs(t *testing.T) {
+	want := []string{"--", "", "żółć", "--leading", "$(touch /tmp/never)", "a b"}
+	argv := []string{"worker", "start", "--name=x"}
+	for _, value := range want {
+		argv = append(argv, "--arg="+value)
+	}
+	c, err := Parse(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		ExtraArgs []string `json:"extra_args"`
+	}
+	b, err := json.Marshal(c.Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(payload.ExtraArgs, want) {
+		t.Fatalf("extra argv = %#v, want %#v", payload.ExtraArgs, want)
+	}
+	for _, args := range [][]string{{"send", "--to=x", "--body=x", "--arg=y"}, {"worker", "adopt", "--pane=x", "--arg=y"}, {"worker", "start", "--arg=x\x00y"}} {
+		if _, err := Parse(args); err == nil {
+			t.Fatalf("accepted %q", args)
+		}
+	}
+}
 
 func TestCommandPayloadAndExplicitScope(t *testing.T) {
 	c, err := Parse([]string{"send", "--to", "worker:w_123", "--body", "please inspect", "--artifact", "./handoff.md", "--artifact", "/tmp/report.md", "--workspace", "ws_new", "--json"})

@@ -91,3 +91,67 @@ func TestMissingAndUnknownProfileErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCwdIsResolvedFromConfigWithoutChangingConfiguredText(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config space")
+	for _, dir := range []string{configDir, filepath.Join(root, "workspace"), filepath.Join(configDir, "日本語 $VAR $(noop) *")} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(configDir, "config.yml")
+	raw := "日本語 $VAR $(noop) *"
+	if err := os.WriteFile(configPath, []byte("profiles:\n  local:\n    agent: claude\n    cwd: '"+raw+"'\ndefaults:\n  worker_profile: local\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(root, "workspace")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	p, err := cfg.Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(configDir, raw); p.Cwd != want {
+		t.Fatalf("resolved cwd = %q, want %q", p.Cwd, want)
+	}
+	if cfg.Profiles["local"].Cwd != raw {
+		t.Fatalf("configured cwd changed: %q", cfg.Profiles["local"].Cwd)
+	}
+	encoded, err := json.Marshal(cfg.Profiles["local"])
+	if err != nil || !strings.Contains(string(encoded), raw) {
+		t.Fatalf("profile show data = %s: %v", encoded, err)
+	}
+}
+
+func TestCwdAbsoluteHomeAndAbsent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	cfg, err := loadText(t, "profiles:\n  absolute:\n    agent: claude\n    cwd: '"+root+"'\n  home:\n    agent: claude\n    cwd: ~/folder\n  old:\n    agent: claude\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"absolute": root, "home": filepath.Join(root, "folder"), "old": ""} {
+		p, err := cfg.Resolve(name)
+		if err != nil || p.Cwd != want {
+			t.Errorf("%s cwd = %q, %v; want %q", name, p.Cwd, err, want)
+		}
+	}
+}
+
+func TestRejectNonStringCwd(t *testing.T) {
+	for _, value := range []string{"42", "true", "[path]", "{path: x}", "null"} {
+		if _, err := loadText(t, "profiles:\n  worker:\n    agent: claude\n    cwd: "+value+"\n"); err == nil {
+			t.Errorf("accepted cwd %s", value)
+		}
+	}
+}

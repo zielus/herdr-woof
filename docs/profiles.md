@@ -53,6 +53,7 @@ profiles:
 
   claude:
     agent: claude
+    cwd: ~/dev/project
     args:
       - --add-dir
       - ~/dev/shared
@@ -104,6 +105,12 @@ Use environment/OS secret storage for secrets.
 Expand `~/` in profile path-like arguments where safe and predictable, following the useful behavior in `herdr-projects`.
 
 Do not perform arbitrary shell interpolation.
+
+The optional `cwd` also accepts an absolute directory or a path relative to
+the directory containing the loaded config file. It keeps literal `$VAR`,
+command substitutions and glob characters. `profile show` displays the
+configured text, while new launches use the resolved absolute path. The
+directory must exist when launching.
 
 ## Roster
 

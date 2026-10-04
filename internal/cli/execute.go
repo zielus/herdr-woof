@@ -28,7 +28,7 @@ Usage: woof COMMAND [OPTIONS]
 
   session attach [--socket PATH --herdr-name NAME]   Register current Herdr session
   session list | workspace list | worktree list     Discover scope IDs
-  worker start --name NAME [--profile NAME --cwd PATH --pane PANE]
+  worker start --name NAME [--profile NAME --cwd PATH --pane PANE --arg=VALUE ...]
   worker adopt --pane PANE --name NAME              Validate and adopt a live agent
   worker adopt --id WORKER --pane PANE               Re-adopt the same logical worker
   worker list | show ID | read ID | retain ID [--off]

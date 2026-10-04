@@ -5,6 +5,9 @@ import "encoding/json"
 
 const Protocol = 1
 
+// ExtraArgsProtocol gates per-launch argv so older daemons reject before spawn.
+const ExtraArgsProtocol = 2
+
 type Scope struct {
 	SessionID   string `json:"session_id,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`

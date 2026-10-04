@@ -35,6 +35,7 @@ type Args struct {
 	Decision   string   `json:"decision,omitempty"`
 	Resolution string   `json:"resolution,omitempty"`
 	Artifacts  []string `json:"artifacts,omitempty"`
+	ExtraArgs  []string `json:"extra_args,omitempty"`
 	Options    []string `json:"options,omitempty"`
 	Events     []string `json:"events,omitempty"`
 	Retained   bool     `json:"retained,omitempty"`
@@ -63,7 +64,7 @@ var commands = map[string]string{
 	"operation list": "operation.list", "operation show": "operation.show", "operation resolve": "operation.resolve", "events": "events.list", "events list": "events.list", "events follow": "events.follow", "events wait": "wait", "wait": "wait", "profile roster": "profile.roster", "profile list": "profile.roster", "profile show": "profile.show", "daemon stop": "daemon.stop", "daemon restart": "daemon.restart",
 }
 var allowed = map[string]string{
-	"session.attach": "socket herdr-name name", "worker.spawn": "name profile pane cwd herdr-workspace retained", "worker.adopt": "id worker name pane cwd", "worker.show": "id worker", "worker.read": "id worker lines", "worker.list": "all", "worker.retain": "id worker retained off", "worker.release": "id worker force", "worker.stop": "id worker force",
+	"session.attach": "socket herdr-name name", "worker.spawn": "name profile pane cwd herdr-workspace retained arg", "worker.adopt": "id worker name pane cwd", "worker.show": "id worker", "worker.read": "id worker lines", "worker.list": "all", "worker.retain": "id worker retained off", "worker.release": "id worker force", "worker.stop": "id worker force",
 	"run.create": "title kind", "run.show": "id", "send": "to subject body kind artifact", "ask": "to subject body question artifact timeout no-wait", "reply": "id body artifact", "inbox": "id all limit", "ack": "id", "consume": "id", "message.show": "id", "question.wait": "id timeout",
 	"dispatch": "to worker spec handoff", "dispatch.show": "id", "done": "dispatch attachment body artifact failed outcome", "nudge": "id dispatch reason", "fail": "id dispatch reason", "gate.create": "question options option", "gate.show": "id", "gate.resolve": "id decision", "operation.show": "id", "operation.resolve": "id resolution reason",
 	"events.list": "events since limit", "events.follow": "events since", "wait": "events since timeout",
@@ -71,7 +72,7 @@ var allowed = map[string]string{
 }
 var boolean = map[string]bool{"json": true, "help": true, "global": true, "force": true, "retained": true, "all": true, "failed": true, "off": true, "no-wait": true, "version": true}
 var scopeKeys = map[string]bool{"session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true, "global": true}
-var valued = map[string]bool{"as-worker": true, "as-attachment": true, "id": true, "name": true, "profile": true, "pane": true, "socket": true, "herdr-name": true, "cwd": true, "herdr-workspace": true, "worker": true, "to": true, "subject": true, "body": true, "question": true, "kind": true, "title": true, "spec": true, "handoff": true, "dispatch": true, "attachment": true, "outcome": true, "reason": true, "decision": true, "resolution": true, "artifact": true, "options": true, "option": true, "events": true, "since": true, "limit": true, "lines": true, "timeout": true, "session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true}
+var valued = map[string]bool{"arg": true, "as-worker": true, "as-attachment": true, "id": true, "name": true, "profile": true, "pane": true, "socket": true, "herdr-name": true, "cwd": true, "herdr-workspace": true, "worker": true, "to": true, "subject": true, "body": true, "question": true, "kind": true, "title": true, "spec": true, "handoff": true, "dispatch": true, "attachment": true, "outcome": true, "reason": true, "decision": true, "resolution": true, "artifact": true, "options": true, "option": true, "events": true, "since": true, "limit": true, "lines": true, "timeout": true, "session": true, "workspace": true, "worktree": true, "run": true, "worker-scope": true}
 
 func Parse(argv []string) (Command, error) {
 	var c Command
@@ -177,7 +178,12 @@ func Parse(argv []string) (Command, error) {
 	if c.Explicit.Global && (c.Explicit.SessionID != "" || c.Explicit.WorkspaceID != "" || c.Explicit.WorktreeID != "" || c.Explicit.RunID != "" || c.Explicit.WorkerID != "") {
 		return c, fmt.Errorf("--global cannot be combined with scope IDs")
 	}
-	a := Args{ID: get("id"), Name: get("name"), Profile: get("profile"), Pane: get("pane"), Socket: get("socket"), HerdrName: get("herdr-name"), Cwd: get("cwd"), Workspace: get("herdr-workspace"), To: get("to"), Subject: get("subject"), Body: get("body"), Question: get("question"), Kind: get("kind"), Title: get("title"), Spec: get("spec"), Handoff: get("handoff"), Dispatch: get("dispatch"), Attachment: get("attachment"), Outcome: get("outcome"), Reason: get("reason"), Decision: get("decision"), Resolution: get("resolution"), Artifacts: flags["artifact"], Retained: isTrue("retained"), Force: isTrue("force"), All: isTrue("all")}
+	a := Args{ID: get("id"), Name: get("name"), Profile: get("profile"), Pane: get("pane"), Socket: get("socket"), HerdrName: get("herdr-name"), Cwd: get("cwd"), Workspace: get("herdr-workspace"), To: get("to"), Subject: get("subject"), Body: get("body"), Question: get("question"), Kind: get("kind"), Title: get("title"), Spec: get("spec"), Handoff: get("handoff"), Dispatch: get("dispatch"), Attachment: get("attachment"), Outcome: get("outcome"), Reason: get("reason"), Decision: get("decision"), Resolution: get("resolution"), Artifacts: flags["artifact"], ExtraArgs: flags["arg"], Retained: isTrue("retained"), Force: isTrue("force"), All: isTrue("all")}
+	for _, arg := range a.ExtraArgs {
+		if strings.ContainsRune(arg, 0) {
+			return c, fmt.Errorf("--arg cannot contain NUL")
+		}
+	}
 	if op == "session.attach" && a.HerdrName == "" {
 		a.HerdrName = a.Name
 		a.Name = ""

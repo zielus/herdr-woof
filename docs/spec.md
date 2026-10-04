@@ -192,6 +192,7 @@ Required Phase 1 features:
 - reconnect/recovery,
 - workers,
 - profiles,
+- optional profile cwd as a thin launch preset field (absolute, home-relative, or config-relative), with CLI cwd > selected worktree > profile cwd > workspace cwd for new workers; validate before spawn and verify an existing pane's cwd,
 - profile roster,
 - messages,
 - ask/reply,
