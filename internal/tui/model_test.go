@@ -163,6 +163,9 @@ func (*uiBackend) Act(ctx context.Context, _ Action) (ActionResult, error) {
 func (*uiBackend) Operation(context.Context, string) (model.Operation, error) {
 	return model.Operation{}, nil
 }
+func (*uiBackend) ScheduleDetail(context.Context, model.Scope, string) (ScheduleDetail, error) {
+	return ScheduleDetail{}, nil
+}
 
 func TestReadStartedBeforeDisconnectCannotRestoreReadiness(t *testing.T) {
 	m := newModel(context.Background(), &uiBackend{}, model.Scope{Global: true})
