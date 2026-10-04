@@ -142,20 +142,11 @@ func (e *Engine) send(ctx context.Context, r model.Request, a Args) (any, error)
 				}
 			}
 		}
-		if err := tx.Put("messages", m.ID, m); err != nil {
+		queued, err := e.putMessageTx(tx, m, recipients)
+		if err != nil {
 			return err
 		}
-		for _, w := range recipients {
-			d := model.Delivery{ID: newID("delivery"), MessageID: m.ID, WorkerID: w.ID, SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, RunID: m.RunID, Status: "pending", WakeStatus: "queued", CreatedAt: e.now(), UpdatedAt: e.now()}
-			deliveries = append(deliveries, d)
-			if err := tx.Put("deliveries", d.ID, d); err != nil {
-				return err
-			}
-			recipientScope := model.Scope{SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, RunID: m.RunID, WorkerID: w.ID}
-			if err := tx.Event("message.available", recipientScope, m.FromKind, m.FromWorkerID, map[string]any{"message": m, "delivery": d}); err != nil {
-				return err
-			}
-		}
+		deliveries = append(deliveries, queued...)
 		if toKind == "human" {
 			d := model.Delivery{ID: newID("delivery"), MessageID: m.ID, SessionID: m.SessionID, WorkspaceID: m.WorkspaceID, RunID: m.RunID, Human: true, Status: "delivered", WakeStatus: "human", CreatedAt: e.now(), UpdatedAt: e.now(), DeliveredAt: e.now()}
 			deliveries = append(deliveries, d)
@@ -183,6 +174,27 @@ func (e *Engine) send(ctx context.Context, r model.Request, a Args) (any, error)
 		e.background(func() { e.processInbox(w.ID) })
 	}
 	return map[string]any{"message": m, "deliveries": deliveries}, nil
+}
+
+// putMessageTx persists m with one queued delivery and recipient-scoped
+// availability event per worker. Callers emit message.persisted afterwards.
+func (e *Engine) putMessageTx(tx *store.Tx, m model.Message, recipients []model.Worker) ([]model.Delivery, error) {
+	if err := tx.Put("messages", m.ID, m); err != nil {
+		return nil, err
+	}
+	deliveries := []model.Delivery{}
+	for _, w := range recipients {
+		d := model.Delivery{ID: newID("delivery"), MessageID: m.ID, WorkerID: w.ID, SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, RunID: m.RunID, Status: "pending", WakeStatus: "queued", CreatedAt: e.now(), UpdatedAt: e.now()}
+		deliveries = append(deliveries, d)
+		if err := tx.Put("deliveries", d.ID, d); err != nil {
+			return nil, err
+		}
+		recipientScope := model.Scope{SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, RunID: m.RunID, WorkerID: w.ID}
+		if err := tx.Event("message.available", recipientScope, m.FromKind, m.FromWorkerID, map[string]any{"message": m, "delivery": d}); err != nil {
+			return nil, err
+		}
+	}
+	return deliveries, nil
 }
 
 func terminalRecipient(w model.Worker) bool {

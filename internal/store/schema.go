@@ -58,6 +58,7 @@ CREATE UNIQUE INDEX schedule_runs_occurrence ON schedule_runs(schedule_id,occurr
 CREATE INDEX schedule_runs_schedule_state ON schedule_runs(schedule_id,state);
 CREATE INDEX schedule_runs_worker ON schedule_runs(worker_id);
 CREATE INDEX schedule_runs_run ON schedule_runs(run_id);
+CREATE INDEX schedule_runs_state ON schedule_runs(state);
 `
 
 func (s *Store) migrate() (err error) {

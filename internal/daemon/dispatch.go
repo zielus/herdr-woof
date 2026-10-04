@@ -81,7 +81,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 		}
 		handoff = refs[0].Path
 	}
-	d := model.Dispatch{ID: newID("dispatch"), SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, WorkerID: w.ID, AttachmentID: w.AttachmentID, Spec: a.Spec, Handoff: handoff, Status: "sending", Attempt: 1, BaselineSeq: p.StateChangeSeq, BaselineCompletionSeq: p.CompletionSeq, CreatedAt: e.now(), SentAt: e.now(), LastActivityAt: e.now(), Alerts: map[string]bool{}, OperationID: r.ID}
+	d := model.Dispatch{ID: newID("dispatch"), SessionID: w.SessionID, WorkspaceID: w.WorkspaceID, WorktreeID: w.WorktreeID, WorkerID: w.ID, AttachmentID: w.AttachmentID, Spec: a.Spec, Handoff: handoff, Status: "sending", Attempt: 1, BaselineSeq: p.StateChangeSeq, BaselineCompletionSeq: p.CompletionSeq, CreatedAt: e.now(), SentAt: e.now(), LastActivityAt: e.now(), Alerts: map[string]bool{}, OperationID: r.ID, ScheduleRunID: a.scheduleRun}
 	runID := r.Scope.RunID
 	if runID == "" {
 		runID = w.RunID
@@ -269,6 +269,7 @@ func (e *Engine) done(ctx context.Context, r model.Request, a Args) (any, error)
 	})
 	if err == nil {
 		e.background(func() { e.processInbox(d.WorkerID) })
+		e.kickScheduler(d.WorkerID)
 	}
 	return d, err
 }
@@ -496,6 +497,9 @@ func (e *Engine) observeWorker(ctx context.Context, w model.Worker, p herdr.Pane
 			}
 		}
 		e.background(func() { e.processInbox(w.ID) })
+		if idle(current.RawStatus) {
+			e.kickScheduler(w.ID)
+		}
 	}
 	return err
 }

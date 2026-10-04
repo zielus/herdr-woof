@@ -73,6 +73,7 @@ type Options struct {
 	IdleTimeout, QuietTimeout, BlockedTimeout time.Duration
 	Now                                       func() time.Time
 	HerdrFactory                              func(string) *herdr.Client
+	SchedulerDisabled                         bool
 }
 
 type sessionRuntime struct {
@@ -98,6 +99,11 @@ type Engine struct {
 	tasksMu   sync.Mutex
 	tasks     sync.WaitGroup
 	closing   bool
+	// scheduleKick wakes the scheduler loop; kicked names workers whose
+	// lifecycle changed so their blocked occurrences retry immediately.
+	scheduleKick chan struct{}
+	kickMu       sync.Mutex
+	kicked       map[string]bool
 }
 
 func NewEngine(st *store.Store, o Options) *Engine {
@@ -117,7 +123,7 @@ func NewEngine(st *store.Store, o Options) *Engine {
 		o.BlockedTimeout = 20 * time.Second
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Engine{store: st, opts: o, hub: newHub(), sessions: map[string]*sessionRuntime{}, ctx: ctx, cancel: cancel, stopped: make(chan struct{})}
+	return &Engine{store: st, opts: o, hub: newHub(), sessions: map[string]*sessionRuntime{}, ctx: ctx, cancel: cancel, stopped: make(chan struct{}), scheduleKick: make(chan struct{}, 1), kicked: map[string]bool{}}
 }
 func (e *Engine) Close() {
 	e.stopOnce.Do(func() {
@@ -588,7 +594,7 @@ func (e *Engine) finishTx(tx *store.Tx, id string, out any, err error, state str
 }
 func isRead(op string) bool {
 	switch op {
-	case "ping", "status", "session.list", "workspace.list", "worktree.list", "run.list", "run.show", "worker.list", "worker.show", "worker.read", "profile.roster", "profile.show", "inbox", "message.show", "dispatch.show", "check", "gate.list", "gate.show", "operation.list", "operation.show", "events.list", "events.tail", "events.follow", "question.wait", "wait":
+	case "ping", "status", "session.list", "workspace.list", "worktree.list", "run.list", "run.show", "worker.list", "worker.show", "worker.read", "profile.roster", "profile.show", "inbox", "message.show", "dispatch.show", "check", "gate.list", "gate.show", "operation.list", "operation.show", "events.list", "events.tail", "events.follow", "question.wait", "wait", "schedule.list", "schedule.show", "schedule.history":
 		return true
 	}
 	return false
@@ -669,6 +675,8 @@ func (e *Engine) read(ctx context.Context, r model.Request, a Args) (any, error)
 			since = *a.Since
 		}
 		return e.store.Events(ctx, since, s, a.Events, a.Limit)
+	case "schedule.list", "schedule.show", "schedule.history":
+		return e.scheduleRead(ctx, r, a)
 	case "wait":
 		return e.wait(ctx, r, a)
 	case "question.wait":
