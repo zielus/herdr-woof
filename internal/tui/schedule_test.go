@@ -2,9 +2,12 @@ package tui
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -64,10 +67,9 @@ func scheduleModel(t *testing.T, b Backend) *uiModel {
 	m := newModel(context.Background(), b, model.Scope{Global: true})
 	t.Cleanup(m.cancel)
 	m.width, m.height = 80, 24
-	m.acceptSnapshot(Snapshot{
-		Schedules:    []model.Schedule{testSchedule("sched_a", "alpha brief", true), testSchedule("sched_b", "beta review", false)},
-		ScheduleLast: map[string]ScheduleRunView{"sched_a": {Run: model.ScheduleRun{ID: "srun_1", State: "persisted"}}},
-	})
+	withLast := testSchedule("sched_a", "alpha brief", true)
+	withLast.LastRun = &model.ScheduleRun{ID: "srun_1", State: "persisted"}
+	m.acceptSnapshot(Snapshot{Schedules: []model.Schedule{withLast, testSchedule("sched_b", "beta review", false)}})
 	return m
 }
 
@@ -448,34 +450,27 @@ func checkScheduleView(t *testing.T, profile colorprofile.Profile, colors bool) 
 
 // Backend adapter: schedule list/history in Load, optional on older daemons.
 
-func TestRPCBackendLoadSchedulesAndLatestOccurrence(t *testing.T) {
+func TestRPCBackendLoadSchedulesUsesJoinedLastRunWithoutFanOut(t *testing.T) {
 	var mu sync.Mutex
-	args := map[string]json.RawMessage{}
+	ops := map[string]int{}
+	listArgs := ""
 	p := streamFixture(t, func(c net.Conn, r model.Request) {
 		mu.Lock()
-		args[r.Op] = r.Args
+		ops[r.Op]++
+		if r.Op == "schedule.list" {
+			listArgs = string(r.Args)
+		}
 		mu.Unlock()
 		switch r.Op {
 		case "events.tail":
 			streamReply(t, c, model.EventTail{EventCursor: 3, Events: []model.Event{}})
 		case "schedule.list":
-			streamReply(t, c, []model.Schedule{testSchedule("sched_a", "alpha", true), testSchedule("sched_b", "beta", false)})
-		case "schedule.history":
-			var a struct {
-				ID    string `json:"id"`
-				Limit int    `json:"limit"`
-			}
-			if err := json.Unmarshal(r.Args, &a); err != nil || a.Limit != 1 {
-				t.Errorf("history args %s", r.Args)
-			}
 			if r.ID != "" {
 				t.Error("read carried a mutation request ID")
 			}
-			if a.ID == "sched_a" {
-				streamReply(t, c, []ScheduleRunView{{Run: model.ScheduleRun{ID: "srun_1", State: "dispatched"}, Dispatch: &model.Dispatch{ID: "disp_1"}}})
-				return
-			}
-			streamReply(t, c, []ScheduleRunView{})
+			a := testSchedule("sched_a", "alpha", true)
+			a.LastRun = &model.ScheduleRun{ID: "srun_1", State: "dispatched"}
+			streamReply(t, c, []model.Schedule{a, testSchedule("sched_b", "beta", false)})
 		default:
 			streamReply(t, c, []any{})
 		}
@@ -484,53 +479,69 @@ func TestRPCBackendLoadSchedulesAndLatestOccurrence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	snap, err := b.Load(ctx, model.Scope{WorkspaceID: "workspace_a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Schedules) != 2 || snap.ScheduleLast["sched_a"].Run.State != "dispatched" || snap.ScheduleLast["sched_a"].Dispatch == nil {
-		t.Fatalf("schedules %+v last %+v", snap.Schedules, snap.ScheduleLast)
-	}
-	if _, ok := snap.ScheduleLast["sched_b"]; ok || snap.Errors["schedules"] != "" {
-		t.Fatalf("unexpected last/error %+v %+v", snap.ScheduleLast, snap.Errors)
+	if err != nil || len(snap.Schedules) != 2 || snap.Schedules[0].LastRun == nil || snap.Schedules[0].LastRun.State != "dispatched" || snap.Errors["schedules"] != "" {
+		t.Fatalf("schedules %+v errors %+v %v", snap.Schedules, snap.Errors, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if string(args["schedule.list"]) != `{"all":false}` {
-		t.Fatalf("list args %s", args["schedule.list"])
-	}
-}
-
-func TestRPCBackendScheduleListFailureLeavesMonitorUsable(t *testing.T) {
-	p := streamFixture(t, func(c net.Conn, r model.Request) {
-		switch r.Op {
-		case "events.tail":
-			streamReply(t, c, model.EventTail{EventCursor: 4, Events: []model.Event{}})
-		case "worker.list":
-			streamReply(t, c, []model.Worker{{ID: "w_a"}})
-		case "schedule.list":
-			if err := json.NewEncoder(c).Encode(model.Response{Version: model.Protocol, Error: &model.Error{Code: "unknown_operation", Message: "schedule.list"}}); err != nil {
-				t.Error(err)
-			}
-		default:
-			streamReply(t, c, []any{})
-		}
-	})
-	b := &RPCBackend{Base: &client.Client{Paths: p}}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	snap, err := b.Load(ctx, model.Scope{Global: true})
-	if err != nil || len(snap.Workers) != 1 || snap.Cursor != 4 || len(snap.Schedules) != 0 {
-		t.Fatalf("older daemon blanked monitor: %+v %v", snap, err)
-	}
-	if !strings.Contains(snap.Errors["schedules"], "unknown_operation") {
-		t.Fatalf("schedule error hidden: %+v", snap.Errors)
+	if listArgs != `{"all":false}` || ops["schedule.list"] != 1 || ops["schedule.history"] != 0 || ops["schedule.show"] != 0 {
+		t.Fatalf("schedule reads %v args %s", ops, listArgs)
 	}
 	m := newModel(context.Background(), nil, model.Scope{Global: true})
 	defer m.cancel()
 	m.acceptSnapshot(snap)
-	m.tab = scheduleTab
-	if !strings.Contains(m.View().Content, "schedules: unknown_operation") {
-		t.Fatal("schedule section error not displayed")
+	if rows := m.rowsFor(scheduleTab); !strings.Contains(rows[0].Label, "last:dispatched") || !strings.Contains(rows[1].Label, "last:none") {
+		t.Fatalf("last state column %+v", rows)
+	}
+}
+
+func TestRPCBackendScheduleListFailureLeavesMonitorUsable(t *testing.T) {
+	for _, tc := range []struct{ code, want string }{
+		{"request_id_required", "daemon lacks schedules; run `woof daemon restart` after upgrading"},
+		{"unknown_operation", "daemon lacks schedules; run `woof daemon restart` after upgrading"},
+		{"internal", "internal: schedule store failed"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			p := streamFixture(t, func(c net.Conn, r model.Request) {
+				switch r.Op {
+				case "events.tail":
+					streamReply(t, c, model.EventTail{EventCursor: 4, Events: []model.Event{}})
+				case "worker.list":
+					streamReply(t, c, []model.Worker{{ID: "w_a", Name: "builder"}})
+				case "schedule.list":
+					if err := json.NewEncoder(c).Encode(model.Response{Version: model.Protocol, Error: &model.Error{Code: tc.code, Message: "schedule store failed"}}); err != nil {
+						t.Error(err)
+					}
+				default:
+					streamReply(t, c, []any{})
+				}
+			})
+			b := &RPCBackend{Base: &client.Client{Paths: p}}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			snap, err := b.Load(ctx, model.Scope{Global: true})
+			if err != nil || len(snap.Workers) != 1 || snap.Cursor != 4 || len(snap.Schedules) != 0 {
+				t.Fatalf("schedule failure blanked monitor: %+v %v", snap, err)
+			}
+			if snap.Errors["schedules"] != tc.want {
+				t.Fatalf("schedule error %q, want %q", snap.Errors["schedules"], tc.want)
+			}
+			// The section error never makes the snapshot or other tabs stale.
+			m := newModel(context.Background(), nil, model.Scope{Global: true})
+			defer m.cancel()
+			m.Update(loadMsg{generation: m.generation, snapshot: snap})
+			if !m.ready.Load() || m.err != nil {
+				t.Fatalf("schedules error disabled the monitor: ready=%t err=%v", m.ready.Load(), m.err)
+			}
+			view := m.View().Content
+			if !strings.Contains(view, "LIVE") || strings.Contains(view, "schedules:") || !strings.Contains(view, "builder") {
+				t.Fatalf("workers tab affected by schedules error:\n%s", view)
+			}
+			m.Update(key("6"))
+			if view := m.View().Content; !strings.Contains(view, "LIVE") || !strings.Contains(view, "schedules: "+tc.want) {
+				t.Fatalf("schedules tab error hidden:\n%s", view)
+			}
+		})
 	}
 }
 
@@ -592,20 +603,33 @@ func TestActionDaemonScheduleEnableDisableRunNow(t *testing.T) {
 	if err := human.Call(ctx, "schedule.history", map[string]any{"id": sc.ID, "limit": 10}, &history); err != nil || len(history) != 1 || history[0].Message == nil {
 		t.Fatalf("history after one run now: %+v %v", history, err)
 	}
+	// Inspecting the run-now request receipt reads the occurrence behind it.
+	inspected := inspectOperation(ctx, b, run.RequestID)
+	if inspected.err != nil || inspected.run == nil || inspected.run.Run.ID != run.ID || inspected.run.Run.State != "persisted" {
+		t.Fatalf("receipt inspection: %+v", inspected)
+	}
+	if text := operationText(inspected); !strings.Contains(text, "Occurrence "+run.ID+" [persisted]") || !strings.Contains(text, "no dispatch attempt receipt") {
+		t.Fatalf("inspect text %q", text)
+	}
 	// Real daemon read round trip through the TUI adapter.
 	workspace := model.Scope{SessionID: "session_a", WorkspaceID: "workspace_a"}
 	snap, err := b.Load(ctx, workspace)
-	if err != nil || len(snap.Schedules) != 1 || snap.Schedules[0].ID != sc.ID || snap.ScheduleLast[sc.ID].Run.State != "persisted" || snap.Errors["schedules"] != "" {
-		t.Fatalf("scoped load: %+v last %+v errors %+v %v", snap.Schedules, snap.ScheduleLast, snap.Errors, err)
+	if err != nil || len(snap.Schedules) != 1 || snap.Schedules[0].ID != sc.ID || snap.Schedules[0].LastRun == nil || snap.Schedules[0].LastRun.State != "persisted" || snap.Errors["schedules"] != "" {
+		t.Fatalf("scoped load: %+v errors %+v %v", snap.Schedules, snap.Errors, err)
 	}
 	detail, err := b.ScheduleDetail(ctx, workspace, sc.ID)
 	if err != nil || detail.Schedule.ID != sc.ID || len(detail.Upcoming) != 5 || len(detail.Runs) != 1 || detail.Runs[0].Message == nil {
 		t.Fatalf("detail: %+v %v", detail, err)
 	}
-	for _, scope := range []model.Scope{{Global: true}, {WorktreeID: "tree_a"}, {RunID: "run_a"}} {
+	// Explicit scope wins: schedules carry no run, so a run-only browse scope
+	// lists none (documented in docs/tui.md) without a section error.
+	for scope, want := range map[model.Scope]int{{Global: true}: 1, {WorktreeID: "tree_a"}: 1, {RunID: "run_a"}: 0} {
 		snap, err := b.Load(ctx, scope)
-		if err != nil || snap.Errors["schedules"] != "" || len(snap.Schedules) != 1 {
-			t.Fatalf("%+v load: %d schedules %+v %v", scope, len(snap.Schedules), snap.Errors, err)
+		if err != nil || snap.Errors["schedules"] != "" || len(snap.Schedules) != want {
+			t.Fatalf("%+v load: %d schedules (want %d) %+v %v", scope, len(snap.Schedules), want, snap.Errors, err)
+		}
+		if want == 0 {
+			continue
 		}
 		if detail, err := b.ScheduleDetail(ctx, scope, sc.ID); err != nil || detail.Schedule.ID != sc.ID {
 			t.Fatalf("%+v detail: %v", scope, err)
@@ -785,5 +809,92 @@ func TestScheduleRunEventsMarkDetailStaleGenerically(t *testing.T) {
 		if m.scheduleDetailState != "stale" || !m.dirty || cmd == nil {
 			t.Fatalf("%s did not mark schedules stale and schedule a reload", typ)
 		}
+	}
+}
+
+// inspectBackend serves a completed schedule.run receipt whose occurrence's
+// dispatch attempt is uncertain.
+type inspectBackend struct{ uiBackend }
+
+func (inspectBackend) Operation(_ context.Context, id string) (model.Operation, error) {
+	raw, err := json.Marshal(model.ScheduleRun{ID: "srun_9", ScheduleID: "sched_a", State: "claimed"})
+	if err != nil {
+		return model.Operation{}, err
+	}
+	return model.Operation{ID: id, Op: "schedule.run", State: "completed", ResourceKind: "schedule_runs", ResourceID: "srun_9", Result: raw}, nil
+}
+func (inspectBackend) ScheduleRun(_ context.Context, scheduleID, runID string) (ScheduleRunView, error) {
+	if scheduleID != "sched_a" || runID != "srun_9" {
+		return ScheduleRunView{}, fmt.Errorf("unexpected lookup %s %s", scheduleID, runID)
+	}
+	return ScheduleRunView{Run: model.ScheduleRun{ID: "srun_9", State: "uncertain", AttemptID: "op_attempt"}, Operation: &model.Operation{ID: "op_attempt", State: "uncertain"}}, nil
+}
+
+func TestInspectAfterUncertainRunNowShowsOccurrenceAndAttempt(t *testing.T) {
+	m := newModel(context.Background(), &inspectBackend{}, model.Scope{Global: true})
+	defer m.cancel()
+	m.Update(actionMsg{kind: "schedule.run", result: ActionResult{OperationID: "op_request", Uncertain: true}, err: &model.Error{Code: "outcome_unknown", OperationID: "op_request"}})
+	_, cmd := m.Update(key("i"))
+	if cmd == nil {
+		t.Fatal("uncertain run-now not inspectable")
+	}
+	m.Update(cmd())
+	for _, want := range []string{"Run-now request op_request: completed", "not the dispatch outcome", "Occurrence srun_9 [uncertain]", "attempt receipt op_attempt [uncertain]", "Never resent", "woof operation show --id op_attempt"} {
+		if !strings.Contains(m.notice, want) {
+			t.Fatalf("inspect notice %q missing %q", m.notice, want)
+		}
+	}
+	// A receipt for another operation keeps the plain receipt text.
+	if got := operationText(operationMsg{operation: model.Operation{ID: "op_x", Op: "send", State: "uncertain"}}); !strings.Contains(got, "Operation op_x (send): uncertain") {
+		t.Fatalf("plain inspect %q", got)
+	}
+	if got := operationText(operationMsg{operation: model.Operation{ID: "op_r", Op: "schedule.run", State: "accepted"}, runErr: errors.New("receipt has no recorded occurrence yet")}); !strings.Contains(got, "occurrence unavailable") {
+		t.Fatalf("unclaimed run-now inspect %q", got)
+	}
+}
+
+func TestQuitPrintsRunNowOccurrenceAndAttemptAfterRestore(t *testing.T) {
+	m := newModel(context.Background(), &inspectBackend{}, model.Scope{Global: true})
+	m.Update(actionMsg{kind: "schedule.run", result: ActionResult{OperationID: "op_request", Uncertain: true}})
+	input, writer := io.Pipe()
+	defer func() { _ = input.Close() }()
+	defer func() { _ = writer.Close() }()
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runModel(context.Background(), m, &out, tea.WithInput(input), tea.WithEnvironment([]string{"TERM=xterm-256color"}), tea.WithWindowSize(100, 30))
+	}()
+	if _, err := io.WriteString(writer, "q"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("quit did not finish")
+	}
+	output := out.String()
+	restore := strings.LastIndex(output, "\x1b[?1049l")
+	line := strings.LastIndex(output, "Uncertain operation op_request")
+	if restore < 0 || line <= restore || !strings.Contains(output[line:], "Occurrence srun_9 [uncertain]; attempt receipt op_attempt [uncertain]") {
+		t.Fatalf("exit printout lacks occurrence/attempt after restore: %q", output)
+	}
+}
+
+func TestDetailShowsStaleInsteadOfRefreshingWhenReloadFails(t *testing.T) {
+	m := scheduleModel(t, nil)
+	m.tab = scheduleTab
+	m.scheduleDetailID, m.scheduleDetailState = "sched_a", "done"
+	m.scheduleDetail = &ScheduleDetail{Schedule: model.Schedule{ID: "sched_a"}}
+	m.Update(streamMsg{generation: m.generation, update: StreamUpdate{Event: &model.Event{Seq: 3, Type: "schedule.run.settled"}}})
+	if !strings.Contains(m.detailText(), "refreshing") {
+		t.Fatal("schedule event did not mark refreshing")
+	}
+	m.Update(loadMsg{generation: m.generation, err: errors.New("daemon offline")})
+	text := m.detailText()
+	if strings.Contains(text, "refreshing") || !strings.Contains(text, "STALE, reload failed (daemon offline)") {
+		t.Fatalf("failed reload left refreshing state:\n%s", text)
 	}
 }

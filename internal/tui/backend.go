@@ -53,7 +53,7 @@ func connectionError(err error) error {
 // state than the boundary; follow replay invalidates it without losing commits.
 func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, error) {
 	c := b.scoped(scope)
-	snap := Snapshot{Scope: c.Scope, ProfileDetails: map[string]profiles.Profile{}, Reports: map[string]MessageDetail{}, WorkerInboxes: map[string][]InboxEntry{}, ScheduleLast: map[string]ScheduleRunView{}, Errors: map[string]string{}}
+	snap := Snapshot{Scope: c.Scope, ProfileDetails: map[string]profiles.Profile{}, Reports: map[string]MessageDetail{}, WorkerInboxes: map[string][]InboxEntry{}, Errors: map[string]string{}}
 	var tail model.EventTail
 	if err := c.Call(ctx, "events.tail", map[string]any{"limit": 500}, &tail); err != nil {
 		return snap, connectionError(err)
@@ -74,6 +74,16 @@ func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, err
 	}
 	if err := c.Call(ctx, "inbox", map[string]any{"id": "human", "all": true}, &snap.Inbox); err != nil {
 		return snap, connectionError(err)
+	}
+	// Schedules are an isolated optional section: any failure, including a
+	// transport loss or an older daemon, stays under "schedules" and never makes
+	// the canonical snapshot or other tabs stale.
+	if err := c.Call(ctx, "schedule.list", map[string]any{"all": false}, &snap.Schedules); err != nil {
+		snap.Schedules = nil
+		if ctx.Err() != nil {
+			return snap, ctx.Err()
+		}
+		snap.Errors["schedules"] = scheduleSectionError(err)
 	}
 
 	// Detail failures leave the canonical monitor usable. Connection loss still
@@ -145,26 +155,6 @@ func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, err
 			mu.Unlock()
 		})
 	}
-	// Schedules are optional: an older daemon without schedule.list leaves the
-	// canonical monitor usable and reports the section error instead.
-	if err := c.Call(ctx, "schedule.list", map[string]any{"all": false}, &snap.Schedules); err != nil {
-		snap.Schedules = nil
-		recordError("schedules", err)
-	}
-	for _, sc := range snap.Schedules {
-		jobs = append(jobs, func() {
-			var runs []ScheduleRunView
-			if err := c.Call(ctx, "schedule.history", map[string]any{"id": sc.ID, "limit": 1}, &runs); err != nil {
-				recordError("schedules", fmt.Errorf("%s: %w", sc.ID, err))
-				return
-			}
-			if len(runs) > 0 {
-				mu.Lock()
-				snap.ScheduleLast[sc.ID] = runs[0]
-				mu.Unlock()
-			}
-		})
-	}
 	// Four reads at once keep large catalogues from opening one socket per worker.
 	queue := make(chan func())
 	var wg sync.WaitGroup
@@ -189,6 +179,17 @@ func (b *RPCBackend) Load(ctx context.Context, scope model.Scope) (Snapshot, err
 		return snap, ctx.Err()
 	}
 	return snap, transportErr
+}
+
+// scheduleSectionError explains an older daemon that predates schedules: it
+// answers the read with request_id_required (unknown op treated as a mutation)
+// or unknown_operation.
+func scheduleSectionError(err error) string {
+	var problem *model.Error
+	if errors.As(err, &problem) && (problem.Code == "request_id_required" || problem.Code == "unknown_operation") {
+		return "daemon lacks schedules; run `woof daemon restart` after upgrading"
+	}
+	return err.Error()
 }
 
 func inboxMatches(entry InboxEntry, scope model.Scope) bool {
@@ -276,6 +277,21 @@ func (b *RPCBackend) ScheduleDetail(ctx context.Context, scope model.Scope, id s
 	var detail ScheduleDetail
 	err := b.scoped(scope).Call(ctx, "schedule.show", map[string]any{"id": id}, &detail)
 	return detail, connectionError(err)
+}
+
+// ScheduleRun finds one occurrence's current state through schedule.history
+// (a human global read), joined with its message, dispatch and attempt receipt.
+func (b *RPCBackend) ScheduleRun(ctx context.Context, scheduleID, runID string) (ScheduleRunView, error) {
+	var runs []ScheduleRunView
+	if err := b.scoped(model.Scope{Global: true}).Call(ctx, "schedule.history", map[string]any{"id": scheduleID, "limit": 100}, &runs); err != nil {
+		return ScheduleRunView{}, connectionError(err)
+	}
+	for _, v := range runs {
+		if v.Run.ID == runID {
+			return v, nil
+		}
+	}
+	return ScheduleRunView{}, fmt.Errorf("occurrence %s not found in recent history of %s", runID, scheduleID)
 }
 
 func (b *RPCBackend) Operation(ctx context.Context, id string) (model.Operation, error) {

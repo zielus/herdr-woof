@@ -58,6 +58,10 @@ const scheduleTab = 5
 type operationMsg struct {
 	operation model.Operation
 	err       error
+	// run is the current occurrence behind a schedule.run request receipt; the
+	// receipt itself completes at claim time, before any dispatch attempt.
+	run    *ScheduleRunView
+	runErr error
 }
 type quitRequest struct{}
 type connectionState struct {
@@ -103,6 +107,7 @@ type uiModel struct {
 	pending               *pendingAction
 	result                ActionResult
 	uncertain             []string
+	uncertainKinds        map[string]string
 	err                   error
 	notice                string
 	shutdownMutationError error
@@ -474,7 +479,7 @@ func (m *uiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.result = v.result
 		m.err = v.err
 		if v.result.Uncertain {
-			m.recordUncertain(v.result)
+			m.recordUncertain(v.result, v.kind)
 			m.notice = "Uncertain operation " + v.result.OperationID + "; i inspect; resolve with woof operation show --id " + v.result.OperationID
 			if v.kind == "schedule.run" && v.err == nil {
 				m.notice = scheduleActionNotice(v.kind, v.result.Value)
@@ -492,11 +497,7 @@ func (m *uiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.load()
 	case operationMsg:
-		if v.err != nil {
-			m.notice = v.err.Error()
-		} else {
-			m.notice = fmt.Sprintf("Operation %s: %s; %s. Inspect with woof operation show --id %s", v.operation.ID, v.operation.State, v.operation.Error, v.operation.ID)
-		}
+		m.notice = operationText(v)
 		return m, nil
 	case tea.KeyPressMsg:
 		k := v.String()
@@ -641,8 +642,7 @@ func (m *uiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(m.root), 5*time.Second)
 					defer cancel()
-					op, err := b.Operation(ctx, id)
-					return operationMsg{op, err}
+					return inspectOperation(ctx, b, id)
 				}
 			}
 		case "down", "j":
@@ -754,9 +754,15 @@ func (m *uiModel) rows() []row {
 	return out
 }
 
-func (m *uiModel) recordUncertain(result ActionResult) {
+func (m *uiModel) recordUncertain(result ActionResult, kind string) {
 	if !result.Uncertain {
 		return
+	}
+	if m.uncertainKinds == nil {
+		m.uncertainKinds = map[string]string{}
+	}
+	if kind != "" {
+		m.uncertainKinds[result.OperationID] = kind
 	}
 	for _, id := range m.uncertain {
 		if id == result.OperationID {
@@ -841,4 +847,60 @@ func scheduleActionNotice(kind string, raw []byte) string {
 		return fmt.Sprintf("Run now %s failed: %s", run.ID, orDash(strings.TrimSpace(run.Error+" "+run.Reason)))
 	}
 	return fmt.Sprintf("Run now %s %s", run.ID, run.State)
+}
+
+// inspectOperation reads a receipt once. A schedule.run receipt completes when
+// the occurrence is claimed, so its current occurrence state and dispatch
+// attempt receipt are read as well. Nothing is retried or resolved here.
+func inspectOperation(ctx context.Context, b Backend, id string) operationMsg {
+	op, err := b.Operation(ctx, id)
+	msg := operationMsg{operation: op, err: err}
+	if err != nil || op.Op != "schedule.run" {
+		return msg
+	}
+	var claimed model.ScheduleRun
+	if json.Unmarshal(op.Result, &claimed) != nil || claimed.ScheduleID == "" {
+		msg.runErr = fmt.Errorf("receipt has no recorded occurrence yet")
+		return msg
+	}
+	runID := claimed.ID
+	if op.ResourceKind == "schedule_runs" && op.ResourceID != "" {
+		runID = op.ResourceID
+	}
+	v, rerr := b.ScheduleRun(ctx, claimed.ScheduleID, runID)
+	if rerr != nil {
+		msg.runErr = rerr
+		return msg
+	}
+	msg.run = &v
+	return msg
+}
+
+// operationText states a receipt and, for run-now, the occurrence and attempt.
+func operationText(v operationMsg) string {
+	if v.err != nil {
+		return v.err.Error()
+	}
+	op := v.operation
+	text := fmt.Sprintf("Operation %s (%s): %s; %s. Inspect with woof operation show --id %s", op.ID, orDash(op.Op), op.State, op.Error, op.ID)
+	if op.Op != "schedule.run" {
+		return text
+	}
+	text = fmt.Sprintf("Run-now request %s: %s (claim recorded; not the dispatch outcome)", op.ID, op.State)
+	if v.run == nil {
+		if v.runErr != nil {
+			text += "; occurrence unavailable: " + v.runErr.Error()
+		}
+		return text + ". Inspect with woof operation show --id " + op.ID
+	}
+	r := v.run.Run
+	text += fmt.Sprintf(". Occurrence %s [%s]", r.ID, r.State)
+	if r.AttemptID == "" {
+		return text + "; no dispatch attempt receipt"
+	}
+	attemptState := "unknown"
+	if v.run.Operation != nil {
+		attemptState = v.run.Operation.State
+	}
+	return text + fmt.Sprintf("; attempt receipt %s [%s]. Never resent; inspect with woof operation show --id %s", r.AttemptID, attemptState, r.AttemptID)
 }

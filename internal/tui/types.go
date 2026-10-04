@@ -38,10 +38,9 @@ type Snapshot struct {
 	ProfileDetails map[string]profiles.Profile
 	Reports        map[string]MessageDetail
 	WorkerInboxes  map[string][]InboxEntry
-	// Schedules are non-removed native schedules in the browse scope. The
-	// latest occurrence per schedule (history limit 1) feeds the list column.
-	Schedules    []model.Schedule
-	ScheduleLast map[string]ScheduleRunView
+	// Schedules are non-removed native schedules in the browse scope; the
+	// daemon joins each schedule's latest occurrence as LastRun.
+	Schedules []model.Schedule
 }
 
 // ScheduleRunView mirrors the daemon's schedule.show/schedule.history run view:
@@ -94,6 +93,7 @@ type Backend interface {
 	Act(context.Context, Action) (ActionResult, error)
 	Operation(context.Context, string) (model.Operation, error)
 	ScheduleDetail(context.Context, model.Scope, string) (ScheduleDetail, error)
+	ScheduleRun(context.Context, string, string) (ScheduleRunView, error)
 }
 type RPCBackend struct{ Base *client.Client }
 type ConnectionError struct{ Err error }

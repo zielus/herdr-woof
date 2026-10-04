@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/zielus/herdr-woof-v2/internal/model"
@@ -48,7 +49,7 @@ func runModel(ctx context.Context, m *uiModel, stdout io.Writer, options ...tea.
 	if m.pending != nil {
 		receipt := m.pending.wait()
 		m.result = receipt.result
-		m.recordUncertain(receipt.result)
+		m.recordUncertain(receipt.result, receipt.kind)
 		if receipt.err != nil && err == nil {
 			err = receipt.err
 		}
@@ -57,7 +58,15 @@ func runModel(ctx context.Context, m *uiModel, stdout io.Writer, options ...tea.
 		err = errors.Join(err, m.shutdownMutationError)
 	}
 	for _, id := range m.uncertain {
-		if _, printErr := fmt.Fprintf(stdout, "Uncertain operation %s. Inspect: woof operation show --id %s\n", inline(id), inline(id)); err == nil {
+		line := fmt.Sprintf("Uncertain operation %s. Inspect: woof operation show --id %s\n", inline(id), inline(id))
+		// A run-now receipt completes at claim time; one bounded read reports
+		// the occurrence state and its dispatch attempt receipt.
+		if m.uncertainKinds[id] == "schedule.run" && m.backend != nil {
+			readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			line += "  " + inline(operationText(inspectOperation(readCtx, m.backend, id))) + "\n"
+			cancel()
+		}
+		if _, printErr := io.WriteString(stdout, line); err == nil {
 			err = printErr
 		}
 	}

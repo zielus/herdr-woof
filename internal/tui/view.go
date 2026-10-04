@@ -66,8 +66,8 @@ func (m *uiModel) rowsFor(tab int) []row {
 				enabled, next = "disabled", "disabled"
 			}
 			last := "none"
-			if v, ok := m.snapshot.ScheduleLast[sc.ID]; ok && v.Run.State != "" {
-				last = v.Run.State
+			if sc.LastRun != nil && sc.LastRun.State != "" {
+				last = sc.LastRun.State
 			}
 			rows = append(rows, row{sc.ID, fmt.Sprintf("%s [%s] %s→%s last:%s next:%s · %s", sc.Name, enabled, sc.Action, sc.TargetName, last, next, sc.ID), enabled})
 		}
@@ -154,6 +154,9 @@ func (m *uiModel) scheduleDetailText(id string) string {
 	switch {
 	case m.scheduleDetailID == id && m.scheduleDetailErr != nil:
 		fmt.Fprintf(&b, "Detail unavailable: %s\n", m.scheduleDetailErr)
+	case detail != nil && m.err != nil:
+		// A failed reload must not leave "refreshing" on screen.
+		fmt.Fprintf(&b, "Detail unavailable: STALE, reload failed (%s); showing last read; retrying\n", m.err)
 	case m.scheduleDetailID == id && m.scheduleDetailState == "stale":
 		b.WriteString("Detail: refreshing after a schedule event…\n")
 	case detail == nil || m.scheduleDetailState == "loading" || m.scheduleDetailState == "":

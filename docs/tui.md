@@ -49,7 +49,10 @@ limitations. File references preserve locations, not contents.
 The Schedules tab (`6`) lists the native schedules in the browsing scope that have
 not been removed (`schedule.list`). Each row shows name, enabled/disabled, action
 (message or dispatch), target worker name, last occurrence state and next run in
-the schedule's zone (`disabled` when disabled). Selection is keyed by schedule
+the schedule's zone (`disabled` when disabled). The last state comes from the
+daemon's joined `last_run`, so loading needs no per-schedule reads. An explicit
+`--run` scope lists only schedules whose occurrences dispatched into that run;
+browse by session, workspace or worktree for the rest. Selection is keyed by schedule
 ID and survives reorders, filtering and reloads. Detail is read on demand with
 `schedule.show` for the selected schedule. It shows the full identity (ID,
 session, workspace, worktree, target worker ID and name), cron, time zone, missed
@@ -73,12 +76,18 @@ schedules stays in the CLI (`woof schedule add`, `woof schedule remove`).
 Run now executes synchronously in the daemon. The result notice names the
 occurrence and its state. If its dispatch prompt outcome is unknown, the
 attempt operation is recorded like any uncertain mutation and never resent.
+If the run-now response itself is lost, the request receipt completes once the
+occurrence is claimed, before any dispatch attempt. Its state is therefore not the
+dispatch outcome. `i` and the exit printout also read the occurrence's current
+state and its attempt receipt (`attempt_id`).
 The daemon reports `run_outstanding`, `schedule_removed` and `not_found` as
 definite rejections. Any `schedule.*` event, including every `schedule.run.*`
 state, marks the shown detail as refreshing. Like other events, it triggers the usual
 coalesced reload, and every successful reload re-reads the visible detail once.
-An older daemon without `schedule.list` leaves the other tabs usable and shows
-the error in this tab.
+If that reload fails, the detail says it is stale and shows the error. Schedule
+read failures stay in this tab and never make other tabs stale. An older daemon
+(`request_id_required` or `unknown_operation`) is reported as "daemon lacks
+schedules; run `woof daemon restart` after upgrading".
 
 ## Runtime behavior
 
