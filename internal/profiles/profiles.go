@@ -54,7 +54,16 @@ func (p *Profile) UnmarshalYAML(node *yaml.Node) error {
 
 type Defaults struct {
 	WorkerProfile string `yaml:"worker_profile" json:"worker_profile"`
+	// WorkerPermissions is the single opt-out for the Woof launch permissions
+	// added to claude and codex workers; unset means enabled.
+	WorkerPermissions *bool `yaml:"worker_permissions,omitempty" json:"worker_permissions,omitempty"`
 }
+
+// PermissionsEnabled reports whether Woof adds its default launch permissions.
+func (d Defaults) PermissionsEnabled() bool {
+	return d.WorkerPermissions == nil || *d.WorkerPermissions
+}
+
 type Config struct {
 	Profiles  map[string]Profile `yaml:"profiles" json:"profiles"`
 	Defaults  Defaults           `yaml:"defaults" json:"defaults"`

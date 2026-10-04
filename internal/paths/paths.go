@@ -11,6 +11,8 @@ import (
 	"syscall"
 )
 
+var chmod = os.Chmod // replaced in tests
+
 type Paths struct{ Dir, DB, Sock, Lock, Log, Config, Archive string }
 
 func privateDir(dir string) error {
@@ -28,7 +30,12 @@ func privateDir(dir string) error {
 	if !ok || int(owner.Uid) != os.Getuid() {
 		return fmt.Errorf("state directory %s is not owned by current user", dir)
 	}
-	return os.Chmod(dir, 0700)
+	// A correctly private directory needs no write: sandboxed callers may be
+	// allowed to use the state directory without being allowed to chmod it.
+	if st.Mode().Perm() == 0700 {
+		return nil
+	}
+	return chmod(dir, 0700)
 }
 func Resolve() (Paths, error) {
 	home, err := os.UserHomeDir()

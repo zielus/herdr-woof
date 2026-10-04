@@ -399,3 +399,31 @@ func TestSubscriptionTimeoutPreservesCallerDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestNotifyReportsWhetherHerdrShowedIt(t *testing.T) {
+	for reply, want := range map[string]NotifyResult{
+		`{"result":{"type":"notification_show","shown":true,"reason":"shown"}}`:                 {Shown: true, Reason: "shown"},
+		`{"result":{"type":"notification_show","shown":false,"reason":"disabled"}}`:             {Reason: "disabled"},
+		`{"result":{"type":"notification_show","shown":false,"reason":"no_foreground_client"}}`: {Reason: "no_foreground_client"},
+		`{"result":{}}`: {},
+	} {
+		got, err := New(server(t, reply+"\n", false)).Notify(context.Background(), "t", "b", true)
+		if err != nil || got != want {
+			t.Errorf("%s: %+v %v", reply, got, err)
+		}
+	}
+	if got, err := New(server(t, `{"error":{"code":"internal","message":"x"}}`+"\n", false)).Notify(context.Background(), "t", "b", true); err == nil || got.Shown {
+		t.Fatalf("error reported as shown: %+v %v", got, err)
+	}
+}
+
+func TestAgentExplainRule(t *testing.T) {
+	id, state, err := New(server(t, `{"result":{"type":"agent_explain","explain":{"state":"blocked","matched_rule":{"id":"bash_permission_prompt","priority":850,"state":"blocked"}}}}`+"\n", false)).AgentExplainRule(context.Background(), "w1:p1")
+	if err != nil || id != "bash_permission_prompt" || state != "blocked" {
+		t.Fatalf("%q %q %v", id, state, err)
+	}
+	id, state, err = New(server(t, `{"result":{"type":"agent_explain","explain":{"matched_rule":null}}}`+"\n", false)).AgentExplainRule(context.Background(), "w1:p1")
+	if err != nil || id != "" || state != "" {
+		t.Fatalf("%q %q %v", id, state, err)
+	}
+}

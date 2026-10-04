@@ -434,7 +434,7 @@ func (e *Engine) observeWorker(ctx context.Context, w model.Worker, p herdr.Pane
 				current.BlockedAt = e.now()
 			}
 		} else {
-			current.BlockedAt = 0
+			clearBlocked(&current)
 		}
 		ds, err := txList[model.Dispatch](tx, "dispatches", model.Scope{WorkerID: w.ID})
 		if err != nil {

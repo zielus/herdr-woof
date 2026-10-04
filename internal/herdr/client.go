@@ -224,12 +224,41 @@ func (c *Client) AgentPrompt(ctx context.Context, target, text string) error {
 	return c.Call(ctx, "agent.prompt", map[string]any{"target": target, "text": text}, nil)
 }
 
-func (c *Client) Notify(ctx context.Context, title, body string, urgent bool) error {
+// NotifyResult is Herdr's own account of a notification: Reason is one of
+// shown, disabled, rate_limited, no_foreground_client or busy.
+type NotifyResult struct {
+	Shown  bool   `json:"shown"`
+	Reason string `json:"reason"`
+}
+
+// Notify asks Herdr to show a notification and reports whether it was shown.
+// An accepted request is not a shown notification: toast delivery may be off.
+func (c *Client) Notify(ctx context.Context, title, body string, urgent bool) (NotifyResult, error) {
 	sound := "done"
 	if urgent {
 		sound = "request"
 	}
-	return c.Call(ctx, "notification.show", map[string]any{"title": title, "body": body, "sound": sound}, nil)
+	var r NotifyResult
+	err := c.Call(ctx, "notification.show", map[string]any{"title": title, "body": body, "sound": sound}, &r)
+	return r, err
+}
+
+// AgentExplainRule returns the id of the detection rule Herdr currently matches
+// for the agent and the state that rule implies. Both are empty when unknown.
+func (c *Client) AgentExplainRule(ctx context.Context, target string) (id, state string, err error) {
+	type rule struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	var r struct {
+		Explain struct {
+			MatchedRule *rule `json:"matched_rule"`
+		} `json:"explain"`
+	}
+	if err = c.Call(ctx, "agent.explain", map[string]any{"target": target}, &r); err != nil || r.Explain.MatchedRule == nil {
+		return "", "", err
+	}
+	return r.Explain.MatchedRule.ID, r.Explain.MatchedRule.State, nil
 }
 
 // NewTab creates a tab and returns its root pane.

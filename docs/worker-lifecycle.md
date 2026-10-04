@@ -69,6 +69,12 @@ failed
 
 Distinguish Woof lifecycle state from raw Herdr agent status where useful.
 
+`blocked` means Herdr recognized an approval or question UI. Woof does not
+answer it. Workers started by Woof get default launch permissions for their own
+coordination commands, and a block that persists is reported once per episode
+to the requester and then to the human; see
+[permissions-and-blocked-alerts.md](permissions-and-blocked-alerts.md).
+
 ## Completion/settlement
 
 Port the strong `herdr-orch` rule.

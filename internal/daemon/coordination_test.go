@@ -22,6 +22,9 @@ type fakeAgent struct {
 	mu           sync.Mutex
 	p            herdr.Pane
 	prompts      []string
+	notes        []string // notification.show bodies
+	notify       any      // notification.show result; shown when nil
+	explain      any      // agent.explain result; empty when nil
 	uncertain    bool
 	beforePrompt func()
 	beforeRead   func()
@@ -68,6 +71,7 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 					Method string `json:"method"`
 					Params struct {
 						Text string `json:"text"`
+						Body string `json:"body"`
 					} `json:"params"`
 				}
 				if err := json.Unmarshal(line, &req); err != nil {
@@ -95,7 +99,16 @@ func fixture(t *testing.T) (*Engine, *fakeAgent, model.Worker) {
 					}
 					result = map[string]bool{"accepted": true}
 				case "notification.show":
-					result = map[string]bool{"shown": true}
+					f.notes = append(f.notes, req.Params.Body)
+					result = map[string]any{"shown": true, "reason": "shown"}
+					if f.notify != nil {
+						result = f.notify
+					}
+				case "agent.explain":
+					result = map[string]any{}
+					if f.explain != nil {
+						result = f.explain
+					}
 				default:
 					result = map[string]any{}
 				}

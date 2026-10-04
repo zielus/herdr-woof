@@ -84,6 +84,7 @@ type lifecycleAgent struct {
 	process              *exec.Cmd
 	beforeTab            func(map[string]any)
 	namedFile            string
+	startedKind          string // agent kind reported after launch; "sleep" when empty
 	beforeInfo           func()
 	shellOnTab           bool
 }
@@ -176,6 +177,9 @@ func workerFixture(t *testing.T, withProcess bool) (*Engine, *lifecycleAgent, mo
 							f.pane.Name = &name
 							if f.shellOnTab {
 								kind := "sleep"
+								if f.startedKind != "" {
+									kind = f.startedKind
+								}
 								p.Agent = &kind
 								f.pane.Agent = &kind
 							}

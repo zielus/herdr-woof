@@ -49,12 +49,21 @@ func TestContinuousBlockedTimeoutResetsAndEscalationDeduplicates(t *testing.T) {
 	check(39000, false) // cumulative blocked time is 38s; continuous time is only 19s.
 	check(41000, true)
 	check(42000, true)
-	observe("working", 6, 43000)
-	observe("blocked", 7, 44000)
-	check(65000, true)
 	messages, err := list[model.Message](context.Background(), e.store, "messages", model.Scope{RunID: d.RunID})
 	if err != nil || len(messages) != 1 || messages[0].Kind != "escalation" {
-		t.Fatalf("reason repeated across ticks/episodes: %+v %v", messages, err)
+		t.Fatalf("reason repeated across ticks: %+v %v", messages, err)
+	}
+	// A new block episode in the same dispatch is debounced and reported again.
+	observe("working", 6, 43000)
+	observe("blocked", 7, 44000)
+	check(63000, true)
+	if messages, err = list[model.Message](context.Background(), e.store, "messages", model.Scope{RunID: d.RunID}); err != nil || len(messages) != 1 {
+		t.Fatalf("new block alerted before its own debounce: %+v %v", messages, err)
+	}
+	check(65000, true)
+	check(66000, true)
+	if messages, err = list[model.Message](context.Background(), e.store, "messages", model.Scope{RunID: d.RunID}); err != nil || len(messages) != 2 {
+		t.Fatalf("new block episode must alert exactly once: %+v %v", messages, err)
 	}
 	currentDispatch, _ := get[model.Dispatch](context.Background(), e.store, "dispatches", d.ID)
 	if !activeDispatch(currentDispatch) {

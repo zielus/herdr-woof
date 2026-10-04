@@ -176,7 +176,7 @@ worker idle + active dispatch + no done report
 → send nudge
 
 worker blocked too long
-→ emit escalation
+→ alert the requester once, then the human once
 
 message requiring response not acknowledged
 → wake/nudge according to policy
@@ -184,6 +184,15 @@ message requiring response not acknowledged
 pane disappeared
 → reconcile worker/dispatch
 ```
+
+A block is reported per episode, with or without a dispatch: the first alert
+after `--blocked-timeout` goes to the invoker of the run when one is available
+and to the human otherwise; a block already reported to a worker is escalated
+to the human once after `--blocked-escalation-timeout`. The event is
+`dispatch.escalated` when the worker has an active dispatch and
+`worker.escalated` otherwise, with `payload.reason` `continuously_blocked` or
+`blocked_unresolved`. Alerts only inform; they never settle, fail, nudge or
+redispatch. See [permissions-and-blocked-alerts.md](permissions-and-blocked-alerts.md).
 
 ## Mutation retry safety
 

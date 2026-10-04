@@ -1,6 +1,6 @@
 id = "woof"
 name = "Woof"
-version = "1.0.0"
+version = "1.1.0"
 min_herdr_version = "0.9.3"
 description = "Durable coordination for coding agents across Herdr sessions: workers, messages, dispatches, schedules. CLI: woof."
 platforms = ["macos", "linux"]
