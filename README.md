@@ -95,13 +95,14 @@ profiles:
   reviewer:
     agent: codex
     args: [--model, gpt-5.5, -c, model_reasoning_effort=high]
+    cwd: ~/dev/project
     description: Review using an explicitly selected model
     tags: [review]
 defaults:
   worker_profile: reviewer
 ```
 
-Choose arguments supported by your installed agent CLI. Only leading `~/` and `=~/` expand the home directory; `$VAR`, command substitutions and quotes remain literal. Unknown profile fields are errors. `woof profile roster --json` lists metadata without raw arguments; `woof profile show reviewer` shows the selected launch preset. OMP can be configured as a launch preset, but automatic input delivery currently waits because its prompt layout has no verified fixture.
+Choose arguments supported by your installed agent CLI. In arguments, only leading `~/` and `=~/` expand the home directory. The optional profile `cwd` accepts an absolute path, leading `~/`, or a path relative to the directory containing `WOOF_CONFIG`. `$VAR`, command substitutions, globs and quotes remain literal; no shell runs to resolve paths. Unknown profile fields are errors. `woof profile roster --json` lists metadata without raw arguments or cwd; `woof profile show reviewer` shows the configured launch preset, including its original cwd text. OMP can be configured as a launch preset, but automatic input delivery currently waits because its prompt layout has no verified fixture.
 
 Prompt safety requires faithful ANSI styling when a CLI uses placeholder text. Launch workers with color enabled: an inherited `NO_COLOR=1` can make Claude's empty placeholder indistinguishable from typed text, so Woof conservatively refuses delivery. Remove `NO_COLOR` from the Herdr server/agent launch environment and verify snapshot styling before retrying; Woof does not discard typed drafts to work around it.
 
@@ -124,6 +125,8 @@ woof worker adopt --workspace workspace_ID --pane w1:p7 --name reviewer
 woof worker show worker_ID --global
 woof worker read worker_ID --global --lines 100
 ```
+
+For a new worker, the launch directory is chosen from explicit `--cwd`, selected `--worktree`, profile `cwd`, then workspace cwd. A selected worktree conflicts with a different explicit `--cwd`; Woof rejects it. The effective directory must exist before a worker is reserved or a tab is created. An existing empty pane must report the same cwd. Adoption uses the live agent's cwd and identity; changing a profile affects future launches only. The resolved cwd is saved on the worker.
 
 Adoption requires an explicit live pane and verifies agent/session identity. To rebind an existing logical worker after inspection, supply its ID and the new live pane:
 

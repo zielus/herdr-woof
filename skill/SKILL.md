@@ -9,7 +9,7 @@ Woof owns durable coordination. Herdr runs agents. Use the `woof` CLI for every 
 
 ## Scope and profiles
 
-Injected `WOOF_*` context is validated by the daemon. Explicit `--session`, `--workspace`, `--worktree`, `--run`, or `--global` scope overrides inference. Use an explicit worker ID when a name could be ambiguous. `woof profile roster --json` shows the available presets; select `--profile` when starting a worker. A profile is a reusable raw-argument launch preset, separate from a worker's identity.
+Injected `WOOF_*` context is validated by the daemon. Explicit `--session`, `--workspace`, `--worktree`, `--run`, or `--global` scope overrides inference. Use an explicit worker ID when a name could be ambiguous. `woof profile roster --json` shows the available presets; select `--profile` when starting a worker. A profile is a reusable raw-argument launch preset, separate from a worker's identity. Its optional `cwd` is resolved for a new worker relative to the config file (or from `~/`), and `profile show` retains the configured text. Launch precedence is explicit `--cwd`, selected worktree, profile cwd, workspace cwd. A conflicting worktree and explicit cwd, missing directory, or mismatched existing pane fails before launch. Adoption keeps the verified live cwd; profile changes do not move running workers.
 
 After recovery, inspect the current worker binding before overriding stale injected identity. Paired `--as-worker ID --as-attachment ID` flags select the actor and clear inherited scope; explicit scope flags remain. The daemon still validates fresh attachment evidence for mutations.
 
