@@ -100,6 +100,10 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 		}
 		d.RunID = runID
 	}
+	actor := "worker"
+	if a.scheduleRun != "" {
+		actor = "schedule"
+	}
 	err = e.write(ctx, func(tx *store.Tx) error {
 		current, err := txGet[model.Worker](tx, "workers", w.ID)
 		if err != nil {
@@ -121,7 +125,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 			if err = tx.Put("runs", run.ID, run); err != nil {
 				return err
 			}
-			if err = tx.Event("run.created", dispatchScope(d), "worker", r.Caller.WorkerID, run); err != nil {
+			if err = tx.Event("run.created", dispatchScope(d), actor, r.Caller.WorkerID, run); err != nil {
 				return err
 			}
 		}
@@ -137,7 +141,7 @@ func (e *Engine) dispatch(ctx context.Context, r model.Request, a Args) (any, er
 		if err = tx.Put("operations", op.ID, op); err != nil {
 			return err
 		}
-		return tx.Event("dispatch.created", dispatchScope(d), "worker", r.Caller.WorkerID, d)
+		return tx.Event("dispatch.created", dispatchScope(d), actor, r.Caller.WorkerID, d)
 	})
 	if err != nil {
 		return nil, err
@@ -274,6 +278,9 @@ func (e *Engine) done(ctx context.Context, r model.Request, a Args) (any, error)
 	return d, err
 }
 func (e *Engine) settleRunTx(tx *store.Tx, d model.Dispatch) error {
+	if err := e.syncScheduleRunTx(tx, d); err != nil {
+		return err
+	}
 	run, err := txGet[model.Run](tx, "runs", d.RunID)
 	if err != nil {
 		return err

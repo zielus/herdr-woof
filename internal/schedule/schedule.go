@@ -330,6 +330,12 @@ func LocalZone() string {
 			}
 		}
 	}
+	// Debian-style hosts may copy /etc/localtime and name the zone here.
+	if data, err := os.ReadFile("/etc/timezone"); err == nil {
+		if name := zoneName(strings.TrimSpace(string(data))); name != "" {
+			return name
+		}
+	}
 	return "UTC"
 }
 

@@ -289,11 +289,12 @@ run_id nullable
 occurrence_key     t:<ms> | manual:<request-id> | missed:<ms>
 trigger
 action
-state              persisted | claimed | dispatching | dispatched | uncertain
-                   | failed | blocked | skipped | missed | cancelled
+state              persisted | claimed | dispatching | dispatched | settled
+                   | uncertain | failed | blocked | missed | cancelled
 reason nullable
 scheduled_for
 missed_count, missed_last nullable
+skipped_count, skipped_last nullable   coalesced overlap while outstanding
 attempts
 attempt_id nullable          operation receipt of the current dispatch attempt
 next_attempt_at nullable

@@ -30,7 +30,7 @@ const (
 	scheduleRetryMax    = 15 * time.Minute
 	scheduleMissedGrace = time.Minute
 	scheduleIdleWake    = 30 * time.Second
-	scheduleDueLimit    = 100000
+	scheduleDueLimit    = 10000
 )
 
 var scheduleName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -76,6 +76,9 @@ func (e *Engine) advance(tx *store.Tx, sc *model.Schedule, expr *schedule.Expr, 
 	next, err := expr.Next(now, time.UnixMilli(sc.AnchorAt))
 	if err != nil {
 		sc.Enabled = false
+		if err := e.cancelOutstandingTx(tx, *sc, "schedule has no future occurrence", actorKind, actorID); err != nil {
+			return err
+		}
 		return tx.Event("schedule.disabled", scheduleScope(*sc), actorKind, actorID, map[string]any{"schedule": sc, "reason": "no future occurrence: " + err.Error()})
 	}
 	sc.NextRunAt = next.UnixMilli()
@@ -222,6 +225,9 @@ func (e *Engine) resolveSchedule(ctx context.Context, ref string, s model.Scope)
 }
 
 func (e *Engine) scheduleList(ctx context.Context, s model.Scope, all bool) ([]model.Schedule, error) {
+	// A worker caller's inferred run/worktree describe its current work, not the
+	// schedules that target it; filter by session, workspace and worker only.
+	s.RunID, s.WorktreeID = "", ""
 	scheds, err := list[model.Schedule](ctx, e.store, "schedules", s)
 	if err != nil {
 		return nil, err
@@ -458,13 +464,12 @@ func (e *Engine) createRunTx(tx *store.Tx, sc model.Schedule, run model.Schedule
 	return run, tx.Event("schedule.run."+run.State, scheduleEventScope(sc, run), actorKind, actorID, run)
 }
 
+// blockRun backs off with the occurrence's age (30 s up to 15 min); an idle
+// observation of the target still retries immediately.
 func (e *Engine) blockRun(run *model.ScheduleRun, reason string) {
 	run.State, run.Reason = "blocked", reason
-	backoff := scheduleRetryMin
-	for i := 1; i < run.Attempts && backoff < scheduleRetryMax; i++ {
-		backoff *= 2
-	}
-	backoff = min(backoff, scheduleRetryMax)
+	age := time.Duration(e.now()-run.ClaimedAt) * time.Millisecond
+	backoff := min(max(age/2, scheduleRetryMin), scheduleRetryMax)
 	run.NextAttemptAt = e.now() + backoff.Milliseconds()
 	run.UpdatedAt = e.now()
 }
@@ -564,8 +569,11 @@ func (e *Engine) claimDue(ctx context.Context, id string) (model.ScheduleRun, er
 		if err != nil {
 			sc.Enabled, sc.NextRunAt, sc.NextRunLocal = false, 0, ""
 			sc.Revision++
-			if err := tx.Put("schedules", sc.ID, sc); err != nil {
-				return err
+			if x := e.cancelOutstandingTx(tx, sc, "schedule expression is no longer valid", "daemon", ""); x != nil {
+				return x
+			}
+			if x := tx.Put("schedules", sc.ID, sc); x != nil {
+				return x
 			}
 			return tx.Event("schedule.disabled", scheduleScope(sc), "daemon", "", map[string]any{"schedule": sc, "reason": err.Error()})
 		}
@@ -582,36 +590,60 @@ func (e *Engine) claimDue(ctx context.Context, id string) (model.ScheduleRun, er
 		missedLast := time.Time{}
 		if !fire {
 			missed, missedLast = due.Count, due.Latest
-		} else if missed > 0 {
+		} else if missed > 0 && !due.Capped {
 			before, err := expr.Due(due.First, due.Latest.Add(-time.Millisecond), anchor, scheduleDueLimit)
 			if err != nil {
 				return err
 			}
 			missedLast = before.Latest
 		}
+		missedKey := fmt.Sprintf("missed:%d", due.First.UnixMilli())
+		if _, exists, err := tx.ScheduleRunByKey(sc.ID, missedKey); err != nil {
+			return err
+		} else if exists {
+			missed = 0
+		}
 		if missed > 0 {
 			reason := fmt.Sprintf("daemon was not running or busy for %d occurrence(s)", missed)
 			if due.Capped {
 				reason = fmt.Sprintf("at least %d occurrences were missed", missed)
 			}
-			if _, err := e.createRunTx(tx, sc, model.ScheduleRun{OccurrenceKey: fmt.Sprintf("missed:%d", due.First.UnixMilli()), Trigger: "scheduled", State: "missed", Reason: reason, ScheduledFor: due.First.UnixMilli(), MissedCount: missed, MissedLast: missedLast.UnixMilli()}, "daemon", ""); err != nil {
+			if _, err := e.createRunTx(tx, sc, model.ScheduleRun{OccurrenceKey: missedKey, Trigger: "scheduled", State: "missed", Reason: reason, ScheduledFor: due.First.UnixMilli(), MissedCount: missed, MissedLast: missedLast.UnixMilli()}, "daemon", ""); err != nil {
 				return err
 			}
 		}
-		if fire {
-			run := model.ScheduleRun{OccurrenceKey: fmt.Sprintf("t:%d", due.Latest.UnixMilli()), Trigger: "scheduled", ScheduledFor: due.Latest.UnixMilli()}
+		key := fmt.Sprintf("t:%d", due.Latest.UnixMilli())
+		// After a clock step back and re-enable, a series can return to an
+		// occurrence already claimed. It is never claimed twice; the schedule
+		// still advances so the loop cannot stall on it.
+		_, exists, err := tx.ScheduleRunByKey(sc.ID, key)
+		if err != nil {
+			return err
+		}
+		if fire && !exists {
 			outstanding, err := tx.ScheduleRunsInState(sc.ID, outstandingRuns...)
 			if err != nil {
 				return err
 			}
 			if len(outstanding) > 0 {
-				run.State = "skipped"
-				run.Reason = fmt.Sprintf("overlap: occurrence %s is still %s", outstanding[0].ID, outstanding[0].State)
-			}
-			if claimed, err = e.createRunTx(tx, sc, run, "daemon", ""); err != nil {
+				// Overlap is coalesced onto the outstanding occurrence so a long
+				// block cannot add one history row per period.
+				held := outstanding[0]
+				held.SkippedCount++
+				held.SkippedLast = due.Latest.UnixMilli()
+				held.UpdatedAt = e.now()
+				if err := tx.Put("schedule_runs", held.ID, held); err != nil {
+					return err
+				}
+				if err := tx.Event("schedule.run.skipped", scheduleEventScope(sc, held), "daemon", "", map[string]any{"run": held, "skipped_for": due.Latest.UnixMilli(), "reason": "overlap: occurrence " + held.ID + " is still " + held.State}); err != nil {
+					return err
+				}
+			} else if claimed, err = e.createRunTx(tx, sc, model.ScheduleRun{OccurrenceKey: key, Trigger: "scheduled", ScheduledFor: due.Latest.UnixMilli()}, "daemon", ""); err != nil {
 				return err
+			} else {
+				sc.LastRunID = claimed.ID
 			}
-			sc.LastRunAt, sc.LastRunID = due.Latest.UnixMilli(), claimed.ID
+			sc.LastRunAt = due.Latest.UnixMilli()
 		}
 		if err := e.advance(tx, &sc, expr, now, "daemon", ""); err != nil {
 			return err
@@ -745,6 +777,32 @@ func (e *Engine) retryMessageRun(ctx context.Context, sc model.Schedule, run mod
 	e.afterClaim(persisted)
 }
 
+// syncScheduleRunTx follows a scheduled dispatch to its final state in the
+// transaction that settles or fails it, so occurrence history and events never
+// lag the dispatch. Settlement itself is decided only by the dispatch rules.
+func (e *Engine) syncScheduleRunTx(tx *store.Tx, d model.Dispatch) error {
+	if d.ScheduleRunID == "" || (d.Status != "settled" && d.Status != "failed") {
+		return nil
+	}
+	run, err := txGet[model.ScheduleRun](tx, "schedule_runs", d.ScheduleRunID)
+	if err != nil {
+		return err
+	}
+	if run.DispatchID != d.ID || (run.State != "dispatched" && run.State != "uncertain") {
+		return nil
+	}
+	sc, err := txGet[model.Schedule](tx, "schedules", run.ScheduleID)
+	if err != nil {
+		return err
+	}
+	run.State, run.Reason, run.Error = d.Status, d.Outcome, ""
+	run.UpdatedAt, run.FinishedAt = e.now(), e.now()
+	if err := tx.Put("schedule_runs", run.ID, run); err != nil {
+		return err
+	}
+	return tx.Event("schedule.run."+run.State, scheduleEventScope(sc, run), "daemon", "", run)
+}
+
 var permanentDispatchRefusals = map[string]bool{"not_found": true, "invalid_args": true, "invalid_scope": true}
 
 // settleAttempt classifies an attempt from persisted evidence, never from the
@@ -791,10 +849,17 @@ func (e *Engine) classifyAttemptTx(tx *store.Tx, run *model.ScheduleRun, dispatc
 			if op.State == "accepted" {
 				return e.finishTx(tx, op.ID, nil, problem("uncertain", "%s", run.Error), "uncertain")
 			}
+			return nil
 		case "failed":
 			run.State, run.Reason = "failed", d.Outcome
+		case "settled":
+			run.State, run.Reason, run.Error = "settled", d.Outcome, ""
 		default:
 			run.State, run.Reason, run.Error = "dispatched", "", ""
+		}
+		// Later lifecycle evidence (report, failure) proves the prompt landed.
+		if op.State == "accepted" || op.State == "uncertain" {
+			return e.finishTx(tx, op.ID, d, nil, "completed")
 		}
 		return nil
 	}
@@ -806,7 +871,7 @@ func (e *Engine) classifyAttemptTx(tx *store.Tx, run *model.ScheduleRun, dispatc
 	if permanentDispatchRefusals[code] {
 		run.State, run.Reason, run.FinishedAt = "failed", code, e.now()
 	} else {
-		e.blockRun(run, code+": "+dispatchErr.Error())
+		e.blockRun(run, dispatchErr.Error())
 	}
 	// No intent committed, so no prompt was sent: the receipt is a certain refusal.
 	return e.finishTx(tx, op.ID, nil, dispatchErr, "failed")
@@ -869,12 +934,14 @@ func (e *Engine) scheduleOnce(ctx context.Context) time.Duration {
 		log.Printf("scheduler: %v", err)
 		return scheduleIdleWake
 	}
+	failed := map[string]bool{}
 	for _, sc := range scheds {
 		if !sc.Enabled || sc.State != "active" || sc.NextRunAt == 0 || sc.NextRunAt > e.now() {
 			continue
 		}
 		run, err := e.claimDue(ctx, sc.ID)
 		if err != nil {
+			failed[sc.ID] = true
 			log.Printf("schedule %s: claim: %v", sc.ID, err)
 			continue
 		}
@@ -901,7 +968,10 @@ func (e *Engine) scheduleOnce(ctx context.Context) time.Duration {
 	scheds, err = list[model.Schedule](ctx, e.store, "schedules", model.Scope{Global: true})
 	if err == nil {
 		for _, sc := range scheds {
-			if sc.Enabled && sc.State == "active" && sc.NextRunAt != 0 {
+			if failed[sc.ID] {
+				// A failing claim backs off instead of spinning on a past due time.
+				wake = min(wake, scheduleRetryMin)
+			} else if sc.Enabled && sc.State == "active" && sc.NextRunAt != 0 {
 				wake = min(wake, time.Duration(sc.NextRunAt-e.now())*time.Millisecond)
 			}
 		}

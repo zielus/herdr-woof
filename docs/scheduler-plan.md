@@ -39,7 +39,9 @@ coalesced missed range.
 
 States: `persisted` (message action committed atomically with the claim),
 `claimed` → `dispatching` → `dispatched` | `uncertain` | `failed`, `blocked`
-(no external effect; retried), `skipped` (overlap), `missed`, `cancelled`.
+(no external effect; retried), `missed`, `cancelled`; a dispatch occurrence
+follows its dispatch to `settled`/`failed`. Overlap is coalesced onto the
+outstanding occurrence (`skipped_count`) rather than stored as rows (review fix).
 
 Dispatch execution: each attempt has its own operation receipt. The existing
 dispatch intent transaction links the receipt to the dispatch before any prompt.
@@ -85,5 +87,5 @@ CLI: `woof schedule add --name N --to WORKER (--cron EXPR | --every DUR) [--tz Z
 Events: `schedule.created`, `schedule.enabled`, `schedule.disabled`,
 `schedule.removed`, and occurrence events `schedule.run.<state>` for
 `persisted`, `claimed`, `dispatching`, `dispatched`, `uncertain`, `failed`,
-`blocked`, `skipped`, `missed`, `cancelled`. Scope: schedule session/workspace,
+`blocked`, `skipped` (coalesced overlap), `missed`, `cancelled`, `settled`. Scope: schedule session/workspace,
 target worker (and its worktree), plus the dispatch run when known.

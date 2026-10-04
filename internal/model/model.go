@@ -282,6 +282,8 @@ type ScheduleRun struct {
 	ScheduledForLocal string   `json:"scheduled_for_local"`
 	MissedCount       int64    `json:"missed_count,omitempty"`
 	MissedLast        int64    `json:"missed_last,omitempty"`
+	SkippedCount      int64    `json:"skipped_count,omitempty"`
+	SkippedLast       int64    `json:"skipped_last,omitempty"`
 	Attempts          int      `json:"attempts"`
 	AttemptID         string   `json:"attempt_id,omitempty"`
 	NextAttemptAt     int64    `json:"next_attempt_at,omitempty"`

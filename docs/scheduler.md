@@ -38,7 +38,8 @@ until it is disabled or removed. An explicit worker ID from another session or
 workspace is refused (`invalid_scope`).
 
 `list` is scoped like other Woof reads: a worker caller without explicit scope
-sees schedules that target it; pass `--workspace`/`--session` or `--global` to
+sees schedules that target it (its inferred run/worktree do not narrow the
+list); pass `--workspace`/`--session` or `--global` to
 see more. `show`/`history`/mutations of a schedule outside the selected
 session/workspace return `not_found`.
 
@@ -60,7 +61,7 @@ session/workspace return `not_found`.
 ## Time zones and daylight saving
 
 Each schedule stores one IANA zone. `--tz` sets it; otherwise the daemon's zone
-(`$TZ`, then `/etc/localtime`, then `UTC`) is resolved and persisted at
+(`$TZ`, then the `/etc/localtime` link, then `/etc/timezone`, then `UTC`) is resolved and persisted at
 creation, so later host changes do not move the schedule. Zone rules come from
 the Go embedded time zone database, identical on every host.
 
@@ -82,29 +83,44 @@ offset in the schedule zone, for display only.
 Every occurrence is a durable `schedule_runs` row with a unique
 `(schedule_id, occurrence_key)` (`t:<ms>` for time, `manual:<request-id>`,
 `missed:<ms>`). The daemon claims an occurrence, records its intent and
-advances the schedule in one transaction. Concurrent loop passes, manual runs
-and restarts therefore claim a given occurrence at most once; a second claim is
-a refused write. This is an at-most-one-claim guarantee per occurrence key,
-not an exactly-once delivery claim.
+advances the schedule in one transaction. Claims are serialized by the single
+writer and re-check the schedule's due time inside the transaction; an
+occurrence key that already exists (for example after a clock step back and
+re-enable) is never claimed again, and the schedule still advances. The unique
+index is a backstop. This is an at-most-one-claim guarantee per occurrence
+key, not an exactly-once delivery claim.
 
 | State | Meaning |
 | --- | --- |
 | `persisted` | Message action: the Woof message and its delivery were committed with the claim. Delivery/wakeup progress lives on the delivery; a delivered message is not completed work. |
 | `claimed` | Dispatch action recorded; no attempt yet. |
 | `dispatching` | An attempt receipt exists; a prompt may be in progress. |
-| `dispatched` | The dispatch prompt was accepted. Completion is the dispatch's own settlement, which still requires an explicit `done` report **and** matching turn-end evidence. |
+| `dispatched` | The dispatch prompt was accepted and the dispatch has not finished. |
+| `settled` | The dispatch settled: an explicit `done` report **and** matching turn-end evidence. `reason` is the reported outcome (`done` or `failed`). |
 | `uncertain` | The dispatch prompt outcome is unknown. Never resent; inspect `dispatch show` and `operation show`, then resolve explicitly with `operation resolve`. |
-| `failed` | Certain failure (for example the prompt was refused, or the target was invalid). |
+| `failed` | Certain failure: the prompt was refused, the dispatch was failed or resolved as failed, or the target was invalid. |
 | `blocked` | Nothing was sent; the reason is recorded and the attempt is retried. |
-| `skipped` | Due while an earlier occurrence was still `claimed`/`dispatching`/`blocked` (overlap). |
 | `missed` | Coalesced occurrences that came due while the daemon was not running. |
 | `cancelled` | A `claimed` or `blocked` occurrence when the schedule was disabled or removed. |
+
+A dispatch occurrence follows its dispatch: the transaction that settles or
+fails the dispatch also moves the occurrence to `settled`/`failed` and emits
+the event. Resolving an uncertain attempt as `failed` frees the worker and
+fails the occurrence; it is not retried, and the next occurrence starts fresh.
+Resolving as `completed` records that the prompt landed, but the dispatch keeps
+waiting for a report and turn end, so later occurrences stay blocked by
+`dispatch_active` until it settles or is failed.
+
+Overlap is coalesced: while an occurrence is `claimed`, `dispatching` or
+`blocked`, later due times increment its `skipped_count`/`skipped_last` and
+emit `schedule.run.skipped` instead of adding rows or queueing work.
 
 `schedule history` lists occurrences newest first and joins the current
 message, deliveries, dispatch and attempt receipt. `schedule show` adds the
 next five occurrences. Events are append-only: `schedule.created`,
 `schedule.enabled`, `schedule.disabled`, `schedule.removed` and
-`schedule.run.<state>`, scoped to the schedule's session, workspace and target
+`schedule.run.<state>` (including `schedule.run.skipped` for coalesced
+overlap), scoped to the schedule's session, workspace and target
 worker (plus the dispatch run when known), so `woof events follow` and
 `woof wait --events schedule.run.dispatched` observe them.
 
@@ -136,8 +152,8 @@ schedule starts a fresh series; disabled periods are not caught up.
   `dispatch_active`, `stale_attachment`, `subscription_not_ready`, ...) and
   nothing is sent. Offline/lost/terminal workers are recorded as
   `target_unavailable`/`target_terminal` without an attempt.
-- Blocked occurrences retry with exponential backoff (30 s up to 15 min) and
-  immediately when the target worker is observed idle. They stay visible until
+- Blocked occurrences retry with a backoff that grows with their age (30 s up
+  to 15 min) and immediately when the target worker is observed idle. They stay visible until
   they run or the schedule is disabled/removed (→ `cancelled`).
 - Starting stopped workers, granting permissions and answering startup dialogs
   are out of scope; the schedule only uses existing logical workers.
@@ -154,6 +170,10 @@ evidence:
 - linked dispatch still `sending`/`uncertain` → `uncertain`, never resent (the
   watchdog also escalates the dispatch);
 - linked dispatch active or settled → `dispatched`.
+
+A `schedule run` request replayed with the same request ID returns its
+receipt, which records the claimed occurrence; read the live outcome with
+`schedule history`.
 
 `woofd --scheduler=false` keeps schedules durable but does not fire them.
 

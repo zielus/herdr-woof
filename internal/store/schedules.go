@@ -11,12 +11,22 @@ import (
 // (MIT). Occurrence rows are claimed through Tx.Put with the unique
 // (schedule_id, occurrence_key) index; these helpers only read.
 
-// ScheduleRuns returns one schedule's occurrences, newest claim first.
+// ScheduleRunByKey reports whether an occurrence key was already claimed.
+func (t *Tx) ScheduleRunByKey(scheduleID, key string) (model.ScheduleRun, bool, error) {
+	runs, err := scheduleRuns(t.ctx, t.sql, `SELECT record_json FROM schedule_runs WHERE schedule_id=? AND occurrence_key=?`, scheduleID, key)
+	if err != nil || len(runs) == 0 {
+		return model.ScheduleRun{}, false, err
+	}
+	return runs[0], true, nil
+}
+
+// ScheduleRuns returns one schedule's occurrences, newest claim first. Rows are
+// only inserted when claimed, so rowid order is claim order.
 func (s *Store) ScheduleRuns(ctx context.Context, scheduleID string, limit int) ([]model.ScheduleRun, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	return scheduleRuns(ctx, s.db, `SELECT record_json FROM schedule_runs WHERE schedule_id=? ORDER BY json_extract(record_json,'$.claimed_at') DESC, json_extract(record_json,'$.scheduled_for') DESC, id DESC LIMIT ?`, scheduleID, limit)
+	return scheduleRuns(ctx, s.db, `SELECT record_json FROM schedule_runs WHERE schedule_id=? ORDER BY rowid DESC LIMIT ?`, scheduleID, limit)
 }
 
 // ScheduleRunsInState returns occurrences in any of states; an empty

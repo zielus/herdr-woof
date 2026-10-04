@@ -302,11 +302,18 @@ func TestScheduleBusyWorkerBlocksThenRetriesWithoutInterrupting(t *testing.T) {
 	if op.State != "failed" || op.ErrorCode != "worker_busy" || op.ResourceKind != "" {
 		t.Fatalf("pre-intent receipt %+v", op)
 	}
-	// A second due occurrence while the first is blocked is recorded, not queued.
-	clock.Add(5 * time.Minute.Milliseconds())
-	e.scheduleOnce(context.Background())
-	if skipped := runsIn(t, e, sc.ID, "skipped"); len(skipped) != 1 || !strings.Contains(skipped[0].Reason, run.ID) {
-		t.Fatalf("overlap not recorded: %+v", runsOf(t, e, sc.ID))
+	// Due occurrences while the first is blocked are coalesced onto it, not queued.
+	for i := 0; i < 3; i++ {
+		clock.Add(5 * time.Minute.Milliseconds())
+		e.scheduleOnce(context.Background())
+	}
+	held := runsOf(t, e, sc.ID)
+	if len(held) != 1 || held[0].SkippedCount != 3 || held[0].SkippedLast != clock.Load() {
+		t.Fatalf("overlap not coalesced: %+v", held)
+	}
+	evs, _ := e.store.Events(context.Background(), 0, model.Scope{Global: true}, []string{"schedule.run.skipped"}, 0)
+	if len(evs) != 3 {
+		t.Fatalf("skip events %d", len(evs))
 	}
 	// Lifecycle evidence (busy -> idle) wakes the scheduler for this worker.
 	seq := uint64(4)
@@ -611,7 +618,7 @@ func TestScheduleUncertainDispatchIsNeverResent(t *testing.T) {
 	if got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", run.ID); got.State != "uncertain" {
 		t.Fatalf("run changed %+v", got)
 	}
-	if blocked := runsIn(t, e, sc.ID, "blocked"); len(blocked) != 1 || !strings.HasPrefix(blocked[0].Reason, "dispatch_active") {
+	if blocked := runsIn(t, e, sc.ID, "blocked"); len(blocked) != 1 || !strings.HasPrefix(blocked[0].Reason, "dispatch_active") || blocked[0].SkippedCount != 2 {
 		t.Fatalf("later occurrences %+v", runsOf(t, e, sc.ID))
 	}
 }
@@ -740,5 +747,161 @@ func TestScheduleIsolationAcrossTwoSessions(t *testing.T) {
 	evs, _ := e.store.Events(context.Background(), 0, model.Scope{SessionID: "s_b"}, []string{"schedule.created"}, 0)
 	if len(evs) != 1 || evs[0].SessionID != "s_b" {
 		t.Fatalf("session B events %+v", evs)
+	}
+}
+
+func TestScheduleClaimCollisionAdvancesWithoutSpinning(t *testing.T) {
+	e, _, _ := fixture(t)
+	nine := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	clock := schedClock(e, nine.Add(-time.Minute))
+	sc := addSchedule(t, e, Args{Name: "nine", To: "alice", Cron: "0 9 * * *", Timezone: "UTC", Body: "b"})
+	clock.Store(nine.UnixMilli())
+	e.scheduleOnce(context.Background())
+	// The clock steps back and the schedule is re-enabled: the series returns
+	// to the occurrence that was already claimed.
+	clock.Store(nine.Add(-2 * time.Minute).UnixMilli())
+	for _, op := range []string{"schedule.disable", "schedule.enable"} {
+		if _, err := schedReq(t, e, op, scopeA, Args{ID: sc.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if next := reload(t, e, sc.ID).NextRunAt; next != nine.UnixMilli() {
+		t.Fatalf("precondition: next %d", next)
+	}
+	clock.Store(nine.UnixMilli())
+	wake := e.scheduleOnce(context.Background())
+	if runs := runsOf(t, e, sc.ID); len(runs) != 1 {
+		t.Fatalf("occurrence claimed twice: %+v", runs)
+	}
+	if next := reload(t, e, sc.ID).NextRunAt; next != nine.AddDate(0, 0, 1).UnixMilli() {
+		t.Fatalf("schedule stalled at %d", next)
+	}
+	if wake < time.Second {
+		t.Fatalf("loop would spin: wake %v", wake)
+	}
+}
+
+func TestScheduledDispatchOccurrenceFollowsSettlementAndResolution(t *testing.T) {
+	e, f, w := fixture(t)
+	clock := schedClock(e, time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC))
+	sc := addSchedule(t, e, Args{Name: "s", To: "alice", Cron: "@every 1h", Spec: "task"})
+	v, err := schedReq(t, e, "schedule.run", scopeA, Args{ID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := v.(model.ScheduleRun)
+	head, _ := e.store.Head(context.Background())
+	if _, err := call(t, e, "done", Args{Dispatch: first.DispatchID, Attachment: w.AttachmentID, Body: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", first.ID); got.State != "dispatched" {
+		t.Fatalf("report alone moved occurrence: %+v", got)
+	}
+	setObservation(t, e, f, w, "working", 3, w.CompletionSeq)
+	seq := uint64(4)
+	setObservation(t, e, f, w, "idle", 4, &seq)
+	got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", first.ID)
+	if got.State != "settled" || got.Reason != "done" {
+		t.Fatalf("occurrence did not follow settlement: %+v", got)
+	}
+	if evs, _ := e.store.Events(context.Background(), head, model.Scope{Global: true}, []string{"schedule.run.settled"}, 0); len(evs) != 1 {
+		t.Fatalf("settled events %d", len(evs))
+	}
+
+	// An uncertain prompt resolved as failed frees the worker. The uncertain
+	// occurrence becomes failed and is never retried; only the next occurrence
+	// sends a new prompt.
+	f.mu.Lock()
+	f.uncertain = true
+	f.mu.Unlock()
+	v, err = schedReq(t, e, "schedule.run", scopeA, Args{ID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := v.(model.ScheduleRun)
+	if second.State != "uncertain" || promptCount(f) != 2 {
+		t.Fatalf("second %+v prompts %d", second, promptCount(f))
+	}
+	f.mu.Lock()
+	f.uncertain = false
+	f.mu.Unlock()
+	if _, err := call(t, e, "operation.resolve", Args{ID: second.AttemptID, Resolution: "failed", Reason: "prompt never appeared in the pane"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", second.ID); got.State != "failed" {
+		t.Fatalf("resolution not reflected: %+v", got)
+	}
+	for i := 0; i < 3; i++ {
+		e.kickScheduler(w.ID)
+		e.scheduleOnce(context.Background())
+	}
+	if promptCount(f) != 2 {
+		t.Fatalf("resolved occurrence was retried: %d prompts", promptCount(f))
+	}
+	clock.Add(time.Hour.Milliseconds())
+	e.scheduleOnce(context.Background())
+	third := waitRun(t, e, reload(t, e, sc.ID).LastRunID, "dispatched")
+	if third.ID == second.ID || promptCount(f) != 3 {
+		t.Fatalf("next occurrence %+v prompts %d", third, promptCount(f))
+	}
+}
+
+func TestScheduleRecoveryClassifiesLandedDispatch(t *testing.T) {
+	e, _, w := fixture(t)
+	schedClock(e, time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC))
+	sc := addSchedule(t, e, Args{Name: "landed", To: "alice", Cron: "@daily", Spec: "task"})
+	d := mustDispatchSending(t, e, w, sc)
+	if err := e.write(context.Background(), func(tx *store.Tx) error {
+		current, err := txGet[model.Dispatch](tx, "dispatches", d.ID)
+		if err != nil {
+			return err
+		}
+		current.Status = "active"
+		return tx.Put("dispatches", d.ID, current)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.recoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := get[model.ScheduleRun](context.Background(), e.store, "schedule_runs", d.ScheduleRunID)
+	op, _ := get[model.Operation](context.Background(), e.store, "operations", run.AttemptID)
+	if run.State != "dispatched" || run.DispatchID != d.ID || op.State != "completed" {
+		t.Fatalf("landed dispatch: run %+v receipt %+v", run, op)
+	}
+}
+
+func TestScheduleWorkerCallerSeesOwnSchedulesWhileRunScoped(t *testing.T) {
+	e, _, w := fixture(t)
+	sc := addSchedule(t, e, Args{Name: "own", To: "alice", Cron: "@daily", Body: "b"})
+	mustDispatch(t, e, w) // gives the worker an inferred run scope
+	raw, _ := json.Marshal(Args{})
+	v, err := e.Handle(context.Background(), model.Request{Version: model.Protocol, Op: "schedule.list", Caller: model.Caller{WorkerID: w.ID, AttachmentID: w.AttachmentID}, Args: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.([]model.Schedule); len(got) != 1 || got[0].ID != sc.ID {
+		t.Fatalf("worker list %+v", got)
+	}
+}
+
+func TestSchedulerLoopWakesOnKick(t *testing.T) {
+	e, _, _ := fixture(t)
+	start := time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC)
+	clock := schedClock(e, start)
+	sc := addSchedule(t, e, Args{Name: "loop", To: "alice", Cron: "@every 1h", Body: "b"})
+	e.background(e.scheduler)
+	time.Sleep(20 * time.Millisecond)
+	if len(runsOf(t, e, sc.ID)) != 0 {
+		t.Fatal("fired early")
+	}
+	clock.Store(start.Add(time.Hour).UnixMilli())
+	e.kickScheduler("")
+	deadline := time.Now().Add(2 * time.Second)
+	for len(runsOf(t, e, sc.ID)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("loop did not claim after kick")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
