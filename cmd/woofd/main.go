@@ -33,7 +33,7 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err = daemon.Run(ctx, daemon.Options{Paths: p, WatchdogInterval: *interval, IdleTimeout: *idle, QuietTimeout: *quiet, BlockedTimeout: *blocked, BlockedEscalationTimeout: *blockedEscalation, SchedulerDisabled: !*scheduler}); err != nil {
+	if err = daemon.Run(ctx, daemon.Options{Paths: p, WatchdogInterval: *interval, IdleTimeout: *idle, QuietTimeout: *quiet, BlockedTimeout: *blocked, BlockedEscalationTimeout: *blockedEscalation, SchedulerDisabled: !*scheduler, OSNotify: daemon.OSNotify}); err != nil {
 		fmt.Fprintln(os.Stderr, "woofd:", err)
 		os.Exit(1)
 	}

@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"github.com/zielus/herdr-woof-v2/internal/herdr"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 	"github.com/zielus/herdr-woof-v2/internal/store"
+	"log"
+	"regexp"
 	"time"
 )
 
@@ -253,17 +256,58 @@ func (e *Engine) escalate(ctx context.Context, d model.Dispatch, reason string) 
 		e.background(func() { e.processInbox(recipient) })
 	}
 	if fresh {
-		c, x := e.sessionClient(d.SessionID)
-		if x == nil {
-			e.background(func() {
-				ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
-				defer cancel()
-				_ = c.Notify(ctx, "Woof needs attention", d.ID+": "+reason, reason != "idle_without_report")
-			})
-		}
+		e.notifyHuman(d.SessionID, d.ID+": "+reason, reason != "idle_without_report")
 	}
 	return nil
 }
+
+// notifyHuman asks Herdr for one notification per alert. Herdr may accept the
+// request without showing anything (toast delivery off, no foreground client);
+// that is logged and handed once to the local OS fallback instead of dropped.
+func (e *Engine) notifyHuman(sessionID, body string, urgent bool) {
+	const title = "Woof needs attention"
+	e.background(func() {
+		ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
+		defer cancel()
+		reason := ""
+		c, err := e.sessionClient(sessionID)
+		if err == nil {
+			var shown herdr.NotifyResult
+			if shown, err = c.Notify(ctx, title, body, urgent); err == nil && shown.Shown {
+				return
+			}
+			reason = shown.Reason
+		}
+		if err != nil {
+			reason = err.Error()
+		}
+		log.Printf("human notification not shown by Herdr (%s): %s", reason, body)
+		if e.opts.OSNotify == nil {
+			return
+		}
+		if err = e.opts.OSNotify(e.ctx, title, body); err != nil {
+			log.Printf("OS notification fallback: %v", err)
+		}
+	})
+}
+
+// blockedRule best-effort reads the id of the Herdr detection rule behind a
+// block. It is quoted verbatim in the alert and never interpreted.
+func (e *Engine) blockedRule(ctx context.Context, w model.Worker) string {
+	c, err := e.sessionClient(w.SessionID)
+	if err != nil || w.PaneID == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	id, state, err := c.AgentExplainRule(ctx, w.PaneID)
+	if err != nil || state != "blocked" || !ruleID.MatchString(id) {
+		return ""
+	}
+	return id
+}
+
+var ruleID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 // escalationTx persists one daemon escalation, addressed to the candidate worker
 // when it is available and to the human otherwise; delivery.WorkerID tells which.
@@ -306,6 +350,8 @@ func (e *Engine) blockedDue(w model.Worker) (first, human bool) {
 // never answered and no dispatch is settled, failed, nudged or redispatched.
 func (e *Engine) escalateBlocked(ctx context.Context, w model.Worker) error {
 	var recipient, note string
+	// Read outside the transaction; a stale or missing rule only omits a sentence.
+	rule := e.blockedRule(ctx, w)
 	err := e.write(ctx, func(tx *store.Tx) error {
 		current, err := txGet[model.Worker](tx, "workers", w.ID)
 		if err != nil {
@@ -349,6 +395,9 @@ func (e *Engine) escalateBlocked(ctx context.Context, w model.Worker) error {
 		who := fmt.Sprintf("Worker %s (%s)", current.Name, current.ID)
 		blockedFor := (time.Duration(e.now()-current.BlockedAt) * time.Millisecond).Round(time.Second)
 		m.Body = fmt.Sprintf("%s needs attention: Herdr has reported it blocked for %s, which usually means an approval or question UI is waiting for input; Woof cannot see which. Location: %s. Inspect: %s. Woof will not answer the prompt and will not settle, fail or redispatch anything.", who, blockedFor, where, inspect)
+		if rule != "" && current.PaneID == w.PaneID {
+			m.Body += " Herdr detection rule: " + rule + "."
+		}
 		reason, state := "continuously_blocked", "blocked"
 		if human {
 			reason, state, candidate = "blocked_unresolved", "still blocked", ""
@@ -403,13 +452,7 @@ func (e *Engine) escalateBlocked(ctx context.Context, w model.Worker) error {
 	if recipient != "" {
 		e.background(func() { e.processInbox(recipient) })
 	}
-	if c, x := e.sessionClient(w.SessionID); x == nil {
-		e.background(func() {
-			ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
-			defer cancel()
-			_ = c.Notify(ctx, "Woof needs attention", note, true)
-		})
-	}
+	e.notifyHuman(w.SessionID, note, true)
 	return nil
 }
 func (e *Engine) humanEscalationTx(tx *store.Tx, s model.Scope, body string) error {

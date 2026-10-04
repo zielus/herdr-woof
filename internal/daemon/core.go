@@ -77,6 +77,9 @@ type Options struct {
 	Now                      func() time.Time
 	HerdrFactory             func(string) *herdr.Client
 	SchedulerDisabled        bool
+	// OSNotify is the local fallback used when Herdr reports that a human
+	// notification was not shown. Nil disables it; woofd sets OSNotify.
+	OSNotify func(ctx context.Context, title, body string) error
 }
 
 type sessionRuntime struct {
