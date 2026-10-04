@@ -27,6 +27,14 @@ Esc returns. Below 60 columns or 16 rows a minimum-size notice is shown.
   or stale gates open read-only detail. The confirmation includes the full question.
 - Forms: Tab changes fields; Ctrl+s reviews; submission requires confirmation.
 
+Color-capable terminals use a bold header, underlined active tab, full-width
+reverse selection and restrained status colors. Red indicates failures/stale
+state, yellow indicates attention, and green indicates healthy/resolved state.
+The palette uses the terminal's own basic ANSI colors without imposing a
+background. `NO_COLOR=1 woof tui` disables styling; ASCII and `TERM=dumb` retain
+plain labels and the `>` selection marker. Names and statuses precede full IDs in
+lists, while details and action review retain the complete identity.
+
 Reading does not acknowledge or consume messages. Worker mailboxes are read-only.
 Sending and asking preserve short text and artifact paths; one artifact reference
 per line in the form, relative to the operator cwd. Confirmation shows resolved,

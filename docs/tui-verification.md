@@ -86,3 +86,19 @@ That request was canceled, not approved. Subsequent artifact guidance used Read
 and individually permitted absolute Woof commands. This is an observed live setup
 limitation, not evidence of uninterrupted first-turn success. Existing user panes,
 default Woof state and user focus were preserved.
+
+## Visual polish follow-up
+
+Authenticated Claude Code reviewed the existing rendering as a terminal designer.
+Its hierarchy-first guidance informed the basic ANSI palette, reverse selection,
+active tab and detail labels. The implementation preserves explicit status text,
+Unicode bounds and sanitization before trusted theme markup. No RPC or action
+contract changed.
+
+`make check` passed after the visual update. New regressions:
+`TestStyledTerminalRetainsSelectionStatusAndSafeBounds`,
+`TestNoColorAndASCIIKeepAllOperatorText` (independent ASCII, NO_COLOR and dumb
+terminal cases), and `TestWorkerListPutsStatusBeforeLongIdentity`. A focused
+independent review approved terminal safety, clipping, fallbacks and action safety.
+Local design feedback, review and check output remain under
+`/private/tmp/woof-tui-style`.

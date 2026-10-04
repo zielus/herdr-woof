@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/zielus/herdr-woof-v2/internal/model"
 )
 
@@ -88,11 +90,13 @@ type uiModel struct {
 	err                   error
 	notice                string
 	shutdownMutationError error
+	colors                bool
+	noColor               bool
 }
 
 func newModel(ctx context.Context, b Backend, scope model.Scope) *uiModel {
 	reads, cancel := context.WithCancel(ctx)
-	return &uiModel{backend: b, root: ctx, ctx: reads, cancel: cancel, scope: scope, generation: 1, ready: &atomic.Bool{}, connection: &connectionState{}, width: 100, height: 30, retryDelay: 250 * time.Millisecond}
+	return &uiModel{noColor: os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb", backend: b, root: ctx, ctx: reads, cancel: cancel, scope: scope, generation: 1, ready: &atomic.Bool{}, connection: &connectionState{}, width: 100, height: 30, retryDelay: 250 * time.Millisecond}
 }
 func (m *uiModel) Init() tea.Cmd { return m.load() }
 func (m *uiModel) load() tea.Cmd {
@@ -315,6 +319,8 @@ func (m *uiModel) quit() tea.Cmd {
 }
 func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case tea.ColorProfileMsg:
+		m.colors = !m.noColor && v.Profile >= colorprofile.ANSI
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
 		if m.form != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/zielus/herdr-woof-v2/internal/model"
 )
 
-type row struct{ ID, Label string }
+type row struct{ ID, Label, State string }
 
 var tabNames = []string{"Workers", "Inbox", "Decisions", "Events", "Profiles"}
 
@@ -40,23 +40,23 @@ func (m *uiModel) rowsFor(tab int) []row {
 	switch tab {
 	case 0:
 		for _, w := range m.snapshot.Workers {
-			rows = append(rows, row{w.ID, fmt.Sprintf("%s %s [%s] ready:%t", w.Name, w.ID, w.State, w.Ready)})
+			rows = append(rows, row{w.ID, fmt.Sprintf("%s [%s] ready:%t · %s", w.Name, w.State, w.Ready, w.ID), w.State})
 		}
 	case 1:
 		for _, e := range m.snapshot.Inbox {
-			rows = append(rows, row{e.Delivery.ID, fmt.Sprintf("%s %s [%s] %s", e.Message.ID, e.Message.Kind, e.Delivery.Status, e.Message.Subject)})
+			rows = append(rows, row{e.Delivery.ID, fmt.Sprintf("%s [%s] %s · %s", e.Message.Kind, e.Delivery.Status, e.Message.Subject, e.Message.ID), e.Delivery.Status})
 		}
 	case 2:
 		for _, g := range m.snapshot.Gates {
-			rows = append(rows, row{g.ID, fmt.Sprintf("%s [%s] %s", g.ID, g.Status, g.Question)})
+			rows = append(rows, row{g.ID, fmt.Sprintf("[%s] %s · %s", g.Status, g.Question, g.ID), g.Status})
 		}
 	case 3:
 		for _, e := range m.snapshot.Events {
-			rows = append(rows, row{strconv.FormatInt(e.Seq, 10), fmt.Sprintf("%d %s %s", e.Seq, e.Type, e.ActorID)})
+			rows = append(rows, row{strconv.FormatInt(e.Seq, 10), fmt.Sprintf("%d %s %s", e.Seq, e.Type, e.ActorID), ""})
 		}
 	case 4:
 		for _, p := range m.snapshot.Profiles {
-			rows = append(rows, row{p.Name, p.Name + " [" + p.Agent + "] " + p.Description})
+			rows = append(rows, row{p.Name, p.Name + " [" + p.Agent + "] " + p.Description, ""})
 		}
 	}
 	return rows
@@ -171,7 +171,7 @@ func (m *uiModel) listLines(width, height int) []string {
 	rows := m.rows()
 	out := make([]string, height)
 	if len(rows) == 0 {
-		out[0] = "No matching entries"
+		out[0] = m.paint("No matching entries", "muted")
 		return out
 	}
 	idx := 0
@@ -191,7 +191,20 @@ func (m *uiModel) listLines(width, height int) []string {
 		if r.ID == m.selected[m.tab] {
 			mark = "> "
 		}
-		out[i] = ansi.Truncate(mark+inline(r.Label), width, "…")
+		line := mark + inline(r.Label)
+		if r.ID == m.selected[m.tab] {
+			line = ansi.Truncate(line, width, "…")
+			if m.colors {
+				line += strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
+			}
+			out[i] = m.paint(line, "selected")
+		} else {
+			badge := "[" + inline(r.State) + "]"
+			if r.State != "" {
+				line = strings.Replace(line, badge, m.paint(badge, statusRole(r.State)), 1)
+			}
+			out[i] = ansi.Truncate(line, width, "…")
+		}
 	}
 	return out
 }
@@ -234,7 +247,7 @@ func (m *uiModel) View() tea.View {
 		for i, n := range tabNames {
 			tabs[i] = fmt.Sprintf("%d %s", i+1, n)
 			if i == m.tab {
-				tabs[i] = "[" + tabs[i] + "]"
+				tabs[i] = m.paint("["+tabs[i]+"]", "active")
 			}
 		}
 		status := "LIVE"
@@ -247,7 +260,13 @@ func (m *uiModel) View() tea.View {
 		if m.busy {
 			status += " (submitting)"
 		}
-		header := []string{"Woof · human · " + scopeID(m.scope) + " · " + status, strings.Join(tabs, "  "), "Filter: " + m.filter}
+		statusStyle := "success"
+		if !m.ready.Load() {
+			statusStyle = "error"
+		} else if m.busy {
+			statusStyle = "warning"
+		}
+		header := []string{m.paint("Woof", "heading") + " · human · " + inline(scopeID(m.scope)) + " · " + m.paint(status, statusStyle), strings.Join(tabs, "  "), m.paint("Filter:", "label") + " " + inline(m.filter)}
 		errText := ""
 		if m.err != nil {
 			errText = m.err.Error()
@@ -259,36 +278,42 @@ func (m *uiModel) View() tea.View {
 		if m.tab == 0 && m.snapshot.Errors["reports"] != "" {
 			errText += " reports: " + m.snapshot.Errors["reports"]
 		}
-		header = append(header, inline(errText))
+		header = append(header, m.paint(inline(errText), "error"))
 		bodyHeight := height - 6
 		var body []string
 		switch {
 		case m.help:
 			body = screenLines("1–5 / Tab tabs; arrows / j,k select; / filter; s choose global/session/workspace/worktree/run; r refresh; Enter detail or gate decision; Esc back; q quit.\n\nWorkers: n message, o ask. Inbox: n recipient picker, o ask, p reply, a acknowledge, x consume. Worker mailbox is read-only.\n\nForm: Tab/Shift+Tab fields; Ctrl+s review. Review: Enter submits once; Esc cancels. PgUp/PgDown scroll.\n\nAfter an uncertain mutation: i inspect operation; never automatically resend.\n\nSettlement requires an explicit report AND matching turn-end evidence. Delivery, wake, acknowledgment and consumption are separate.", width, bodyHeight, m.scroll)
 		case m.picker != nil:
-			body = screenLines(m.pickerText(bodyHeight), width, bodyHeight, 0)
+			body = m.decorate(screenLines(m.pickerText(bodyHeight), width, bodyHeight, 0), "picker")
 		case m.review != nil:
-			body = screenLines(reviewText(*m.review), width, bodyHeight, m.scroll)
+			body = m.decorate(screenLines(reviewText(*m.review), width, bodyHeight, m.scroll), "review")
 		case m.form != nil:
-			body = screenLines(m.form.View(width, bodyHeight), width, bodyHeight, 0)
+			body = m.decorate(screenLines(m.form.View(width, bodyHeight), width, bodyHeight, 0), "form")
 		case m.detail:
-			body = screenLines(m.detailText(), width, bodyHeight, m.scroll)
+			body = m.decorate(screenLines(m.detailText(), width, bodyHeight, m.scroll), "detail")
 		case width >= 100:
 			leftWidth := width * 2 / 5
 			rightWidth := width - leftWidth - 3
 			left := m.listLines(leftWidth, bodyHeight)
-			right := screenLines(m.detailText(), rightWidth, bodyHeight, m.scroll)
+			right := m.decorate(screenLines(m.detailText(), rightWidth, bodyHeight, m.scroll), "detail")
 			body = make([]string, bodyHeight)
 			for i := range bodyHeight {
-				body[i] = left[i] + strings.Repeat(" ", max(0, leftWidth-lipgloss.Width(left[i]))) + " │ " + right[i]
+				body[i] = left[i] + strings.Repeat(" ", max(0, leftWidth-lipgloss.Width(left[i]))) + m.paint(" │ ", "muted") + right[i]
 			}
 		default:
 			body = m.listLines(width, bodyHeight)
 		}
 		lines := append(header, body...)
-		lines = append(lines, inline(m.notice), "1–5/Tab tabs · / filter · s scope · r refresh · ? help · q quit")
+		noticeRole := "muted"
+		if len(m.uncertain) > 0 {
+			noticeRole = "warning"
+		} else if m.notice == "Action accepted" {
+			noticeRole = "success"
+		}
+		lines = append(lines, m.paint(inline(m.notice), noticeRole), m.paint("1–5/Tab tabs · / filter · s scope · r refresh · ? help · q quit", "muted"))
 		for i := range lines {
-			lines[i] = ansi.Truncate(safeText(lines[i]), width, "…")
+			lines[i] = ansi.Truncate(lines[i], width, "…")
 		}
 		content = strings.Join(lines, "\n")
 	}
