@@ -87,3 +87,35 @@ func TestRelativeConfigResolvedBeforeDaemonChangesDirectory(t *testing.T) {
 		t.Fatalf("relative config will change meaning on bootstrap: %s", p.Config)
 	}
 }
+
+func TestResolveOnlyChmodsWhenTheModeIsWrong(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("WOOF_STATE_DIR", dir)
+	if _, e := Resolve(); e != nil {
+		t.Fatal(e)
+	}
+	// A sandbox that allows using the state directory may still refuse chmod.
+	var calls []string
+	chmod = func(name string, _ os.FileMode) error {
+		calls = append(calls, name)
+		return os.ErrPermission
+	}
+	t.Cleanup(func() { chmod = os.Chmod })
+	if _, e := Resolve(); e != nil || len(calls) != 0 {
+		t.Fatalf("private state dir was chmodded: %v %v", calls, e)
+	}
+	// A directory that is not private is still corrected, and a refusal is an error.
+	if e := os.Chmod(dir, 0755); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := Resolve(); e == nil || len(calls) != 1 {
+		t.Fatalf("loose state dir accepted: %v %v", calls, e)
+	}
+	chmod = os.Chmod
+	if _, e := Resolve(); e != nil {
+		t.Fatal(e)
+	}
+	if st, e := os.Stat(dir); e != nil || st.Mode().Perm() != 0700 {
+		t.Fatalf("state dir not restored to 0700: %v %v", st, e)
+	}
+}

@@ -557,6 +557,10 @@ func (e *Engine) bindWorker(ctx context.Context, r model.Request, a Args) (any, 
 	}
 	w.AgentKind = profile.Agent
 	w.Args = append(append([]string(nil), profile.Args...), a.ExtraArgs...)
+	if cfg.Defaults.PermissionsEnabled() {
+		// Recorded on the worker, so `worker show` and events carry the effective launch.
+		w.Args = append(workerPermissionArgs(w.AgentKind, w.Args, e.opts.Paths.Sock), w.Args...)
+	}
 	w.AgentName = "woof-" + w.ID[len(w.ID)-20:]
 	if a.Pane != "" {
 		p, err = c.PaneGet(ctx, a.Pane)

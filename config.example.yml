@@ -21,3 +21,6 @@ profiles:
     tags: [custom]
 defaults:
   worker_profile: claude
+  # Woof adds launch permissions so claude and codex workers can run their own
+  # woof coordination commands (see docs/profiles.md). Set false to opt out.
+  # worker_permissions: true

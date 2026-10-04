@@ -155,3 +155,26 @@ func TestRejectNonStringCwd(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerPermissionsDefaultOnAndOptOut(t *testing.T) {
+	const base = "profiles:\n  a:\n    agent: claude\n"
+	for text, want := range map[string]bool{
+		base: true,
+		base + "defaults:\n  worker_profile: a\n":                              true,
+		base + "defaults:\n  worker_permissions: true\n":                       true,
+		base + "defaults:\n  worker_profile: a\n  worker_permissions: false\n": false,
+	} {
+		c, err := loadText(t, text)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+		if got := c.Defaults.PermissionsEnabled(); got != want {
+			t.Errorf("%q: enabled = %v, want %v", text, got, want)
+		}
+	}
+	for _, bad := range []string{"defaults:\n  worker_permissions: sometimes\n", "defaults:\n  worker_permission: false\n", "defaults:\n  worker_permissions: [woof inbox]\n"} {
+		if _, err := loadText(t, base+bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
