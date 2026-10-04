@@ -107,15 +107,18 @@ Evidence: shared-run/worktree and adhoc membership tests, scoped event replay an
 
 Behavior is specified in [scheduler.md](scheduler.md). This is a time trigger, not the Phase 2 workflow engine.
 
-Evidence: pending final verification.
+Evidence: [scheduler-verification.md](scheduler-verification.md) — final
+`make check integration install-test`, the named tests listed there, and live
+scenarios 1–4 in the isolated session `woof-sched-193704`. Linux runtime and a
+live DST transition are covered by tests only.
 
-- [ ] Recurring cron and `@every` schedules support add, list, show, enable, disable, remove, manual run and history.
-- [ ] Timezone, DST (nonexistent and repeated times) and missed-run behavior are defined and tested.
-- [ ] Schedules live in the single daemon and database; v1 to v2 migration is transactional and safe.
-- [ ] Targets are stable worker IDs resolved in validated scope; no pane targets and no silent retargeting.
-- [ ] Messages and dispatches use Woof's durable paths; dispatch settlement is unchanged (report plus turn end).
-- [ ] Occurrences are claimed atomically with a durable occurrence identity; concurrent, manual and restart paths never claim one twice.
-- [ ] Uncertain outcomes are inspectable and never resent.
-- [ ] Busy, offline and blocked target behavior is explicit and never interrupts a busy agent.
-- [ ] CLI/RPC reads are scoped, support JSON and history, and schedule events are append-only.
-- [ ] The TUI shows a schedules view.
+- [x] Recurring cron and `@every` schedules support add, list, show, enable, disable, remove, manual run and history.
+- [x] Timezone, DST (nonexistent and repeated times) and missed-run behavior are defined and tested.
+- [x] Schedules live in the single daemon and database; v1 to v2 migration is transactional and safe.
+- [x] Targets are stable worker IDs resolved in validated scope; no pane targets and no silent retargeting.
+- [x] Messages and dispatches use Woof's durable paths; dispatch settlement is unchanged (report plus turn end).
+- [x] Occurrences are claimed atomically with a durable occurrence identity; concurrent, manual and restart paths never claim one twice.
+- [x] Uncertain outcomes are inspectable and never resent.
+- [x] Busy, offline and blocked target behavior is explicit and never interrupts a busy agent.
+- [x] CLI/RPC reads are scoped, support JSON and history, and schedule events are append-only.
+- [x] The TUI shows a schedules view.
