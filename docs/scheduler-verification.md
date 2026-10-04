@@ -39,8 +39,10 @@ Isolated state `/private/tmp/woof-sched-live-193704` (`WOOF_STATE_DIR`,
 `WOOF_CONFIG`, binaries built from commit `4245ff5` via `git archive`), daemon
 `woofd --watchdog 0`, uniquely named Herdr session `woof-sched-193704` (stopped
 afterwards). Profile `demo` = `claude --model haiku`. The production daemon and
-database, Life OS notes and plugin registrations were not changed; no
-permission was granted to the agent. Raw JSON is kept beside the state.
+database, Life OS notes and plugin registrations were not changed. This
+session pressed no keys in worker panes and changed no permission settings.
+Raw JSON is kept beside the state. Scenarios 1–4 used binaries from `4245ff5`;
+scenario 5 repeats a scheduled dispatch on the final code.
 
 1. Scheduled message `ping2` (`@every 1m`, worker
    `worker_40332cc01a102e7157235742cccf4d25`): occurrence
@@ -68,6 +70,16 @@ permission was granted to the agent. Raw JSON is kept beside the state.
    workspace returned `uncertain` (`op_a9581d7d111416d5c6c07dcbcbbaf946`). The
    session listed no workspaces or agents; it was explicitly resolved as failed,
    not resent.
+
+5. Final code (`1fc9984`, state `/private/tmp/woof-sched-live2-200715`, session
+   `woof-sched2-200715`): scheduled dispatch `final` (`* * * * *`) occurrence
+   `srun_dc47b8a7fc1a66e43d8c53b955a54c59` at 20:08:00 dispatched
+   `dispatch_e8d5e6a6bd616e2fca8736ea4fb81561` (actor `schedule`). After the
+   report and turn end (working seq 6, end seq 7) the dispatch settled and the
+   occurrence moved to `settled`; events `dispatch.settled` (20) then
+   `schedule.run.settled` (21); attempt receipt
+   `op_4602e18e56e852c300ee6fc25ae9ab2e` `completed`; `schedule list` joined
+   `last_run` `settled`.
 
 Observed limitation (pre-existing, not scheduler code): a worker started with
 `--pane` into an existing pane does not receive injected `WOOF_STATE_DIR`,
@@ -103,4 +115,5 @@ occurrence) and showed only the claim receipt after a lost run-now response.
 - Automatic launch of stopped workers, new permissions and startup dialogs are
   out of scope.
 - Rolling back to an older binary after migration requires a database backup.
-- Linux runtime and a live DST transition were verified only through tests.
+- Linux runtime is covered by CI (`ubuntu-24.04` and `macos-14` checks passed
+  on `1fc9984`); a live DST transition was verified only through tests.
